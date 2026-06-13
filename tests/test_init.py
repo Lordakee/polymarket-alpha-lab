@@ -1,6 +1,15 @@
 import polymarket_alpha_lab as lab
 from polymarket_alpha_lab.journal import PaperTradeJournal, PaperTradeRecord
 from polymarket_alpha_lab.paper import PaperFill, PaperOrder, simulate_order_book_fill
+from polymarket_alpha_lab.positions import (
+    PaperNavLog,
+    PaperNavSnapshot,
+    PaperPortfolio,
+    PaperPosition,
+    PaperPositionMark,
+    build_paper_portfolio,
+    mark_paper_nav,
+)
 from polymarket_alpha_lab.rejections import RejectedCandidateLog, RejectedCandidateRecord
 from polymarket_alpha_lab.research import ResearchPacket, build_research_packet
 from polymarket_alpha_lab.risk import (
@@ -49,3 +58,24 @@ def test_level_1b_node_1_public_api_exports():
     assert lab.RiskGateDecision is RiskGateDecision
     assert lab.RiskGateReason is RiskGateReason
     assert lab.evaluate_research_packet_risk is evaluate_research_packet_risk
+
+
+def test_level_1b_node_2_public_api_exports():
+    expected_exports = {
+        "PaperNavLog",
+        "PaperNavSnapshot",
+        "PaperPortfolio",
+        "PaperPosition",
+        "PaperPositionMark",
+        "build_paper_portfolio",
+        "mark_paper_nav",
+    }
+
+    assert expected_exports <= set(lab.__all__)
+    assert lab.PaperNavLog is PaperNavLog
+    assert lab.PaperNavSnapshot is PaperNavSnapshot
+    assert lab.PaperPortfolio is PaperPortfolio
+    assert lab.PaperPosition is PaperPosition
+    assert lab.PaperPositionMark is PaperPositionMark
+    assert lab.build_paper_portfolio is build_paper_portfolio
+    assert lab.mark_paper_nav is mark_paper_nav

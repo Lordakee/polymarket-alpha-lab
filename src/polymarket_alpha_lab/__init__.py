@@ -10,6 +10,15 @@ from polymarket_alpha_lab.domain import (
 )
 from polymarket_alpha_lab.journal import PaperTradeJournal, PaperTradeRecord
 from polymarket_alpha_lab.paper import PaperFill, PaperOrder, simulate_order_book_fill
+from polymarket_alpha_lab.positions import (
+    PaperNavLog,
+    PaperNavSnapshot,
+    PaperPortfolio,
+    PaperPosition,
+    PaperPositionMark,
+    build_paper_portfolio,
+    mark_paper_nav,
+)
 from polymarket_alpha_lab.rejections import RejectedCandidateLog, RejectedCandidateRecord
 from polymarket_alpha_lab.research import ResearchPacket, build_research_packet
 from polymarket_alpha_lab.risk import (
@@ -27,7 +36,12 @@ __all__ = [
     "OrderBookSnapshot",
     "OutcomeToken",
     "PaperFill",
+    "PaperNavLog",
+    "PaperNavSnapshot",
     "PaperOrder",
+    "PaperPortfolio",
+    "PaperPosition",
+    "PaperPositionMark",
     "PaperTradeJournal",
     "PaperTradeRecord",
     "RejectedCandidateLog",
@@ -36,7 +50,9 @@ __all__ = [
     "RiskGateConfig",
     "RiskGateDecision",
     "RiskGateReason",
+    "build_paper_portfolio",
     "build_research_packet",
     "evaluate_research_packet_risk",
+    "mark_paper_nav",
     "simulate_order_book_fill",
 ]

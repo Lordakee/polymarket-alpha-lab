@@ -12,7 +12,7 @@ The long-term goal is an automated system that can screen markets, research cand
 
 ## Phase 1 Scope
 
-This repository currently contains the project design, research notes, implementation plans, a read-only market scanner, research packet assembly, bid/ask paper-fill simulation, JSONL paper-trade journaling, paper-only risk gates, and rejected-candidate logs.
+This repository currently contains the project design, research notes, implementation plans, a read-only market scanner, research packet assembly, bid/ask paper-fill simulation, JSONL paper-trade journaling, paper-only risk gates, rejected-candidate logs, paper position ledgers, and executable NAV marks.
 
 The current phase does not contain:
 
@@ -68,6 +68,18 @@ Node 1 is exposed through Python APIs:
 - Evaluate packets with `evaluate_research_packet_risk(packet, config)`.
 - Persist rejected candidates with `RejectedCandidateRecord.from_packet_and_decision(...)` and `RejectedCandidateLog(path).append(record)`.
 
+## Level 1B Node 2 Status
+
+Level 1B Node 2 adds a paper-only position ledger and executable NAV marks derived from accepted paper-trade journal records and supplied public order book snapshots. It does not fetch order books, place orders, authenticate, handle private keys, cancel orders, open user WebSockets, run heartbeat logic, reconcile exchange account positions, or create live-trading proposals.
+
+## Level 1B Node 2 Python API
+
+Node 2 is exposed through Python APIs:
+
+- Build paper portfolios with `build_paper_portfolio(records, starting_cash=Decimal("10000"))`, which returns `PaperPortfolio`.
+- Mark open positions with `mark_paper_nav(portfolio, books_by_token_id, marked_at=datetime.now(UTC))`, which returns `PaperNavSnapshot`.
+- Persist executable NAV snapshots with `PaperNavLog(path).append(snapshot)`.
+
 ## Automation Roadmap
 
 The recommended staged path is:
@@ -100,6 +112,8 @@ See:
 │       ├── plans
 │       │   ├── 2026-06-13-level-0-market-intelligence.md
 │       │   ├── 2026-06-13-level-1-research-packets-paper-trading.md
+│       │   ├── 2026-06-13-level-1b-rejections-risk-gates.md
+│       │   ├── 2026-06-13-level-1b-positions-nav.md
 │       │   └── 2026-06-13-project-bootstrap.md
 │       └── specs
 │           ├── 2026-06-13-automated-investment-roadmap.md
@@ -116,6 +130,7 @@ See:
 │       ├── normalize.py
 │       ├── paper.py
 │       ├── pipeline.py
+│       ├── positions.py
 │       ├── rejections.py
 │       ├── research.py
 │       ├── risk.py
@@ -130,6 +145,7 @@ See:
     ├── test_normalize.py
     ├── test_paper.py
     ├── test_pipeline.py
+    ├── test_positions.py
     ├── test_rejections.py
     ├── test_research.py
     ├── test_risk_gates.py
