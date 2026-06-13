@@ -40,3 +40,8 @@ Avoid using website scraping as a primary data path unless a needed field is una
 - Distinguish `null`, `0`, and `unknown` in data models.
 - Use executable bid/ask and order book depth for research calculations, not only displayed midpoint.
 - Keep all research outputs reproducible and timestamped.
+
+## Model Defaults
+
+- Codex subagents dispatched for this project should use model `gpt-5.5` with reasoning effort `xhigh`.
+- Claude Code reviews for this project should use model `claude-opus-4-8` with effort `max`.
