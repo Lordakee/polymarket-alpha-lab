@@ -7,12 +7,12 @@ The long-term goal is an automated system that can screen markets, research cand
 - market discovery and metadata normalization
 - order book and liquidity quality scoring
 - strategy research around measurable edges
-- paper-trading journals and risk review
+- paper-trading journals, risk gates, and rejection review
 - future backtesting and signal validation
 
 ## Phase 1 Scope
 
-This repository currently contains the project design, research notes, implementation plans, a read-only market scanner, research packet assembly, bid/ask paper-fill simulation, and JSONL paper-trade journaling.
+This repository currently contains the project design, research notes, implementation plans, a read-only market scanner, research packet assembly, bid/ask paper-fill simulation, JSONL paper-trade journaling, paper-only risk gates, and rejected-candidate logs.
 
 The current phase does not contain:
 
@@ -55,6 +55,18 @@ Node 3 is exposed through Python APIs rather than new CLI commands:
 - Build research packets with `build_research_packet(...)`, which returns `ResearchPacket`.
 - Simulate bid/ask paper fills with `PaperOrder(...)` and `simulate_order_book_fill(...)`, which returns `PaperFill`.
 - Persist JSONL journal entries with `PaperTradeRecord.from_packet_and_fill(...)` and `PaperTradeJournal(path).append(record)`.
+
+## Level 1B Node 1 Status
+
+Level 1B Node 1 adds configurable paper-only risk gates and append-only rejected-candidate logs. It does not place orders, authenticate, handle private keys, cancel orders, open user WebSockets, run heartbeat logic, or create live-trading proposals.
+
+## Level 1B Node 1 Python API
+
+Node 1 is exposed through Python APIs:
+
+- Configure entry gates with `RiskGateConfig(...)`.
+- Evaluate packets with `evaluate_research_packet_risk(packet, config)`.
+- Persist rejected candidates with `RejectedCandidateRecord.from_packet_and_decision(...)` and `RejectedCandidateLog(path).append(record)`.
 
 ## Automation Roadmap
 
@@ -104,7 +116,9 @@ See:
 │       ├── normalize.py
 │       ├── paper.py
 │       ├── pipeline.py
+│       ├── rejections.py
 │       ├── research.py
+│       ├── risk.py
 │       └── scoring.py
 └── tests
     ├── test_api.py
@@ -116,7 +130,9 @@ See:
     ├── test_normalize.py
     ├── test_paper.py
     ├── test_pipeline.py
+    ├── test_rejections.py
     ├── test_research.py
+    ├── test_risk_gates.py
     └── test_scoring.py
 ```
 
