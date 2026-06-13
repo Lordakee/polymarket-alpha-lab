@@ -1,0 +1,41 @@
+# Project Instructions
+
+## Scope
+
+This repository is for Polymarket market research, data engineering, strategy validation, paper trading, and risk analysis.
+
+Do not add live trading, account authentication, private-key handling, or automated order placement unless the user explicitly asks for that in a later turn.
+
+Do not perform compliance, legal, geographic-access, or regulatory analysis in this repository unless the user explicitly reopens that topic.
+
+## CodeGraph
+
+This repository is intended to be indexed by CodeGraph. If `.codegraph/` exists at the repository root, use CodeGraph before `rg`, `find`, or manual file reads when the goal is to understand or locate code:
+
+```bash
+codegraph explore "question or symbol names"
+codegraph node <symbol-or-file>
+```
+
+Use `rg` only after CodeGraph is not enough or the task is plain text search across documentation.
+
+## Data Source Priority
+
+Use official Polymarket sources first:
+
+1. Gamma API for market, event, tag, search, and metadata discovery.
+2. CLOB API for order books, prices, spreads, midpoints, price history, and public market data.
+3. Data API for public trades, positions, activity, holders, open interest, and leaderboards.
+4. WebSocket market channel for real-time watchlist updates.
+5. Officially documented third-party chain data only for historical backfill or verification.
+
+Avoid using website scraping as a primary data path unless a needed field is unavailable through official APIs.
+
+## Engineering Defaults
+
+- Keep source files small and domain-focused.
+- Preserve raw API payloads before normalization.
+- Distinguish `null`, `0`, and `unknown` in data models.
+- Use executable bid/ask and order book depth for research calculations, not only displayed midpoint.
+- Keep all research outputs reproducible and timestamped.
+
