@@ -45,3 +45,4 @@ Avoid using website scraping as a primary data path unless a needed field is una
 
 - Codex subagents dispatched for this project should use model `gpt-5.5` with reasoning effort `xhigh`.
 - Claude Code reviews for this project should use model `claude-opus-4-8` with effort `max`.
+- If the user informally writes `xhign` for the Codex subagent reasoning level, treat it as the executable setting `xhigh`.
