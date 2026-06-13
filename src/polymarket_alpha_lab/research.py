@@ -57,9 +57,19 @@ class ResearchPacket:
             "ask",
             "midpoint",
             "expected_entry_price",
+            "fair_value_estimate",
+            "theoretical_edge",
             "spread",
             "slippage_estimate",
             "cost_adjusted_edge",
+            "confidence",
+            "raw_archive_path",
+        ):
+            if not _has_value(getattr(self, field_name)):
+                missing.append(field_name)
+        if not self.risk_tags or any(not tag.strip() for tag in self.risk_tags):
+            missing.append("risk_tags")
+        for field_name in (
             "thesis",
             "invalidating_conditions",
             "rule_text",
@@ -67,7 +77,11 @@ class ResearchPacket:
         ):
             if not _has_value(getattr(self, field_name)):
                 missing.append(field_name)
-        if self.max_executable_size is None or self.max_executable_size <= 0:
+        if (
+            self.max_executable_size is None
+            or not self.max_executable_size.is_finite()
+            or self.max_executable_size <= 0
+        ):
             missing.append("positive_max_executable_size")
         return missing
 
@@ -143,4 +157,6 @@ def _has_value(value: object) -> bool:
         return False
     if isinstance(value, str):
         return value.strip() != ""
+    if isinstance(value, Decimal):
+        return value.is_finite()
     return True

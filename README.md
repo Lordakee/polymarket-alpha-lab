@@ -12,7 +12,7 @@ The long-term goal is an automated system that can screen markets, research cand
 
 ## Phase 1 Scope
 
-This repository currently contains the project design, research notes, implementation plan, and a minimal Python domain model skeleton.
+This repository currently contains the project design, research notes, implementation plans, a read-only market scanner, research packet assembly, bid/ask paper-fill simulation, and JSONL paper-trade journaling.
 
 The current phase does not contain:
 
@@ -44,6 +44,18 @@ Run the current read-only scanner with:
 
 The scan uses public Polymarket market-data endpoints only. It does not authenticate, handle private keys, place orders, or trade. Raw API payloads are archived under `data/raw/`, and ranked candidate output is written to `artifacts/market-scores.json`; both directories are ignored by git.
 
+## Level 1A Status
+
+Level 1A adds research packets, bid/ask order-book-walk paper-fill simulation, and JSONL paper-trade journals. It remains paper-only: no account authentication, no private-key handling, no order placement, no order cancellation, no user WebSocket, no heartbeat, no live trading, and no compliance/legal/geographic-access analysis.
+
+## Level 1A Python API
+
+Node 3 is exposed through Python APIs rather than new CLI commands:
+
+- Build research packets with `build_research_packet(...)`, which returns `ResearchPacket`.
+- Simulate bid/ask paper fills with `PaperOrder(...)` and `simulate_order_book_fill(...)`, which returns `PaperFill`.
+- Persist JSONL journal entries with `PaperTradeRecord.from_packet_and_fill(...)` and `PaperTradeJournal(path).append(record)`.
+
 ## Automation Roadmap
 
 The recommended staged path is:
@@ -74,6 +86,8 @@ See:
 │   ├── sources.md
 │   └── superpowers
 │       ├── plans
+│       │   ├── 2026-06-13-level-0-market-intelligence.md
+│       │   ├── 2026-06-13-level-1-research-packets-paper-trading.md
 │       │   └── 2026-06-13-project-bootstrap.md
 │       └── specs
 │           ├── 2026-06-13-automated-investment-roadmap.md
@@ -86,16 +100,23 @@ See:
 │       ├── archive.py
 │       ├── cli.py
 │       ├── domain.py
+│       ├── journal.py
 │       ├── normalize.py
+│       ├── paper.py
 │       ├── pipeline.py
+│       ├── research.py
 │       └── scoring.py
 └── tests
     ├── test_api.py
     ├── test_archive.py
     ├── test_cli.py
     ├── test_domain.py
+    ├── test_init.py
+    ├── test_journal.py
     ├── test_normalize.py
+    ├── test_paper.py
     ├── test_pipeline.py
+    ├── test_research.py
     └── test_scoring.py
 ```
 

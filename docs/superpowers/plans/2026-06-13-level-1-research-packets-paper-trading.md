@@ -50,15 +50,17 @@ Level 1B is deferred. It will add rejected-candidate logs, configurable risk gat
 - Create: `src/polymarket_alpha_lab/journal.py`
   - JSONL paper-trade journal writer.
 - Modify: `src/polymarket_alpha_lab/__init__.py`
-  - Export stable Level 1 public dataclasses.
+  - Export stable Level 1 public APIs.
 - Create: `tests/test_research.py`
   - Research packet construction and required-field tests.
 - Create: `tests/test_paper.py`
   - Bid/ask fill simulation tests, including partial fills.
 - Create: `tests/test_journal.py`
   - Journal persistence and validation tests.
+- Create: `tests/test_init.py`
+  - Package-root public API export tests.
 - Modify: `README.md`
-  - Add Level 1A status note after implementation.
+  - Add Level 1A status and Python API notes after implementation.
 
 ## Node 1: Research Packets
 
@@ -571,7 +573,7 @@ Expected: untracked files are explicitly listed or `none`; node-specific pytest 
 Run:
 
 ```bash
-claude -p --model claude-opus-4-8 --effort max --permission-mode plan "Review Level 1A Node 2 paper fill simulation changes and the updated Node 3 journal plan in /home/ubuntu/polymarket-alpha-lab before commit/push. First run git status --short --branch --untracked-files=all and review all staged, unstaged, and untracked files, including docs/superpowers/plans/2026-06-13-level-1-research-packets-paper-trading.md, src/polymarket_alpha_lab/paper.py, tests/test_paper.py, src/polymarket_alpha_lab/normalize.py, tests/test_normalize.py, src/polymarket_alpha_lab/domain.py, tests/test_domain.py, and tests/test_scoring.py. Confirm the recorded Node 2 gate includes node-specific pytest, full pytest, git diff --check, and CodeGraph status/sync-if-stale results. Node 2 requirements: uses asks for buy, bids for sell, walks depth, stops after requested size is filled, reports partial and zero fills, rejects non-finite/non-positive order sizes, skips non-executable levels with non-finite price/size or price <= 0 or size <= 0, normalizes non-finite raw order-book Decimal values to zero before sorting, shared OrderBookSnapshot best_bid/best_ask ignore non-executable levels, shared spread/midpoint are absent when either side has no executable quote or when executable quotes are crossed, scoring does not reward no-ask/no-bid/crossed books as tight spreads, records executable bid/ask/midpoint/spread/slippage plus order_book_captured_at and deterministic lowercase hex order_book_snapshot_sha256, canonicalizes equivalent finite Decimal spellings in the snapshot hash, does not use midpoint fills, quantizes average price, midpoint, spread, and slippage with explicit Decimal('0.001') ROUND_HALF_EVEN while leaving best_bid/best_ask/worst_price as raw book prices, keeps fill arithmetic deterministic under hostile caller Decimal precision, rounding, and traps, keeps size accounting exact for accepted finite Decimal sizes, and avoids pre-rounding high-precision weighted-average, midpoint, or spread values before final quantization. Safety requirements: no auth, no private keys, no order placement, no cancellation, no user WebSocket, no heartbeat, no live trading, no trading SDK, and no compliance/legal/geographic-access analysis. Node 3 plan requirements: separate research_* and fill_* fields, require confidence and non-empty non-blank risk_tags before journaling, persist non-empty market_raw_archive_path, order_book_raw_archive_path, order_book_raw_payload_sha256 as raw payload checksum, and order_book_snapshot_sha256 as normalized snapshot digest, validate both SHA-256 digests, normalize decision_timestamp_utc and order_book_captured_at, include fill_status, enforce max_executable_size and positive account_equity_before_trade, include fair value/theoretical edge/cost-adjusted edge, reject token mismatch and invalid fill invariants, use JSONL append-only persistence, and verify the Node 3 commit step stages every file Node 3 modifies. Report Critical, Important, Minor findings only, and finish with an explicit verdict: Proceed, Proceed with fixes, or Blocked."
+claude -p --model claude-opus-4-8 --effort max --permission-mode plan "Review Level 1A Node 2 paper fill simulation changes and the updated Node 3 journal plan in /home/ubuntu/polymarket-alpha-lab before commit/push. First run git status --short --branch --untracked-files=all and review all staged, unstaged, and untracked files, including docs/superpowers/plans/2026-06-13-level-1-research-packets-paper-trading.md, src/polymarket_alpha_lab/paper.py, tests/test_paper.py, src/polymarket_alpha_lab/normalize.py, tests/test_normalize.py, src/polymarket_alpha_lab/domain.py, tests/test_domain.py, and tests/test_scoring.py. Confirm the recorded Node 2 gate includes node-specific pytest, full pytest, git diff --check, and CodeGraph status/sync-if-stale results. Node 2 requirements: uses asks for buy, bids for sell, walks depth, stops after requested size is filled, reports partial and zero fills, rejects non-finite/non-positive order sizes, skips non-executable levels with non-finite price/size or price <= 0 or size <= 0, normalizes non-finite raw order-book Decimal values to zero before sorting, shared OrderBookSnapshot best_bid/best_ask ignore non-executable levels, shared spread/midpoint are absent when either side has no executable quote or when executable quotes are crossed, scoring does not reward no-ask/no-bid/crossed books as tight spreads, records executable bid/ask/midpoint/spread/slippage plus order_book_captured_at and deterministic lowercase hex order_book_snapshot_sha256, canonicalizes equivalent finite Decimal spellings in the snapshot hash, does not use midpoint fills, quantizes average price, midpoint, spread, and slippage with explicit Decimal('0.001') ROUND_HALF_EVEN while leaving best_bid/best_ask/worst_price as raw book prices, keeps fill arithmetic deterministic under hostile caller Decimal precision, rounding, and traps, keeps size accounting exact for accepted finite Decimal sizes, and avoids pre-rounding high-precision weighted-average, midpoint, or spread values before final quantization. Safety requirements: no auth, no private keys, no order placement, no cancellation, no user WebSocket, no heartbeat, no live trading, no trading SDK, and no compliance/legal/geographic-access analysis. Node 3 plan requirements: separate research_* and fill_* fields, require confidence and non-empty non-blank risk_tags before journaling, persist non-empty market_raw_archive_path, order_book_raw_archive_path, order_book_raw_payload_sha256 as raw payload checksum, and order_book_snapshot_sha256 as normalized snapshot digest, validate both SHA-256 digests, normalize decision_timestamp_utc and order_book_captured_at, include fill_status, enforce max_executable_size and finite positive account_equity_before_trade, include fair value/theoretical edge/cost-adjusted edge, reject token mismatch and invalid fill invariants, reject non-finite journal Decimal values before serialization, serialize missing optional fill quote metadata as JSON null, persist sell fills, preserve crossed-book fill metadata separately from research quotes, use JSONL append-only persistence, and verify the Node 3 commit step stages every file Node 3 modifies. Report Critical, Important, Minor findings only, and finish with an explicit verdict: Proceed, Proceed with fixes, or Blocked."
 ```
 
 Do not run `git commit` or `git push` until Claude returns `Proceed` or `Proceed with fixes` and all Critical/Important findings are resolved.
@@ -598,9 +600,13 @@ git push
 - `confidence`, `fair_value_estimate`, `theoretical_edge`, non-empty `raw_archive_path`, and non-empty non-blank `risk_tags` are required for packet completeness before journaling.
 - `fill.requested_size` and `fill.filled_size` must not exceed `packet.max_executable_size`.
 - `decision_timestamp_utc` and `order_book_captured_at` are normalized to UTC; naive timestamps are treated as UTC.
-- `account_equity_before_trade` must be positive.
+- `account_equity_before_trade` must be finite and positive; zero, negative, `NaN`, `Infinity`, and `-Infinity` values must raise `ValueError`.
 - `order_book_raw_archive_path` and `order_book_raw_payload_sha256` are provided to `PaperTradeRecord.from_packet_and_fill()` and persisted alongside `order_book_snapshot_sha256`.
 - `order_book_raw_payload_sha256` is the checksum of the archived raw order-book payload before normalization; `order_book_snapshot_sha256` is the digest of the normalized `OrderBookSnapshot`. They are distinct provenance fields and both must validate as lowercase 64-character SHA-256 hex digests.
+- Every `Decimal` persisted by the journal must be finite. Non-finite `Decimal` values in packet fields, fill fields, `account_equity_before_trade`, or directly constructed `PaperTradeRecord` instances must raise `ValueError` before JSONL serialization.
+- Missing optional fill quote metadata (`fill_best_bid`, `fill_best_ask`, `fill_midpoint`, `fill_spread`) and optional `fill_slippage_estimate` must serialize as JSON `null`, not be omitted or stringified.
+- Journal records must accept and persist both buy and sell fills; sell fills use `order_side="sell"` and simulator-provided fill fields.
+- Crossed-book paper fill metadata is journalable when the simulated fill is positive: `fill_spread` may be negative while `research_*` quote fields remain separate and unchanged.
 - Post-trade review remains deferred to Level 1B; Level 1A persists only entry-time paper records and `planned_exit_rule`.
 
 **Files:**
@@ -610,6 +616,7 @@ git push
 - Create: `src/polymarket_alpha_lab/journal.py`
 - Create: `tests/test_journal.py`
 - Modify: `src/polymarket_alpha_lab/__init__.py`
+- Create: `tests/test_init.py`
 - Modify: `README.md`
 
 - [ ] **Step 1: Tighten research packet completeness tests**
@@ -673,6 +680,8 @@ def test_research_packet_reports_blank_risk_tags_missing():
     assert "risk_tags" in packet.missing_required_fields()
 ```
 
+Also add a focused test that non-finite `Decimal` values in required research fields are reported missing and that `max_executable_size=Decimal("NaN")` does not raise `decimal.InvalidOperation`.
+
 - [ ] **Step 2: Run research test to verify it fails**
 
 Run:
@@ -719,12 +728,16 @@ Modify `src/polymarket_alpha_lab/research.py`:
         ):
             if not _has_value(getattr(self, field_name)):
                 missing.append(field_name)
-        if self.max_executable_size is None or self.max_executable_size <= 0:
+        if (
+            self.max_executable_size is None
+            or not self.max_executable_size.is_finite()
+            or self.max_executable_size <= 0
+        ):
             missing.append("positive_max_executable_size")
         return missing
 ```
 
-Use the existing `_has_value()` helper; `confidence` and `max_executable_size` already accept `Decimal | None` in the packet builder.
+Use the existing `_has_value()` helper, and update it so non-finite `Decimal` values return `False`. `confidence` and `max_executable_size` already accept `Decimal | None` in the packet builder.
 
 - [ ] **Step 4: Write failing journal tests**
 
@@ -1160,12 +1173,24 @@ def test_paper_trade_record_rejects_impossible_fill_inputs(fill, match):
         )
 ```
 
+- [ ] **Step 4b: Expand journal edge-case coverage**
+
+The starter journal tests must be expanded before finalizing Node 3. Minimum additional coverage:
+
+- non-finite `Decimal` values in persisted packet fields, fill fields, `account_equity_before_trade`, and directly constructed `PaperTradeRecord` instances raise `ValueError` before JSONL serialization
+- negative `account_equity_before_trade` is rejected, not only zero equity
+- missing optional fill quote metadata serializes as JSON `null`
+- sell fills persist with `order_side == "sell"`
+- append creates parent directories and writes sorted JSONL object keys
+- packet, decision, and order-book timestamps normalize to UTC
+- simulator-produced crossed-book, partial-fill, and zero-fill outputs are tested against journal boundaries
+
 - [ ] **Step 5: Run tests to verify they fail**
 
 Run:
 
 ```bash
-.venv/bin/python -m pytest tests/test_research.py tests/test_journal.py -q
+.venv/bin/python -m pytest tests/test_research.py tests/test_journal.py tests/test_init.py -q
 ```
 
 Expected: the research completeness test passes after Step 3; journal test collection fails until `polymarket_alpha_lab.journal` exists.
@@ -1402,13 +1427,27 @@ def _required_decimal(value: Decimal | None, field_name: str) -> Decimal:
     return value
 
 
+def _require_finite_decimal(value: Decimal, field_name: str) -> None:
+    if not value.is_finite():
+        raise ValueError(f"{field_name} must be finite")
+
+
+def _require_optional_finite_decimal(value: Decimal | None, field_name: str) -> None:
+    if value is not None:
+        _require_finite_decimal(value, field_name)
+
+
 def _require_probability(value: Decimal, field_name: str) -> None:
+    _require_finite_decimal(value, field_name)
     if value < 0 or value > 1:
         raise ValueError(f"{field_name} must be in [0, 1]")
 
 
 def _require_price_domain(value: Decimal | None, field_name: str) -> None:
-    if value is not None and (value < 0 or value > 1):
+    if value is None:
+        return
+    _require_finite_decimal(value, field_name)
+    if value < 0 or value > 1:
         raise ValueError(f"{field_name} must be in [0, 1]")
 
 
@@ -1439,7 +1478,7 @@ def _json_ready(value: Any) -> Any:
 Modify `src/polymarket_alpha_lab/__init__.py` to:
 
 ```python
-"""Domain skeleton for Polymarket Alpha Lab."""
+"""Public API for Polymarket Alpha Lab."""
 
 from polymarket_alpha_lab.domain import (
     MarketScore,
@@ -1451,7 +1490,7 @@ from polymarket_alpha_lab.domain import (
 )
 from polymarket_alpha_lab.journal import PaperTradeJournal, PaperTradeRecord
 from polymarket_alpha_lab.paper import PaperFill, PaperOrder, simulate_order_book_fill
-from polymarket_alpha_lab.research import ResearchPacket
+from polymarket_alpha_lab.research import ResearchPacket, build_research_packet
 
 __all__ = [
     "MarketScore",
@@ -1465,13 +1504,14 @@ __all__ = [
     "PaperTradeJournal",
     "PaperTradeRecord",
     "ResearchPacket",
+    "build_research_packet",
     "simulate_order_book_fill",
 ]
 ```
 
-- [ ] **Step 8: Update README status**
+- [ ] **Step 8: Update README status and Python API notes**
 
-Add this exact section after the current Level 0 usage section:
+Add this section after the current Level 0 usage section:
 
 ```markdown
 ## Level 1A Status
@@ -1479,13 +1519,15 @@ Add this exact section after the current Level 0 usage section:
 Level 1A adds research packets, bid/ask order-book-walk paper-fill simulation, and JSONL paper-trade journals. It remains paper-only: no account authentication, no private-key handling, no order placement, no order cancellation, no user WebSocket, no heartbeat, no live trading, and no compliance/legal/geographic-access analysis.
 ```
 
+Also add a short Python API note explaining that Node 3 exposes `build_research_packet(...)`, `PaperOrder(...)`, `simulate_order_book_fill(...)`, `PaperTradeRecord.from_packet_and_fill(...)`, and `PaperTradeJournal(path).append(record)` rather than new CLI commands.
+
 - [ ] **Step 9: Run required pre-commit/pre-push gate for Node 3**
 
 Run:
 
 ```bash
 git status --short --branch --untracked-files=all
-.venv/bin/python -m pytest tests/test_research.py tests/test_journal.py -q
+.venv/bin/python -m pytest tests/test_research.py tests/test_journal.py tests/test_init.py -q
 .venv/bin/python -m pytest
 git diff --check
 codegraph status .
@@ -1508,7 +1550,7 @@ Expected:
 Run:
 
 ```bash
-claude -p --model claude-opus-4-8 --effort max --permission-mode plan "Review all Level 1A research packet and paper trading changes in /home/ubuntu/polymarket-alpha-lab before final push. First run git status --short --branch --untracked-files=all and review all staged, unstaged, and untracked files. Confirm the recorded Node 3 gate includes Node 3 focused pytest, full pytest, git diff --check, and CodeGraph status/sync-if-stale results. Requirements: auditable research packets, rule text hash, bid/ask order-book-walk paper fills, execution-cost fields, non-empty market raw archive provenance, non-empty order-book raw archive path, lowercase order-book raw payload SHA-256, lowercase normalized order-book snapshot SHA-256, JSONL paper journal, separate research_* and fill_* quote fields, non-empty non-blank risk_tags, confidence, fair value, theoretical edge, cost-adjusted edge, fill_status, max_executable_size enforcement, positive account_equity_before_trade, no midpoint fills, no auth, no private keys, no order placement, no cancellation, no user WebSocket, no heartbeat, no live trading, and no compliance/legal/geographic-access analysis. Also review next-stage direction: Level 1B rejected-candidate logs, configurable risk gates, paper positions, daily executable NAV marks, exposure analytics, performance reports, richer packet evidence, and dashboards, still paper-only. Report Critical, Important, Minor findings only, and finish with an explicit verdict: Proceed, Proceed with fixes, or Blocked."
+claude -p --model claude-opus-4-8 --effort max --permission-mode plan "Review all Level 1A research packet and paper trading changes in /home/ubuntu/polymarket-alpha-lab before final push. First run git status --short --branch --untracked-files=all and review all staged, unstaged, and untracked files. Confirm the recorded Node 3 gate includes Node 3 focused pytest, full pytest, git diff --check, and CodeGraph status/sync-if-stale results. Requirements: auditable research packets, rule text hash, bid/ask order-book-walk paper fills, execution-cost fields, non-empty market raw archive provenance, non-empty order-book raw archive path, lowercase order-book raw payload SHA-256, lowercase normalized order-book snapshot SHA-256, JSONL paper journal, finite-only journal Decimal values, JSON null serialization for missing optional fill quote metadata, sell-fill journal persistence, crossed-book fill metadata preserved separately from research quotes, separate research_* and fill_* quote fields, non-empty non-blank risk_tags, confidence, fair value, theoretical edge, cost-adjusted edge, fill_status, max_executable_size enforcement, finite positive account_equity_before_trade, no midpoint fills, no auth, no private keys, no order placement, no cancellation, no user WebSocket, no heartbeat, no live trading, and no compliance/legal/geographic-access analysis. Also review next-stage direction: Level 1B rejected-candidate logs, configurable risk gates, paper positions, daily executable NAV marks, exposure analytics, performance reports, richer packet evidence, and dashboards, still paper-only. Report Critical, Important, Minor findings only, and finish with an explicit verdict: Proceed, Proceed with fixes, or Blocked."
 ```
 
 Do not run `git commit` or `git push` until Claude returns `Proceed` or `Proceed with fixes` and all Critical/Important findings are resolved.
@@ -1518,7 +1560,7 @@ Do not run `git commit` or `git push` until Claude returns `Proceed` or `Proceed
 Run:
 
 ```bash
-git add src/polymarket_alpha_lab/journal.py src/polymarket_alpha_lab/research.py src/polymarket_alpha_lab/__init__.py README.md tests/test_journal.py tests/test_research.py docs/superpowers/plans/2026-06-13-level-1-research-packets-paper-trading.md
+git add src/polymarket_alpha_lab/journal.py src/polymarket_alpha_lab/research.py src/polymarket_alpha_lab/__init__.py README.md tests/test_journal.py tests/test_research.py tests/test_init.py docs/superpowers/plans/2026-06-13-level-1-research-packets-paper-trading.md
 git commit -m "feat: journal paper trades"
 git push
 ```
@@ -1532,7 +1574,7 @@ Level 1A is complete only when:
 - paper fills use asks for buy and bids for sell
 - paper fills walk order book depth and report partial fills
 - paper fills record bid, ask, midpoint, spread, slippage estimate, average fill price, worst fill price, order-book capture timestamp, and normalized order-book snapshot SHA-256
-- journal records are persisted as JSONL with packet timestamp, decision timestamp, order-book timestamp, strategy type, source score, non-empty market raw archive path, non-empty order-book raw archive path, lowercase order-book raw payload SHA-256, lowercase normalized order-book snapshot SHA-256, non-empty non-blank risk tags, confidence, max executable size, fill status, fair value, theoretical edge, `research_*` quote fields, `fill_*` quote fields, Decimal values, and datetime values serialized safely
+- journal records are persisted as JSONL with packet timestamp, decision timestamp, order-book timestamp, strategy type, source score, non-empty market raw archive path, non-empty order-book raw archive path, lowercase order-book raw payload SHA-256, lowercase normalized order-book snapshot SHA-256, non-empty non-blank risk tags, confidence, max executable size, fill status, fair value, theoretical edge, `research_*` quote fields, `fill_*` quote fields, JSON `null` for absent optional fill quote metadata, finite Decimal values, and datetime values serialized safely
 - Level 1B-only outputs are not implemented in Level 1A: rejected-candidate logs, portfolio positions, daily exit NAV, realized PnL, holding days, calibration, drawdown, dashboards, and risk-gate configuration
 - every node has passed the required gate: `git status --short --branch --untracked-files=all`, node-specific pytest, `.venv/bin/python -m pytest`, `git diff --check`, `codegraph status .`, `codegraph sync .` when stale, and a follow-up `codegraph status .`
 - Claude Code reviewed the plan and every code node before push using `claude-opus-4-8`, `--effort max`, and `--permission-mode plan`, and returned `Proceed` or `Proceed with fixes` with all Critical/Important findings resolved
