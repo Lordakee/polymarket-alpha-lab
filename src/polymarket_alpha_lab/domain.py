@@ -35,6 +35,10 @@ class MarketSnapshot:
     volume_24h: Decimal | None
     liquidity: Decimal | None
     captured_at: datetime
+    enable_order_book: bool | None = None
+    order_min_size: Decimal | None = None
+    order_price_min_tick_size: Decimal | None = None
+    resolution_status: str | None = None
 
     @property
     def is_tradeable(self) -> bool:
@@ -68,6 +72,16 @@ class MarketSnapshot:
             liquidity=liquidity,
             captured_at=datetime.now(UTC),
         )
+
+
+@dataclass(frozen=True)
+class NormalizedMarket:
+    """Market metadata plus its tradable outcome tokens."""
+
+    market: MarketSnapshot
+    tokens: tuple[OutcomeToken, ...]
+    rules_text: str | None
+    resolution_source: str | None
 
 
 @dataclass(frozen=True)

@@ -3,6 +3,7 @@
 from polymarket_alpha_lab.domain import (
     MarketScore,
     MarketSnapshot,
+    NormalizedMarket,
     OrderBookLevel,
     OrderBookSnapshot,
     OutcomeToken,
@@ -11,8 +12,8 @@ from polymarket_alpha_lab.domain import (
 __all__ = [
     "MarketScore",
     "MarketSnapshot",
+    "NormalizedMarket",
     "OrderBookLevel",
     "OrderBookSnapshot",
     "OutcomeToken",
 ]
-
