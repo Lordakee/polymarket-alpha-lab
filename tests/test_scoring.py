@@ -53,3 +53,69 @@ def test_score_market_rewards_activity_liquidity_and_tight_spread():
     assert scores[1].token_id == "222"
     assert scores[1].spread_quality == Decimal("0")
     assert scores[1].total > Decimal("0")
+
+
+def test_score_market_does_not_reward_books_without_executable_ask():
+    captured_at = datetime(2026, 6, 13, tzinfo=UTC)
+    market = NormalizedMarket(
+        market=MarketSnapshot(
+            condition_id="0xabc",
+            market_slug="example",
+            question="Will this happen?",
+            active=True,
+            closed=False,
+            accepting_orders=True,
+            end_time=None,
+            volume_24h=Decimal("10000"),
+            liquidity=Decimal("20000"),
+            captured_at=captured_at,
+        ),
+        tokens=(OutcomeToken("0xabc", "111", 0, "Yes"),),
+        rules_text="Clear rule text",
+        resolution_source="https://example.com",
+    )
+    books = {
+        "111": OrderBookSnapshot(
+            token_id="111",
+            bids=(OrderBookLevel(Decimal("0.40"), Decimal("10")),),
+            asks=(OrderBookLevel(Decimal("0"), Decimal("5")),),
+            captured_at=captured_at,
+        )
+    }
+
+    scores = score_market(market, books)
+
+    assert scores[0].spread_quality == Decimal("0")
+
+
+def test_score_market_does_not_reward_crossed_books_as_tight_spreads():
+    captured_at = datetime(2026, 6, 13, tzinfo=UTC)
+    market = NormalizedMarket(
+        market=MarketSnapshot(
+            condition_id="0xabc",
+            market_slug="example",
+            question="Will this happen?",
+            active=True,
+            closed=False,
+            accepting_orders=True,
+            end_time=None,
+            volume_24h=Decimal("10000"),
+            liquidity=Decimal("20000"),
+            captured_at=captured_at,
+        ),
+        tokens=(OutcomeToken("0xabc", "111", 0, "Yes"),),
+        rules_text="Clear rule text",
+        resolution_source="https://example.com",
+    )
+    books = {
+        "111": OrderBookSnapshot(
+            token_id="111",
+            bids=(OrderBookLevel(Decimal("0.60"), Decimal("10")),),
+            asks=(OrderBookLevel(Decimal("0.55"), Decimal("10")),),
+            captured_at=captured_at,
+        )
+    }
+
+    scores = score_market(market, books)
+
+    assert scores[0].spread_quality == Decimal("0")

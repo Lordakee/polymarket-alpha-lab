@@ -66,14 +66,14 @@ def normalize_order_book(
     bids = tuple(
         sorted(
             (_book_level(level) for level in payload.get("bids", [])),
-            key=lambda level: level.price,
+            key=_bid_sort_key,
             reverse=True,
         )
     )
     asks = tuple(
         sorted(
             (_book_level(level) for level in payload.get("asks", [])),
-            key=lambda level: level.price,
+            key=_ask_sort_key,
         )
     )
     return OrderBookSnapshot(token_id=token_id, bids=bids, asks=asks, captured_at=captured_at)
@@ -94,9 +94,10 @@ def _parse_decimal(value: Any) -> Decimal | None:
     if value is None or value == "":
         return None
     try:
-        return Decimal(str(value))
+        decimal = Decimal(str(value))
     except (InvalidOperation, ValueError):
         return None
+    return decimal if decimal.is_finite() else None
 
 
 def _parse_optional_bool(value: Any) -> bool | None:
@@ -133,3 +134,13 @@ def _book_level(payload: dict[str, Any]) -> OrderBookLevel:
     price = _parse_decimal(payload.get("price")) or Decimal("0")
     size = _parse_decimal(payload.get("size")) or Decimal("0")
     return OrderBookLevel(price=price, size=size)
+
+
+def _bid_sort_key(level: OrderBookLevel) -> tuple[int, Decimal]:
+    executable = level.price > 0 and level.size > 0
+    return (1 if executable else 0, level.price)
+
+
+def _ask_sort_key(level: OrderBookLevel) -> tuple[int, Decimal]:
+    executable = level.price > 0 and level.size > 0
+    return (0 if executable else 1, level.price)

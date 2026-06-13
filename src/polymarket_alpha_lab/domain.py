@@ -103,23 +103,27 @@ class OrderBookSnapshot:
 
     @property
     def best_bid(self) -> Decimal | None:
-        return self.bids[0].price if self.bids else None
+        return _best_executable_price(self.bids)
 
     @property
     def best_ask(self) -> Decimal | None:
-        return self.asks[0].price if self.asks else None
+        return _best_executable_price(self.asks)
 
     @property
     def spread(self) -> Decimal | None:
-        if self.best_bid is None or self.best_ask is None:
+        best_bid = self.best_bid
+        best_ask = self.best_ask
+        if best_bid is None or best_ask is None or best_ask <= best_bid:
             return None
-        return self.best_ask - self.best_bid
+        return best_ask - best_bid
 
     @property
     def midpoint(self) -> Decimal | None:
-        if self.best_bid is None or self.best_ask is None:
+        best_bid = self.best_bid
+        best_ask = self.best_ask
+        if best_bid is None or best_ask is None or best_ask <= best_bid:
             return None
-        return (self.best_bid + self.best_ask) / Decimal("2")
+        return (best_bid + best_ask) / Decimal("2")
 
 
 @dataclass(frozen=True)
@@ -149,3 +153,15 @@ class MarketScore:
             + self.price_behavior * Decimal("0.15")
             - self.duplicate_penalty * Decimal("0.05")
         )
+
+
+def _best_executable_price(levels: tuple[OrderBookLevel, ...]) -> Decimal | None:
+    for level in levels:
+        if (
+            level.price.is_finite()
+            and level.size.is_finite()
+            and level.price > 0
+            and level.size > 0
+        ):
+            return level.price
+    return None

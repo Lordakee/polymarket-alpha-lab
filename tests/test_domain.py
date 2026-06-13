@@ -36,6 +36,40 @@ def test_order_book_snapshot_derives_bid_ask_spread_and_midpoint():
     assert snapshot.midpoint == Decimal("0.50")
 
 
+def test_order_book_snapshot_ignores_non_executable_levels_for_best_prices():
+    snapshot = OrderBookSnapshot(
+        token_id="123",
+        bids=(
+            OrderBookLevel(price=Decimal("0"), size=Decimal("100")),
+            OrderBookLevel(price=Decimal("0.48"), size=Decimal("100")),
+        ),
+        asks=(
+            OrderBookLevel(price=Decimal("0"), size=Decimal("100")),
+            OrderBookLevel(price=Decimal("0.52"), size=Decimal("0")),
+        ),
+        captured_at=datetime(2026, 6, 13, tzinfo=UTC),
+    )
+
+    assert snapshot.best_bid == Decimal("0.48")
+    assert snapshot.best_ask is None
+    assert snapshot.spread is None
+    assert snapshot.midpoint is None
+
+
+def test_order_book_snapshot_treats_crossed_executable_book_as_no_spread():
+    snapshot = OrderBookSnapshot(
+        token_id="123",
+        bids=(OrderBookLevel(price=Decimal("0.60"), size=Decimal("10")),),
+        asks=(OrderBookLevel(price=Decimal("0.55"), size=Decimal("10")),),
+        captured_at=datetime(2026, 6, 13, tzinfo=UTC),
+    )
+
+    assert snapshot.best_bid == Decimal("0.60")
+    assert snapshot.best_ask == Decimal("0.55")
+    assert snapshot.spread is None
+    assert snapshot.midpoint is None
+
+
 def test_market_score_applies_initial_weighting():
     score = MarketScore(
         condition_id="0xabc",

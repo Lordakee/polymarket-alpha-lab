@@ -77,3 +77,36 @@ def test_normalize_order_book_sorts_bids_descending_and_asks_ascending():
     assert [level.price for level in book.bids] == [Decimal("0.45"), Decimal("0.40")]
     assert [level.price for level in book.asks] == [Decimal("0.55"), Decimal("0.60")]
     assert book.spread == Decimal("0.10")
+
+
+def test_normalize_order_book_coerces_non_finite_levels_to_zero_before_sorting():
+    captured_at = datetime(2026, 6, 13, tzinfo=UTC)
+    payload = {
+        "asset_id": "111",
+        "bids": [
+            {"price": "NaN", "size": "100"},
+            {"price": "0.45", "size": "Infinity"},
+            {"price": "0.40", "size": "10"},
+        ],
+        "asks": [
+            {"price": "Infinity", "size": "5"},
+            {"price": "0.55", "size": "NaN"},
+            {"price": "0.60", "size": "8"},
+        ],
+    }
+
+    book = normalize_order_book(payload, captured_at=captured_at)
+
+    assert [(level.price, level.size) for level in book.bids] == [
+        (Decimal("0.40"), Decimal("10")),
+        (Decimal("0.45"), Decimal("0")),
+        (Decimal("0"), Decimal("100")),
+    ]
+    assert [(level.price, level.size) for level in book.asks] == [
+        (Decimal("0.60"), Decimal("8")),
+        (Decimal("0"), Decimal("5")),
+        (Decimal("0.55"), Decimal("0")),
+    ]
+    assert book.best_bid == Decimal("0.40")
+    assert book.best_ask == Decimal("0.60")
+    assert book.spread == Decimal("0.20")
