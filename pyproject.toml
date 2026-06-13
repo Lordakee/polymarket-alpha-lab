@@ -14,9 +14,11 @@ dev = [
   "pytest>=8.0",
 ]
 
+[project.scripts]
+polymarket-alpha-lab = "polymarket_alpha_lab.cli:main"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-

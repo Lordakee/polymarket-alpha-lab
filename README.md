@@ -33,6 +33,17 @@ The strongest first product is a market-quality and edge-scanning system:
 3. Start with measurable edges: spread quality, liquidity rewards, multi-outcome pricing inconsistencies, related-market constraints, and post-fill drift.
 4. Validate everything through paper trading before execution automation is considered.
 
+## Level 0 Usage
+
+Run the current read-only scanner with:
+
+```bash
+.venv/bin/python -m pip install -e '.[dev]'
+.venv/bin/polymarket-alpha-lab scan --limit 25 --output artifacts/market-scores.json
+```
+
+The scan uses public Polymarket market-data endpoints only. It does not authenticate, handle private keys, place orders, or trade. Raw API payloads are archived under `data/raw/`, and ranked candidate output is written to `artifacts/market-scores.json`; both directories are ignored by git.
+
 ## Automation Roadmap
 
 The recommended staged path is:
@@ -71,9 +82,21 @@ See:
 ├── src
 │   └── polymarket_alpha_lab
 │       ├── __init__.py
-│       └── domain.py
+│       ├── api.py
+│       ├── archive.py
+│       ├── cli.py
+│       ├── domain.py
+│       ├── normalize.py
+│       ├── pipeline.py
+│       └── scoring.py
 └── tests
-    └── test_domain.py
+    ├── test_api.py
+    ├── test_archive.py
+    ├── test_cli.py
+    ├── test_domain.py
+    ├── test_normalize.py
+    ├── test_pipeline.py
+    └── test_scoring.py
 ```
 
 ## Useful Commands
@@ -82,6 +105,7 @@ See:
 python3 -m venv .venv
 .venv/bin/python -m pip install -e '.[dev]'
 .venv/bin/python -m pytest
+.venv/bin/polymarket-alpha-lab scan --limit 25
 codegraph status .
 codegraph files
 ```
