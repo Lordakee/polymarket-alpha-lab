@@ -12,7 +12,7 @@ The long-term goal is an automated system that can screen markets, research cand
 
 ## Phase 1 Scope
 
-This repository currently contains the project design, research notes, implementation plans, a read-only market scanner, research packet assembly, bid/ask paper-fill simulation, JSONL paper-trade journaling, paper-only risk gates, rejected-candidate logs, paper position ledgers, executable NAV marks, paper-only portfolio analytics, exposure reports, and executable-NAV drawdown reports.
+This repository currently contains the project design, research notes, implementation plans, a read-only market scanner, research packet assembly, bid/ask paper-fill simulation, JSONL paper-trade journaling, paper-only risk gates, rejected-candidate logs, paper position ledgers, executable NAV marks, paper-only portfolio analytics, exposure reports, executable-NAV drawdown reports, and paper-only analytics history validation.
 
 The current phase does not contain:
 
@@ -93,6 +93,19 @@ Node 3 is exposed through Python APIs:
 - Build executable-NAV drawdown points with `build_paper_drawdown_points(snapshots)`.
 - Persist report snapshots with `PaperAnalyticsLog(path).append(report)`.
 
+## Level 1B Node 4 Status
+
+Level 1B Node 4 adds paper-only analytics history validation over existing `PaperAnalyticsReport` values, including validation-gate summaries, trend extrema, and evidence-readiness status for later human review. Its `paper_review_ready` status means the history artifact is ready for manual review only; it is not a proposal-generation, promotion, or live-execution signal. It does not fetch historical market, order-book, or account data, use external loaders, scrape websites, authenticate, handle private keys, place or cancel orders, open user WebSockets, run heartbeat logic, use a trading SDK, create trade proposals, reconcile exchange accounts, or perform compliance/legal/geographic analysis.
+
+## Level 1B Node 4 Python API
+
+Node 4 is exposed through Python APIs:
+
+- Configure history thresholds with `PaperAnalyticsHistoryConfig(...)`.
+- Build paper analytics history reports with `build_paper_analytics_history_report(reports, config=..., generated_at=...)`, which returns `PaperAnalyticsHistoryReport`.
+- Inspect validation rows with `PaperAnalyticsHistoryGateResult` and trend rows with `PaperAnalyticsHistoryTrend`.
+- Persist history snapshots with `PaperAnalyticsHistoryLog(path).append(report)`.
+
 ## Automation Roadmap
 
 The recommended staged path is:
@@ -126,6 +139,7 @@ See:
 │       │   ├── 2026-06-13-level-0-market-intelligence.md
 │       │   ├── 2026-06-13-level-1-research-packets-paper-trading.md
 │       │   ├── 2026-06-13-level-1b-paper-analytics-risk-exposure.md
+│       │   ├── 2026-06-13-level-1b-paper-analytics-history-validation.md
 │       │   ├── 2026-06-13-level-1b-rejections-risk-gates.md
 │       │   ├── 2026-06-13-level-1b-positions-nav.md
 │       │   └── 2026-06-13-project-bootstrap.md
@@ -137,6 +151,7 @@ See:
 │   └── polymarket_alpha_lab
 │       ├── __init__.py
 │       ├── analytics.py
+│       ├── analytics_history.py
 │       ├── api.py
 │       ├── archive.py
 │       ├── cli.py
@@ -152,6 +167,8 @@ See:
 │       └── scoring.py
 └── tests
     ├── test_analytics.py
+    ├── test_analytics_history.py
+    ├── test_analytics_history_scope.py
     ├── test_analytics_scope.py
     ├── test_api.py
     ├── test_archive.py

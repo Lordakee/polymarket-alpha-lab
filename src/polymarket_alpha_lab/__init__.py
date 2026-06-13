@@ -12,6 +12,14 @@ from polymarket_alpha_lab.analytics import (
     build_paper_analytics_report,
     build_paper_drawdown_points,
 )
+from polymarket_alpha_lab.analytics_history import (
+    PaperAnalyticsHistoryConfig,
+    PaperAnalyticsHistoryGateResult,
+    PaperAnalyticsHistoryLog,
+    PaperAnalyticsHistoryReport,
+    PaperAnalyticsHistoryTrend,
+    build_paper_analytics_history_report,
+)
 from polymarket_alpha_lab.domain import (
     MarketScore,
     MarketSnapshot,
@@ -50,6 +58,11 @@ __all__ = [
     "PaperAnalyticsBreach",
     "PaperAnalyticsBucket",
     "PaperAnalyticsConfig",
+    "PaperAnalyticsHistoryConfig",
+    "PaperAnalyticsHistoryGateResult",
+    "PaperAnalyticsHistoryLog",
+    "PaperAnalyticsHistoryReport",
+    "PaperAnalyticsHistoryTrend",
     "PaperAnalyticsLog",
     "PaperAnalyticsReport",
     "PaperDrawdownPoint",
@@ -70,6 +83,7 @@ __all__ = [
     "RiskGateConfig",
     "RiskGateDecision",
     "RiskGateReason",
+    "build_paper_analytics_history_report",
     "build_paper_analytics_report",
     "build_paper_drawdown_points",
     "build_paper_portfolio",

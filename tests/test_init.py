@@ -11,6 +11,14 @@ from polymarket_alpha_lab.analytics import (
     build_paper_analytics_report,
     build_paper_drawdown_points,
 )
+from polymarket_alpha_lab.analytics_history import (
+    PaperAnalyticsHistoryConfig,
+    PaperAnalyticsHistoryGateResult,
+    PaperAnalyticsHistoryLog,
+    PaperAnalyticsHistoryReport,
+    PaperAnalyticsHistoryTrend,
+    build_paper_analytics_history_report,
+)
 from polymarket_alpha_lab.journal import PaperTradeJournal, PaperTradeRecord
 from polymarket_alpha_lab.paper import PaperFill, PaperOrder, simulate_order_book_fill
 from polymarket_alpha_lab.positions import (
@@ -118,3 +126,22 @@ def test_level_1b_node_3_public_api_exports():
     assert lab.PaperPositionExposure is PaperPositionExposure
     assert lab.build_paper_analytics_report is build_paper_analytics_report
     assert lab.build_paper_drawdown_points is build_paper_drawdown_points
+
+
+def test_level_1b_node_4_public_api_exports():
+    expected_exports = {
+        "PaperAnalyticsHistoryConfig",
+        "PaperAnalyticsHistoryGateResult",
+        "PaperAnalyticsHistoryLog",
+        "PaperAnalyticsHistoryReport",
+        "PaperAnalyticsHistoryTrend",
+        "build_paper_analytics_history_report",
+    }
+
+    assert expected_exports <= set(lab.__all__)
+    assert lab.PaperAnalyticsHistoryConfig is PaperAnalyticsHistoryConfig
+    assert lab.PaperAnalyticsHistoryGateResult is PaperAnalyticsHistoryGateResult
+    assert lab.PaperAnalyticsHistoryLog is PaperAnalyticsHistoryLog
+    assert lab.PaperAnalyticsHistoryReport is PaperAnalyticsHistoryReport
+    assert lab.PaperAnalyticsHistoryTrend is PaperAnalyticsHistoryTrend
+    assert lab.build_paper_analytics_history_report is build_paper_analytics_history_report
