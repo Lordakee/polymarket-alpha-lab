@@ -2,9 +2,11 @@
 
 ## Scope
 
-This repository is for Polymarket market research, data engineering, strategy validation, paper trading, and risk analysis.
+This repository is for Polymarket market research, data engineering, strategy validation, paper trading, risk analysis, and staged automation toward user-authorized execution.
 
-Do not add live trading, account authentication, private-key handling, or automated order placement unless the user explicitly asks for that in a later turn.
+Current phase boundary: do not add live trading, account authentication, private-key handling, or automated order placement in Phase 1. Treat this as a staged delivery boundary, not a permanent project non-goal.
+
+Future execution work must be introduced through explicit roadmap documentation, validation gates, risk controls, audit logging, and user authorization for credential handling. Do not read, print, or move stored secrets unless the task is specifically about secret-management infrastructure.
 
 Do not perform compliance, legal, geographic-access, or regulatory analysis in this repository unless the user explicitly reopens that topic.
 
@@ -38,4 +40,3 @@ Avoid using website scraping as a primary data path unless a needed field is una
 - Distinguish `null`, `0`, and `unknown` in data models.
 - Use executable bid/ask and order book depth for research calculations, not only displayed midpoint.
 - Keep all research outputs reproducible and timestamped.
-
