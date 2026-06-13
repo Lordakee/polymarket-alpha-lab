@@ -12,7 +12,7 @@ The long-term goal is an automated system that can screen markets, research cand
 
 ## Phase 1 Scope
 
-This repository currently contains the project design, research notes, implementation plans, a read-only market scanner, research packet assembly, bid/ask paper-fill simulation, JSONL paper-trade journaling, paper-only risk gates, rejected-candidate logs, paper position ledgers, and executable NAV marks.
+This repository currently contains the project design, research notes, implementation plans, a read-only market scanner, research packet assembly, bid/ask paper-fill simulation, JSONL paper-trade journaling, paper-only risk gates, rejected-candidate logs, paper position ledgers, executable NAV marks, paper-only portfolio analytics, exposure reports, and executable-NAV drawdown reports.
 
 The current phase does not contain:
 
@@ -80,6 +80,19 @@ Node 2 is exposed through Python APIs:
 - Mark open positions with `mark_paper_nav(portfolio, books_by_token_id, marked_at=datetime.now(UTC))`, which returns `PaperNavSnapshot`.
 - Persist executable NAV snapshots with `PaperNavLog(path).append(snapshot)`.
 
+## Level 1B Node 3 Status
+
+Level 1B Node 3 adds paper-only portfolio analytics, exposure concentration, liquidity-risk, report-only threshold breaches, and executable-NAV drawdown reports derived from paper portfolio and NAV artifacts. It does not fetch market, order-book, or account data, place or cancel orders, authenticate, handle private keys, open user WebSockets, run heartbeat logic, use a trading SDK, create trade proposals, reconcile exchange accounts, scrape websites, or perform compliance/legal/geographic analysis.
+
+## Level 1B Node 3 Python API
+
+Node 3 is exposed through Python APIs:
+
+- Configure report thresholds with `PaperAnalyticsConfig(...)`.
+- Build paper analytics reports with `build_paper_analytics_report(portfolio, snapshot, config=..., generated_at=...)`, which returns `PaperAnalyticsReport`.
+- Build executable-NAV drawdown points with `build_paper_drawdown_points(snapshots)`.
+- Persist report snapshots with `PaperAnalyticsLog(path).append(report)`.
+
 ## Automation Roadmap
 
 The recommended staged path is:
@@ -112,6 +125,7 @@ See:
 │       ├── plans
 │       │   ├── 2026-06-13-level-0-market-intelligence.md
 │       │   ├── 2026-06-13-level-1-research-packets-paper-trading.md
+│       │   ├── 2026-06-13-level-1b-paper-analytics-risk-exposure.md
 │       │   ├── 2026-06-13-level-1b-rejections-risk-gates.md
 │       │   ├── 2026-06-13-level-1b-positions-nav.md
 │       │   └── 2026-06-13-project-bootstrap.md
@@ -122,6 +136,7 @@ See:
 ├── src
 │   └── polymarket_alpha_lab
 │       ├── __init__.py
+│       ├── analytics.py
 │       ├── api.py
 │       ├── archive.py
 │       ├── cli.py
@@ -136,6 +151,8 @@ See:
 │       ├── risk.py
 │       └── scoring.py
 └── tests
+    ├── test_analytics.py
+    ├── test_analytics_scope.py
     ├── test_api.py
     ├── test_archive.py
     ├── test_cli.py

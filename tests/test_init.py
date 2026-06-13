@@ -1,4 +1,16 @@
 import polymarket_alpha_lab as lab
+from polymarket_alpha_lab.analytics import (
+    PaperAnalyticsBreach,
+    PaperAnalyticsBucket,
+    PaperAnalyticsConfig,
+    PaperAnalyticsLog,
+    PaperAnalyticsReport,
+    PaperDrawdownPoint,
+    PaperPerformanceSummary,
+    PaperPositionExposure,
+    build_paper_analytics_report,
+    build_paper_drawdown_points,
+)
 from polymarket_alpha_lab.journal import PaperTradeJournal, PaperTradeRecord
 from polymarket_alpha_lab.paper import PaperFill, PaperOrder, simulate_order_book_fill
 from polymarket_alpha_lab.positions import (
@@ -79,3 +91,30 @@ def test_level_1b_node_2_public_api_exports():
     assert lab.PaperPositionMark is PaperPositionMark
     assert lab.build_paper_portfolio is build_paper_portfolio
     assert lab.mark_paper_nav is mark_paper_nav
+
+
+def test_level_1b_node_3_public_api_exports():
+    expected_exports = {
+        "PaperAnalyticsBreach",
+        "PaperAnalyticsBucket",
+        "PaperAnalyticsConfig",
+        "PaperAnalyticsLog",
+        "PaperAnalyticsReport",
+        "PaperDrawdownPoint",
+        "PaperPerformanceSummary",
+        "PaperPositionExposure",
+        "build_paper_analytics_report",
+        "build_paper_drawdown_points",
+    }
+
+    assert expected_exports <= set(lab.__all__)
+    assert lab.PaperAnalyticsBreach is PaperAnalyticsBreach
+    assert lab.PaperAnalyticsBucket is PaperAnalyticsBucket
+    assert lab.PaperAnalyticsConfig is PaperAnalyticsConfig
+    assert lab.PaperAnalyticsLog is PaperAnalyticsLog
+    assert lab.PaperAnalyticsReport is PaperAnalyticsReport
+    assert lab.PaperDrawdownPoint is PaperDrawdownPoint
+    assert lab.PaperPerformanceSummary is PaperPerformanceSummary
+    assert lab.PaperPositionExposure is PaperPositionExposure
+    assert lab.build_paper_analytics_report is build_paper_analytics_report
+    assert lab.build_paper_drawdown_points is build_paper_drawdown_points
