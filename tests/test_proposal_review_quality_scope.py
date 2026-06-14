@@ -3,19 +3,19 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-PROPOSAL_REVIEW_SUMMARY_PATH = (
-    REPO_ROOT / "src" / "polymarket_alpha_lab" / "proposal_review_summary.py"
+PROPOSAL_REVIEW_QUALITY_PATH = (
+    REPO_ROOT / "src" / "polymarket_alpha_lab" / "proposal_review_quality.py"
 )
 PACKAGE_ROOT_PATH = REPO_ROOT / "src" / "polymarket_alpha_lab" / "__init__.py"
 
 
-EXPECTED_PROPOSAL_REVIEW_SUMMARY_EXPORTS = {
-    "TradeProposalReviewBucketSummary",
-    "TradeProposalReviewReasonCodeSummary",
-    "TradeProposalReviewSummaryConfig",
-    "TradeProposalReviewSummaryLog",
-    "TradeProposalReviewSummaryReport",
-    "build_trade_proposal_review_summary_report",
+EXPECTED_PROPOSAL_REVIEW_QUALITY_EXPORTS = {
+    "TradeProposalReviewQualityConfig",
+    "TradeProposalReviewQualityGateResult",
+    "TradeProposalReviewQualityLog",
+    "TradeProposalReviewQualityReasonTrend",
+    "TradeProposalReviewQualityReport",
+    "build_trade_proposal_review_quality_report",
 }
 EXPECTED_LEVEL_2_PROPOSAL_PACKET_EXPORTS = {
     "TradeProposalPacket",
@@ -29,13 +29,13 @@ EXPECTED_PROPOSAL_REVIEW_EXPORTS = {
     "TradeProposalReviewLog",
     "build_trade_proposal_review_record",
 }
-EXPECTED_PROPOSAL_REVIEW_QUALITY_EXPORTS = {
-    "TradeProposalReviewQualityConfig",
-    "TradeProposalReviewQualityGateResult",
-    "TradeProposalReviewQualityLog",
-    "TradeProposalReviewQualityReasonTrend",
-    "TradeProposalReviewQualityReport",
-    "build_trade_proposal_review_quality_report",
+EXPECTED_PROPOSAL_REVIEW_SUMMARY_EXPORTS = {
+    "TradeProposalReviewBucketSummary",
+    "TradeProposalReviewReasonCodeSummary",
+    "TradeProposalReviewSummaryConfig",
+    "TradeProposalReviewSummaryLog",
+    "TradeProposalReviewSummaryReport",
+    "build_trade_proposal_review_summary_report",
 }
 EXPECTED_LEVEL_2_ARTIFACT_EXPORTS = (
     EXPECTED_LEVEL_2_PROPOSAL_PACKET_EXPORTS
@@ -51,14 +51,17 @@ ALLOWED_IMPORT_PREFIXES = {
     "dataclasses",
     "datetime",
     "decimal",
-    "hashlib",
     "pathlib",
     "typing",
-    "polymarket_alpha_lab.proposal_review",
+    "polymarket_alpha_lab.proposal_review_summary",
 }
 
 EXPECTED_FIRST_PARTY_IMPORTS = {
-    "polymarket_alpha_lab.proposal_review": {"TradeProposalReviewRecord"},
+    "polymarket_alpha_lab.proposal_review_summary": {
+        "TradeProposalReviewBucketSummary",
+        "TradeProposalReviewReasonCodeSummary",
+        "TradeProposalReviewSummaryReport",
+    },
 }
 
 FORBIDDEN_IMPORT_PREFIXES = {
@@ -76,6 +79,7 @@ FORBIDDEN_IMPORT_PREFIXES = {
     "polymarket_alpha_lab.pipeline",
     "polymarket_alpha_lab.positions",
     "polymarket_alpha_lab.proposal_packet",
+    "polymarket_alpha_lab.proposal_review",
     "polymarket_alpha_lab.rejections",
     "polymarket_alpha_lab.research",
     "polymarket_alpha_lab.risk",
@@ -291,8 +295,8 @@ FORBIDDEN_PUBLIC_EXPORT_FRAGMENTS = (
 )
 
 
-def parse_proposal_review_summary():
-    return ast.parse(PROPOSAL_REVIEW_SUMMARY_PATH.read_text(encoding="utf-8"))
+def parse_proposal_review_quality():
+    return ast.parse(PROPOSAL_REVIEW_QUALITY_PATH.read_text(encoding="utf-8"))
 
 
 def normalize_identifier(value):
@@ -335,8 +339,8 @@ def module_exports(tree):
     return tuple(assigned_exports)
 
 
-def test_proposal_review_summary_module_imports_only_allowed_dependencies():
-    tree = parse_proposal_review_summary()
+def test_proposal_review_quality_module_imports_only_allowed_dependencies():
+    tree = parse_proposal_review_quality()
     for module_name in imported_modules(tree):
         assert any(
             module_name == allowed or module_name.startswith(f"{allowed}.")
@@ -344,8 +348,8 @@ def test_proposal_review_summary_module_imports_only_allowed_dependencies():
         ), module_name
 
 
-def test_proposal_review_summary_module_does_not_import_forbidden_surfaces():
-    tree = parse_proposal_review_summary()
+def test_proposal_review_quality_module_does_not_import_forbidden_surfaces():
+    tree = parse_proposal_review_quality()
     for module_name in imported_modules(tree):
         assert not any(
             module_name == forbidden or module_name.startswith(f"{forbidden}.")
@@ -353,13 +357,13 @@ def test_proposal_review_summary_module_does_not_import_forbidden_surfaces():
         ), module_name
 
 
-def test_proposal_review_summary_module_uses_only_allowed_first_party_symbols():
-    tree = parse_proposal_review_summary()
+def test_proposal_review_quality_module_uses_only_allowed_first_party_symbols():
+    tree = parse_proposal_review_quality()
     assert imported_first_party_symbols(tree) == EXPECTED_FIRST_PARTY_IMPORTS
 
 
-def test_proposal_review_summary_module_does_not_define_forbidden_live_or_workflow_names():
-    tree = parse_proposal_review_summary()
+def test_proposal_review_quality_module_does_not_define_forbidden_live_or_workflow_names():
+    tree = parse_proposal_review_quality()
     names = set()
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
@@ -378,12 +382,14 @@ def test_proposal_review_summary_module_does_not_define_forbidden_live_or_workfl
         assert not any(fragment in name for name in lowered), fragment
 
 
-def test_trade_proposal_review_summary_public_exports_are_report_only():
-    tree = parse_proposal_review_summary()
+def test_trade_proposal_review_quality_public_exports_are_report_only():
+    tree = parse_proposal_review_quality()
     assigned_exports = module_exports(tree)
-    assert set(assigned_exports) == EXPECTED_PROPOSAL_REVIEW_SUMMARY_EXPORTS
+    assert set(assigned_exports) == EXPECTED_PROPOSAL_REVIEW_QUALITY_EXPORTS
     for name in assigned_exports:
-        assert name.startswith("TradeProposalReview") or name == "build_trade_proposal_review_summary_report"
+        assert name.startswith("TradeProposalReviewQuality") or name == (
+            "build_trade_proposal_review_quality_report"
+        )
         normalized_name = normalize_identifier(name)
         assert not any(
             fragment in normalized_name
@@ -391,7 +397,7 @@ def test_trade_proposal_review_summary_public_exports_are_report_only():
         )
 
 
-def test_package_root_exports_do_not_leak_forbidden_level_2_node_3_surfaces():
+def test_package_root_exports_do_not_leak_forbidden_level_2_node_4_surfaces():
     tree = ast.parse(PACKAGE_ROOT_PATH.read_text(encoding="utf-8"))
     assigned_exports = module_exports(tree)
     for name in assigned_exports:

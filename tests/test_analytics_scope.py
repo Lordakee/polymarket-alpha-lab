@@ -40,10 +40,19 @@ EXPECTED_PROPOSAL_REVIEW_SUMMARY_EXPORTS = {
     "TradeProposalReviewSummaryReport",
     "build_trade_proposal_review_summary_report",
 }
+EXPECTED_PROPOSAL_REVIEW_QUALITY_EXPORTS = {
+    "TradeProposalReviewQualityConfig",
+    "TradeProposalReviewQualityGateResult",
+    "TradeProposalReviewQualityLog",
+    "TradeProposalReviewQualityReasonTrend",
+    "TradeProposalReviewQualityReport",
+    "build_trade_proposal_review_quality_report",
+}
 EXPECTED_LEVEL_2_ARTIFACT_EXPORTS = (
     EXPECTED_LEVEL_2_PROPOSAL_PACKET_EXPORTS
     | EXPECTED_PROPOSAL_REVIEW_EXPORTS
     | EXPECTED_PROPOSAL_REVIEW_SUMMARY_EXPORTS
+    | EXPECTED_PROPOSAL_REVIEW_QUALITY_EXPORTS
 )
 
 ALLOWED_IMPORT_PREFIXES = {

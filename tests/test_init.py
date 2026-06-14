@@ -56,6 +56,14 @@ from polymarket_alpha_lab.proposal_review_summary import (
     TradeProposalReviewSummaryReport,
     build_trade_proposal_review_summary_report,
 )
+from polymarket_alpha_lab.proposal_review_quality import (
+    TradeProposalReviewQualityConfig,
+    TradeProposalReviewQualityGateResult,
+    TradeProposalReviewQualityLog,
+    TradeProposalReviewQualityReasonTrend,
+    TradeProposalReviewQualityReport,
+    build_trade_proposal_review_quality_report,
+)
 from polymarket_alpha_lab.journal import PaperTradeJournal, PaperTradeRecord
 from polymarket_alpha_lab.paper import PaperFill, PaperOrder, simulate_order_book_fill
 from polymarket_alpha_lab.positions import (
@@ -282,4 +290,32 @@ def test_level_2_node_3_public_api_exports():
     assert (
         lab.build_trade_proposal_review_summary_report
         is build_trade_proposal_review_summary_report
+    )
+
+
+def test_level_2_node_4_public_api_exports():
+    expected_exports = {
+        "TradeProposalReviewQualityConfig",
+        "TradeProposalReviewQualityGateResult",
+        "TradeProposalReviewQualityLog",
+        "TradeProposalReviewQualityReasonTrend",
+        "TradeProposalReviewQualityReport",
+        "build_trade_proposal_review_quality_report",
+    }
+
+    assert expected_exports <= set(lab.__all__)
+    assert lab.TradeProposalReviewQualityConfig is TradeProposalReviewQualityConfig
+    assert (
+        lab.TradeProposalReviewQualityGateResult
+        is TradeProposalReviewQualityGateResult
+    )
+    assert lab.TradeProposalReviewQualityLog is TradeProposalReviewQualityLog
+    assert (
+        lab.TradeProposalReviewQualityReasonTrend
+        is TradeProposalReviewQualityReasonTrend
+    )
+    assert lab.TradeProposalReviewQualityReport is TradeProposalReviewQualityReport
+    assert (
+        lab.build_trade_proposal_review_quality_report
+        is build_trade_proposal_review_quality_report
     )
