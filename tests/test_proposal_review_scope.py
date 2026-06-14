@@ -15,6 +15,14 @@ EXPECTED_PROPOSAL_REVIEW_EXPORTS = {
     "TradeProposalReviewLog",
     "build_trade_proposal_review_record",
 }
+EXPECTED_PROPOSAL_REVIEW_SUMMARY_EXPORTS = {
+    "TradeProposalReviewBucketSummary",
+    "TradeProposalReviewReasonCodeSummary",
+    "TradeProposalReviewSummaryConfig",
+    "TradeProposalReviewSummaryLog",
+    "TradeProposalReviewSummaryReport",
+    "build_trade_proposal_review_summary_report",
+}
 EXPECTED_LEVEL_2_PROPOSAL_PACKET_EXPORTS = {
     "TradeProposalPacket",
     "TradeProposalPacketConfig",
@@ -22,7 +30,9 @@ EXPECTED_LEVEL_2_PROPOSAL_PACKET_EXPORTS = {
     "build_trade_proposal_packet",
 }
 EXPECTED_LEVEL_2_ARTIFACT_EXPORTS = (
-    EXPECTED_LEVEL_2_PROPOSAL_PACKET_EXPORTS | EXPECTED_PROPOSAL_REVIEW_EXPORTS
+    EXPECTED_LEVEL_2_PROPOSAL_PACKET_EXPORTS
+    | EXPECTED_PROPOSAL_REVIEW_EXPORTS
+    | EXPECTED_PROPOSAL_REVIEW_SUMMARY_EXPORTS
 )
 
 ALLOWED_IMPORT_PREFIXES = {

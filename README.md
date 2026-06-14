@@ -12,7 +12,7 @@ The long-term goal is an automated system that can screen markets, research cand
 
 ## Phase 1 Scope
 
-This repository currently contains the project design, research notes, implementation plans, a read-only market scanner, research packet assembly, bid/ask paper-fill simulation, JSONL paper-trade journaling, paper-only risk gates, rejected-candidate logs, paper position ledgers, executable NAV marks, paper-only portfolio analytics, exposure reports, executable-NAV drawdown reports, paper-only analytics history validation, paper-only forecast evidence reports, paper-only manual-review queues, human-review proposal packet artifacts, and append-only proposal-review record artifacts.
+This repository currently contains the project design, research notes, implementation plans, a read-only market scanner, research packet assembly, bid/ask paper-fill simulation, JSONL paper-trade journaling, paper-only risk gates, rejected-candidate logs, paper position ledgers, executable NAV marks, paper-only portfolio analytics, exposure reports, executable-NAV drawdown reports, paper-only analytics history validation, paper-only forecast evidence reports, paper-only manual-review queues, human-review proposal packet artifacts, append-only proposal-review record artifacts, and proposal-review summary report artifacts.
 
 The current phase does not contain:
 
@@ -164,6 +164,21 @@ Node 2 is exposed through Python APIs:
 - Inspect review-only audit fields with `TradeProposalReviewRecord`.
 - Persist proposal-review snapshots with `TradeProposalReviewLog(path).append(record)`.
 
+## Level 2 Node 3 Status
+
+Level 2 Node 3 adds report-only proposal-review summary artifacts over supplied `TradeProposalReviewRecord` values. It tracks review volume, approved/rejected decision counts, rejected reason-code concentration, duplicate source proposal review volume, and market/strategy/risk-tag breakdowns for audit only; it is not an approval workflow, trade instruction, order instruction, broker request, order request, account action, strategy-promotion signal, or live-execution signal.
+
+It does not fetch market, order-book, price-history, outcome, account, credential, or identity data; read external history or JSONL logs; scrape websites; authenticate; handle private keys or credentials; place, submit, sign, send, create, or cancel orders; open user WebSockets; run heartbeat logic; use a trading SDK, broker client, execution client, or transport client; build broker or order request payloads; reconcile exchange accounts; import manual executions; or perform compliance/legal/geographic analysis.
+
+## Level 2 Node 3 Python API
+
+Node 3 is exposed through Python APIs:
+
+- Configure proposal-review summary boundaries with `TradeProposalReviewSummaryConfig(config_version="summary-v1")`.
+- Build proposal-review summary reports with `build_trade_proposal_review_summary_report(records, config=config, generated_at=datetime.now(UTC))`, which returns `TradeProposalReviewSummaryReport`.
+- Inspect reason-code rows with `TradeProposalReviewReasonCodeSummary` and grouped market/strategy/risk-tag rows with `TradeProposalReviewBucketSummary`.
+- Persist proposal-review summary snapshots with `TradeProposalReviewSummaryLog(path).append(report)`.
+
 ## Automation Roadmap
 
 The recommended staged path is:
@@ -204,6 +219,7 @@ See:
 │       │   ├── 2026-06-14-level-1b-paper-manual-review-queue.md
 │       │   ├── 2026-06-14-level-2-proposal-packets.md
 │       │   ├── 2026-06-14-level-2-proposal-review-records.md
+│       │   ├── 2026-06-14-level-2-proposal-review-summary-reports.md
 │       │   └── 2026-06-13-project-bootstrap.md
 │       └── specs
 │           ├── 2026-06-13-automated-investment-roadmap.md
@@ -227,6 +243,7 @@ See:
 │       ├── positions.py
 │       ├── proposal_packet.py
 │       ├── proposal_review.py
+│       ├── proposal_review_summary.py
 │       ├── rejections.py
 │       ├── research.py
 │       ├── risk.py
@@ -253,6 +270,8 @@ See:
     ├── test_proposal_packet.py
     ├── test_proposal_packet_scope.py
     ├── test_proposal_review.py
+    ├── test_proposal_review_summary.py
+    ├── test_proposal_review_summary_scope.py
     ├── test_proposal_review_scope.py
     ├── test_rejections.py
     ├── test_research.py

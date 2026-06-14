@@ -3,21 +3,20 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-MANUAL_REVIEW_QUEUE_PATH = (
-    REPO_ROOT / "src" / "polymarket_alpha_lab" / "manual_review_queue.py"
+PROPOSAL_REVIEW_SUMMARY_PATH = (
+    REPO_ROOT / "src" / "polymarket_alpha_lab" / "proposal_review_summary.py"
 )
 PACKAGE_ROOT_PATH = REPO_ROOT / "src" / "polymarket_alpha_lab" / "__init__.py"
 
 
-EXPECTED_MANUAL_REVIEW_QUEUE_EXPORTS = {
-    "PaperManualReviewCandidate",
-    "PaperManualReviewConfig",
-    "PaperManualReviewLog",
-    "PaperManualReviewQueue",
-    "PaperManualReviewQueueItem",
-    "build_paper_manual_review_queue",
+EXPECTED_PROPOSAL_REVIEW_SUMMARY_EXPORTS = {
+    "TradeProposalReviewBucketSummary",
+    "TradeProposalReviewReasonCodeSummary",
+    "TradeProposalReviewSummaryConfig",
+    "TradeProposalReviewSummaryLog",
+    "TradeProposalReviewSummaryReport",
+    "build_trade_proposal_review_summary_report",
 }
-
 EXPECTED_LEVEL_2_PROPOSAL_PACKET_EXPORTS = {
     "TradeProposalPacket",
     "TradeProposalPacketConfig",
@@ -30,14 +29,6 @@ EXPECTED_PROPOSAL_REVIEW_EXPORTS = {
     "TradeProposalReviewLog",
     "build_trade_proposal_review_record",
 }
-EXPECTED_PROPOSAL_REVIEW_SUMMARY_EXPORTS = {
-    "TradeProposalReviewBucketSummary",
-    "TradeProposalReviewReasonCodeSummary",
-    "TradeProposalReviewSummaryConfig",
-    "TradeProposalReviewSummaryLog",
-    "TradeProposalReviewSummaryReport",
-    "build_trade_proposal_review_summary_report",
-}
 EXPECTED_LEVEL_2_ARTIFACT_EXPORTS = (
     EXPECTED_LEVEL_2_PROPOSAL_PACKET_EXPORTS
     | EXPECTED_PROPOSAL_REVIEW_EXPORTS
@@ -45,34 +36,37 @@ EXPECTED_LEVEL_2_ARTIFACT_EXPORTS = (
 )
 
 ALLOWED_IMPORT_PREFIXES = {
+    "__future__",
     "json",
     "collections.abc",
     "dataclasses",
     "datetime",
     "decimal",
+    "hashlib",
     "pathlib",
     "typing",
-    "polymarket_alpha_lab.domain",
-    "polymarket_alpha_lab.analytics_history",
-    "polymarket_alpha_lab.forecast_evidence",
+    "polymarket_alpha_lab.proposal_review",
 }
 
 EXPECTED_FIRST_PARTY_IMPORTS = {
-    "polymarket_alpha_lab.domain": {"MarketScore"},
-    "polymarket_alpha_lab.analytics_history": {"PaperAnalyticsHistoryReport"},
-    "polymarket_alpha_lab.forecast_evidence": {"PaperForecastEvidenceReport"},
+    "polymarket_alpha_lab.proposal_review": {"TradeProposalReviewRecord"},
 }
 
 FORBIDDEN_IMPORT_PREFIXES = {
+    "polymarket_alpha_lab.analytics",
+    "polymarket_alpha_lab.analytics_history",
     "polymarket_alpha_lab.api",
     "polymarket_alpha_lab.archive",
     "polymarket_alpha_lab.cli",
-    "polymarket_alpha_lab.analytics",
+    "polymarket_alpha_lab.domain",
+    "polymarket_alpha_lab.forecast_evidence",
     "polymarket_alpha_lab.journal",
+    "polymarket_alpha_lab.manual_review_queue",
     "polymarket_alpha_lab.normalize",
     "polymarket_alpha_lab.paper",
     "polymarket_alpha_lab.pipeline",
     "polymarket_alpha_lab.positions",
+    "polymarket_alpha_lab.proposal_packet",
     "polymarket_alpha_lab.rejections",
     "polymarket_alpha_lab.research",
     "polymarket_alpha_lab.risk",
@@ -117,17 +111,27 @@ FORBIDDEN_NAME_FRAGMENTS = (
     "privkey",
     "apikey",
     "secret",
-    "credential",
+    "credentialrequest",
+    "credentialworkflow",
+    "credentialstore",
+    "credentialmanager",
+    "credentialprovider",
+    "credentialloader",
     "password",
     "mnemonic",
     "seedphrase",
-    "auth",
-    "authentication",
-    "bearer",
-    "jwt",
-    "wallet",
-    "signer",
-    "signature",
+    "accountaction",
+    "accountauthentication",
+    "accountlogin",
+    "accountsession",
+    "accountstate",
+    "accountposition",
+    "accountbalance",
+    "bearertoken",
+    "jwttoken",
+    "walletsignature",
+    "walletsigner",
+    "walletclient",
     "signedorder",
     "signorder",
     "signmessage",
@@ -137,50 +141,65 @@ FORBIDDEN_NAME_FRAGMENTS = (
     "cancelorder",
     "submitorder",
     "sendorder",
+    "orderinstruction",
+    "orderrequest",
+    "orderpayload",
+    "orderplacement",
     "orderlifecycle",
     "ordermanager",
     "orderrouter",
+    "tradeinstruction",
+    "executionclient",
     "executiondecision",
+    "executionengine",
+    "executionqueue",
+    "executionrequest",
+    "executionrouter",
+    "executionworkflow",
     "liveexecution",
-    "client",
-    "transport",
-    "fetch",
-    "request",
-    "response",
-    "session",
+    "approvalworkflow",
+    "approvalqueue",
+    "approvalrouter",
+    "approvalbroker",
+    "approvalstatus",
+    "approvedby",
+    "approvedat",
+    "autoapproval",
+    "autoapprove",
+    "automaticapproval",
+    "unattendedapproval",
+    "approver",
+    "brokerclient",
+    "brokerrequest",
+    "tradingbroker",
+    "tradingclient",
+    "transportclient",
+    "transportrequest",
+    "httpclient",
+    "marketclient",
+    "requestpayload",
+    "requestbody",
+    "requestparams",
+    "responsebody",
     "urlopen",
     "getjson",
+    "fetchmarket",
+    "fetchorderbook",
+    "fetchpricehistory",
+    "fetchoutcome",
+    "fetchaccount",
     "websocket",
     "heartbeat",
-    "proposal",
-    "tradeproposal",
-    "approval",
-    "broker",
     "reconciler",
     "reconciliation",
     "exchangeaccount",
-    "accountstate",
-    "accountposition",
-    "accountbalance",
-    "compliance",
-    "legal",
-    "jurisdiction",
-    "geofence",
-    "geographic",
-    "geoblock",
-    "kyc",
-    "aml",
-    "sanction",
-    "simulateorderbookfill",
     "clobclient",
     "tradesdk",
     "settlement",
     "settle",
+    "manualexecution",
+    "manualexecutionimport",
     "resolvedoutcome",
-    "brier",
-    "calibration",
-    "edgedecay",
-    "holdingperiod",
     "promotionpacket",
     "strategypromotion",
     "dashboard",
@@ -197,42 +216,65 @@ FORBIDDEN_NAME_FRAGMENTS = (
     "antibot",
     "bypass",
     "browserautomation",
+    "compliance",
+    "legal",
+    "jurisdiction",
+    "geofence",
+    "geographic",
+    "geoblock",
+    "kyc",
+    "aml",
+    "sanction",
 )
 
 FORBIDDEN_PUBLIC_EXPORT_FRAGMENTS = (
-    "broker",
-    "proposal",
-    "tradeproposal",
-    "execution",
-    "credential",
-    "wallet",
-    "reconciliation",
-    "compliance",
-    "auth",
     "privatekey",
+    "privkey",
     "apikey",
-    "signer",
-    "signature",
+    "credentialrequest",
+    "credentialworkflow",
+    "accountaction",
+    "accountauthentication",
+    "walletsignature",
+    "walletsigner",
+    "signedorder",
     "placeorder",
     "createorder",
     "cancelorder",
     "submitorder",
-    "signedorder",
+    "orderinstruction",
+    "orderrequest",
     "orderlifecycle",
     "ordermanager",
     "orderrouter",
-    "client",
-    "transport",
-    "fetch",
-    "request",
-    "session",
+    "tradeinstruction",
+    "executionclient",
+    "executiondecision",
+    "executionrequest",
+    "liveexecution",
+    "approvalworkflow",
+    "approvalqueue",
+    "approvalrouter",
+    "approvalbroker",
+    "approvalstatus",
+    "autoapproval",
+    "autoapprove",
+    "automaticapproval",
+    "unattendedapproval",
+    "brokerclient",
+    "brokerrequest",
+    "tradingclient",
+    "transportclient",
+    "transportrequest",
+    "requestpayload",
     "websocket",
     "heartbeat",
+    "reconciliation",
     "settlement",
+    "manualexecution",
     "resolvedoutcome",
-    "brier",
-    "calibration",
     "dashboard",
+    "compliance",
     "legal",
     "jurisdiction",
     "geofence",
@@ -240,8 +282,8 @@ FORBIDDEN_PUBLIC_EXPORT_FRAGMENTS = (
 )
 
 
-def parse_manual_review_queue():
-    return ast.parse(MANUAL_REVIEW_QUEUE_PATH.read_text(encoding="utf-8"))
+def parse_proposal_review_summary():
+    return ast.parse(PROPOSAL_REVIEW_SUMMARY_PATH.read_text(encoding="utf-8"))
 
 
 def normalize_identifier(value):
@@ -263,8 +305,13 @@ def imported_modules(tree):
 def imported_first_party_symbols(tree):
     symbols = {}
     for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and node.module in EXPECTED_FIRST_PARTY_IMPORTS:
-            symbols.setdefault(node.module, set()).update(alias.name for alias in node.names)
+        if (
+            isinstance(node, ast.ImportFrom)
+            and node.module in EXPECTED_FIRST_PARTY_IMPORTS
+        ):
+            symbols.setdefault(node.module, set()).update(
+                alias.name for alias in node.names
+            )
     return symbols
 
 
@@ -279,8 +326,8 @@ def module_exports(tree):
     return tuple(assigned_exports)
 
 
-def test_manual_review_queue_module_imports_only_allowed_dependencies():
-    tree = parse_manual_review_queue()
+def test_proposal_review_summary_module_imports_only_allowed_dependencies():
+    tree = parse_proposal_review_summary()
     for module_name in imported_modules(tree):
         assert any(
             module_name == allowed or module_name.startswith(f"{allowed}.")
@@ -288,8 +335,8 @@ def test_manual_review_queue_module_imports_only_allowed_dependencies():
         ), module_name
 
 
-def test_manual_review_queue_module_does_not_import_forbidden_surfaces():
-    tree = parse_manual_review_queue()
+def test_proposal_review_summary_module_does_not_import_forbidden_surfaces():
+    tree = parse_proposal_review_summary()
     for module_name in imported_modules(tree):
         assert not any(
             module_name == forbidden or module_name.startswith(f"{forbidden}.")
@@ -297,13 +344,13 @@ def test_manual_review_queue_module_does_not_import_forbidden_surfaces():
         ), module_name
 
 
-def test_manual_review_queue_module_uses_only_allowed_first_party_symbols():
-    tree = parse_manual_review_queue()
+def test_proposal_review_summary_module_uses_only_allowed_first_party_symbols():
+    tree = parse_proposal_review_summary()
     assert imported_first_party_symbols(tree) == EXPECTED_FIRST_PARTY_IMPORTS
 
 
-def test_manual_review_queue_module_does_not_define_forbidden_names():
-    tree = parse_manual_review_queue()
+def test_proposal_review_summary_module_does_not_define_forbidden_live_or_workflow_names():
+    tree = parse_proposal_review_summary()
     names = set()
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
@@ -322,21 +369,20 @@ def test_manual_review_queue_module_does_not_define_forbidden_names():
         assert not any(fragment in name for name in lowered), fragment
 
 
-def test_manual_review_queue_public_exports_are_paper_review_only():
-    tree = parse_manual_review_queue()
+def test_trade_proposal_review_summary_public_exports_are_report_only():
+    tree = parse_proposal_review_summary()
     assigned_exports = module_exports(tree)
-    assert set(assigned_exports) == EXPECTED_MANUAL_REVIEW_QUEUE_EXPORTS
+    assert set(assigned_exports) == EXPECTED_PROPOSAL_REVIEW_SUMMARY_EXPORTS
     for name in assigned_exports:
-        assert name.startswith("PaperManualReview") or name.startswith(
-            "build_paper_manual_review"
-        )
+        assert name.startswith("TradeProposalReview") or name == "build_trade_proposal_review_summary_report"
         normalized_name = normalize_identifier(name)
         assert not any(
-            fragment in normalized_name for fragment in FORBIDDEN_PUBLIC_EXPORT_FRAGMENTS
+            fragment in normalized_name
+            for fragment in FORBIDDEN_PUBLIC_EXPORT_FRAGMENTS
         )
 
 
-def test_package_root_exports_do_not_leak_forbidden_manual_review_surfaces():
+def test_package_root_exports_do_not_leak_forbidden_level_2_node_3_surfaces():
     tree = ast.parse(PACKAGE_ROOT_PATH.read_text(encoding="utf-8"))
     assigned_exports = module_exports(tree)
     for name in assigned_exports:
@@ -347,5 +393,6 @@ def test_package_root_exports_do_not_leak_forbidden_manual_review_surfaces():
             assert name in EXPECTED_LEVEL_2_ARTIFACT_EXPORTS
             continue
         assert not any(
-            fragment in normalized_name for fragment in FORBIDDEN_PUBLIC_EXPORT_FRAGMENTS
+            fragment in normalized_name
+            for fragment in FORBIDDEN_PUBLIC_EXPORT_FRAGMENTS
         )

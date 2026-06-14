@@ -48,6 +48,14 @@ from polymarket_alpha_lab.proposal_review import (
     TradeProposalReviewRecord,
     build_trade_proposal_review_record,
 )
+from polymarket_alpha_lab.proposal_review_summary import (
+    TradeProposalReviewBucketSummary,
+    TradeProposalReviewReasonCodeSummary,
+    TradeProposalReviewSummaryConfig,
+    TradeProposalReviewSummaryLog,
+    TradeProposalReviewSummaryReport,
+    build_trade_proposal_review_summary_report,
+)
 from polymarket_alpha_lab.journal import PaperTradeJournal, PaperTradeRecord
 from polymarket_alpha_lab.paper import PaperFill, PaperOrder, simulate_order_book_fill
 from polymarket_alpha_lab.positions import (
@@ -249,4 +257,29 @@ def test_level_2_node_2_public_api_exports():
     assert (
         lab.build_trade_proposal_review_record
         is build_trade_proposal_review_record
+    )
+
+
+def test_level_2_node_3_public_api_exports():
+    expected_exports = {
+        "TradeProposalReviewBucketSummary",
+        "TradeProposalReviewReasonCodeSummary",
+        "TradeProposalReviewSummaryConfig",
+        "TradeProposalReviewSummaryLog",
+        "TradeProposalReviewSummaryReport",
+        "build_trade_proposal_review_summary_report",
+    }
+
+    assert expected_exports <= set(lab.__all__)
+    assert lab.TradeProposalReviewBucketSummary is TradeProposalReviewBucketSummary
+    assert (
+        lab.TradeProposalReviewReasonCodeSummary
+        is TradeProposalReviewReasonCodeSummary
+    )
+    assert lab.TradeProposalReviewSummaryConfig is TradeProposalReviewSummaryConfig
+    assert lab.TradeProposalReviewSummaryLog is TradeProposalReviewSummaryLog
+    assert lab.TradeProposalReviewSummaryReport is TradeProposalReviewSummaryReport
+    assert (
+        lab.build_trade_proposal_review_summary_report
+        is build_trade_proposal_review_summary_report
     )
