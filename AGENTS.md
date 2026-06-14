@@ -43,10 +43,10 @@ Avoid using website scraping as a primary data path unless a needed field is una
 
 ## Agent Coordination Defaults
 
-- Keep multiple subagents active when there are independent tasks that can run in parallel.
-- Avoid assigning multiple subagents to edit the same files or the same tightly coupled responsibility at the same time.
-- For write tasks, split ownership by non-overlapping files or modules before dispatching subagents.
-- Close completed subagents promptly, then dispatch fresh independent tasks when useful.
+- Keep as many subagents active as is useful when there are independent tasks that can run in parallel.
+- Avoid assigning multiple subagents to edit the same files, the same batch of files, or the same tightly coupled responsibility at the same time.
+- For write tasks, split ownership by non-overlapping files or modules before dispatching subagents, and keep each subagent inside its assigned write scope.
+- Close completed subagents promptly, then dispatch fresh independent tasks when useful so parallel execution stays active without creating file conflicts.
 
 ## Model Defaults
 
