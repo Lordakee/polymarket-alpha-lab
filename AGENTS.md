@@ -41,6 +41,13 @@ Avoid using website scraping as a primary data path unless a needed field is una
 - Use executable bid/ask and order book depth for research calculations, not only displayed midpoint.
 - Keep all research outputs reproducible and timestamped.
 
+## Agent Coordination Defaults
+
+- Keep multiple subagents active when there are independent tasks that can run in parallel.
+- Avoid assigning multiple subagents to edit the same files or the same tightly coupled responsibility at the same time.
+- For write tasks, split ownership by non-overlapping files or modules before dispatching subagents.
+- Close completed subagents promptly, then dispatch fresh independent tasks when useful.
+
 ## Model Defaults
 
 - Codex subagents dispatched for this project should use model `gpt-5.5` with reasoning effort `xhigh`.
