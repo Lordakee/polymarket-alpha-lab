@@ -37,6 +37,14 @@ from polymarket_alpha_lab.forecast_evidence import (
     PaperForecastEvidenceReport,
     build_paper_forecast_evidence_report,
 )
+from polymarket_alpha_lab.manual_review_queue import (
+    PaperManualReviewCandidate,
+    PaperManualReviewConfig,
+    PaperManualReviewLog,
+    PaperManualReviewQueue,
+    PaperManualReviewQueueItem,
+    build_paper_manual_review_queue,
+)
 from polymarket_alpha_lab.journal import PaperTradeJournal, PaperTradeRecord
 from polymarket_alpha_lab.paper import PaperFill, PaperOrder, simulate_order_book_fill
 from polymarket_alpha_lab.positions import (
@@ -82,6 +90,11 @@ __all__ = [
     "PaperForecastEvidenceLog",
     "PaperForecastEvidenceObservation",
     "PaperForecastEvidenceReport",
+    "PaperManualReviewCandidate",
+    "PaperManualReviewConfig",
+    "PaperManualReviewLog",
+    "PaperManualReviewQueue",
+    "PaperManualReviewQueueItem",
     "PaperNavLog",
     "PaperNavSnapshot",
     "PaperOrder",
@@ -102,6 +115,7 @@ __all__ = [
     "build_paper_analytics_report",
     "build_paper_drawdown_points",
     "build_paper_forecast_evidence_report",
+    "build_paper_manual_review_queue",
     "build_paper_portfolio",
     "build_research_packet",
     "evaluate_research_packet_risk",

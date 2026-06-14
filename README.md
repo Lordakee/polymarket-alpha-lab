@@ -12,7 +12,7 @@ The long-term goal is an automated system that can screen markets, research cand
 
 ## Phase 1 Scope
 
-This repository currently contains the project design, research notes, implementation plans, a read-only market scanner, research packet assembly, bid/ask paper-fill simulation, JSONL paper-trade journaling, paper-only risk gates, rejected-candidate logs, paper position ledgers, executable NAV marks, paper-only portfolio analytics, exposure reports, executable-NAV drawdown reports, paper-only analytics history validation, and paper-only forecast evidence reports.
+This repository currently contains the project design, research notes, implementation plans, a read-only market scanner, research packet assembly, bid/ask paper-fill simulation, JSONL paper-trade journaling, paper-only risk gates, rejected-candidate logs, paper position ledgers, executable NAV marks, paper-only portfolio analytics, exposure reports, executable-NAV drawdown reports, paper-only analytics history validation, paper-only forecast evidence reports, and paper-only manual-review queues.
 
 The current phase does not contain:
 
@@ -120,6 +120,20 @@ Node 5 is exposed through Python APIs:
 - Inspect evidence gates with `PaperForecastEvidenceGateResult` and probability buckets with `PaperForecastEvidenceBucket`.
 - Persist forecast evidence snapshots with `PaperForecastEvidenceLog(path).append(report)`.
 
+## Level 1B Node 6 Status
+
+Level 1B Node 6 adds paper-only manual-review queues over supplied `PaperManualReviewCandidate` values, `MarketScore` rows, `PaperAnalyticsHistoryReport`, and `PaperForecastEvidenceReport`. Its `paper_review_ready` status means a queue item is ready for human inspection only; it is not proposal generation, strategy promotion, a trade instruction, an approval workflow, or a live-execution signal. It does not fetch market, order-book, price-history, outcome, or account data, read external history, scrape websites, authenticate, handle private keys, place or cancel orders, open user WebSockets, run heartbeat logic, use a trading SDK, reconcile exchange accounts, or perform compliance/legal/geographic analysis.
+
+## Level 1B Node 6 Python API
+
+Node 6 is exposed through Python APIs:
+
+- Configure review thresholds and boundary text with `PaperManualReviewConfig(...)`.
+- Create queue candidates with `PaperManualReviewCandidate(...)`.
+- Build paper manual-review queues with `build_paper_manual_review_queue(candidates, market_scores=..., analytics_history=..., forecast_evidence=..., config=..., generated_at=...)`, which returns `PaperManualReviewQueue`.
+- Inspect ranked rows with `PaperManualReviewQueueItem`.
+- Persist manual-review snapshots with `PaperManualReviewLog(path).append(queue)`.
+
 ## Automation Roadmap
 
 The recommended staged path is:
@@ -157,6 +171,7 @@ See:
 │       │   ├── 2026-06-13-level-1b-paper-analytics-history-validation.md
 │       │   ├── 2026-06-13-level-1b-rejections-risk-gates.md
 │       │   ├── 2026-06-13-level-1b-positions-nav.md
+│       │   ├── 2026-06-14-level-1b-paper-manual-review-queue.md
 │       │   └── 2026-06-13-project-bootstrap.md
 │       └── specs
 │           ├── 2026-06-13-automated-investment-roadmap.md
@@ -173,6 +188,7 @@ See:
 │       ├── domain.py
 │       ├── forecast_evidence.py
 │       ├── journal.py
+│       ├── manual_review_queue.py
 │       ├── normalize.py
 │       ├── paper.py
 │       ├── pipeline.py
@@ -194,6 +210,8 @@ See:
     ├── test_forecast_evidence_scope.py
     ├── test_init.py
     ├── test_journal.py
+    ├── test_manual_review_queue.py
+    ├── test_manual_review_queue_scope.py
     ├── test_normalize.py
     ├── test_paper.py
     ├── test_pipeline.py

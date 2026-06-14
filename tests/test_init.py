@@ -28,6 +28,14 @@ from polymarket_alpha_lab.forecast_evidence import (
     PaperForecastEvidenceReport,
     build_paper_forecast_evidence_report,
 )
+from polymarket_alpha_lab.manual_review_queue import (
+    PaperManualReviewCandidate,
+    PaperManualReviewConfig,
+    PaperManualReviewLog,
+    PaperManualReviewQueue,
+    PaperManualReviewQueueItem,
+    build_paper_manual_review_queue,
+)
 from polymarket_alpha_lab.journal import PaperTradeJournal, PaperTradeRecord
 from polymarket_alpha_lab.paper import PaperFill, PaperOrder, simulate_order_book_fill
 from polymarket_alpha_lab.positions import (
@@ -178,3 +186,22 @@ def test_level_1b_node_5_public_api_exports():
         lab.build_paper_forecast_evidence_report
         is build_paper_forecast_evidence_report
     )
+
+
+def test_level_1b_node_6_public_api_exports():
+    expected_exports = {
+        "PaperManualReviewCandidate",
+        "PaperManualReviewConfig",
+        "PaperManualReviewLog",
+        "PaperManualReviewQueue",
+        "PaperManualReviewQueueItem",
+        "build_paper_manual_review_queue",
+    }
+
+    assert expected_exports <= set(lab.__all__)
+    assert lab.PaperManualReviewCandidate is PaperManualReviewCandidate
+    assert lab.PaperManualReviewConfig is PaperManualReviewConfig
+    assert lab.PaperManualReviewLog is PaperManualReviewLog
+    assert lab.PaperManualReviewQueue is PaperManualReviewQueue
+    assert lab.PaperManualReviewQueueItem is PaperManualReviewQueueItem
+    assert lab.build_paper_manual_review_queue is build_paper_manual_review_queue
