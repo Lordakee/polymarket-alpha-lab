@@ -51,6 +51,12 @@ from polymarket_alpha_lab.proposal_packet import (
     TradeProposalPacketLog,
     build_trade_proposal_packet,
 )
+from polymarket_alpha_lab.proposal_review import (
+    TradeProposalReviewConfig,
+    TradeProposalReviewLog,
+    TradeProposalReviewRecord,
+    build_trade_proposal_review_record,
+)
 from polymarket_alpha_lab.journal import PaperTradeJournal, PaperTradeRecord
 from polymarket_alpha_lab.paper import PaperFill, PaperOrder, simulate_order_book_fill
 from polymarket_alpha_lab.positions import (
@@ -120,6 +126,9 @@ __all__ = [
     "TradeProposalPacket",
     "TradeProposalPacketConfig",
     "TradeProposalPacketLog",
+    "TradeProposalReviewConfig",
+    "TradeProposalReviewLog",
+    "TradeProposalReviewRecord",
     "build_paper_analytics_history_report",
     "build_paper_analytics_report",
     "build_paper_drawdown_points",
@@ -128,6 +137,7 @@ __all__ = [
     "build_paper_portfolio",
     "build_research_packet",
     "build_trade_proposal_packet",
+    "build_trade_proposal_review_record",
     "evaluate_research_packet_risk",
     "mark_paper_nav",
     "simulate_order_book_fill",

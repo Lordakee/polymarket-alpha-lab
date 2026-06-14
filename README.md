@@ -12,7 +12,7 @@ The long-term goal is an automated system that can screen markets, research cand
 
 ## Phase 1 Scope
 
-This repository currently contains the project design, research notes, implementation plans, a read-only market scanner, research packet assembly, bid/ask paper-fill simulation, JSONL paper-trade journaling, paper-only risk gates, rejected-candidate logs, paper position ledgers, executable NAV marks, paper-only portfolio analytics, exposure reports, executable-NAV drawdown reports, paper-only analytics history validation, paper-only forecast evidence reports, paper-only manual-review queues, and human-review proposal packet artifacts.
+This repository currently contains the project design, research notes, implementation plans, a read-only market scanner, research packet assembly, bid/ask paper-fill simulation, JSONL paper-trade journaling, paper-only risk gates, rejected-candidate logs, paper position ledgers, executable NAV marks, paper-only portfolio analytics, exposure reports, executable-NAV drawdown reports, paper-only analytics history validation, paper-only forecast evidence reports, paper-only manual-review queues, human-review proposal packet artifacts, and append-only proposal-review record artifacts.
 
 The current phase does not contain:
 
@@ -149,6 +149,21 @@ Node 1 is exposed through Python APIs:
 - Inspect proposal-only review fields with `TradeProposalPacket`.
 - Persist proposal packet snapshots with `TradeProposalPacketLog(path).append(packet)`.
 
+## Level 2 Node 2 Status
+
+Level 2 Node 2 adds append-only proposal-review record artifacts over supplied `TradeProposalPacket` values. A proposal-review record captures a reviewer decision, rationale, reviewed packet identity, attestation, and boundary text for audit only; it is not an approval workflow, trade instruction, order instruction, broker request, order request, account action, strategy-promotion signal, or live-execution signal.
+
+It does not fetch market, order-book, price-history, outcome, account, credential, or identity data; scrape websites; authenticate; handle private keys or credentials; place, submit, sign, send, create, or cancel orders; open user WebSockets; run heartbeat logic; use a trading SDK, broker client, execution client, or transport client; build broker or order request payloads; reconcile exchange accounts; import manual executions; or perform compliance/legal/geographic analysis.
+
+## Level 2 Node 2 Python API
+
+Node 2 is exposed through Python APIs:
+
+- Configure proposal-review boundaries with `TradeProposalReviewConfig(config_version="review-v1")`.
+- Build proposal-review records with `build_trade_proposal_review_record(packet, decision="approved", reviewer_label="human-reviewer", review_rationale="Reviewed packet fields and supporting evidence.", review_reason_codes=(), human_attestation=config.required_human_attestation, config=config, recorded_at=datetime.now(UTC))`, which returns `TradeProposalReviewRecord`.
+- Inspect review-only audit fields with `TradeProposalReviewRecord`.
+- Persist proposal-review snapshots with `TradeProposalReviewLog(path).append(record)`.
+
 ## Automation Roadmap
 
 The recommended staged path is:
@@ -188,6 +203,7 @@ See:
 │       │   ├── 2026-06-13-level-1b-positions-nav.md
 │       │   ├── 2026-06-14-level-1b-paper-manual-review-queue.md
 │       │   ├── 2026-06-14-level-2-proposal-packets.md
+│       │   ├── 2026-06-14-level-2-proposal-review-records.md
 │       │   └── 2026-06-13-project-bootstrap.md
 │       └── specs
 │           ├── 2026-06-13-automated-investment-roadmap.md
@@ -210,6 +226,7 @@ See:
 │       ├── pipeline.py
 │       ├── positions.py
 │       ├── proposal_packet.py
+│       ├── proposal_review.py
 │       ├── rejections.py
 │       ├── research.py
 │       ├── risk.py
@@ -235,6 +252,8 @@ See:
     ├── test_positions.py
     ├── test_proposal_packet.py
     ├── test_proposal_packet_scope.py
+    ├── test_proposal_review.py
+    ├── test_proposal_review_scope.py
     ├── test_rejections.py
     ├── test_research.py
     ├── test_risk_gates.py

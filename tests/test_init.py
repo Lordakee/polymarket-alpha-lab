@@ -42,6 +42,12 @@ from polymarket_alpha_lab.proposal_packet import (
     TradeProposalPacketLog,
     build_trade_proposal_packet,
 )
+from polymarket_alpha_lab.proposal_review import (
+    TradeProposalReviewConfig,
+    TradeProposalReviewLog,
+    TradeProposalReviewRecord,
+    build_trade_proposal_review_record,
+)
 from polymarket_alpha_lab.journal import PaperTradeJournal, PaperTradeRecord
 from polymarket_alpha_lab.paper import PaperFill, PaperOrder, simulate_order_book_fill
 from polymarket_alpha_lab.positions import (
@@ -226,3 +232,21 @@ def test_level_2_node_1_public_api_exports():
     assert lab.TradeProposalPacketConfig is TradeProposalPacketConfig
     assert lab.TradeProposalPacketLog is TradeProposalPacketLog
     assert lab.build_trade_proposal_packet is build_trade_proposal_packet
+
+
+def test_level_2_node_2_public_api_exports():
+    expected_exports = {
+        "TradeProposalReviewConfig",
+        "TradeProposalReviewLog",
+        "TradeProposalReviewRecord",
+        "build_trade_proposal_review_record",
+    }
+
+    assert expected_exports <= set(lab.__all__)
+    assert lab.TradeProposalReviewConfig is TradeProposalReviewConfig
+    assert lab.TradeProposalReviewLog is TradeProposalReviewLog
+    assert lab.TradeProposalReviewRecord is TradeProposalReviewRecord
+    assert (
+        lab.build_trade_proposal_review_record
+        is build_trade_proposal_review_record
+    )

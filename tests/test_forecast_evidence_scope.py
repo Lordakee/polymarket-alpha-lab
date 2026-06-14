@@ -23,6 +23,15 @@ EXPECTED_LEVEL_2_PROPOSAL_PACKET_EXPORTS = {
     "TradeProposalPacketLog",
     "build_trade_proposal_packet",
 }
+EXPECTED_PROPOSAL_REVIEW_EXPORTS = {
+    "TradeProposalReviewConfig",
+    "TradeProposalReviewRecord",
+    "TradeProposalReviewLog",
+    "build_trade_proposal_review_record",
+}
+EXPECTED_LEVEL_2_ARTIFACT_EXPORTS = (
+    EXPECTED_LEVEL_2_PROPOSAL_PACKET_EXPORTS | EXPECTED_PROPOSAL_REVIEW_EXPORTS
+)
 
 ALLOWED_IMPORT_PREFIXES = {
     "json",
@@ -298,8 +307,10 @@ def test_package_root_exports_do_not_leak_forbidden_forecast_evidence_surfaces()
     assigned_exports = module_exports(tree)
     for name in assigned_exports:
         normalized_name = normalize_identifier(name)
-        if "proposal" in normalized_name or "tradeproposal" in normalized_name:
-            assert name in EXPECTED_LEVEL_2_PROPOSAL_PACKET_EXPORTS
+        if any(
+            fragment in normalized_name for fragment in ("proposal", "tradeproposal")
+        ):
+            assert name in EXPECTED_LEVEL_2_ARTIFACT_EXPORTS
             continue
         assert not any(
             fragment in normalized_name for fragment in FORBIDDEN_PUBLIC_EXPORT_FRAGMENTS
