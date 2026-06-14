@@ -36,6 +36,12 @@ from polymarket_alpha_lab.manual_review_queue import (
     PaperManualReviewQueueItem,
     build_paper_manual_review_queue,
 )
+from polymarket_alpha_lab.proposal_packet import (
+    TradeProposalPacket,
+    TradeProposalPacketConfig,
+    TradeProposalPacketLog,
+    build_trade_proposal_packet,
+)
 from polymarket_alpha_lab.journal import PaperTradeJournal, PaperTradeRecord
 from polymarket_alpha_lab.paper import PaperFill, PaperOrder, simulate_order_book_fill
 from polymarket_alpha_lab.positions import (
@@ -205,3 +211,18 @@ def test_level_1b_node_6_public_api_exports():
     assert lab.PaperManualReviewQueue is PaperManualReviewQueue
     assert lab.PaperManualReviewQueueItem is PaperManualReviewQueueItem
     assert lab.build_paper_manual_review_queue is build_paper_manual_review_queue
+
+
+def test_level_2_node_1_public_api_exports():
+    expected_exports = {
+        "TradeProposalPacket",
+        "TradeProposalPacketConfig",
+        "TradeProposalPacketLog",
+        "build_trade_proposal_packet",
+    }
+
+    assert expected_exports <= set(lab.__all__)
+    assert lab.TradeProposalPacket is TradeProposalPacket
+    assert lab.TradeProposalPacketConfig is TradeProposalPacketConfig
+    assert lab.TradeProposalPacketLog is TradeProposalPacketLog
+    assert lab.build_trade_proposal_packet is build_trade_proposal_packet

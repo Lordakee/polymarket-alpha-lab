@@ -20,6 +20,13 @@ EXPECTED_ANALYTICS_EXPORTS = {
     "build_paper_drawdown_points",
 }
 
+EXPECTED_LEVEL_2_PROPOSAL_PACKET_EXPORTS = {
+    "TradeProposalPacket",
+    "TradeProposalPacketConfig",
+    "TradeProposalPacketLog",
+    "build_trade_proposal_packet",
+}
+
 ALLOWED_IMPORT_PREFIXES = {
     "json",
     "collections",
@@ -292,6 +299,9 @@ def test_package_root_exports_do_not_leak_forbidden_analytics_surfaces():
     assigned_exports = module_exports(tree)
     for name in assigned_exports:
         normalized_name = normalize_identifier(name)
+        if "proposal" in normalized_name or "tradeproposal" in normalized_name:
+            assert name in EXPECTED_LEVEL_2_PROPOSAL_PACKET_EXPORTS
+            continue
         assert not any(
             fragment in normalized_name for fragment in FORBIDDEN_PUBLIC_EXPORT_FRAGMENTS
         )

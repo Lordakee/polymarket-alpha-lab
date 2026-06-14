@@ -12,7 +12,7 @@ The long-term goal is an automated system that can screen markets, research cand
 
 ## Phase 1 Scope
 
-This repository currently contains the project design, research notes, implementation plans, a read-only market scanner, research packet assembly, bid/ask paper-fill simulation, JSONL paper-trade journaling, paper-only risk gates, rejected-candidate logs, paper position ledgers, executable NAV marks, paper-only portfolio analytics, exposure reports, executable-NAV drawdown reports, paper-only analytics history validation, paper-only forecast evidence reports, and paper-only manual-review queues.
+This repository currently contains the project design, research notes, implementation plans, a read-only market scanner, research packet assembly, bid/ask paper-fill simulation, JSONL paper-trade journaling, paper-only risk gates, rejected-candidate logs, paper position ledgers, executable NAV marks, paper-only portfolio analytics, exposure reports, executable-NAV drawdown reports, paper-only analytics history validation, paper-only forecast evidence reports, paper-only manual-review queues, and human-review proposal packet artifacts.
 
 The current phase does not contain:
 
@@ -134,6 +134,21 @@ Node 6 is exposed through Python APIs:
 - Inspect ranked rows with `PaperManualReviewQueueItem`.
 - Persist manual-review snapshots with `PaperManualReviewLog(path).append(queue)`.
 
+## Level 2 Node 1 Status
+
+Level 2 Node 1 adds reviewable proposal-packet artifacts over supplied paper-trading, analytics, forecast-evidence, and manual-review artifacts. A proposal packet is for human review only; it is not an approval workflow, trade instruction, order instruction, broker request, strategy-promotion signal, or live-execution signal. No order may leave the system without explicit human approval.
+
+It does not fetch market, order-book, price-history, outcome, or account data; scrape websites; authenticate; handle private keys or credentials; place, submit, sign, or cancel orders; open user WebSockets; run heartbeat logic; use a trading SDK, broker client, or execution client; reconcile exchange accounts; import manual executions; or perform compliance/legal/geographic analysis.
+
+## Level 2 Node 1 Python API
+
+Node 1 is exposed through Python APIs:
+
+- Configure proposal packet limits and boundary text with `TradeProposalPacketConfig(config_version="proposal-v1")`.
+- Build proposal packets with `build_trade_proposal_packet(queue_item, side="buy", intended_order_type="limit", maximum_size=Decimal("25"), exposure_after_trade=Decimal("0.1200"), exit_rule="Exit if executable price reaches fair value or thesis invalidates.", reason_trade_could_be_wrong="Liquidity could disappear before exit.", config=config, generated_at=datetime.now(UTC))`, which returns `TradeProposalPacket`.
+- Inspect proposal-only review fields with `TradeProposalPacket`.
+- Persist proposal packet snapshots with `TradeProposalPacketLog(path).append(packet)`.
+
 ## Automation Roadmap
 
 The recommended staged path is:
@@ -172,6 +187,7 @@ See:
 │       │   ├── 2026-06-13-level-1b-rejections-risk-gates.md
 │       │   ├── 2026-06-13-level-1b-positions-nav.md
 │       │   ├── 2026-06-14-level-1b-paper-manual-review-queue.md
+│       │   ├── 2026-06-14-level-2-proposal-packets.md
 │       │   └── 2026-06-13-project-bootstrap.md
 │       └── specs
 │           ├── 2026-06-13-automated-investment-roadmap.md
@@ -193,6 +209,7 @@ See:
 │       ├── paper.py
 │       ├── pipeline.py
 │       ├── positions.py
+│       ├── proposal_packet.py
 │       ├── rejections.py
 │       ├── research.py
 │       ├── risk.py
@@ -216,6 +233,8 @@ See:
     ├── test_paper.py
     ├── test_pipeline.py
     ├── test_positions.py
+    ├── test_proposal_packet.py
+    ├── test_proposal_packet_scope.py
     ├── test_rejections.py
     ├── test_research.py
     ├── test_risk_gates.py

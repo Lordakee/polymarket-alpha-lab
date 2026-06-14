@@ -45,6 +45,12 @@ from polymarket_alpha_lab.manual_review_queue import (
     PaperManualReviewQueueItem,
     build_paper_manual_review_queue,
 )
+from polymarket_alpha_lab.proposal_packet import (
+    TradeProposalPacket,
+    TradeProposalPacketConfig,
+    TradeProposalPacketLog,
+    build_trade_proposal_packet,
+)
 from polymarket_alpha_lab.journal import PaperTradeJournal, PaperTradeRecord
 from polymarket_alpha_lab.paper import PaperFill, PaperOrder, simulate_order_book_fill
 from polymarket_alpha_lab.positions import (
@@ -111,6 +117,9 @@ __all__ = [
     "RiskGateConfig",
     "RiskGateDecision",
     "RiskGateReason",
+    "TradeProposalPacket",
+    "TradeProposalPacketConfig",
+    "TradeProposalPacketLog",
     "build_paper_analytics_history_report",
     "build_paper_analytics_report",
     "build_paper_drawdown_points",
@@ -118,6 +127,7 @@ __all__ = [
     "build_paper_manual_review_queue",
     "build_paper_portfolio",
     "build_research_packet",
+    "build_trade_proposal_packet",
     "evaluate_research_packet_risk",
     "mark_paper_nav",
     "simulate_order_book_fill",

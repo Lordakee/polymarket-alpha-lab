@@ -3,21 +3,11 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-FORECAST_EVIDENCE_PATH = REPO_ROOT / "src" / "polymarket_alpha_lab" / "forecast_evidence.py"
+PROPOSAL_PACKET_PATH = REPO_ROOT / "src" / "polymarket_alpha_lab" / "proposal_packet.py"
 PACKAGE_ROOT_PATH = REPO_ROOT / "src" / "polymarket_alpha_lab" / "__init__.py"
 
 
-EXPECTED_FORECAST_EVIDENCE_EXPORTS = {
-    "PaperForecastEvidenceBucket",
-    "PaperForecastEvidenceConfig",
-    "PaperForecastEvidenceGateResult",
-    "PaperForecastEvidenceLog",
-    "PaperForecastEvidenceObservation",
-    "PaperForecastEvidenceReport",
-    "build_paper_forecast_evidence_report",
-}
-
-EXPECTED_LEVEL_2_PROPOSAL_PACKET_EXPORTS = {
+EXPECTED_PROPOSAL_PACKET_EXPORTS = {
     "TradeProposalPacket",
     "TradeProposalPacketConfig",
     "TradeProposalPacketLog",
@@ -25,20 +15,30 @@ EXPECTED_LEVEL_2_PROPOSAL_PACKET_EXPORTS = {
 }
 
 ALLOWED_IMPORT_PREFIXES = {
+    "__future__",
     "json",
     "collections.abc",
     "dataclasses",
     "datetime",
     "decimal",
+    "hashlib",
     "pathlib",
     "typing",
+    "polymarket_alpha_lab.manual_review_queue",
+}
+
+EXPECTED_FIRST_PARTY_IMPORTS = {
+    "polymarket_alpha_lab.manual_review_queue": {"PaperManualReviewQueueItem"},
 }
 
 FORBIDDEN_IMPORT_PREFIXES = {
+    "polymarket_alpha_lab.analytics",
+    "polymarket_alpha_lab.analytics_history",
     "polymarket_alpha_lab.api",
     "polymarket_alpha_lab.archive",
     "polymarket_alpha_lab.cli",
     "polymarket_alpha_lab.domain",
+    "polymarket_alpha_lab.forecast_evidence",
     "polymarket_alpha_lab.journal",
     "polymarket_alpha_lab.normalize",
     "polymarket_alpha_lab.paper",
@@ -47,6 +47,7 @@ FORBIDDEN_IMPORT_PREFIXES = {
     "polymarket_alpha_lab.rejections",
     "polymarket_alpha_lab.research",
     "polymarket_alpha_lab.risk",
+    "polymarket_alpha_lab.scoring",
     "urllib",
     "urllib3",
     "http",
@@ -112,6 +113,12 @@ FORBIDDEN_NAME_FRAGMENTS = (
     "orderrouter",
     "executiondecision",
     "liveexecution",
+    "approvalworkflow",
+    "approvalqueue",
+    "approvalstatus",
+    "approvedby",
+    "approvedat",
+    "approver",
     "client",
     "transport",
     "fetch",
@@ -122,9 +129,6 @@ FORBIDDEN_NAME_FRAGMENTS = (
     "getjson",
     "websocket",
     "heartbeat",
-    "proposal",
-    "tradeproposal",
-    "approval",
     "broker",
     "reconciler",
     "reconciliation",
@@ -147,10 +151,6 @@ FORBIDDEN_NAME_FRAGMENTS = (
     "settlement",
     "settle",
     "resolvedoutcome",
-    "brier",
-    "calibration",
-    "edgedecay",
-    "holdingperiod",
     "promotionpacket",
     "strategypromotion",
     "dashboard",
@@ -170,9 +170,8 @@ FORBIDDEN_NAME_FRAGMENTS = (
 )
 
 FORBIDDEN_PUBLIC_EXPORT_FRAGMENTS = (
+    "approval",
     "broker",
-    "proposal",
-    "tradeproposal",
     "execution",
     "credential",
     "wallet",
@@ -200,8 +199,6 @@ FORBIDDEN_PUBLIC_EXPORT_FRAGMENTS = (
     "heartbeat",
     "settlement",
     "resolvedoutcome",
-    "brier",
-    "calibration",
     "dashboard",
     "legal",
     "jurisdiction",
@@ -210,8 +207,8 @@ FORBIDDEN_PUBLIC_EXPORT_FRAGMENTS = (
 )
 
 
-def parse_forecast_evidence():
-    return ast.parse(FORECAST_EVIDENCE_PATH.read_text(encoding="utf-8"))
+def parse_proposal_packet():
+    return ast.parse(PROPOSAL_PACKET_PATH.read_text(encoding="utf-8"))
 
 
 def normalize_identifier(value):
@@ -230,6 +227,14 @@ def imported_modules(tree):
     return modules
 
 
+def imported_first_party_symbols(tree):
+    symbols = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module in EXPECTED_FIRST_PARTY_IMPORTS:
+            symbols.setdefault(node.module, set()).update(alias.name for alias in node.names)
+    return symbols
+
+
 def module_exports(tree):
     assigned_exports = None
     for node in ast.walk(tree):
@@ -241,8 +246,8 @@ def module_exports(tree):
     return tuple(assigned_exports)
 
 
-def test_forecast_evidence_module_imports_only_allowed_dependencies():
-    tree = parse_forecast_evidence()
+def test_proposal_packet_module_imports_only_allowed_dependencies():
+    tree = parse_proposal_packet()
     for module_name in imported_modules(tree):
         assert any(
             module_name == allowed or module_name.startswith(f"{allowed}.")
@@ -250,8 +255,8 @@ def test_forecast_evidence_module_imports_only_allowed_dependencies():
         ), module_name
 
 
-def test_forecast_evidence_module_does_not_import_forbidden_surfaces():
-    tree = parse_forecast_evidence()
+def test_proposal_packet_module_does_not_import_forbidden_surfaces():
+    tree = parse_proposal_packet()
     for module_name in imported_modules(tree):
         assert not any(
             module_name == forbidden or module_name.startswith(f"{forbidden}.")
@@ -259,8 +264,13 @@ def test_forecast_evidence_module_does_not_import_forbidden_surfaces():
         ), module_name
 
 
-def test_forecast_evidence_module_does_not_define_forbidden_names():
-    tree = parse_forecast_evidence()
+def test_proposal_packet_module_uses_only_allowed_first_party_symbols():
+    tree = parse_proposal_packet()
+    assert imported_first_party_symbols(tree) == EXPECTED_FIRST_PARTY_IMPORTS
+
+
+def test_proposal_packet_module_does_not_define_forbidden_live_or_workflow_names():
+    tree = parse_proposal_packet()
     names = set()
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
@@ -279,13 +289,13 @@ def test_forecast_evidence_module_does_not_define_forbidden_names():
         assert not any(fragment in name for name in lowered), fragment
 
 
-def test_forecast_evidence_public_exports_are_paper_report_only():
-    tree = parse_forecast_evidence()
+def test_trade_proposal_packet_public_exports_are_artifact_only():
+    tree = parse_proposal_packet()
     assigned_exports = module_exports(tree)
-    assert set(assigned_exports) == EXPECTED_FORECAST_EVIDENCE_EXPORTS
+    assert set(assigned_exports) == EXPECTED_PROPOSAL_PACKET_EXPORTS
     for name in assigned_exports:
-        assert name.startswith("PaperForecastEvidence") or name.startswith(
-            "build_paper_forecast_evidence"
+        assert name.startswith("TradeProposalPacket") or name == (
+            "build_trade_proposal_packet"
         )
         normalized_name = normalize_identifier(name)
         assert not any(
@@ -293,13 +303,13 @@ def test_forecast_evidence_public_exports_are_paper_report_only():
         )
 
 
-def test_package_root_exports_do_not_leak_forbidden_forecast_evidence_surfaces():
+def test_package_root_exports_do_not_leak_forbidden_level_2_node_1_surfaces():
     tree = ast.parse(PACKAGE_ROOT_PATH.read_text(encoding="utf-8"))
     assigned_exports = module_exports(tree)
     for name in assigned_exports:
         normalized_name = normalize_identifier(name)
         if "proposal" in normalized_name or "tradeproposal" in normalized_name:
-            assert name in EXPECTED_LEVEL_2_PROPOSAL_PACKET_EXPORTS
+            assert name in EXPECTED_PROPOSAL_PACKET_EXPORTS
             continue
         assert not any(
             fragment in normalized_name for fragment in FORBIDDEN_PUBLIC_EXPORT_FRAGMENTS
