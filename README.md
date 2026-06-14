@@ -12,7 +12,7 @@ The long-term goal is an automated system that can screen markets, research cand
 
 ## Phase 1 Scope
 
-This repository currently contains the project design, research notes, implementation plans, a read-only market scanner, research packet assembly, bid/ask paper-fill simulation, JSONL paper-trade journaling, paper-only risk gates, rejected-candidate logs, paper position ledgers, executable NAV marks, paper-only portfolio analytics, exposure reports, executable-NAV drawdown reports, and paper-only analytics history validation.
+This repository currently contains the project design, research notes, implementation plans, a read-only market scanner, research packet assembly, bid/ask paper-fill simulation, JSONL paper-trade journaling, paper-only risk gates, rejected-candidate logs, paper position ledgers, executable NAV marks, paper-only portfolio analytics, exposure reports, executable-NAV drawdown reports, paper-only analytics history validation, and paper-only forecast evidence reports.
 
 The current phase does not contain:
 
@@ -106,6 +106,20 @@ Node 4 is exposed through Python APIs:
 - Inspect validation rows with `PaperAnalyticsHistoryGateResult` and trend rows with `PaperAnalyticsHistoryTrend`.
 - Persist history snapshots with `PaperAnalyticsHistoryLog(path).append(report)`.
 
+## Level 1B Node 5 Status
+
+Level 1B Node 5 adds paper-only forecast evidence reports over supplied `PaperForecastEvidenceObservation` values, including probability bucket quality, executable-edge gap and hit-rate checks, residual exposure checks, and append-only JSONL snapshots. Its `paper_review_ready` status means the evidence artifact is ready for manual review only; it is not a promotion, trade, or live-execution signal. It does not fetch market, order-book, price history, or account data, use external loaders, scrape websites, authenticate, handle private keys, place or cancel orders, open user WebSockets, run heartbeat logic, use a trading SDK, reconcile exchange accounts, or perform compliance/legal/geographic analysis.
+
+## Level 1B Node 5 Python API
+
+Node 5 is exposed through Python APIs:
+
+- Configure evidence thresholds with `PaperForecastEvidenceConfig(...)`.
+- Create evidence rows with `PaperForecastEvidenceObservation(...)`.
+- Build paper forecast evidence reports with `build_paper_forecast_evidence_report(observations, config=..., generated_at=...)`, which returns `PaperForecastEvidenceReport`.
+- Inspect evidence gates with `PaperForecastEvidenceGateResult` and probability buckets with `PaperForecastEvidenceBucket`.
+- Persist forecast evidence snapshots with `PaperForecastEvidenceLog(path).append(report)`.
+
 ## Automation Roadmap
 
 The recommended staged path is:
@@ -139,6 +153,7 @@ See:
 │       │   ├── 2026-06-13-level-0-market-intelligence.md
 │       │   ├── 2026-06-13-level-1-research-packets-paper-trading.md
 │       │   ├── 2026-06-13-level-1b-paper-analytics-risk-exposure.md
+│       │   ├── 2026-06-13-level-1b-paper-forecast-evidence.md
 │       │   ├── 2026-06-13-level-1b-paper-analytics-history-validation.md
 │       │   ├── 2026-06-13-level-1b-rejections-risk-gates.md
 │       │   ├── 2026-06-13-level-1b-positions-nav.md
@@ -156,6 +171,7 @@ See:
 │       ├── archive.py
 │       ├── cli.py
 │       ├── domain.py
+│       ├── forecast_evidence.py
 │       ├── journal.py
 │       ├── normalize.py
 │       ├── paper.py
@@ -174,6 +190,8 @@ See:
     ├── test_archive.py
     ├── test_cli.py
     ├── test_domain.py
+    ├── test_forecast_evidence.py
+    ├── test_forecast_evidence_scope.py
     ├── test_init.py
     ├── test_journal.py
     ├── test_normalize.py

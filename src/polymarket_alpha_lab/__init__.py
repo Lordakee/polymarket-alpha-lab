@@ -28,6 +28,15 @@ from polymarket_alpha_lab.domain import (
     OrderBookSnapshot,
     OutcomeToken,
 )
+from polymarket_alpha_lab.forecast_evidence import (
+    PaperForecastEvidenceBucket,
+    PaperForecastEvidenceConfig,
+    PaperForecastEvidenceGateResult,
+    PaperForecastEvidenceLog,
+    PaperForecastEvidenceObservation,
+    PaperForecastEvidenceReport,
+    build_paper_forecast_evidence_report,
+)
 from polymarket_alpha_lab.journal import PaperTradeJournal, PaperTradeRecord
 from polymarket_alpha_lab.paper import PaperFill, PaperOrder, simulate_order_book_fill
 from polymarket_alpha_lab.positions import (
@@ -67,6 +76,12 @@ __all__ = [
     "PaperAnalyticsReport",
     "PaperDrawdownPoint",
     "PaperFill",
+    "PaperForecastEvidenceBucket",
+    "PaperForecastEvidenceConfig",
+    "PaperForecastEvidenceGateResult",
+    "PaperForecastEvidenceLog",
+    "PaperForecastEvidenceObservation",
+    "PaperForecastEvidenceReport",
     "PaperNavLog",
     "PaperNavSnapshot",
     "PaperOrder",
@@ -86,6 +101,7 @@ __all__ = [
     "build_paper_analytics_history_report",
     "build_paper_analytics_report",
     "build_paper_drawdown_points",
+    "build_paper_forecast_evidence_report",
     "build_paper_portfolio",
     "build_research_packet",
     "evaluate_research_packet_risk",

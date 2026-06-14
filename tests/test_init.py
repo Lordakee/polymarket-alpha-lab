@@ -19,6 +19,15 @@ from polymarket_alpha_lab.analytics_history import (
     PaperAnalyticsHistoryTrend,
     build_paper_analytics_history_report,
 )
+from polymarket_alpha_lab.forecast_evidence import (
+    PaperForecastEvidenceBucket,
+    PaperForecastEvidenceConfig,
+    PaperForecastEvidenceGateResult,
+    PaperForecastEvidenceLog,
+    PaperForecastEvidenceObservation,
+    PaperForecastEvidenceReport,
+    build_paper_forecast_evidence_report,
+)
 from polymarket_alpha_lab.journal import PaperTradeJournal, PaperTradeRecord
 from polymarket_alpha_lab.paper import PaperFill, PaperOrder, simulate_order_book_fill
 from polymarket_alpha_lab.positions import (
@@ -145,3 +154,27 @@ def test_level_1b_node_4_public_api_exports():
     assert lab.PaperAnalyticsHistoryReport is PaperAnalyticsHistoryReport
     assert lab.PaperAnalyticsHistoryTrend is PaperAnalyticsHistoryTrend
     assert lab.build_paper_analytics_history_report is build_paper_analytics_history_report
+
+
+def test_level_1b_node_5_public_api_exports():
+    expected_exports = {
+        "PaperForecastEvidenceBucket",
+        "PaperForecastEvidenceConfig",
+        "PaperForecastEvidenceGateResult",
+        "PaperForecastEvidenceLog",
+        "PaperForecastEvidenceObservation",
+        "PaperForecastEvidenceReport",
+        "build_paper_forecast_evidence_report",
+    }
+
+    assert expected_exports <= set(lab.__all__)
+    assert lab.PaperForecastEvidenceBucket is PaperForecastEvidenceBucket
+    assert lab.PaperForecastEvidenceConfig is PaperForecastEvidenceConfig
+    assert lab.PaperForecastEvidenceGateResult is PaperForecastEvidenceGateResult
+    assert lab.PaperForecastEvidenceLog is PaperForecastEvidenceLog
+    assert lab.PaperForecastEvidenceObservation is PaperForecastEvidenceObservation
+    assert lab.PaperForecastEvidenceReport is PaperForecastEvidenceReport
+    assert (
+        lab.build_paper_forecast_evidence_report
+        is build_paper_forecast_evidence_report
+    )
