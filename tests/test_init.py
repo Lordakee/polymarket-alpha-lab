@@ -91,6 +91,17 @@ from polymarket_alpha_lab.proposal_review_dossier import (
     TradeProposalReviewDossierSourceRow,
     build_trade_proposal_review_dossier_report,
 )
+from polymarket_alpha_lab.proposal_review_dossier_batch import (
+    TradeProposalReviewDossierBatchConfig,
+    TradeProposalReviewDossierBatchConfigVersionSummary,
+    TradeProposalReviewDossierBatchDuplicateSummary,
+    TradeProposalReviewDossierBatchFindingSummary,
+    TradeProposalReviewDossierBatchGateResult,
+    TradeProposalReviewDossierBatchLog,
+    TradeProposalReviewDossierBatchReport,
+    TradeProposalReviewDossierBatchSourceSummary,
+    build_trade_proposal_review_dossier_batch_report,
+)
 from polymarket_alpha_lab.journal import PaperTradeJournal, PaperTradeRecord
 from polymarket_alpha_lab.paper import PaperFill, PaperOrder, simulate_order_book_fill
 from polymarket_alpha_lab.positions import (
@@ -438,4 +449,50 @@ def test_level_2_node_7_public_api_exports():
     assert (
         lab.build_trade_proposal_review_dossier_report
         is build_trade_proposal_review_dossier_report
+    )
+
+
+def test_level_2_node_8_public_api_exports():
+    expected_exports = {
+        "TradeProposalReviewDossierBatchConfig",
+        "TradeProposalReviewDossierBatchConfigVersionSummary",
+        "TradeProposalReviewDossierBatchDuplicateSummary",
+        "TradeProposalReviewDossierBatchFindingSummary",
+        "TradeProposalReviewDossierBatchGateResult",
+        "TradeProposalReviewDossierBatchLog",
+        "TradeProposalReviewDossierBatchReport",
+        "TradeProposalReviewDossierBatchSourceSummary",
+        "build_trade_proposal_review_dossier_batch_report",
+    }
+
+    assert expected_exports <= set(lab.__all__)
+    assert lab.TradeProposalReviewDossierBatchConfig is TradeProposalReviewDossierBatchConfig
+    assert (
+        lab.TradeProposalReviewDossierBatchConfigVersionSummary
+        is TradeProposalReviewDossierBatchConfigVersionSummary
+    )
+    assert (
+        lab.TradeProposalReviewDossierBatchDuplicateSummary
+        is TradeProposalReviewDossierBatchDuplicateSummary
+    )
+    assert (
+        lab.TradeProposalReviewDossierBatchFindingSummary
+        is TradeProposalReviewDossierBatchFindingSummary
+    )
+    assert (
+        lab.TradeProposalReviewDossierBatchGateResult
+        is TradeProposalReviewDossierBatchGateResult
+    )
+    assert lab.TradeProposalReviewDossierBatchLog is TradeProposalReviewDossierBatchLog
+    assert (
+        lab.TradeProposalReviewDossierBatchReport
+        is TradeProposalReviewDossierBatchReport
+    )
+    assert (
+        lab.TradeProposalReviewDossierBatchSourceSummary
+        is TradeProposalReviewDossierBatchSourceSummary
+    )
+    assert (
+        lab.build_trade_proposal_review_dossier_batch_report
+        is build_trade_proposal_review_dossier_batch_report
     )

@@ -12,7 +12,7 @@ The long-term goal is an automated system that can screen markets, research cand
 
 ## Phase 1 Scope
 
-This repository currently contains the project design, research notes, implementation plans, a read-only market scanner, research packet assembly, bid/ask paper-fill simulation, JSONL paper-trade journaling, paper-only risk gates, rejected-candidate logs, paper position ledgers, executable NAV marks, paper-only portfolio analytics, exposure reports, executable-NAV drawdown reports, paper-only analytics history validation, paper-only forecast evidence reports, paper-only manual-review queues, human-review proposal packet artifacts, append-only proposal-review record artifacts, proposal-review summary report artifacts, proposal-review quality gate artifacts, proposal-review diagnostic artifacts, proposal-review coverage report artifacts, and proposal-review dossier artifacts.
+This repository currently contains the project design, research notes, implementation plans, a read-only market scanner, research packet assembly, bid/ask paper-fill simulation, JSONL paper-trade journaling, paper-only risk gates, rejected-candidate logs, paper position ledgers, executable NAV marks, paper-only portfolio analytics, exposure reports, executable-NAV drawdown reports, paper-only analytics history validation, paper-only forecast evidence reports, paper-only manual-review queues, human-review proposal packet artifacts, append-only proposal-review record artifacts, proposal-review summary report artifacts, proposal-review quality gate artifacts, proposal-review diagnostic artifacts, proposal-review coverage report artifacts, proposal-review dossier artifacts, and proposal-review dossier batch health artifacts.
 
 The current phase does not contain:
 
@@ -239,6 +239,21 @@ Node 7 is exposed through Python APIs:
 - Inspect dossier gates with `TradeProposalReviewDossierGateResult`, source rows with `TradeProposalReviewDossierSourceRow`, and finding rows with `TradeProposalReviewDossierFindingRow`.
 - Persist proposal-review dossier snapshots with `TradeProposalReviewDossierLog(path).append(report)`.
 
+## Level 2 Node 8 Status
+
+Level 2 Node 8 adds report-only proposal-review dossier batch health artifacts over supplied `TradeProposalReviewDossierReport` values. It treats supplied dossier reports as caller-provided audit inputs and summarizes dossier counts, status ratios, config-version rows, duplicate dossier fingerprints, finding summaries, source summaries, and gate rows for audit only; it is not an approval workflow, proposal approval step, approved-proposal selector, latest-decision selector, decision-resolution process, investment ranking, trade recommendation, trade instruction, order instruction, broker request, order request, account action, strategy-promotion signal, or live-execution signal.
+
+It does not fetch market, order-book, price-history, outcome, account, credential, or identity data; read external history or JSONL logs; scrape websites; authenticate; handle credentials/private keys; place, submit, sign, send, create, or cancel orders; open user WebSockets; run heartbeat logic; use trading SDK/broker/execution/transport clients; build broker or order request payloads; reconcile exchange accounts; perform reconciliation; review settlement; approve proposals; select latest decisions; resolve conflicting reviews; rank investments; recommend trades; or perform compliance/legal/geographic analysis.
+
+## Level 2 Node 8 Python API
+
+Node 8 is exposed through Python APIs:
+
+- Configure proposal-review dossier batches with `TradeProposalReviewDossierBatchConfig(config_version="dossier-batch-v1")`.
+- Build proposal-review dossier batch health reports with `build_trade_proposal_review_dossier_batch_report(dossiers, config=config, generated_at=datetime.now(UTC))`, which returns `TradeProposalReviewDossierBatchReport`.
+- Inspect batch gates with `TradeProposalReviewDossierBatchGateResult`, config rows with `TradeProposalReviewDossierBatchConfigVersionSummary`, duplicate rows with `TradeProposalReviewDossierBatchDuplicateSummary`, finding rows with `TradeProposalReviewDossierBatchFindingSummary`, and source rows with `TradeProposalReviewDossierBatchSourceSummary`.
+- Persist proposal-review dossier batch snapshots with `TradeProposalReviewDossierBatchLog(path).append(report)`.
+
 ## Automation Roadmap
 
 The recommended staged path is:
@@ -309,6 +324,7 @@ See:
 │       ├── proposal_packet.py
 │       ├── proposal_review.py
 │       ├── proposal_review_coverage.py
+│       ├── proposal_review_dossier_batch.py
 │       ├── proposal_review_dossier.py
 │       ├── proposal_review_diagnostics.py
 │       ├── proposal_review_quality.py
@@ -341,6 +357,8 @@ See:
     ├── test_proposal_review.py
     ├── test_proposal_review_coverage.py
     ├── test_proposal_review_coverage_scope.py
+    ├── test_proposal_review_dossier_batch.py
+    ├── test_proposal_review_dossier_batch_scope.py
     ├── test_proposal_review_dossier.py
     ├── test_proposal_review_dossier_scope.py
     ├── test_proposal_review_diagnostics.py

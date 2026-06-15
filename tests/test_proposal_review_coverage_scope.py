@@ -27,6 +27,17 @@ EXPECTED_PROPOSAL_REVIEW_DOSSIER_EXPORTS = {
     "TradeProposalReviewDossierSourceRow",
     "build_trade_proposal_review_dossier_report",
 }
+EXPECTED_PROPOSAL_REVIEW_DOSSIER_BATCH_EXPORTS = {
+    "TradeProposalReviewDossierBatchConfig",
+    "TradeProposalReviewDossierBatchGateResult",
+    "TradeProposalReviewDossierBatchConfigVersionSummary",
+    "TradeProposalReviewDossierBatchDuplicateSummary",
+    "TradeProposalReviewDossierBatchFindingSummary",
+    "TradeProposalReviewDossierBatchSourceSummary",
+    "TradeProposalReviewDossierBatchReport",
+    "TradeProposalReviewDossierBatchLog",
+    "build_trade_proposal_review_dossier_batch_report",
+}
 EXPECTED_LEVEL_2_PROPOSAL_PACKET_EXPORTS = {
     "TradeProposalPacket",
     "TradeProposalPacketConfig",
@@ -72,6 +83,7 @@ EXPECTED_LEVEL_2_ARTIFACT_EXPORTS = (
     | EXPECTED_PROPOSAL_REVIEW_DIAGNOSTIC_EXPORTS
     | EXPECTED_PROPOSAL_REVIEW_COVERAGE_EXPORTS
     | EXPECTED_PROPOSAL_REVIEW_DOSSIER_EXPORTS
+    | EXPECTED_PROPOSAL_REVIEW_DOSSIER_BATCH_EXPORTS
 )
 
 ALLOWED_IMPORT_PREFIXES = {

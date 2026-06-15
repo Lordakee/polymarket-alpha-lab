@@ -894,3 +894,42 @@ Expected: push succeeds and final status is clean against `origin/main`.
 - Spec coverage: The plan adds a report-only batch observability layer over supplied dossier reports and does not add fetching, scraping, JSONL reads, proposal approval, decision resolution, investment ranking, trade recommendations, credential handling, order placement, settlement/reconciliation work, or compliance/legal/geographic analysis.
 - Placeholder scan: No implementation task uses TBD/TODO language. Public API, status rules, validation rules, scope tests, verification commands, opencode review policy, and handoff fields are specified.
 - Type consistency: The same names are used throughout: `TradeProposalReviewDossierBatchConfig`, `TradeProposalReviewDossierBatchGateResult`, `TradeProposalReviewDossierBatchConfigVersionSummary`, `TradeProposalReviewDossierBatchDuplicateSummary`, `TradeProposalReviewDossierBatchFindingSummary`, `TradeProposalReviewDossierBatchSourceSummary`, `TradeProposalReviewDossierBatchReport`, `TradeProposalReviewDossierBatchLog`, and `build_trade_proposal_review_dossier_batch_report`.
+
+## Handoff Summary
+
+- Node completed: Level 2 Node 8 proposal-review dossier batch health.
+- Commit: pending at handoff-write time; final assistant response must report commit hash after commit.
+- Pushed: pending at handoff-write time; final assistant response must report push result after push.
+- Repo status before commit:
+  - `## main...origin/main`
+  - Modified: `README.md`, `src/polymarket_alpha_lab/__init__.py`, `tests/test_analytics_history_scope.py`, `tests/test_analytics_scope.py`, `tests/test_forecast_evidence_scope.py`, `tests/test_init.py`, `tests/test_manual_review_queue_scope.py`, `tests/test_proposal_packet_scope.py`, `tests/test_proposal_review_coverage_scope.py`, `tests/test_proposal_review_diagnostics_scope.py`, `tests/test_proposal_review_dossier_scope.py`, `tests/test_proposal_review_quality_scope.py`, `tests/test_proposal_review_scope.py`, `tests/test_proposal_review_summary_scope.py`.
+  - Untracked: `docs/superpowers/plans/2026-06-15-level-2-proposal-evidence-comparison.md`, `src/polymarket_alpha_lab/proposal_review_dossier_batch.py`, `tests/test_proposal_review_dossier_batch.py`, `tests/test_proposal_review_dossier_batch_scope.py`.
+- Verification commands:
+  - `.venv/bin/python -m pytest -q`: `605 passed in 3.97s`.
+  - `git diff --check`: passed with exit 0.
+  - `codegraph sync`: passed; synced changed files.
+  - `codegraph status .`: index is up to date.
+  - opencode implementation review: `Critical findings: 0; Important findings: 0; Minor findings: 2; Verdict: Proceed`.
+  - opencode next-plan review for `2026-06-15-level-2-proposal-evidence-comparison.md`: first pass `Critical findings: 0; Important findings: 3; Minor findings: 3; Verdict: Proceed with fixes`; after plan fixes, re-review `Critical findings: 0; Important findings: 0; Minor findings: 3; Verdict: Proceed`.
+- Files changed:
+  - `src/polymarket_alpha_lab/proposal_review_dossier_batch.py`
+  - `src/polymarket_alpha_lab/__init__.py`
+  - `tests/test_proposal_review_dossier_batch.py`
+  - `tests/test_proposal_review_dossier_batch_scope.py`
+  - `tests/test_init.py`
+  - `tests/test_analytics_scope.py`
+  - `tests/test_analytics_history_scope.py`
+  - `tests/test_forecast_evidence_scope.py`
+  - `tests/test_manual_review_queue_scope.py`
+  - `tests/test_proposal_packet_scope.py`
+  - `tests/test_proposal_review_scope.py`
+  - `tests/test_proposal_review_summary_scope.py`
+  - `tests/test_proposal_review_quality_scope.py`
+  - `tests/test_proposal_review_diagnostics_scope.py`
+  - `tests/test_proposal_review_coverage_scope.py`
+  - `tests/test_proposal_review_dossier_scope.py`
+  - `README.md`
+  - `docs/superpowers/plans/2026-06-15-level-2-proposal-review-dossier-batch-health.md`
+  - `docs/superpowers/plans/2026-06-15-level-2-proposal-evidence-comparison.md`
+- Uncommitted files after push: pending at handoff-write time; final assistant response must report post-push status.
+- Next safe step: Level 2 Node 9 proposal evidence comparison can consume supplied `PaperForecastEvidenceReport` and `TradeProposalReviewDossierBatchReport` values, but it must remain report-only and require a fresh opencode-reviewed implementation pass before code changes.

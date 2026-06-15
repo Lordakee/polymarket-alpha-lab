@@ -100,6 +100,17 @@ from polymarket_alpha_lab.proposal_review_dossier import (
     TradeProposalReviewDossierSourceRow,
     build_trade_proposal_review_dossier_report,
 )
+from polymarket_alpha_lab.proposal_review_dossier_batch import (
+    TradeProposalReviewDossierBatchConfig,
+    TradeProposalReviewDossierBatchConfigVersionSummary,
+    TradeProposalReviewDossierBatchDuplicateSummary,
+    TradeProposalReviewDossierBatchFindingSummary,
+    TradeProposalReviewDossierBatchGateResult,
+    TradeProposalReviewDossierBatchLog,
+    TradeProposalReviewDossierBatchReport,
+    TradeProposalReviewDossierBatchSourceSummary,
+    build_trade_proposal_review_dossier_batch_report,
+)
 from polymarket_alpha_lab.journal import PaperTradeJournal, PaperTradeRecord
 from polymarket_alpha_lab.paper import PaperFill, PaperOrder, simulate_order_book_fill
 from polymarket_alpha_lab.positions import (
@@ -184,6 +195,14 @@ __all__ = [
     "TradeProposalReviewDiagnosticReport",
     "TradeProposalReviewDiagnosticSourceRow",
     "TradeProposalReviewDossierConfig",
+    "TradeProposalReviewDossierBatchConfig",
+    "TradeProposalReviewDossierBatchConfigVersionSummary",
+    "TradeProposalReviewDossierBatchDuplicateSummary",
+    "TradeProposalReviewDossierBatchFindingSummary",
+    "TradeProposalReviewDossierBatchGateResult",
+    "TradeProposalReviewDossierBatchLog",
+    "TradeProposalReviewDossierBatchReport",
+    "TradeProposalReviewDossierBatchSourceSummary",
     "TradeProposalReviewDossierFindingRow",
     "TradeProposalReviewDossierGateResult",
     "TradeProposalReviewDossierLog",
@@ -209,6 +228,7 @@ __all__ = [
     "build_research_packet",
     "build_trade_proposal_packet",
     "build_trade_proposal_review_coverage_report",
+    "build_trade_proposal_review_dossier_batch_report",
     "build_trade_proposal_review_diagnostic_report",
     "build_trade_proposal_review_dossier_report",
     "build_trade_proposal_review_quality_report",
