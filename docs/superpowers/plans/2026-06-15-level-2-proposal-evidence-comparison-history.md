@@ -6,7 +6,7 @@
 
 **Architecture:** Create a focused `proposal_evidence_comparison_history.py` module that accepts only in-memory `TradeProposalEvidenceComparisonReport` objects from Level 2 Node 9. It clones/revalidates each comparison report tree, summarizes status counts, finding-code frequencies, config-version coverage, source-status transitions, and rate gates, then optionally appends a validated JSONL snapshot. The artifact is an offline divergence proxy only: it never reads logs, fetches outcomes, ranks investments, recommends trades, approves proposals, handles credentials, or touches execution surfaces.
 
-**Tech Stack:** Python 3.11+, standard library only, frozen dataclasses, `Decimal`, UTC `datetime`, JSONL append-only persistence, pytest, CodeGraph, and local opencode review with model `zhipuai-coding-plan/glm-5.2` using variant `max`.
+**Tech Stack:** Python 3.11+, standard library only, frozen dataclasses, `Decimal`, UTC `datetime`, JSONL append-only persistence, pytest, CodeGraph, and local Claude Code review with model `claude-opus-4-8` using effort `max`.
 
 ---
 
@@ -568,7 +568,7 @@ Run:
 
 Expected: PASS after implementation.
 
-## Task 5: Verification, opencode Review, Handoff, Commit, Push
+## Task 5: Verification, Claude Review, Handoff, Commit, Push
 
 **Files:**
 
@@ -593,9 +593,9 @@ Expected:
 - CodeGraph: index up to date.
 - Git status: only intended Node 10 files modified/untracked.
 
-- [ ] **Step 2: opencode implementation review**
+- [ ] **Step 2: Claude Code implementation review**
 
-Run local opencode with model `zhipuai-coding-plan/glm-5.2` and variant `max`. The implementation review prompt must treat any raw upstream report dependency beyond Node 9 comparison reports, raw observation/proposal/review dependency, data fetch, external-history load, JSONL read, scraping/browser automation, auth/credential/wallet/broker/execution/request/session/websocket/order surface, approval workflow, approved-proposal selection, decision resolution, ranking, recommendation, promotion, outcome loading, realized false-positive analysis, profitability analysis, settlement, reconciliation, manual execution import, or compliance/legal/geographic analysis as Critical.
+Run local Claude Code with model `claude-opus-4-8` and effort `max`. The implementation review prompt must treat any raw upstream report dependency beyond Node 9 comparison reports, raw observation/proposal/review dependency, data fetch, external-history load, JSONL read, scraping/browser automation, auth/credential/wallet/broker/execution/request/session/websocket/order surface, approval workflow, approved-proposal selection, decision resolution, ranking, recommendation, promotion, outcome loading, realized false-positive analysis, profitability analysis, settlement, reconciliation, manual execution import, or compliance/legal/geographic analysis as Critical.
 
 Accepted terminal state: `Critical findings: 0`, `Important findings: 0`, and `Verdict: Proceed` or `Verdict: Proceed with fixes`. Fix every Critical and Important finding before commit.
 
@@ -609,13 +609,38 @@ Append actual evidence:
 - Node completed: Level 2 Node 10 proposal evidence comparison history.
 - Commit: pending at handoff-write time; final assistant response must report commit hash after commit.
 - Pushed: pending at handoff-write time; final assistant response must report push result after push.
-- Repo status before commit: <git status output>
+- Repo status before commit:
+  - `README.md`
+  - `docs/superpowers/plans/2026-06-15-level-2-proposal-evidence-comparison-history.md`
+  - `src/polymarket_alpha_lab/__init__.py`
+  - `tests/test_analytics_history_scope.py`
+  - `tests/test_analytics_scope.py`
+  - `tests/test_forecast_evidence_scope.py`
+  - `tests/test_init.py`
+  - `tests/test_manual_review_queue_scope.py`
+  - `tests/test_proposal_evidence_comparison_scope.py`
+  - `tests/test_proposal_packet_scope.py`
+  - `tests/test_proposal_review_coverage_scope.py`
+  - `tests/test_proposal_review_diagnostics_scope.py`
+  - `tests/test_proposal_review_dossier_batch_scope.py`
+  - `tests/test_proposal_review_dossier_scope.py`
+  - `tests/test_proposal_review_quality_scope.py`
+  - `tests/test_proposal_review_scope.py`
+  - `tests/test_proposal_review_summary_scope.py`
+  - `docs/superpowers/plans/2026-06-15-level-2-proposal-evidence-comparison-history-batch-health.md`
+  - `src/polymarket_alpha_lab/proposal_evidence_comparison_history.py`
+  - `tests/test_proposal_evidence_comparison_history.py`
+  - `tests/test_proposal_evidence_comparison_history_scope.py`
 - Verification commands:
-  - `.venv/bin/python -m pytest -q`: <pass/fail summary>
-  - `git diff --check`: <pass/fail summary>
-  - `codegraph sync`: <pass/fail summary>
-  - `codegraph status .`: <up-to-date/stale summary>
-  - opencode implementation review: <Critical/Important/Minor counts and verdict>
+  - `.venv/bin/python -m pytest tests/test_proposal_evidence_comparison_history.py -q`: `10 passed`.
+  - `.venv/bin/python -m pytest tests/test_proposal_evidence_comparison_history.py tests/test_proposal_evidence_comparison_history_scope.py tests/test_init.py -q`: `41 passed`.
+  - `.venv/bin/python -m pytest -q`: `652 passed`.
+  - `git diff --check`: exit 0 with no output.
+  - `codegraph sync`: already up to date.
+  - `codegraph status .`: index up to date; 70 files, 2,464 nodes, 7,885 edges.
+  - Secret scan over tracked and untracked project files: no matches; `SECRET_FINDINGS_NONE`.
+  - Claude Code implementation review, `claude-opus-4-8`, effort `max`: `Critical findings: 0; Important findings: 0; Minor findings: 0; Verdict: Proceed`.
+  - Claude Code Node 11 plan review, `claude-opus-4-8`, effort `max`: `Critical findings: 0; Important findings: 0; Minor findings: 0; Verdict: Proceed`.
 - Files changed:
   - `src/polymarket_alpha_lab/proposal_evidence_comparison_history.py`
   - `src/polymarket_alpha_lab/__init__.py`
@@ -625,8 +650,9 @@ Append actual evidence:
   - scope allowlist tests
   - `README.md`
   - `docs/superpowers/plans/2026-06-15-level-2-proposal-evidence-comparison-history.md`
+  - `docs/superpowers/plans/2026-06-15-level-2-proposal-evidence-comparison-history-batch-health.md`
 - Uncommitted files after push: pending at handoff-write time; final assistant response must report post-push status.
-- Next safe step: forecast and review dossier evidence can be compared by human analysts using the history report, but any automated routing, ranking, recommendation, settlement/outcome analysis, or execution planning requires a new opencode-reviewed plan.
+- Next safe step: forecast and review dossier evidence can be compared by human analysts using the history report, but any automated routing, ranking, recommendation, settlement/outcome analysis, or execution planning requires a new Claude-reviewed plan.
 ```
 
 - [ ] **Step 4: Commit and push**
@@ -643,5 +669,5 @@ Expected: push succeeds and final status is clean against `origin/main`.
 ## Self-Review
 
 - Spec coverage: The plan creates a supplied-input, report-only comparison-history layer over Node 9 reports and does not add fetching, scraping, JSONL reads, raw upstream report ingestion, outcome loading, realized false-positive analysis, profitability analysis, proposal approval, decision resolution, investment ranking, trade recommendations, credential handling, order placement, settlement/reconciliation work, manual execution import, or compliance/legal/geographic analysis.
-- Placeholder scan: The plan contains no TBD/TODO placeholders. Public API, statuses, gate rules, counting rules, validation rules, scope tests, README requirements, verification commands, opencode review policy, and handoff fields are specified.
+- Placeholder scan: The plan contains no TBD/TODO placeholders. Public API, statuses, gate rules, counting rules, validation rules, scope tests, README requirements, verification commands, Claude review policy, and handoff fields are specified.
 - Type consistency: The same names are used throughout: `TradeProposalEvidenceComparisonHistoryConfig`, `TradeProposalEvidenceComparisonHistoryGateResult`, `TradeProposalEvidenceComparisonHistoryStatusRow`, `TradeProposalEvidenceComparisonHistoryFindingSummary`, `TradeProposalEvidenceComparisonHistoryConfigVersionSummary`, `TradeProposalEvidenceComparisonHistorySourceTransition`, `TradeProposalEvidenceComparisonHistoryReport`, `TradeProposalEvidenceComparisonHistoryLog`, and `build_trade_proposal_evidence_comparison_history_report`.

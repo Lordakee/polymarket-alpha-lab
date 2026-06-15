@@ -1,4 +1,7 @@
 import polymarket_alpha_lab as lab
+from polymarket_alpha_lab import (
+    proposal_evidence_comparison_history as comparison_history,
+)
 from polymarket_alpha_lab.analytics import (
     PaperAnalyticsBreach,
     PaperAnalyticsBucket,
@@ -111,6 +114,17 @@ from polymarket_alpha_lab.proposal_evidence_comparison import (
     TradeProposalEvidenceComparisonReport,
     TradeProposalEvidenceComparisonSourceRow,
     build_trade_proposal_evidence_comparison_report,
+)
+from polymarket_alpha_lab.proposal_evidence_comparison_history import (
+    TradeProposalEvidenceComparisonHistoryConfig,
+    TradeProposalEvidenceComparisonHistoryConfigVersionSummary,
+    TradeProposalEvidenceComparisonHistoryFindingSummary,
+    TradeProposalEvidenceComparisonHistoryGateResult,
+    TradeProposalEvidenceComparisonHistoryLog,
+    TradeProposalEvidenceComparisonHistoryReport,
+    TradeProposalEvidenceComparisonHistorySourceTransition,
+    TradeProposalEvidenceComparisonHistoryStatusRow,
+    build_trade_proposal_evidence_comparison_history_report,
 )
 from polymarket_alpha_lab.journal import PaperTradeJournal, PaperTradeRecord
 from polymarket_alpha_lab.paper import PaperFill, PaperOrder, simulate_order_book_fill
@@ -550,3 +564,67 @@ def test_level_2_node_9_public_api_exports():
         lab.build_trade_proposal_evidence_comparison_report
         is build_trade_proposal_evidence_comparison_report
     )
+
+
+def test_level_2_node_10_public_api_exports():
+    expected_exports = {
+        "TradeProposalEvidenceComparisonHistoryConfig",
+        "TradeProposalEvidenceComparisonHistoryConfigVersionSummary",
+        "TradeProposalEvidenceComparisonHistoryFindingSummary",
+        "TradeProposalEvidenceComparisonHistoryGateResult",
+        "TradeProposalEvidenceComparisonHistoryLog",
+        "TradeProposalEvidenceComparisonHistoryReport",
+        "TradeProposalEvidenceComparisonHistorySourceTransition",
+        "TradeProposalEvidenceComparisonHistoryStatusRow",
+        "build_trade_proposal_evidence_comparison_history_report",
+    }
+
+    assert expected_exports <= set(lab.__all__)
+    assert (
+        lab.TradeProposalEvidenceComparisonHistoryConfig
+        is TradeProposalEvidenceComparisonHistoryConfig
+    )
+    assert (
+        lab.TradeProposalEvidenceComparisonHistoryConfigVersionSummary
+        is TradeProposalEvidenceComparisonHistoryConfigVersionSummary
+    )
+    assert (
+        lab.TradeProposalEvidenceComparisonHistoryFindingSummary
+        is TradeProposalEvidenceComparisonHistoryFindingSummary
+    )
+    assert (
+        lab.TradeProposalEvidenceComparisonHistoryGateResult
+        is TradeProposalEvidenceComparisonHistoryGateResult
+    )
+    assert (
+        lab.TradeProposalEvidenceComparisonHistoryLog
+        is TradeProposalEvidenceComparisonHistoryLog
+    )
+    assert (
+        lab.TradeProposalEvidenceComparisonHistoryReport
+        is TradeProposalEvidenceComparisonHistoryReport
+    )
+    assert (
+        lab.TradeProposalEvidenceComparisonHistorySourceTransition
+        is TradeProposalEvidenceComparisonHistorySourceTransition
+    )
+    assert (
+        lab.TradeProposalEvidenceComparisonHistoryStatusRow
+        is TradeProposalEvidenceComparisonHistoryStatusRow
+    )
+    assert (
+        lab.build_trade_proposal_evidence_comparison_history_report
+        is build_trade_proposal_evidence_comparison_history_report
+    )
+
+
+def test_public_api_does_not_export_private_or_boundary_constants():
+    boundary_constant = (
+        "DEFAULT_PROPOSAL_EVIDENCE_COMPARISON_HISTORY_BOUNDARY_STATEMENT"
+    )
+
+    assert hasattr(comparison_history, boundary_constant)
+    assert boundary_constant not in lab.__all__
+    assert not hasattr(lab, boundary_constant)
+    assert not any(name.startswith("_") for name in lab.__all__)
+    assert not any("BOUNDARY" in name for name in lab.__all__)

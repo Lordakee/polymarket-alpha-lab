@@ -12,7 +12,7 @@ The long-term goal is an automated system that can screen markets, research cand
 
 ## Phase 1 Scope
 
-This repository currently contains the project design, research notes, implementation plans, a read-only market scanner, research packet assembly, bid/ask paper-fill simulation, JSONL paper-trade journaling, paper-only risk gates, rejected-candidate logs, paper position ledgers, executable NAV marks, paper-only portfolio analytics, exposure reports, executable-NAV drawdown reports, paper-only analytics history validation, paper-only forecast evidence reports, paper-only manual-review queues, human-review proposal packet artifacts, append-only proposal-review record artifacts, proposal-review summary report artifacts, proposal-review quality gate artifacts, proposal-review diagnostic artifacts, proposal-review coverage report artifacts, proposal-review dossier artifacts, proposal-review dossier batch health artifacts, and proposal evidence comparison artifacts.
+This repository currently contains the project design, research notes, implementation plans, a read-only market scanner, research packet assembly, bid/ask paper-fill simulation, JSONL paper-trade journaling, paper-only risk gates, rejected-candidate logs, paper position ledgers, executable NAV marks, paper-only portfolio analytics, exposure reports, executable-NAV drawdown reports, paper-only analytics history validation, paper-only forecast evidence reports, paper-only manual-review queues, human-review proposal packet artifacts, append-only proposal-review record artifacts, proposal-review summary report artifacts, proposal-review quality gate artifacts, proposal-review diagnostic artifacts, proposal-review coverage report artifacts, proposal-review dossier artifacts, proposal-review dossier batch health artifacts, proposal evidence comparison artifacts, and proposal evidence comparison history artifacts.
 
 The current phase does not contain:
 
@@ -269,6 +269,21 @@ Node 9 is exposed through Python APIs:
 - Inspect comparison gates with `TradeProposalEvidenceComparisonGateResult`, source rows with `TradeProposalEvidenceComparisonSourceRow`, metric rows with `TradeProposalEvidenceComparisonMetricRow`, and finding rows with `TradeProposalEvidenceComparisonFindingRow`.
 - Persist comparison snapshots with `TradeProposalEvidenceComparisonLog(path).append(report)`.
 
+## Level 2 Node 10 Status
+
+Level 2 Node 10 adds report-only proposal evidence comparison history summaries over caller-supplied, in-memory `TradeProposalEvidenceComparisonReport` values from Node 9. It summarizes comparison statuses, divergence proxy rates, finding-code frequencies, config-version coverage, and source-status transitions for audit only; it is not an approval workflow, proposal approval step, approved-proposal selector, latest-decision selector, decision-resolution process, investment ranking, trade recommendation, strategy-promotion signal, trade instruction, order instruction, broker request, order request, account action, outcome loader, realized false-positive analysis, profitability analysis, compliance surface, geographic surface, or live-execution signal.
+
+It rejects loader-shaped inputs such as paths, mappings, strings, and bytes. It does not fetch market, order-book, price-history, outcome, account, credential, identity, or settlement data; read external history or JSONL logs; provide JSONL readers, loaders, replay, or from-file APIs; scrape websites; use browsers or browser sessions; authenticate; handle wallets, credentials, or private keys; place, submit, sign, send, create, or cancel orders; open user WebSockets; run heartbeat logic; use trading SDK/broker/execution/transport clients; build broker or order request payloads; reconcile exchange accounts; perform reconciliation; review settlement; import manual executions; approve proposals; select latest decisions; resolve conflicting reviews; rank investments; recommend trades; or perform compliance/legal/geographic analysis.
+
+## Level 2 Node 10 Python API
+
+Node 10 is exposed through Python APIs:
+
+- Configure comparison-history reports with `TradeProposalEvidenceComparisonHistoryConfig(config_version="comparison-history-v1")`.
+- Build comparison-history reports from supplied, in-memory Node 9 `TradeProposalEvidenceComparisonReport` values with `build_trade_proposal_evidence_comparison_history_report(comparisons, config=config, generated_at=datetime.now(UTC))`, which returns `TradeProposalEvidenceComparisonHistoryReport`.
+- Inspect history gates with `TradeProposalEvidenceComparisonHistoryGateResult`, status rows with `TradeProposalEvidenceComparisonHistoryStatusRow`, finding summaries with `TradeProposalEvidenceComparisonHistoryFindingSummary`, config-version summaries with `TradeProposalEvidenceComparisonHistoryConfigVersionSummary`, and source transitions with `TradeProposalEvidenceComparisonHistorySourceTransition`.
+- Optionally append already-built comparison-history snapshots with `TradeProposalEvidenceComparisonHistoryLog(path).append(report)`; there is no JSONL reader, loader, replay, or from-file API.
+
 ## Automation Roadmap
 
 The recommended staged path is:
@@ -309,6 +324,7 @@ See:
 │       │   ├── 2026-06-14-level-1b-paper-manual-review-queue.md
 │       │   ├── 2026-06-14-level-2-proposal-packets.md
 │       │   ├── 2026-06-15-level-2-proposal-evidence-comparison.md
+│       │   ├── 2026-06-15-level-2-proposal-evidence-comparison-history.md
 │       │   ├── 2026-06-15-level-2-proposal-review-coverage.md
 │       │   ├── 2026-06-15-level-2-proposal-review-dossier-batch-health.md
 │       │   ├── 2026-06-15-level-2-proposal-review-dossier.md
@@ -338,6 +354,7 @@ See:
 │       ├── pipeline.py
 │       ├── positions.py
 │       ├── proposal_evidence_comparison.py
+│       ├── proposal_evidence_comparison_history.py
 │       ├── proposal_packet.py
 │       ├── proposal_review.py
 │       ├── proposal_review_coverage.py
@@ -371,6 +388,8 @@ See:
     ├── test_positions.py
     ├── test_proposal_evidence_comparison.py
     ├── test_proposal_evidence_comparison_scope.py
+    ├── test_proposal_evidence_comparison_history.py
+    ├── test_proposal_evidence_comparison_history_scope.py
     ├── test_proposal_packet.py
     ├── test_proposal_packet_scope.py
     ├── test_proposal_review.py

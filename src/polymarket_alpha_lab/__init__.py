@@ -121,6 +121,17 @@ from polymarket_alpha_lab.proposal_evidence_comparison import (
     TradeProposalEvidenceComparisonSourceRow,
     build_trade_proposal_evidence_comparison_report,
 )
+from polymarket_alpha_lab.proposal_evidence_comparison_history import (
+    TradeProposalEvidenceComparisonHistoryConfig,
+    TradeProposalEvidenceComparisonHistoryConfigVersionSummary,
+    TradeProposalEvidenceComparisonHistoryFindingSummary,
+    TradeProposalEvidenceComparisonHistoryGateResult,
+    TradeProposalEvidenceComparisonHistoryLog,
+    TradeProposalEvidenceComparisonHistoryReport,
+    TradeProposalEvidenceComparisonHistorySourceTransition,
+    TradeProposalEvidenceComparisonHistoryStatusRow,
+    build_trade_proposal_evidence_comparison_history_report,
+)
 from polymarket_alpha_lab.journal import PaperTradeJournal, PaperTradeRecord
 from polymarket_alpha_lab.paper import PaperFill, PaperOrder, simulate_order_book_fill
 from polymarket_alpha_lab.positions import (
@@ -190,6 +201,14 @@ __all__ = [
     "TradeProposalEvidenceComparisonConfig",
     "TradeProposalEvidenceComparisonFindingRow",
     "TradeProposalEvidenceComparisonGateResult",
+    "TradeProposalEvidenceComparisonHistoryConfig",
+    "TradeProposalEvidenceComparisonHistoryConfigVersionSummary",
+    "TradeProposalEvidenceComparisonHistoryFindingSummary",
+    "TradeProposalEvidenceComparisonHistoryGateResult",
+    "TradeProposalEvidenceComparisonHistoryLog",
+    "TradeProposalEvidenceComparisonHistoryReport",
+    "TradeProposalEvidenceComparisonHistorySourceTransition",
+    "TradeProposalEvidenceComparisonHistoryStatusRow",
     "TradeProposalEvidenceComparisonLog",
     "TradeProposalEvidenceComparisonMetricRow",
     "TradeProposalEvidenceComparisonReport",
@@ -243,6 +262,7 @@ __all__ = [
     "build_paper_manual_review_queue",
     "build_paper_portfolio",
     "build_research_packet",
+    "build_trade_proposal_evidence_comparison_history_report",
     "build_trade_proposal_evidence_comparison_report",
     "build_trade_proposal_packet",
     "build_trade_proposal_review_coverage_report",
