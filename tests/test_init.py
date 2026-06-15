@@ -102,6 +102,16 @@ from polymarket_alpha_lab.proposal_review_dossier_batch import (
     TradeProposalReviewDossierBatchSourceSummary,
     build_trade_proposal_review_dossier_batch_report,
 )
+from polymarket_alpha_lab.proposal_evidence_comparison import (
+    TradeProposalEvidenceComparisonConfig,
+    TradeProposalEvidenceComparisonFindingRow,
+    TradeProposalEvidenceComparisonGateResult,
+    TradeProposalEvidenceComparisonLog,
+    TradeProposalEvidenceComparisonMetricRow,
+    TradeProposalEvidenceComparisonReport,
+    TradeProposalEvidenceComparisonSourceRow,
+    build_trade_proposal_evidence_comparison_report,
+)
 from polymarket_alpha_lab.journal import PaperTradeJournal, PaperTradeRecord
 from polymarket_alpha_lab.paper import PaperFill, PaperOrder, simulate_order_book_fill
 from polymarket_alpha_lab.positions import (
@@ -495,4 +505,48 @@ def test_level_2_node_8_public_api_exports():
     assert (
         lab.build_trade_proposal_review_dossier_batch_report
         is build_trade_proposal_review_dossier_batch_report
+    )
+
+
+def test_level_2_node_9_public_api_exports():
+    expected_exports = {
+        "TradeProposalEvidenceComparisonConfig",
+        "TradeProposalEvidenceComparisonFindingRow",
+        "TradeProposalEvidenceComparisonGateResult",
+        "TradeProposalEvidenceComparisonLog",
+        "TradeProposalEvidenceComparisonMetricRow",
+        "TradeProposalEvidenceComparisonReport",
+        "TradeProposalEvidenceComparisonSourceRow",
+        "build_trade_proposal_evidence_comparison_report",
+    }
+
+    assert expected_exports <= set(lab.__all__)
+    assert (
+        lab.TradeProposalEvidenceComparisonConfig
+        is TradeProposalEvidenceComparisonConfig
+    )
+    assert (
+        lab.TradeProposalEvidenceComparisonFindingRow
+        is TradeProposalEvidenceComparisonFindingRow
+    )
+    assert (
+        lab.TradeProposalEvidenceComparisonGateResult
+        is TradeProposalEvidenceComparisonGateResult
+    )
+    assert lab.TradeProposalEvidenceComparisonLog is TradeProposalEvidenceComparisonLog
+    assert (
+        lab.TradeProposalEvidenceComparisonMetricRow
+        is TradeProposalEvidenceComparisonMetricRow
+    )
+    assert (
+        lab.TradeProposalEvidenceComparisonReport
+        is TradeProposalEvidenceComparisonReport
+    )
+    assert (
+        lab.TradeProposalEvidenceComparisonSourceRow
+        is TradeProposalEvidenceComparisonSourceRow
+    )
+    assert (
+        lab.build_trade_proposal_evidence_comparison_report
+        is build_trade_proposal_evidence_comparison_report
     )

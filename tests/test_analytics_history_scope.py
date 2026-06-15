@@ -82,6 +82,16 @@ EXPECTED_PROPOSAL_REVIEW_DOSSIER_BATCH_EXPORTS = {
     "TradeProposalReviewDossierBatchLog",
     "build_trade_proposal_review_dossier_batch_report",
 }
+EXPECTED_PROPOSAL_EVIDENCE_COMPARISON_EXPORTS = {
+    "TradeProposalEvidenceComparisonConfig",
+    "TradeProposalEvidenceComparisonGateResult",
+    "TradeProposalEvidenceComparisonSourceRow",
+    "TradeProposalEvidenceComparisonMetricRow",
+    "TradeProposalEvidenceComparisonFindingRow",
+    "TradeProposalEvidenceComparisonReport",
+    "TradeProposalEvidenceComparisonLog",
+    "build_trade_proposal_evidence_comparison_report",
+}
 EXPECTED_LEVEL_2_ARTIFACT_EXPORTS = (
     EXPECTED_LEVEL_2_PROPOSAL_PACKET_EXPORTS
     | EXPECTED_PROPOSAL_REVIEW_EXPORTS
@@ -91,6 +101,7 @@ EXPECTED_LEVEL_2_ARTIFACT_EXPORTS = (
     | EXPECTED_PROPOSAL_REVIEW_COVERAGE_EXPORTS
     | EXPECTED_PROPOSAL_REVIEW_DOSSIER_EXPORTS
     | EXPECTED_PROPOSAL_REVIEW_DOSSIER_BATCH_EXPORTS
+    | EXPECTED_PROPOSAL_EVIDENCE_COMPARISON_EXPORTS
 )
 
 ALLOWED_IMPORT_PREFIXES = {

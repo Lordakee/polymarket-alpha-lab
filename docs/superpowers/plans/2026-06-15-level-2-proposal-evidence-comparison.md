@@ -582,3 +582,66 @@ Expected: push succeeds and final status is clean against `origin/main`.
 - Spec coverage: The plan creates a supplied-input, report-only evidence comparison layer and does not add fetching, scraping, JSONL reads, proposal approval, decision resolution, investment ranking, trade recommendations, credential handling, order placement, settlement/reconciliation work, manual execution import, or compliance/legal/geographic analysis.
 - Placeholder scan: The plan contains no TBD/TODO placeholders. Public API, statuses, gate rules, validation rules, scope tests, README requirements, verification commands, opencode review policy, and handoff fields are specified.
 - Type consistency: The same names are used throughout: `TradeProposalEvidenceComparisonConfig`, `TradeProposalEvidenceComparisonGateResult`, `TradeProposalEvidenceComparisonSourceRow`, `TradeProposalEvidenceComparisonMetricRow`, `TradeProposalEvidenceComparisonFindingRow`, `TradeProposalEvidenceComparisonReport`, `TradeProposalEvidenceComparisonLog`, and `build_trade_proposal_evidence_comparison_report`.
+
+## Handoff Summary
+
+- Node completed: Level 2 Node 9 proposal evidence comparison.
+- Commit: pending at handoff-write time; final assistant response must report commit hash after commit.
+- Pushed: pending at handoff-write time; final assistant response must report push result after push.
+- Repo status before commit:
+
+```text
+## main...origin/main
+ M README.md
+ M docs/superpowers/plans/2026-06-15-level-2-proposal-evidence-comparison.md
+ M src/polymarket_alpha_lab/__init__.py
+ M tests/test_analytics_history_scope.py
+ M tests/test_analytics_scope.py
+ M tests/test_forecast_evidence_scope.py
+ M tests/test_init.py
+ M tests/test_manual_review_queue_scope.py
+ M tests/test_proposal_packet_scope.py
+ M tests/test_proposal_review_coverage_scope.py
+ M tests/test_proposal_review_diagnostics_scope.py
+ M tests/test_proposal_review_dossier_batch_scope.py
+ M tests/test_proposal_review_dossier_scope.py
+ M tests/test_proposal_review_quality_scope.py
+ M tests/test_proposal_review_scope.py
+ M tests/test_proposal_review_summary_scope.py
+?? docs/superpowers/plans/2026-06-15-level-2-proposal-evidence-comparison-history.md
+?? src/polymarket_alpha_lab/proposal_evidence_comparison.py
+?? tests/test_proposal_evidence_comparison.py
+?? tests/test_proposal_evidence_comparison_scope.py
+```
+
+- Verification commands:
+  - `.venv/bin/python -m pytest -q`: `627 passed in 4.51s`
+  - `git diff --check`: exit 0, no output
+  - `codegraph sync`: already up to date
+  - `codegraph status .`: index up to date, 67 Python files, 2,286 nodes, 7,378 edges
+  - opencode implementation review: Critical 0, Important 0, Minor 3, Verdict: Proceed
+  - opencode next-stage Node 10 plan first review: Critical 0, Important 2, Minor 4, Verdict: Proceed with fixes
+  - opencode next-stage Node 10 plan re-review: Critical 0, Important 0, Minor 3, Verdict: Proceed
+- Files changed:
+  - `src/polymarket_alpha_lab/proposal_evidence_comparison.py`
+  - `src/polymarket_alpha_lab/__init__.py`
+  - `tests/test_proposal_evidence_comparison.py`
+  - `tests/test_proposal_evidence_comparison_scope.py`
+  - `tests/test_init.py`
+  - `tests/test_analytics_scope.py`
+  - `tests/test_analytics_history_scope.py`
+  - `tests/test_forecast_evidence_scope.py`
+  - `tests/test_manual_review_queue_scope.py`
+  - `tests/test_proposal_packet_scope.py`
+  - `tests/test_proposal_review_scope.py`
+  - `tests/test_proposal_review_summary_scope.py`
+  - `tests/test_proposal_review_quality_scope.py`
+  - `tests/test_proposal_review_diagnostics_scope.py`
+  - `tests/test_proposal_review_coverage_scope.py`
+  - `tests/test_proposal_review_dossier_scope.py`
+  - `tests/test_proposal_review_dossier_batch_scope.py`
+  - `README.md`
+  - `docs/superpowers/plans/2026-06-15-level-2-proposal-evidence-comparison.md`
+  - `docs/superpowers/plans/2026-06-15-level-2-proposal-evidence-comparison-history.md`
+- Uncommitted files after push: pending at handoff-write time; final assistant response must report post-push status.
+- Next safe step: implement the opencode-reviewed Level 2 Node 10 proposal evidence comparison history plan, keeping it report-only over supplied Node 9 comparison reports and avoiding JSONL readers, data fetching, approval, ranking, recommendation, outcome/settlement analysis, credentials, and execution surfaces.

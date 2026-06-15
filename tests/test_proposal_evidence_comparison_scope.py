@@ -3,32 +3,22 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-PROPOSAL_REVIEW_DOSSIER_PATH = (
-    REPO_ROOT / "src" / "polymarket_alpha_lab" / "proposal_review_dossier.py"
+PROPOSAL_EVIDENCE_COMPARISON_PATH = (
+    REPO_ROOT / "src" / "polymarket_alpha_lab" / "proposal_evidence_comparison.py"
 )
 PACKAGE_ROOT_PATH = REPO_ROOT / "src" / "polymarket_alpha_lab" / "__init__.py"
 README_PATH = REPO_ROOT / "README.md"
 
 
-EXPECTED_PROPOSAL_REVIEW_DOSSIER_EXPORTS = {
-    "TradeProposalReviewDossierConfig",
-    "TradeProposalReviewDossierFindingRow",
-    "TradeProposalReviewDossierGateResult",
-    "TradeProposalReviewDossierLog",
-    "TradeProposalReviewDossierReport",
-    "TradeProposalReviewDossierSourceRow",
-    "build_trade_proposal_review_dossier_report",
-}
-EXPECTED_PROPOSAL_REVIEW_DOSSIER_BATCH_EXPORTS = {
-    "TradeProposalReviewDossierBatchConfig",
-    "TradeProposalReviewDossierBatchGateResult",
-    "TradeProposalReviewDossierBatchConfigVersionSummary",
-    "TradeProposalReviewDossierBatchDuplicateSummary",
-    "TradeProposalReviewDossierBatchFindingSummary",
-    "TradeProposalReviewDossierBatchSourceSummary",
-    "TradeProposalReviewDossierBatchReport",
-    "TradeProposalReviewDossierBatchLog",
-    "build_trade_proposal_review_dossier_batch_report",
+EXPECTED_PROPOSAL_EVIDENCE_COMPARISON_EXPORTS = {
+    "TradeProposalEvidenceComparisonConfig",
+    "TradeProposalEvidenceComparisonGateResult",
+    "TradeProposalEvidenceComparisonSourceRow",
+    "TradeProposalEvidenceComparisonMetricRow",
+    "TradeProposalEvidenceComparisonFindingRow",
+    "TradeProposalEvidenceComparisonReport",
+    "TradeProposalEvidenceComparisonLog",
+    "build_trade_proposal_evidence_comparison_report",
 }
 EXPECTED_LEVEL_2_PROPOSAL_PACKET_EXPORTS = {
     "TradeProposalPacket",
@@ -76,15 +66,25 @@ EXPECTED_PROPOSAL_REVIEW_COVERAGE_EXPORTS = {
     "TradeProposalReviewCoverageReport",
     "build_trade_proposal_review_coverage_report",
 }
-EXPECTED_PROPOSAL_EVIDENCE_COMPARISON_EXPORTS = {
-    "TradeProposalEvidenceComparisonConfig",
-    "TradeProposalEvidenceComparisonGateResult",
-    "TradeProposalEvidenceComparisonSourceRow",
-    "TradeProposalEvidenceComparisonMetricRow",
-    "TradeProposalEvidenceComparisonFindingRow",
-    "TradeProposalEvidenceComparisonReport",
-    "TradeProposalEvidenceComparisonLog",
-    "build_trade_proposal_evidence_comparison_report",
+EXPECTED_PROPOSAL_REVIEW_DOSSIER_EXPORTS = {
+    "TradeProposalReviewDossierConfig",
+    "TradeProposalReviewDossierFindingRow",
+    "TradeProposalReviewDossierGateResult",
+    "TradeProposalReviewDossierLog",
+    "TradeProposalReviewDossierReport",
+    "TradeProposalReviewDossierSourceRow",
+    "build_trade_proposal_review_dossier_report",
+}
+EXPECTED_PROPOSAL_REVIEW_DOSSIER_BATCH_EXPORTS = {
+    "TradeProposalReviewDossierBatchConfig",
+    "TradeProposalReviewDossierBatchGateResult",
+    "TradeProposalReviewDossierBatchConfigVersionSummary",
+    "TradeProposalReviewDossierBatchDuplicateSummary",
+    "TradeProposalReviewDossierBatchFindingSummary",
+    "TradeProposalReviewDossierBatchSourceSummary",
+    "TradeProposalReviewDossierBatchReport",
+    "TradeProposalReviewDossierBatchLog",
+    "build_trade_proposal_review_dossier_batch_report",
 }
 EXPECTED_LEVEL_2_ARTIFACT_EXPORTS = (
     EXPECTED_LEVEL_2_PROPOSAL_PACKET_EXPORTS
@@ -101,40 +101,28 @@ EXPECTED_LEVEL_2_ARTIFACT_EXPORTS = (
 ALLOWED_IMPORT_PREFIXES = {
     "__future__",
     "json",
-    "collections.abc",
     "dataclasses",
     "datetime",
     "decimal",
     "pathlib",
     "typing",
-    "polymarket_alpha_lab.proposal_review_summary",
-    "polymarket_alpha_lab.proposal_review_quality",
-    "polymarket_alpha_lab.proposal_review_diagnostics",
-    "polymarket_alpha_lab.proposal_review_coverage",
+    "polymarket_alpha_lab.forecast_evidence",
+    "polymarket_alpha_lab.proposal_review_dossier_batch",
 }
 
 EXPECTED_FIRST_PARTY_IMPORTS = {
-    "polymarket_alpha_lab.proposal_review_summary": {
-        "TradeProposalReviewBucketSummary",
-        "TradeProposalReviewReasonCodeSummary",
-        "TradeProposalReviewSummaryReport",
+    "polymarket_alpha_lab.forecast_evidence": {
+        "PaperForecastEvidenceBucket",
+        "PaperForecastEvidenceGateResult",
+        "PaperForecastEvidenceReport",
     },
-    "polymarket_alpha_lab.proposal_review_quality": {
-        "TradeProposalReviewQualityGateResult",
-        "TradeProposalReviewQualityReasonTrend",
-        "TradeProposalReviewQualityReport",
-    },
-    "polymarket_alpha_lab.proposal_review_diagnostics": {
-        "TradeProposalReviewDiagnosticBucketRow",
-        "TradeProposalReviewDiagnosticReasonRow",
-        "TradeProposalReviewDiagnosticReport",
-        "TradeProposalReviewDiagnosticSourceRow",
-    },
-    "polymarket_alpha_lab.proposal_review_coverage": {
-        "TradeProposalReviewCoverageBucketRow",
-        "TradeProposalReviewCoverageGateResult",
-        "TradeProposalReviewCoveragePacketRow",
-        "TradeProposalReviewCoverageReport",
+    "polymarket_alpha_lab.proposal_review_dossier_batch": {
+        "TradeProposalReviewDossierBatchConfigVersionSummary",
+        "TradeProposalReviewDossierBatchDuplicateSummary",
+        "TradeProposalReviewDossierBatchFindingSummary",
+        "TradeProposalReviewDossierBatchGateResult",
+        "TradeProposalReviewDossierBatchReport",
+        "TradeProposalReviewDossierBatchSourceSummary",
     },
 }
 
@@ -145,7 +133,6 @@ FORBIDDEN_IMPORT_PREFIXES = {
     "polymarket_alpha_lab.archive",
     "polymarket_alpha_lab.cli",
     "polymarket_alpha_lab.domain",
-    "polymarket_alpha_lab.forecast_evidence",
     "polymarket_alpha_lab.journal",
     "polymarket_alpha_lab.manual_review_queue",
     "polymarket_alpha_lab.normalize",
@@ -154,6 +141,11 @@ FORBIDDEN_IMPORT_PREFIXES = {
     "polymarket_alpha_lab.positions",
     "polymarket_alpha_lab.proposal_packet",
     "polymarket_alpha_lab.proposal_review",
+    "polymarket_alpha_lab.proposal_review_coverage",
+    "polymarket_alpha_lab.proposal_review_diagnostics",
+    "polymarket_alpha_lab.proposal_review_dossier",
+    "polymarket_alpha_lab.proposal_review_quality",
+    "polymarket_alpha_lab.proposal_review_summary",
     "polymarket_alpha_lab.rejections",
     "polymarket_alpha_lab.research",
     "polymarket_alpha_lab.risk",
@@ -208,6 +200,7 @@ FORBIDDEN_NAME_FRAGMENTS = {
     "approvedat",
     "approvedby",
     "approvedpacketselector",
+    "approvedproposalselector",
     "authenticationclient",
     "brokerclient",
     "brokerrequest",
@@ -218,57 +211,67 @@ FORBIDDEN_NAME_FRAGMENTS = {
     "cloudscraper",
     "compliancecheck",
     "compliancereview",
-    "cancelorder",
-    "createorder",
-    "credentials",
+    "conflictreviewer",
+    "conflictresolver",
     "credentialloader",
     "credentialmanager",
-    "crawler",
     "credentialpath",
     "credentialprovider",
     "credentialstore",
     "credentialworkflow",
+    "credentials",
+    "crawler",
+    "decisionresolution",
+    "decisionresolver",
     "downloadhistory",
-    "externalhistory",
     "executionclient",
     "executionengine",
     "executionreadiness",
+    "externalhistory",
+    "externalhistoryloader",
     "fetchmarket",
     "fetchorderbook",
     "fetchpricehistory",
     "fetchsummaryreport",
-    "historicalloader",
-    "httpclient",
+    "fromfile",
+    "fromlog",
     "geographicaccessanalysis",
     "geographicanalysis",
     "geoanalysis",
+    "globjsonl",
     "goliveready",
     "heartbeat",
+    "historicalloader",
+    "httpclient",
     "identitydata",
     "investmentranking",
+    "jsonlreader",
     "jurisdictioncheck",
     "latestdecisionselector",
     "legalreview",
     "liveexecution",
     "liveexecutionsignal",
     "loadjsonl",
-    "marketclient",
     "manualexecutionimport",
+    "marketclient",
+    "marketscore",
     "orderclient",
     "orderinstruction",
-    "orderplacement",
     "orderpayload",
+    "orderplacement",
     "orderrequest",
+    "paperforecastevidenceobservation",
     "password",
-    "placeorder",
-    "playwrightbrowser",
     "privatekey",
     "privatekeypath",
     "profitable",
     "profitablestatus",
-    "promotionready",
     "promotablestatus",
+    "proposalapproval",
     "rankinvestments",
+    "rawobservation",
+    "rawproposal",
+    "rawreview",
     "readjsonl",
     "readjsonlhistory",
     "readyforlivetrading",
@@ -276,23 +279,24 @@ FORBIDDEN_NAME_FRAGMENTS = {
     "reconcileexchangeaccounts",
     "reconciliationprocess",
     "reconciliationstatus",
-    "requestsession",
+    "replayjsonl",
     "requestpayload",
+    "requestsession",
     "scrape",
     "scrapehtml",
     "scrapewebsites",
     "scrapingevidenceloader",
     "secret",
-    "sendorder",
     "seleniumdriver",
     "settlementreview",
-    "signorder",
     "strategypromotion",
     "strategypromotionsignal",
     "submitorder",
     "tradeinstruction",
-    "tradingclient",
+    "tradeproposalpacket",
+    "tradeproposalreviewrecord",
     "traderecommendation",
+    "tradingclient",
     "tradingsdk",
     "transportclient",
     "walletsignature",
@@ -329,8 +333,8 @@ FORBIDDEN_PUBLIC_EXPORT_FRAGMENTS = {
 }
 
 
-def parse_proposal_review_dossier():
-    return ast.parse(PROPOSAL_REVIEW_DOSSIER_PATH.read_text(encoding="utf-8"))
+def parse_proposal_evidence_comparison():
+    return ast.parse(PROPOSAL_EVIDENCE_COMPARISON_PATH.read_text(encoding="utf-8"))
 
 
 def normalize_identifier(value):
@@ -373,9 +377,7 @@ def imported_first_party_symbols(tree):
     symbols = {}
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom) and node.module in EXPECTED_FIRST_PARTY_IMPORTS:
-            symbols.setdefault(node.module, set()).update(
-                alias.name for alias in node.names
-            )
+            symbols.setdefault(node.module, set()).update(alias.name for alias in node.names)
     return symbols
 
 
@@ -390,73 +392,61 @@ def module_exports(tree):
     return tuple(assigned_exports)
 
 
-def test_forbidden_name_fragments_cover_level_2_node_7_scope_variants():
+def test_forbidden_name_fragments_cover_level_2_node_9_scope_variants():
     examples = (
         "account_action",
         "account_authentication",
-        "credential_path",
+        "credential_loader",
+        "credential_manager",
         "private_key_path",
         "api_token",
         "auth_token",
         "secret",
         "password",
-        "credential_loader",
-        "credential_manager",
         "client_session",
         "order_client",
         "order_payload",
-        "place_order",
         "submit_order",
-        "create_order",
-        "cancel_order",
-        "send_order",
-        "sign_order",
-        "execution_client",
         "execution_engine",
         "websocket_session",
         "broker_session",
-        "request_session",
         "request_payload",
         "http_client",
         "market_client",
         "trading_client",
-        "browser_session",
         "browser_automation",
-        "playwright_browser",
         "selenium_driver",
         "crawler",
-        "credentials",
-        "heartbeat",
-        "scraping_evidence_loader",
-        "scrape_websites",
-        "fetch_summary_report",
-        "fetch_market",
-        "fetch_orderbook",
-        "fetch_price_history",
-        "read_jsonl",
-        "load_jsonl",
-        "read_jsonl_history",
         "external_history_loader",
         "historical_loader",
         "download_history",
+        "jsonl_reader",
+        "read_jsonl",
+        "load_jsonl",
+        "replay_jsonl",
+        "glob_jsonl",
+        "from_file",
+        "from_log",
         "scrape_html",
         "scrape",
-        "approval_ready",
-        "approval_gate",
+        "paper_forecast_evidence_observation",
+        "trade_proposal_packet",
+        "trade_proposal_review_record",
+        "market_score",
         "approval_workflow",
-        "approved_packet_selector",
+        "proposal_approval",
+        "approved_proposal_selector",
         "latest_decision_selector",
         "winning_decision",
-        "promotion_ready",
-        "promotable_status",
-        "profitable_status",
-        "execution_readiness",
-        "go_live_ready",
-        "ready_for_live_trading",
-        "trade_recommendation",
-        "recommend_trade",
+        "decision_resolution",
+        "decision_resolver",
+        "conflict_reviewer",
+        "conflict_resolver",
         "investment_ranking",
         "rank_investments",
+        "trade_recommendation",
+        "recommend_trade",
+        "strategy_promotion",
         "settlement_review",
         "reconcile_exchange_accounts",
         "reconciliation_status",
@@ -473,17 +463,20 @@ def test_forbidden_name_fragments_cover_level_2_node_7_scope_variants():
         assert forbidden_fragment_matches(example), example
 
 
-def test_forbidden_name_fragments_allow_required_dossier_audit_identifiers():
+def test_forbidden_name_fragments_allow_required_comparison_audit_identifiers():
     for allowed in (
-        "approved_decision_count",
-        "rejected_decision_count",
-        "proposal_review_dossier_complete",
+        "TradeProposalEvidenceComparisonReport",
+        "proposal_evidence_comparison_complete",
+        "dossier_batch_status",
+        "forecast_evidence_status",
+        "source_sample",
+        "evidence_consistency",
     ):
         assert not forbidden_fragment_matches(allowed)
 
 
-def test_proposal_review_dossier_module_imports_only_allowed_dependencies():
-    tree = parse_proposal_review_dossier()
+def test_proposal_evidence_comparison_module_imports_only_allowed_dependencies():
+    tree = parse_proposal_evidence_comparison()
     for module_name in imported_modules(tree):
         assert any(
             module_matches_prefix(module_name, allowed)
@@ -491,8 +484,8 @@ def test_proposal_review_dossier_module_imports_only_allowed_dependencies():
         ), module_name
 
 
-def test_proposal_review_dossier_module_does_not_import_forbidden_surfaces():
-    tree = parse_proposal_review_dossier()
+def test_proposal_evidence_comparison_module_does_not_import_forbidden_surfaces():
+    tree = parse_proposal_evidence_comparison()
     for module_name in imported_modules(tree):
         assert not any(
             module_matches_prefix(module_name, forbidden)
@@ -500,13 +493,13 @@ def test_proposal_review_dossier_module_does_not_import_forbidden_surfaces():
         ), module_name
 
 
-def test_proposal_review_dossier_module_uses_only_allowed_first_party_symbols():
-    tree = parse_proposal_review_dossier()
+def test_proposal_evidence_comparison_module_uses_only_allowed_first_party_symbols():
+    tree = parse_proposal_evidence_comparison()
     assert imported_first_party_symbols(tree) == EXPECTED_FIRST_PARTY_IMPORTS
 
 
-def test_proposal_review_dossier_module_does_not_import_first_party_modules_wholesale():
-    tree = parse_proposal_review_dossier()
+def test_proposal_evidence_comparison_module_does_not_import_first_party_modules_wholesale():
+    tree = parse_proposal_evidence_comparison()
     for node in ast.walk(tree):
         if not isinstance(node, ast.Import):
             continue
@@ -514,8 +507,8 @@ def test_proposal_review_dossier_module_does_not_import_first_party_modules_whol
             assert alias.name not in EXPECTED_FIRST_PARTY_IMPORTS, alias.name
 
 
-def test_proposal_review_dossier_module_does_not_define_forbidden_live_or_workflow_names():
-    tree = parse_proposal_review_dossier()
+def test_proposal_evidence_comparison_module_does_not_define_forbidden_live_or_workflow_names():
+    tree = parse_proposal_evidence_comparison()
     names = set()
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
@@ -541,21 +534,21 @@ def test_proposal_review_dossier_module_does_not_define_forbidden_live_or_workfl
         )
 
 
-def test_trade_proposal_review_dossier_public_exports_are_report_only():
-    tree = parse_proposal_review_dossier()
+def test_trade_proposal_evidence_comparison_public_exports_are_report_only():
+    tree = parse_proposal_evidence_comparison()
     assigned_exports = module_exports(tree)
-    assert set(assigned_exports) == EXPECTED_PROPOSAL_REVIEW_DOSSIER_EXPORTS
+    assert set(assigned_exports) == EXPECTED_PROPOSAL_EVIDENCE_COMPARISON_EXPORTS
     for name in assigned_exports:
-        assert name.startswith("TradeProposalReviewDossier") or name == (
-            "build_trade_proposal_review_dossier_report"
+        assert name.startswith("TradeProposalEvidenceComparison") or name == (
+            "build_trade_proposal_evidence_comparison_report"
         )
         assert not public_export_fragment_matches(name), name
 
-    for export_name in EXPECTED_PROPOSAL_REVIEW_DOSSIER_EXPORTS:
+    for export_name in EXPECTED_PROPOSAL_EVIDENCE_COMPARISON_EXPORTS:
         assert not public_export_fragment_matches(export_name), export_name
 
 
-def test_package_root_exports_do_not_leak_forbidden_level_2_node_7_surfaces():
+def test_package_root_exports_do_not_leak_forbidden_level_2_node_9_surfaces():
     tree = ast.parse(PACKAGE_ROOT_PATH.read_text(encoding="utf-8"))
     assigned_exports = module_exports(tree)
     for name in assigned_exports:
@@ -571,26 +564,32 @@ def test_package_root_exports_do_not_leak_forbidden_level_2_node_7_surfaces():
         )
 
 
-def test_readme_level_2_node_7_section_keeps_report_only_boundaries():
+def test_readme_level_2_node_9_section_keeps_report_only_boundaries():
     readme = README_PATH.read_text(encoding="utf-8")
-    start = readme.index("## Level 2 Node 7 Status")
-    end = readme.index("## Level 2 Node 8 Status", start)
+    start = readme.index("## Level 2 Node 9 Status")
+    end = readme.index("## Automation Roadmap", start)
     normalized = normalize_identifier(readme[start:end])
     required_fragments = (
-        "level2node7status",
-        "level2node7pythonapi",
-        "reportonlyproposalreviewdossierartifacts",
-        "notanapprovalworkflowtradeinstructionorderinstructionbrokerrequestorderrequestaccountaction",
+        "level2node9status",
+        "level2node9pythonapi",
+        "reportonlyproposalevidencecomparisonartifacts",
+        "suppliedpaperforecastevidencereport",
+        "tradeproposalreviewdossierbatchreport",
+        "notanapprovalworkflow",
+        "proposalapproval",
+        "approvedproposalselector",
+        "latestdecisionselector",
+        "decisionresolution",
+        "investmentranking",
+        "traderecommendation",
         "strategypromotionsignal",
-        "liveexecutionsignal",
-        "credentials",
+        "externalhistory",
+        "jsonllogs",
         "scrapewebsites",
-        "tradingsdk",
-        "brokerclient",
-        "executionclient",
-        "settlement",
-        "reconciliation",
-        "approvalworkflows",
+        "credentialsprivatekeys",
+        "tradingsdkbrokerexecutiontransportclients",
+        "approveproposals",
+        "resolveconflictingreviews",
         "rankinvestments",
         "recommendtrades",
         "compliancelegalgeographicanalysis",
@@ -600,12 +599,13 @@ def test_readme_level_2_node_7_section_keeps_report_only_boundaries():
         assert fragment in normalized, fragment
 
 
-def test_readme_repository_layout_lists_level_2_node_7_artifacts():
+def test_readme_repository_layout_lists_level_2_node_9_artifacts():
     readme = README_PATH.read_text(encoding="utf-8")
     for expected_path in (
-        "2026-06-15-level-2-proposal-review-dossier.md",
-        "proposal_review_dossier.py",
-        "test_proposal_review_dossier.py",
-        "test_proposal_review_dossier_scope.py",
+        "2026-06-15-level-2-proposal-evidence-comparison.md",
+        "proposal_evidence_comparison.py",
+        "test_proposal_evidence_comparison.py",
+        "test_proposal_evidence_comparison_scope.py",
     ):
         assert expected_path in readme
+

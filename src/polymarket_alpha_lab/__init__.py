@@ -111,6 +111,16 @@ from polymarket_alpha_lab.proposal_review_dossier_batch import (
     TradeProposalReviewDossierBatchSourceSummary,
     build_trade_proposal_review_dossier_batch_report,
 )
+from polymarket_alpha_lab.proposal_evidence_comparison import (
+    TradeProposalEvidenceComparisonConfig,
+    TradeProposalEvidenceComparisonFindingRow,
+    TradeProposalEvidenceComparisonGateResult,
+    TradeProposalEvidenceComparisonLog,
+    TradeProposalEvidenceComparisonMetricRow,
+    TradeProposalEvidenceComparisonReport,
+    TradeProposalEvidenceComparisonSourceRow,
+    build_trade_proposal_evidence_comparison_report,
+)
 from polymarket_alpha_lab.journal import PaperTradeJournal, PaperTradeRecord
 from polymarket_alpha_lab.paper import PaperFill, PaperOrder, simulate_order_book_fill
 from polymarket_alpha_lab.positions import (
@@ -177,6 +187,13 @@ __all__ = [
     "RiskGateConfig",
     "RiskGateDecision",
     "RiskGateReason",
+    "TradeProposalEvidenceComparisonConfig",
+    "TradeProposalEvidenceComparisonFindingRow",
+    "TradeProposalEvidenceComparisonGateResult",
+    "TradeProposalEvidenceComparisonLog",
+    "TradeProposalEvidenceComparisonMetricRow",
+    "TradeProposalEvidenceComparisonReport",
+    "TradeProposalEvidenceComparisonSourceRow",
     "TradeProposalPacket",
     "TradeProposalPacketConfig",
     "TradeProposalPacketLog",
@@ -226,6 +243,7 @@ __all__ = [
     "build_paper_manual_review_queue",
     "build_paper_portfolio",
     "build_research_packet",
+    "build_trade_proposal_evidence_comparison_report",
     "build_trade_proposal_packet",
     "build_trade_proposal_review_coverage_report",
     "build_trade_proposal_review_dossier_batch_report",
