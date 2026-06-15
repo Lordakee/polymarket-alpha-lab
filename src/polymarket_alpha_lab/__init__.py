@@ -73,6 +73,15 @@ from polymarket_alpha_lab.proposal_review_quality import (
     TradeProposalReviewQualityReport,
     build_trade_proposal_review_quality_report,
 )
+from polymarket_alpha_lab.proposal_review_diagnostics import (
+    TradeProposalReviewDiagnosticBucketRow,
+    TradeProposalReviewDiagnosticConfig,
+    TradeProposalReviewDiagnosticLog,
+    TradeProposalReviewDiagnosticReasonRow,
+    TradeProposalReviewDiagnosticReport,
+    TradeProposalReviewDiagnosticSourceRow,
+    build_trade_proposal_review_diagnostic_report,
+)
 from polymarket_alpha_lab.journal import PaperTradeJournal, PaperTradeRecord
 from polymarket_alpha_lab.paper import PaperFill, PaperOrder, simulate_order_book_fill
 from polymarket_alpha_lab.positions import (
@@ -144,6 +153,12 @@ __all__ = [
     "TradeProposalPacketConfig",
     "TradeProposalPacketLog",
     "TradeProposalReviewConfig",
+    "TradeProposalReviewDiagnosticBucketRow",
+    "TradeProposalReviewDiagnosticConfig",
+    "TradeProposalReviewDiagnosticLog",
+    "TradeProposalReviewDiagnosticReasonRow",
+    "TradeProposalReviewDiagnosticReport",
+    "TradeProposalReviewDiagnosticSourceRow",
     "TradeProposalReviewLog",
     "TradeProposalReviewQualityConfig",
     "TradeProposalReviewQualityGateResult",
@@ -163,6 +178,7 @@ __all__ = [
     "build_paper_portfolio",
     "build_research_packet",
     "build_trade_proposal_packet",
+    "build_trade_proposal_review_diagnostic_report",
     "build_trade_proposal_review_quality_report",
     "build_trade_proposal_review_record",
     "build_trade_proposal_review_summary_report",

@@ -12,7 +12,7 @@ The long-term goal is an automated system that can screen markets, research cand
 
 ## Phase 1 Scope
 
-This repository currently contains the project design, research notes, implementation plans, a read-only market scanner, research packet assembly, bid/ask paper-fill simulation, JSONL paper-trade journaling, paper-only risk gates, rejected-candidate logs, paper position ledgers, executable NAV marks, paper-only portfolio analytics, exposure reports, executable-NAV drawdown reports, paper-only analytics history validation, paper-only forecast evidence reports, paper-only manual-review queues, human-review proposal packet artifacts, append-only proposal-review record artifacts, proposal-review summary report artifacts, and proposal-review quality gate artifacts.
+This repository currently contains the project design, research notes, implementation plans, a read-only market scanner, research packet assembly, bid/ask paper-fill simulation, JSONL paper-trade journaling, paper-only risk gates, rejected-candidate logs, paper position ledgers, executable NAV marks, paper-only portfolio analytics, exposure reports, executable-NAV drawdown reports, paper-only analytics history validation, paper-only forecast evidence reports, paper-only manual-review queues, human-review proposal packet artifacts, append-only proposal-review record artifacts, proposal-review summary report artifacts, proposal-review quality gate artifacts, and proposal-review diagnostic artifacts.
 
 The current phase does not contain:
 
@@ -194,6 +194,21 @@ Node 4 is exposed through Python APIs:
 - Inspect quality gate rows with `TradeProposalReviewQualityGateResult` and rejected reason-code trends with `TradeProposalReviewQualityReasonTrend`.
 - Persist proposal-review quality snapshots with `TradeProposalReviewQualityLog(path).append(report)`.
 
+## Level 2 Node 5 Status
+
+Level 2 Node 5 adds report-only proposal-review diagnostic artifacts over supplied `TradeProposalReviewRecord` values. It treats rejected human-review decisions as a proposal-quality investigation proxy only; it does not confirm realized false positives, import outcomes, compare fills, reconcile positions, settle decisions, or route proposals.
+
+It does not fetch market, order-book, price-history, outcome, account, credential, or identity data; read external history or JSONL logs; scrape websites; authenticate; handle private keys or credentials; place, submit, sign, send, create, or cancel orders; open user WebSockets; run heartbeat logic; use a trading SDK, broker client, execution client, or transport client; build broker or order request payloads; reconcile exchange accounts; review settlement; import manual executions; or perform compliance/legal/geographic analysis.
+
+## Level 2 Node 5 Python API
+
+Node 5 is exposed through Python APIs:
+
+- Configure proposal-review diagnostics with `TradeProposalReviewDiagnosticConfig(config_version="diagnostic-v1")`.
+- Build proposal-review diagnostic reports with `build_trade_proposal_review_diagnostic_report(records, config=config, generated_at=datetime.now(UTC))`, which returns `TradeProposalReviewDiagnosticReport`.
+- Inspect rejected reason-code proxy rows with `TradeProposalReviewDiagnosticReasonRow`, bucket rows with `TradeProposalReviewDiagnosticBucketRow`, and rejected source proposal rows with `TradeProposalReviewDiagnosticSourceRow`.
+- Persist proposal-review diagnostic snapshots with `TradeProposalReviewDiagnosticLog(path).append(report)`.
+
 ## Automation Roadmap
 
 The recommended staged path is:
@@ -233,6 +248,7 @@ See:
 │       │   ├── 2026-06-13-level-1b-positions-nav.md
 │       │   ├── 2026-06-14-level-1b-paper-manual-review-queue.md
 │       │   ├── 2026-06-14-level-2-proposal-packets.md
+│       │   ├── 2026-06-14-level-2-proposal-review-diagnostics.md
 │       │   ├── 2026-06-14-level-2-proposal-review-records.md
 │       │   ├── 2026-06-14-level-2-proposal-review-quality-gates.md
 │       │   ├── 2026-06-14-level-2-proposal-review-summary-reports.md
@@ -259,6 +275,7 @@ See:
 │       ├── positions.py
 │       ├── proposal_packet.py
 │       ├── proposal_review.py
+│       ├── proposal_review_diagnostics.py
 │       ├── proposal_review_quality.py
 │       ├── proposal_review_summary.py
 │       ├── rejections.py
@@ -287,6 +304,8 @@ See:
     ├── test_proposal_packet.py
     ├── test_proposal_packet_scope.py
     ├── test_proposal_review.py
+    ├── test_proposal_review_diagnostics.py
+    ├── test_proposal_review_diagnostics_scope.py
     ├── test_proposal_review_quality.py
     ├── test_proposal_review_quality_scope.py
     ├── test_proposal_review_summary.py

@@ -64,6 +64,15 @@ from polymarket_alpha_lab.proposal_review_quality import (
     TradeProposalReviewQualityReport,
     build_trade_proposal_review_quality_report,
 )
+from polymarket_alpha_lab.proposal_review_diagnostics import (
+    TradeProposalReviewDiagnosticBucketRow,
+    TradeProposalReviewDiagnosticConfig,
+    TradeProposalReviewDiagnosticLog,
+    TradeProposalReviewDiagnosticReasonRow,
+    TradeProposalReviewDiagnosticReport,
+    TradeProposalReviewDiagnosticSourceRow,
+    build_trade_proposal_review_diagnostic_report,
+)
 from polymarket_alpha_lab.journal import PaperTradeJournal, PaperTradeRecord
 from polymarket_alpha_lab.paper import PaperFill, PaperOrder, simulate_order_book_fill
 from polymarket_alpha_lab.positions import (
@@ -318,4 +327,37 @@ def test_level_2_node_4_public_api_exports():
     assert (
         lab.build_trade_proposal_review_quality_report
         is build_trade_proposal_review_quality_report
+    )
+
+
+def test_level_2_node_5_public_api_exports():
+    expected_exports = {
+        "TradeProposalReviewDiagnosticBucketRow",
+        "TradeProposalReviewDiagnosticConfig",
+        "TradeProposalReviewDiagnosticLog",
+        "TradeProposalReviewDiagnosticReasonRow",
+        "TradeProposalReviewDiagnosticReport",
+        "TradeProposalReviewDiagnosticSourceRow",
+        "build_trade_proposal_review_diagnostic_report",
+    }
+
+    assert expected_exports <= set(lab.__all__)
+    assert (
+        lab.TradeProposalReviewDiagnosticBucketRow
+        is TradeProposalReviewDiagnosticBucketRow
+    )
+    assert lab.TradeProposalReviewDiagnosticConfig is TradeProposalReviewDiagnosticConfig
+    assert lab.TradeProposalReviewDiagnosticLog is TradeProposalReviewDiagnosticLog
+    assert (
+        lab.TradeProposalReviewDiagnosticReasonRow
+        is TradeProposalReviewDiagnosticReasonRow
+    )
+    assert lab.TradeProposalReviewDiagnosticReport is TradeProposalReviewDiagnosticReport
+    assert (
+        lab.TradeProposalReviewDiagnosticSourceRow
+        is TradeProposalReviewDiagnosticSourceRow
+    )
+    assert (
+        lab.build_trade_proposal_review_diagnostic_report
+        is build_trade_proposal_review_diagnostic_report
     )
