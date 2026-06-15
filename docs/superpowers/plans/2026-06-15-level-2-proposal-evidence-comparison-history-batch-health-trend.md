@@ -4,7 +4,7 @@
 
 **Goal:** Add a report-only trend artifact that summarizes caller-supplied proposal evidence comparison history batch-health reports over time for audit stability checks.
 
-**Architecture:** Create a focused `proposal_evidence_comparison_history_batch_health_trend.py` module that consumes only in-memory `TradeProposalEvidenceComparisonHistoryBatchHealthReport` objects from Level 2 Node 11. It clones and revalidates each supplied batch-health report, then summarizes batch-health status frequencies, gate-status frequencies, config-version coverage, duplicate generated-at indicators, duplicate fingerprint indicators, first/last report time bounds, and append-only JSONL persistence for audit only.
+**Architecture:** Create a focused `proposal_evidence_comparison_history_batch_health_trend.py` module that consumes only in-memory `TradeProposalEvidenceComparisonHistoryBatchHealthReport` objects from Level 2 Node 11. It clones and revalidates each supplied batch-health report, then summarizes batch-health status frequencies, gate-status frequencies, config-version coverage, duplicate generated-at indicators, duplicate fingerprint indicators, and first/last report time bounds for audit only, with append-only JSONL persistence for already-built trend snapshots.
 
 **Tech Stack:** Python 3.11+, standard library only, frozen dataclasses, `Decimal`, UTC `datetime`, JSONL append-only persistence, pytest, CodeGraph, and local Claude Code review with model `claude-opus-4-8` using effort `max`.
 
@@ -18,7 +18,7 @@ This node must not consume raw Node 10 history reports, raw Node 9 comparison re
 
 This node must not fetch market/order-book/price/outcome/account data, read JSONL logs, replay history, glob files, scrape websites, run browser automation, authenticate, handle credentials or private keys, open user WebSockets, run heartbeat logic, build order requests, place/submit/sign/send/create/cancel orders, select approved proposals, select latest decisions, resolve conflicting reviews, rank investments, recommend trades, promote strategies, review settlement, reconcile positions or exchange accounts, import manual executions, or perform compliance/legal/geographic analysis.
 
-This node must reject convenience inputs that would imply a loader surface: strings, bytes, mappings/dicts, paths, serialized JSON, JSONL lines, and subclasses of `TradeProposalEvidenceComparisonHistoryBatchHealthReport`.
+This node must reject convenience inputs that would imply a loader surface: strings, bytes, mappings/dicts, paths, serialized JSON, JSONL lines, generators, arbitrary iterables, log-shaped objects, and subclasses of `TradeProposalEvidenceComparisonHistoryBatchHealthReport`.
 
 Allowed first-party imports in the production module are limited to import-from symbols from `polymarket_alpha_lab.proposal_evidence_comparison_history_batch_health`:
 
@@ -176,7 +176,10 @@ Builder signature:
 
 ```python
 def build_trade_proposal_evidence_comparison_history_batch_health_trend_report(
-    batch_health_reports: Iterable[TradeProposalEvidenceComparisonHistoryBatchHealthReport],
+    batch_health_reports: (
+        list[TradeProposalEvidenceComparisonHistoryBatchHealthReport]
+        | tuple[TradeProposalEvidenceComparisonHistoryBatchHealthReport, ...]
+    ),
     *,
     config: TradeProposalEvidenceComparisonHistoryBatchHealthTrendConfig,
     generated_at: datetime,
@@ -935,3 +938,64 @@ Append actual evidence to this plan with node completed, commit/push status, rep
 - Spec coverage: The plan creates a supplied-input, report-only trend layer over Node 11 batch-health reports and does not add fetching, scraping, JSONL reads, raw upstream ingestion, outcome loading, realized false-positive analysis, profitability analysis, proposal approval, decision resolution, investment ranking, trade recommendations, credential handling, order placement, settlement/reconciliation work, manual execution import, or compliance/legal/geographic analysis.
 - Placeholder scan: The plan contains no TBD/TODO placeholders. Public API, statuses, gate rules, counting rules, validation rules, tests, README requirements, verification commands, Claude review policy, and handoff fields are specified.
 - Type consistency: The same names are used throughout: `TradeProposalEvidenceComparisonHistoryBatchHealthTrendConfig`, `TradeProposalEvidenceComparisonHistoryBatchHealthTrendGateResult`, `TradeProposalEvidenceComparisonHistoryBatchHealthTrendStatusRow`, `TradeProposalEvidenceComparisonHistoryBatchHealthTrendConfigVersionSummary`, `TradeProposalEvidenceComparisonHistoryBatchHealthTrendGateStatusSummary`, `TradeProposalEvidenceComparisonHistoryBatchHealthTrendDuplicateGeneratedAtSummary`, `TradeProposalEvidenceComparisonHistoryBatchHealthTrendDuplicateFingerprintSummary`, `TradeProposalEvidenceComparisonHistoryBatchHealthTrendReport`, `TradeProposalEvidenceComparisonHistoryBatchHealthTrendLog`, and `build_trade_proposal_evidence_comparison_history_batch_health_trend_report`.
+
+## Handoff Summary
+
+Node 12 implementation status: complete and ready for commit.
+
+RED evidence:
+
+- Behavior RED: `.venv/bin/python -m pytest tests/test_proposal_evidence_comparison_history_batch_health_trend.py -q` failed with `ModuleNotFoundError` before the production module existed.
+- Scope/export RED: `.venv/bin/python -m pytest tests/test_proposal_evidence_comparison_history_batch_health_trend_scope.py tests/test_init.py ... -q` failed because package-root/module exports did not exist.
+- Review regression RED 1: `.venv/bin/python -m pytest tests/test_proposal_evidence_comparison_history_batch_health_trend.py::test_batch_health_trend_rejects_missing_or_stale_gate_status_summaries -q` failed because missing `gate_status_summaries` were accepted.
+- Review regression RED 2: the same focused test failed after adding a compensated stale case where one Node 11 gate was omitted and another over-counted while the global total remained correct.
+
+GREEN evidence:
+
+- Focused behavior: `.venv/bin/python -m pytest tests/test_proposal_evidence_comparison_history_batch_health_trend.py -q` -> `11 passed`.
+- Focused Node 12/API: `.venv/bin/python -m pytest tests/test_proposal_evidence_comparison_history_batch_health_trend.py tests/test_proposal_evidence_comparison_history_batch_health_trend_scope.py tests/test_init.py -q` -> `40 passed`.
+- Scope/export combo: `.venv/bin/python -m pytest tests/test_proposal_evidence_comparison_history_batch_health_trend_scope.py tests/test_init.py tests/test_analytics_scope.py tests/test_analytics_history_scope.py tests/test_forecast_evidence_scope.py tests/test_manual_review_queue_scope.py tests/test_proposal_packet_scope.py tests/test_proposal_review_scope.py tests/test_proposal_review_summary_scope.py tests/test_proposal_review_quality_scope.py tests/test_proposal_review_diagnostics_scope.py tests/test_proposal_review_coverage_scope.py tests/test_proposal_review_dossier_scope.py tests/test_proposal_review_dossier_batch_scope.py tests/test_proposal_evidence_comparison_scope.py tests/test_proposal_evidence_comparison_history_scope.py tests/test_proposal_evidence_comparison_history_batch_health_scope.py -q` -> `146 passed`.
+- Full suite: `.venv/bin/python -m pytest -q` -> `701 passed`.
+- `git diff --check` -> clean.
+- `codegraph sync` -> already up to date.
+- `codegraph status .` -> index up to date, `76 files`, `2,820 nodes`, `9,030 edges`.
+- Secret scan: `rg -n "ghp_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN (RSA |OPENSSH |EC |DSA )?PRIVATE KEY-----" README.md docs src tests` -> no findings.
+
+Claude Code implementation review:
+
+- First implementation review: Critical `0`, Important `1`, Minor `0`, Verdict `Do not proceed`; finding was missing/stale `gate_status_summaries` append validation.
+- Second implementation review: Critical `0`, Important `1`, Minor `0`, Verdict `Do not proceed`; finding was compensated stale per-gate `gate_status_summaries` could pass a global-total-only check.
+- Final implementation review after fixes: Critical `0`, Important `0`, Minor `0`, Verdict `Proceed`.
+
+Next-node plan:
+
+- Added `docs/superpowers/plans/2026-06-15-level-2-proposal-evidence-comparison-history-batch-health-trend-batch.md`.
+- Claude plan review final result: Critical `0`, Important `0`, Minor `0`, Verdict `Proceed`.
+
+Changed files before commit:
+
+- `README.md`
+- `docs/superpowers/plans/2026-06-15-level-2-proposal-evidence-comparison-history-batch-health-trend.md`
+- `docs/superpowers/plans/2026-06-15-level-2-proposal-evidence-comparison-history-batch-health-trend-batch.md`
+- `src/polymarket_alpha_lab/__init__.py`
+- `src/polymarket_alpha_lab/proposal_evidence_comparison_history_batch_health_trend.py`
+- `tests/test_analytics_history_scope.py`
+- `tests/test_analytics_scope.py`
+- `tests/test_forecast_evidence_scope.py`
+- `tests/test_init.py`
+- `tests/test_manual_review_queue_scope.py`
+- `tests/test_proposal_evidence_comparison_history_batch_health_scope.py`
+- `tests/test_proposal_evidence_comparison_history_batch_health_trend.py`
+- `tests/test_proposal_evidence_comparison_history_batch_health_trend_scope.py`
+- `tests/test_proposal_evidence_comparison_history_scope.py`
+- `tests/test_proposal_evidence_comparison_scope.py`
+- `tests/test_proposal_packet_scope.py`
+- `tests/test_proposal_review_coverage_scope.py`
+- `tests/test_proposal_review_diagnostics_scope.py`
+- `tests/test_proposal_review_dossier_batch_scope.py`
+- `tests/test_proposal_review_dossier_scope.py`
+- `tests/test_proposal_review_quality_scope.py`
+- `tests/test_proposal_review_scope.py`
+- `tests/test_proposal_review_summary_scope.py`
+
+Commit/push status at handoff-write time: pending. Next step is final `git status`, commit, push to `origin/main`, and verify clean post-push status.

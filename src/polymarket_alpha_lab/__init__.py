@@ -145,6 +145,18 @@ from polymarket_alpha_lab.proposal_evidence_comparison_history_batch_health impo
     TradeProposalEvidenceComparisonHistoryBatchHealthStatusRow,
     build_trade_proposal_evidence_comparison_history_batch_health_report,
 )
+from polymarket_alpha_lab.proposal_evidence_comparison_history_batch_health_trend import (
+    TradeProposalEvidenceComparisonHistoryBatchHealthTrendConfig,
+    TradeProposalEvidenceComparisonHistoryBatchHealthTrendConfigVersionSummary,
+    TradeProposalEvidenceComparisonHistoryBatchHealthTrendDuplicateFingerprintSummary,
+    TradeProposalEvidenceComparisonHistoryBatchHealthTrendDuplicateGeneratedAtSummary,
+    TradeProposalEvidenceComparisonHistoryBatchHealthTrendGateResult,
+    TradeProposalEvidenceComparisonHistoryBatchHealthTrendGateStatusSummary,
+    TradeProposalEvidenceComparisonHistoryBatchHealthTrendLog,
+    TradeProposalEvidenceComparisonHistoryBatchHealthTrendReport,
+    TradeProposalEvidenceComparisonHistoryBatchHealthTrendStatusRow,
+    build_trade_proposal_evidence_comparison_history_batch_health_trend_report,
+)
 from polymarket_alpha_lab.journal import PaperTradeJournal, PaperTradeRecord
 from polymarket_alpha_lab.paper import PaperFill, PaperOrder, simulate_order_book_fill
 from polymarket_alpha_lab.positions import (
@@ -225,6 +237,15 @@ __all__ = [
     "TradeProposalEvidenceComparisonHistoryBatchHealthReport",
     "TradeProposalEvidenceComparisonHistoryBatchHealthSourceTransitionSummary",
     "TradeProposalEvidenceComparisonHistoryBatchHealthStatusRow",
+    "TradeProposalEvidenceComparisonHistoryBatchHealthTrendConfig",
+    "TradeProposalEvidenceComparisonHistoryBatchHealthTrendConfigVersionSummary",
+    "TradeProposalEvidenceComparisonHistoryBatchHealthTrendDuplicateFingerprintSummary",
+    "TradeProposalEvidenceComparisonHistoryBatchHealthTrendDuplicateGeneratedAtSummary",
+    "TradeProposalEvidenceComparisonHistoryBatchHealthTrendGateResult",
+    "TradeProposalEvidenceComparisonHistoryBatchHealthTrendGateStatusSummary",
+    "TradeProposalEvidenceComparisonHistoryBatchHealthTrendLog",
+    "TradeProposalEvidenceComparisonHistoryBatchHealthTrendReport",
+    "TradeProposalEvidenceComparisonHistoryBatchHealthTrendStatusRow",
     "TradeProposalEvidenceComparisonHistoryConfigVersionSummary",
     "TradeProposalEvidenceComparisonHistoryFindingSummary",
     "TradeProposalEvidenceComparisonHistoryGateResult",
@@ -284,6 +305,7 @@ __all__ = [
     "build_paper_forecast_evidence_report",
     "build_paper_manual_review_queue",
     "build_trade_proposal_evidence_comparison_history_batch_health_report",
+    "build_trade_proposal_evidence_comparison_history_batch_health_trend_report",
     "build_paper_portfolio",
     "build_research_packet",
     "build_trade_proposal_evidence_comparison_history_report",

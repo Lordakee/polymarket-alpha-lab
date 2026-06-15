@@ -107,6 +107,18 @@ EXPECTED_PROPOSAL_EVIDENCE_COMPARISON_HISTORY_BATCH_HEALTH_EXPORTS = {
     "TradeProposalEvidenceComparisonHistoryBatchHealthLog",
     "build_trade_proposal_evidence_comparison_history_batch_health_report",
 }
+EXPECTED_PROPOSAL_EVIDENCE_COMPARISON_HISTORY_BATCH_HEALTH_TREND_EXPORTS = {
+    "TradeProposalEvidenceComparisonHistoryBatchHealthTrendConfig",
+    "TradeProposalEvidenceComparisonHistoryBatchHealthTrendGateResult",
+    "TradeProposalEvidenceComparisonHistoryBatchHealthTrendStatusRow",
+    "TradeProposalEvidenceComparisonHistoryBatchHealthTrendConfigVersionSummary",
+    "TradeProposalEvidenceComparisonHistoryBatchHealthTrendGateStatusSummary",
+    "TradeProposalEvidenceComparisonHistoryBatchHealthTrendDuplicateGeneratedAtSummary",
+    "TradeProposalEvidenceComparisonHistoryBatchHealthTrendDuplicateFingerprintSummary",
+    "TradeProposalEvidenceComparisonHistoryBatchHealthTrendReport",
+    "TradeProposalEvidenceComparisonHistoryBatchHealthTrendLog",
+    "build_trade_proposal_evidence_comparison_history_batch_health_trend_report",
+}
 EXPECTED_LEVEL_2_ARTIFACT_EXPORTS = (
     EXPECTED_PROPOSAL_PACKET_EXPORTS
     | EXPECTED_PROPOSAL_REVIEW_EXPORTS
@@ -119,6 +131,7 @@ EXPECTED_LEVEL_2_ARTIFACT_EXPORTS = (
     | EXPECTED_PROPOSAL_EVIDENCE_COMPARISON_EXPORTS
     | EXPECTED_PROPOSAL_EVIDENCE_COMPARISON_HISTORY_EXPORTS
     | EXPECTED_PROPOSAL_EVIDENCE_COMPARISON_HISTORY_BATCH_HEALTH_EXPORTS
+    | EXPECTED_PROPOSAL_EVIDENCE_COMPARISON_HISTORY_BATCH_HEALTH_TREND_EXPORTS
 )
 
 ALLOWED_IMPORT_PREFIXES = {
