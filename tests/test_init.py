@@ -2,6 +2,7 @@ import polymarket_alpha_lab as lab
 from polymarket_alpha_lab import (
     proposal_evidence_comparison_history_batch_health as comparison_history_batch_health,
     proposal_evidence_comparison_history_batch_health_trend as batch_health_trend,
+    proposal_evidence_comparison_history_batch_health_trend_batch as batch_health_trend_batch,
     proposal_evidence_comparison_history as comparison_history,
 )
 from polymarket_alpha_lab.analytics import (
@@ -152,6 +153,18 @@ from polymarket_alpha_lab.proposal_evidence_comparison_history_batch_health_tren
     TradeProposalEvidenceComparisonHistoryBatchHealthTrendReport,
     TradeProposalEvidenceComparisonHistoryBatchHealthTrendStatusRow,
     build_trade_proposal_evidence_comparison_history_batch_health_trend_report,
+)
+from polymarket_alpha_lab.proposal_evidence_comparison_history_batch_health_trend_batch import (
+    TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchConfig,
+    TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchConfigVersionSummary,
+    TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchDuplicateFingerprintSummary,
+    TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchDuplicateGeneratedAtSummary,
+    TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchGateResult,
+    TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchGateStatusSummary,
+    TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchLog,
+    TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchReport,
+    TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchStatusRow,
+    build_trade_proposal_evidence_comparison_history_batch_health_trend_batch_report,
 )
 from polymarket_alpha_lab.journal import PaperTradeJournal, PaperTradeRecord
 from polymarket_alpha_lab.paper import PaperFill, PaperOrder, simulate_order_book_fill
@@ -764,6 +777,63 @@ def test_level_2_node_12_public_api_exports():
     )
 
 
+def test_level_2_node_13_public_api_exports():
+    expected_exports = {
+        "TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchConfig",
+        "TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchConfigVersionSummary",
+        "TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchDuplicateFingerprintSummary",
+        "TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchDuplicateGeneratedAtSummary",
+        "TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchGateResult",
+        "TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchGateStatusSummary",
+        "TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchLog",
+        "TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchReport",
+        "TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchStatusRow",
+        "build_trade_proposal_evidence_comparison_history_batch_health_trend_batch_report",
+    }
+
+    assert expected_exports <= set(lab.__all__)
+    assert (
+        lab.TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchConfig
+        is TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchConfig
+    )
+    assert (
+        lab.TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchConfigVersionSummary
+        is TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchConfigVersionSummary
+    )
+    assert (
+        lab.TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchDuplicateFingerprintSummary
+        is TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchDuplicateFingerprintSummary
+    )
+    assert (
+        lab.TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchDuplicateGeneratedAtSummary
+        is TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchDuplicateGeneratedAtSummary
+    )
+    assert (
+        lab.TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchGateResult
+        is TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchGateResult
+    )
+    assert (
+        lab.TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchGateStatusSummary
+        is TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchGateStatusSummary
+    )
+    assert (
+        lab.TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchLog
+        is TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchLog
+    )
+    assert (
+        lab.TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchReport
+        is TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchReport
+    )
+    assert (
+        lab.TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchStatusRow
+        is TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchStatusRow
+    )
+    assert (
+        lab.build_trade_proposal_evidence_comparison_history_batch_health_trend_batch_report
+        is build_trade_proposal_evidence_comparison_history_batch_health_trend_batch_report
+    )
+
+
 def test_public_api_does_not_export_private_or_boundary_constants():
     boundary_constants = (
         (
@@ -777,6 +847,10 @@ def test_public_api_does_not_export_private_or_boundary_constants():
         (
             batch_health_trend,
             "DEFAULT_PROPOSAL_EVIDENCE_COMPARISON_HISTORY_BATCH_HEALTH_TREND_BOUNDARY_STATEMENT",
+        ),
+        (
+            batch_health_trend_batch,
+            "DEFAULT_PROPOSAL_EVIDENCE_COMPARISON_HISTORY_BATCH_HEALTH_TREND_BATCH_BOUNDARY_STATEMENT",
         ),
     )
 

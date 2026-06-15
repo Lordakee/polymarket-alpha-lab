@@ -877,3 +877,53 @@ Append actual evidence to this plan with node completed, commit/push status, rep
 - Spec coverage: The plan creates a supplied-input, report-only trend-batch layer over Node 12 batch-health trend reports and does not add fetching, scraping, JSONL reads, raw upstream ingestion, outcome loading, realized false-positive analysis, profitability analysis, proposal approval, decision resolution, investment ranking, trade recommendations, credential handling, order placement, settlement/reconciliation work, manual execution import, or compliance/legal/geographic analysis.
 - Placeholder scan: The plan contains no TBD/TODO placeholders. Public API, statuses, gate rules, counting rules, validation rules, tests, README requirements, verification commands, Claude review policy, and handoff fields are specified.
 - Type consistency: The same names are used throughout: `TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchConfig`, `TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchGateResult`, `TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchStatusRow`, `TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchConfigVersionSummary`, `TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchGateStatusSummary`, `TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchDuplicateGeneratedAtSummary`, `TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchDuplicateFingerprintSummary`, `TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchReport`, `TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchLog`, and `build_trade_proposal_evidence_comparison_history_batch_health_trend_batch_report`.
+
+## Pre-Commit Handoff Summary
+
+Node completed: Level 2 Node 13 `proposal_evidence_comparison_history_batch_health_trend_batch`.
+
+Implementation delivered:
+
+- Added `src/polymarket_alpha_lab/proposal_evidence_comparison_history_batch_health_trend_batch.py`.
+- Added behavior coverage in `tests/test_proposal_evidence_comparison_history_batch_health_trend_batch.py`.
+- Added scope/API boundary coverage in `tests/test_proposal_evidence_comparison_history_batch_health_trend_batch_scope.py`.
+- Added package-root exports in `src/polymarket_alpha_lab/__init__.py` and `tests/test_init.py`.
+- Updated sibling scope allowlists for the new Node 13 public API.
+- Updated `README.md` with Level 2 Node 13 status/API and repository layout.
+- Added the next-node plan `docs/superpowers/plans/2026-06-15-level-2-proposal-evidence-comparison-history-batch-health-trend-batch-health.md`.
+
+Review-driven fixes applied:
+
+- Added exact root exports for all ten Node 13 public names.
+- Added validation that `gate_status_summaries` cannot contain impossible `batch_health_sample/fail` rows.
+- Added validation that duplicate generated-at summaries are within `first_trend_generated_at` and `last_trend_generated_at`.
+- Strengthened Node 13 scope guardrails for internal `glob`, `replay`, `readlog`, `readlogs`, `logreader`, and `logreaders` names.
+
+Verification evidence before commit:
+
+- Focused Node 13 behavior: `.venv/bin/python -m pytest tests/test_proposal_evidence_comparison_history_batch_health_trend_batch.py -q` -> `13 passed`.
+- Focused Node 13 scope: `.venv/bin/python -m pytest tests/test_proposal_evidence_comparison_history_batch_health_trend_batch_scope.py -q` -> `9 passed`.
+- Node 13 plus scope/API combo: `.venv/bin/python -m pytest tests/test_proposal_evidence_comparison_history_batch_health_trend_batch.py tests/test_proposal_evidence_comparison_history_batch_health_trend_batch_scope.py tests/test_init.py tests/test_analytics_scope.py tests/test_analytics_history_scope.py tests/test_forecast_evidence_scope.py tests/test_manual_review_queue_scope.py tests/test_proposal_packet_scope.py tests/test_proposal_review_scope.py tests/test_proposal_review_summary_scope.py tests/test_proposal_review_quality_scope.py tests/test_proposal_review_diagnostics_scope.py tests/test_proposal_review_coverage_scope.py tests/test_proposal_review_dossier_scope.py tests/test_proposal_review_dossier_batch_scope.py tests/test_proposal_evidence_comparison_scope.py tests/test_proposal_evidence_comparison_history_scope.py tests/test_proposal_evidence_comparison_history_batch_health_scope.py tests/test_proposal_evidence_comparison_history_batch_health_trend_scope.py -q` -> `170 passed`.
+- Full suite: `.venv/bin/python -m pytest -q` -> `725 passed`.
+- Whitespace check: `git diff --check` -> clean.
+- CodeGraph: `codegraph status .` -> index up to date, `79 files`, `2,983 nodes`, `9,570 edges`.
+- Secret scan over `README.md docs src tests` for common token/key patterns -> no matches.
+
+Claude review evidence:
+
+- Node 13 implementation review: `claude -p --model claude-opus-4-8 --effort max ...` -> `Critical findings: 0`, `Important findings: 0`, `Minor findings: 0`, `Verdict: Proceed`.
+- Next-node plan review for Node 14 trend-batch-health: after three review/fix rounds, final result -> `Critical findings: 0`, `Important findings: 0`, `Minor findings: 0`, `Verdict: Proceed`.
+
+Pre-commit git status:
+
+- Modified: `README.md`, `src/polymarket_alpha_lab/__init__.py`, `tests/test_init.py`, sibling scope allowlist tests, and this Node 13 plan.
+- Added: `src/polymarket_alpha_lab/proposal_evidence_comparison_history_batch_health_trend_batch.py`, `tests/test_proposal_evidence_comparison_history_batch_health_trend_batch.py`, `tests/test_proposal_evidence_comparison_history_batch_health_trend_batch_scope.py`, and `docs/superpowers/plans/2026-06-15-level-2-proposal-evidence-comparison-history-batch-health-trend-batch-health.md`.
+
+Commit/push status:
+
+- Pending at the time this handoff summary was written. This summary is intended to be included in the Node 13 commit before push.
+
+Next safe step:
+
+- Commit and push Node 13.
+- Begin Level 2 Node 14 from `docs/superpowers/plans/2026-06-15-level-2-proposal-evidence-comparison-history-batch-health-trend-batch-health.md` using TDD and subagent-driven development, with local Claude Code review fixed to `claude-opus-4-8` and effort `max`.
