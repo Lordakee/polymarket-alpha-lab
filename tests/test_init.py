@@ -73,6 +73,15 @@ from polymarket_alpha_lab.proposal_review_diagnostics import (
     TradeProposalReviewDiagnosticSourceRow,
     build_trade_proposal_review_diagnostic_report,
 )
+from polymarket_alpha_lab.proposal_review_coverage import (
+    TradeProposalReviewCoverageBucketRow,
+    TradeProposalReviewCoverageConfig,
+    TradeProposalReviewCoverageGateResult,
+    TradeProposalReviewCoverageLog,
+    TradeProposalReviewCoveragePacketRow,
+    TradeProposalReviewCoverageReport,
+    build_trade_proposal_review_coverage_report,
+)
 from polymarket_alpha_lab.journal import PaperTradeJournal, PaperTradeRecord
 from polymarket_alpha_lab.paper import PaperFill, PaperOrder, simulate_order_book_fill
 from polymarket_alpha_lab.positions import (
@@ -360,4 +369,31 @@ def test_level_2_node_5_public_api_exports():
     assert (
         lab.build_trade_proposal_review_diagnostic_report
         is build_trade_proposal_review_diagnostic_report
+    )
+
+
+def test_level_2_node_6_public_api_exports():
+    expected_exports = {
+        "TradeProposalReviewCoverageBucketRow",
+        "TradeProposalReviewCoverageConfig",
+        "TradeProposalReviewCoverageGateResult",
+        "TradeProposalReviewCoverageLog",
+        "TradeProposalReviewCoveragePacketRow",
+        "TradeProposalReviewCoverageReport",
+        "build_trade_proposal_review_coverage_report",
+    }
+
+    assert expected_exports <= set(lab.__all__)
+    assert lab.TradeProposalReviewCoverageBucketRow is TradeProposalReviewCoverageBucketRow
+    assert lab.TradeProposalReviewCoverageConfig is TradeProposalReviewCoverageConfig
+    assert (
+        lab.TradeProposalReviewCoverageGateResult
+        is TradeProposalReviewCoverageGateResult
+    )
+    assert lab.TradeProposalReviewCoverageLog is TradeProposalReviewCoverageLog
+    assert lab.TradeProposalReviewCoveragePacketRow is TradeProposalReviewCoveragePacketRow
+    assert lab.TradeProposalReviewCoverageReport is TradeProposalReviewCoverageReport
+    assert (
+        lab.build_trade_proposal_review_coverage_report
+        is build_trade_proposal_review_coverage_report
     )

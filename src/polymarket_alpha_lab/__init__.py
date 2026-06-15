@@ -82,6 +82,15 @@ from polymarket_alpha_lab.proposal_review_diagnostics import (
     TradeProposalReviewDiagnosticSourceRow,
     build_trade_proposal_review_diagnostic_report,
 )
+from polymarket_alpha_lab.proposal_review_coverage import (
+    TradeProposalReviewCoverageBucketRow,
+    TradeProposalReviewCoverageConfig,
+    TradeProposalReviewCoverageGateResult,
+    TradeProposalReviewCoverageLog,
+    TradeProposalReviewCoveragePacketRow,
+    TradeProposalReviewCoverageReport,
+    build_trade_proposal_review_coverage_report,
+)
 from polymarket_alpha_lab.journal import PaperTradeJournal, PaperTradeRecord
 from polymarket_alpha_lab.paper import PaperFill, PaperOrder, simulate_order_book_fill
 from polymarket_alpha_lab.positions import (
@@ -148,11 +157,17 @@ __all__ = [
     "RiskGateConfig",
     "RiskGateDecision",
     "RiskGateReason",
-    "TradeProposalReviewBucketSummary",
     "TradeProposalPacket",
     "TradeProposalPacketConfig",
     "TradeProposalPacketLog",
+    "TradeProposalReviewBucketSummary",
     "TradeProposalReviewConfig",
+    "TradeProposalReviewCoverageBucketRow",
+    "TradeProposalReviewCoverageConfig",
+    "TradeProposalReviewCoverageGateResult",
+    "TradeProposalReviewCoverageLog",
+    "TradeProposalReviewCoveragePacketRow",
+    "TradeProposalReviewCoverageReport",
     "TradeProposalReviewDiagnosticBucketRow",
     "TradeProposalReviewDiagnosticConfig",
     "TradeProposalReviewDiagnosticLog",
@@ -178,6 +193,7 @@ __all__ = [
     "build_paper_portfolio",
     "build_research_packet",
     "build_trade_proposal_packet",
+    "build_trade_proposal_review_coverage_report",
     "build_trade_proposal_review_diagnostic_report",
     "build_trade_proposal_review_quality_report",
     "build_trade_proposal_review_record",
