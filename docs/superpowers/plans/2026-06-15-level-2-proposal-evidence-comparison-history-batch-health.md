@@ -1291,7 +1291,7 @@ Expected: PASS after implementation.
 
 - Modify this plan file with checkbox progress and handoff evidence during execution.
 
-- [ ] **Step 1: Run verification**
+- [x] **Step 1: Run verification**
 
 Run:
 
@@ -1310,7 +1310,7 @@ Expected:
 - CodeGraph: index up to date.
 - Git status: only intended Node 11 files modified/untracked.
 
-- [ ] **Step 2: Claude Code implementation review**
+- [x] **Step 2: Claude Code implementation review**
 
 Run local Claude Code with model `claude-opus-4-8` and effort `max`. The implementation review prompt must treat any raw upstream report dependency beyond Node 10 history reports, raw observation/proposal/review dependency, data fetch, external-history load, JSONL read, scraping/browser automation, auth/credential/wallet/broker/execution/request/session/websocket/order surface, approval workflow, approved-proposal selection, decision resolution, ranking, recommendation, promotion, outcome loading, realized false-positive analysis, profitability analysis, settlement, reconciliation, manual execution import, or compliance/legal/geographic analysis as Critical.
 
@@ -1322,7 +1322,7 @@ Review-note terminology must stay explicit:
 
 Accepted terminal state: `Critical findings: 0`, `Important findings: 0`, and `Verdict: Proceed` or `Verdict: Proceed with fixes`. Fix every Critical and Important finding before commit.
 
-- [ ] **Step 3: Append Handoff Summary**
+- [x] **Step 3: Append Handoff Summary**
 
 Append actual evidence:
 
@@ -1368,3 +1368,73 @@ Expected: push succeeds and final status is clean against `origin/main`.
 - Spec coverage: The plan creates a supplied-input, report-only batch-health layer over Node 10 history reports and does not add fetching, scraping, JSONL reads, raw upstream report ingestion, outcome loading, realized false-positive analysis, profitability analysis, proposal approval, decision resolution, investment ranking, trade recommendations, credential handling, order placement, settlement/reconciliation work, manual execution import, or compliance/legal/geographic analysis.
 - Placeholder scan: The plan contains no TBD/TODO placeholders. Public API, statuses, gate rules, counting rules, validation rules, scope tests, README requirements, verification commands, Claude review policy, and handoff fields are specified.
 - Type consistency: The same names are used throughout: `TradeProposalEvidenceComparisonHistoryBatchHealthConfig`, `TradeProposalEvidenceComparisonHistoryBatchHealthGateResult`, `TradeProposalEvidenceComparisonHistoryBatchHealthStatusRow`, `TradeProposalEvidenceComparisonHistoryBatchHealthConfigVersionSummary`, `TradeProposalEvidenceComparisonHistoryBatchHealthDuplicateGeneratedAtSummary`, `TradeProposalEvidenceComparisonHistoryBatchHealthDuplicateFingerprintSummary`, `TradeProposalEvidenceComparisonHistoryBatchHealthFindingSummary`, `TradeProposalEvidenceComparisonHistoryBatchHealthSourceTransitionSummary`, `TradeProposalEvidenceComparisonHistoryBatchHealthReport`, `TradeProposalEvidenceComparisonHistoryBatchHealthLog`, and `build_trade_proposal_evidence_comparison_history_batch_health_report`.
+
+## Handoff Summary
+
+- Node completed: Level 2 Node 11 proposal evidence comparison history batch health.
+- Commit: pending at handoff-write time; final assistant response must report commit hash after commit.
+- Pushed: pending at handoff-write time; final assistant response must report push result after push.
+- Repo status before commit:
+
+```text
+## main...origin/main
+ M README.md
+ M src/polymarket_alpha_lab/__init__.py
+ M tests/test_analytics_history_scope.py
+ M tests/test_analytics_scope.py
+ M tests/test_forecast_evidence_scope.py
+ M tests/test_init.py
+ M tests/test_manual_review_queue_scope.py
+ M tests/test_proposal_evidence_comparison_history_scope.py
+ M tests/test_proposal_evidence_comparison_scope.py
+ M tests/test_proposal_packet_scope.py
+ M tests/test_proposal_review_coverage_scope.py
+ M tests/test_proposal_review_diagnostics_scope.py
+ M tests/test_proposal_review_dossier_batch_scope.py
+ M tests/test_proposal_review_dossier_scope.py
+ M tests/test_proposal_review_quality_scope.py
+ M tests/test_proposal_review_scope.py
+ M tests/test_proposal_review_summary_scope.py
+?? docs/superpowers/plans/2026-06-15-level-2-proposal-evidence-comparison-history-batch-health-trend.md
+?? src/polymarket_alpha_lab/proposal_evidence_comparison_history_batch_health.py
+?? tests/test_proposal_evidence_comparison_history_batch_health.py
+?? tests/test_proposal_evidence_comparison_history_batch_health_scope.py
+```
+
+- Verification commands:
+  - `.venv/bin/python -m pytest tests/test_proposal_evidence_comparison_history_batch_health.py -q`: `15 passed`
+  - `.venv/bin/python -m pytest tests/test_proposal_evidence_comparison_history_batch_health_scope.py tests/test_init.py ... -q`: `136 passed`
+  - `.venv/bin/python -m pytest tests/test_proposal_evidence_comparison_history_batch_health.py tests/test_proposal_evidence_comparison_history_batch_health_scope.py tests/test_init.py -q`: `46 passed`
+  - `.venv/bin/python -m pytest tests/test_proposal_evidence_comparison_history.py tests/test_proposal_evidence_comparison_history_scope.py tests/test_proposal_evidence_comparison_history_batch_health.py tests/test_proposal_evidence_comparison_history_batch_health_scope.py -q`: `50 passed`
+  - `.venv/bin/python -m pytest -q`: `680 passed`
+  - `git diff --check`: exit 0
+  - `codegraph sync`: synced 19 changed files; 3 added and 16 modified source/test files indexed
+  - `codegraph status .`: index up to date; 73 files, 2,658 nodes, 8,575 edges
+  - Secret scan over current diff: no `ghp_`, GitHub PAT, private-key, API-key, password, or token strings found
+  - Claude Code implementation review (`claude-opus-4-8`, effort `max`): Critical findings 0, Important findings 0, Minor findings 0, Verdict: Proceed
+  - Claude Code next-node plan review (`claude-opus-4-8`, effort `max`): first review Critical 0, Important 4, Minor 1; fixed plan; second review Critical 0, Important 0, Minor 0, Verdict: Proceed
+- Files changed:
+  - `src/polymarket_alpha_lab/proposal_evidence_comparison_history_batch_health.py`
+  - `src/polymarket_alpha_lab/__init__.py`
+  - `tests/test_proposal_evidence_comparison_history_batch_health.py`
+  - `tests/test_proposal_evidence_comparison_history_batch_health_scope.py`
+  - `tests/test_init.py`
+  - `tests/test_analytics_scope.py`
+  - `tests/test_analytics_history_scope.py`
+  - `tests/test_forecast_evidence_scope.py`
+  - `tests/test_manual_review_queue_scope.py`
+  - `tests/test_proposal_packet_scope.py`
+  - `tests/test_proposal_review_scope.py`
+  - `tests/test_proposal_review_summary_scope.py`
+  - `tests/test_proposal_review_quality_scope.py`
+  - `tests/test_proposal_review_diagnostics_scope.py`
+  - `tests/test_proposal_review_coverage_scope.py`
+  - `tests/test_proposal_review_dossier_scope.py`
+  - `tests/test_proposal_review_dossier_batch_scope.py`
+  - `tests/test_proposal_evidence_comparison_scope.py`
+  - `tests/test_proposal_evidence_comparison_history_scope.py`
+  - `README.md`
+  - `docs/superpowers/plans/2026-06-15-level-2-proposal-evidence-comparison-history-batch-health.md`
+  - `docs/superpowers/plans/2026-06-15-level-2-proposal-evidence-comparison-history-batch-health-trend.md`
+- Uncommitted files after push: pending at handoff-write time; final assistant response must report post-push status.
+- Next safe step: execute the Claude-reviewed Node 12 batch-health trend plan. Human analysts can compare batch-health reports using the history batch-health artifact, but any automated routing, ranking, recommendation, settlement/outcome analysis, or execution planning requires a new Claude-reviewed plan.

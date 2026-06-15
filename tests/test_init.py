@@ -1,5 +1,6 @@
 import polymarket_alpha_lab as lab
 from polymarket_alpha_lab import (
+    proposal_evidence_comparison_history_batch_health as comparison_history_batch_health,
     proposal_evidence_comparison_history as comparison_history,
 )
 from polymarket_alpha_lab.analytics import (
@@ -125,6 +126,19 @@ from polymarket_alpha_lab.proposal_evidence_comparison_history import (
     TradeProposalEvidenceComparisonHistorySourceTransition,
     TradeProposalEvidenceComparisonHistoryStatusRow,
     build_trade_proposal_evidence_comparison_history_report,
+)
+from polymarket_alpha_lab.proposal_evidence_comparison_history_batch_health import (
+    TradeProposalEvidenceComparisonHistoryBatchHealthConfig,
+    TradeProposalEvidenceComparisonHistoryBatchHealthConfigVersionSummary,
+    TradeProposalEvidenceComparisonHistoryBatchHealthDuplicateFingerprintSummary,
+    TradeProposalEvidenceComparisonHistoryBatchHealthDuplicateGeneratedAtSummary,
+    TradeProposalEvidenceComparisonHistoryBatchHealthFindingSummary,
+    TradeProposalEvidenceComparisonHistoryBatchHealthGateResult,
+    TradeProposalEvidenceComparisonHistoryBatchHealthLog,
+    TradeProposalEvidenceComparisonHistoryBatchHealthReport,
+    TradeProposalEvidenceComparisonHistoryBatchHealthSourceTransitionSummary,
+    TradeProposalEvidenceComparisonHistoryBatchHealthStatusRow,
+    build_trade_proposal_evidence_comparison_history_batch_health_report,
 )
 from polymarket_alpha_lab.journal import PaperTradeJournal, PaperTradeRecord
 from polymarket_alpha_lab.paper import PaperFill, PaperOrder, simulate_order_book_fill
@@ -618,13 +632,83 @@ def test_level_2_node_10_public_api_exports():
     )
 
 
-def test_public_api_does_not_export_private_or_boundary_constants():
-    boundary_constant = (
-        "DEFAULT_PROPOSAL_EVIDENCE_COMPARISON_HISTORY_BOUNDARY_STATEMENT"
+def test_level_2_node_11_public_api_exports():
+    expected_exports = {
+        "TradeProposalEvidenceComparisonHistoryBatchHealthConfig",
+        "TradeProposalEvidenceComparisonHistoryBatchHealthConfigVersionSummary",
+        "TradeProposalEvidenceComparisonHistoryBatchHealthDuplicateFingerprintSummary",
+        "TradeProposalEvidenceComparisonHistoryBatchHealthDuplicateGeneratedAtSummary",
+        "TradeProposalEvidenceComparisonHistoryBatchHealthFindingSummary",
+        "TradeProposalEvidenceComparisonHistoryBatchHealthGateResult",
+        "TradeProposalEvidenceComparisonHistoryBatchHealthLog",
+        "TradeProposalEvidenceComparisonHistoryBatchHealthReport",
+        "TradeProposalEvidenceComparisonHistoryBatchHealthSourceTransitionSummary",
+        "TradeProposalEvidenceComparisonHistoryBatchHealthStatusRow",
+        "build_trade_proposal_evidence_comparison_history_batch_health_report",
+    }
+
+    assert expected_exports <= set(lab.__all__)
+    assert (
+        lab.TradeProposalEvidenceComparisonHistoryBatchHealthConfig
+        is TradeProposalEvidenceComparisonHistoryBatchHealthConfig
+    )
+    assert (
+        lab.TradeProposalEvidenceComparisonHistoryBatchHealthConfigVersionSummary
+        is TradeProposalEvidenceComparisonHistoryBatchHealthConfigVersionSummary
+    )
+    assert (
+        lab.TradeProposalEvidenceComparisonHistoryBatchHealthDuplicateFingerprintSummary
+        is TradeProposalEvidenceComparisonHistoryBatchHealthDuplicateFingerprintSummary
+    )
+    assert (
+        lab.TradeProposalEvidenceComparisonHistoryBatchHealthDuplicateGeneratedAtSummary
+        is TradeProposalEvidenceComparisonHistoryBatchHealthDuplicateGeneratedAtSummary
+    )
+    assert (
+        lab.TradeProposalEvidenceComparisonHistoryBatchHealthFindingSummary
+        is TradeProposalEvidenceComparisonHistoryBatchHealthFindingSummary
+    )
+    assert (
+        lab.TradeProposalEvidenceComparisonHistoryBatchHealthGateResult
+        is TradeProposalEvidenceComparisonHistoryBatchHealthGateResult
+    )
+    assert (
+        lab.TradeProposalEvidenceComparisonHistoryBatchHealthLog
+        is TradeProposalEvidenceComparisonHistoryBatchHealthLog
+    )
+    assert (
+        lab.TradeProposalEvidenceComparisonHistoryBatchHealthReport
+        is TradeProposalEvidenceComparisonHistoryBatchHealthReport
+    )
+    assert (
+        lab.TradeProposalEvidenceComparisonHistoryBatchHealthSourceTransitionSummary
+        is TradeProposalEvidenceComparisonHistoryBatchHealthSourceTransitionSummary
+    )
+    assert (
+        lab.TradeProposalEvidenceComparisonHistoryBatchHealthStatusRow
+        is TradeProposalEvidenceComparisonHistoryBatchHealthStatusRow
+    )
+    assert (
+        lab.build_trade_proposal_evidence_comparison_history_batch_health_report
+        is build_trade_proposal_evidence_comparison_history_batch_health_report
     )
 
-    assert hasattr(comparison_history, boundary_constant)
-    assert boundary_constant not in lab.__all__
-    assert not hasattr(lab, boundary_constant)
+
+def test_public_api_does_not_export_private_or_boundary_constants():
+    boundary_constants = (
+        (
+            comparison_history,
+            "DEFAULT_PROPOSAL_EVIDENCE_COMPARISON_HISTORY_BOUNDARY_STATEMENT",
+        ),
+        (
+            comparison_history_batch_health,
+            "DEFAULT_PROPOSAL_EVIDENCE_COMPARISON_HISTORY_BATCH_HEALTH_BOUNDARY_STATEMENT",
+        ),
+    )
+
+    for module, boundary_constant in boundary_constants:
+        assert hasattr(module, boundary_constant)
+        assert boundary_constant not in lab.__all__
+        assert not hasattr(lab, boundary_constant)
     assert not any(name.startswith("_") for name in lab.__all__)
     assert not any("BOUNDARY" in name for name in lab.__all__)

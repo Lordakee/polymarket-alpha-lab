@@ -284,6 +284,21 @@ Node 10 is exposed through Python APIs:
 - Inspect history gates with `TradeProposalEvidenceComparisonHistoryGateResult`, status rows with `TradeProposalEvidenceComparisonHistoryStatusRow`, finding summaries with `TradeProposalEvidenceComparisonHistoryFindingSummary`, config-version summaries with `TradeProposalEvidenceComparisonHistoryConfigVersionSummary`, and source transitions with `TradeProposalEvidenceComparisonHistorySourceTransition`.
 - Optionally append already-built comparison-history snapshots with `TradeProposalEvidenceComparisonHistoryLog(path).append(report)`; there is no JSONL reader, loader, replay, or from-file API.
 
+## Level 2 Node 11 Status
+
+Level 2 Node 11 adds report-only proposal evidence comparison history batch health artifacts over supplied `TradeProposalEvidenceComparisonHistoryReport` values. It summarizes history status frequencies, duplicate generated-at indicators, duplicate fingerprint indicators, config-version coverage, finding-code frequencies, source-transition coverage, and append-only JSONL persistence for audit only; it is not an approval workflow, proposal approval step, approved-proposal selector, latest-decision selector, decision-resolution process, investment ranking, trade recommendation, strategy-promotion signal, trade instruction, order instruction, broker request, order request, account action, outcome loader, realized false-positive analysis, profitability analysis, or live-execution signal.
+
+It does not fetch market, order-book, price-history, outcome, account, credential, identity, or settlement data; read external history or JSONL logs; scrape websites; authenticate; handle credentials/private keys; place, submit, sign, send, create, or cancel orders; open user WebSockets; run heartbeat logic; use trading SDK/broker/execution/transport clients; build broker or order request payloads; reconcile exchange accounts; perform reconciliation; review settlement; import manual executions; approve proposals; select latest decisions; resolve conflicting reviews; rank investments; recommend trades; or perform compliance/legal/geographic analysis.
+
+## Level 2 Node 11 Python API
+
+Node 11 is exposed through Python APIs:
+
+- Configure batch-health reports with `TradeProposalEvidenceComparisonHistoryBatchHealthConfig(config_version="history-batch-health-v1")`.
+- Build batch-health reports with `build_trade_proposal_evidence_comparison_history_batch_health_report(history_reports, config=config, generated_at=datetime.now(UTC))`, which returns `TradeProposalEvidenceComparisonHistoryBatchHealthReport`.
+- Inspect batch-health gates with `TradeProposalEvidenceComparisonHistoryBatchHealthGateResult`, status rows with `TradeProposalEvidenceComparisonHistoryBatchHealthStatusRow`, config-version summaries with `TradeProposalEvidenceComparisonHistoryBatchHealthConfigVersionSummary`, duplicate-generated-at summaries with `TradeProposalEvidenceComparisonHistoryBatchHealthDuplicateGeneratedAtSummary`, duplicate-fingerprint summaries with `TradeProposalEvidenceComparisonHistoryBatchHealthDuplicateFingerprintSummary`, finding summaries with `TradeProposalEvidenceComparisonHistoryBatchHealthFindingSummary`, and source-transition summaries with `TradeProposalEvidenceComparisonHistoryBatchHealthSourceTransitionSummary`.
+- Persist batch-health snapshots with `TradeProposalEvidenceComparisonHistoryBatchHealthLog(path).append(report)`.
+
 ## Automation Roadmap
 
 The recommended staged path is:
@@ -325,6 +340,7 @@ See:
 │       │   ├── 2026-06-14-level-2-proposal-packets.md
 │       │   ├── 2026-06-15-level-2-proposal-evidence-comparison.md
 │       │   ├── 2026-06-15-level-2-proposal-evidence-comparison-history.md
+│       │   ├── 2026-06-15-level-2-proposal-evidence-comparison-history-batch-health.md
 │       │   ├── 2026-06-15-level-2-proposal-review-coverage.md
 │       │   ├── 2026-06-15-level-2-proposal-review-dossier-batch-health.md
 │       │   ├── 2026-06-15-level-2-proposal-review-dossier.md
@@ -355,6 +371,7 @@ See:
 │       ├── positions.py
 │       ├── proposal_evidence_comparison.py
 │       ├── proposal_evidence_comparison_history.py
+│       ├── proposal_evidence_comparison_history_batch_health.py
 │       ├── proposal_packet.py
 │       ├── proposal_review.py
 │       ├── proposal_review_coverage.py
@@ -390,6 +407,8 @@ See:
     ├── test_proposal_evidence_comparison_scope.py
     ├── test_proposal_evidence_comparison_history.py
     ├── test_proposal_evidence_comparison_history_scope.py
+    ├── test_proposal_evidence_comparison_history_batch_health.py
+    ├── test_proposal_evidence_comparison_history_batch_health_scope.py
     ├── test_proposal_packet.py
     ├── test_proposal_packet_scope.py
     ├── test_proposal_review.py
