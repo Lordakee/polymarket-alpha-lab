@@ -63,6 +63,15 @@ EXPECTED_PROPOSAL_REVIEW_COVERAGE_EXPORTS = {
     "TradeProposalReviewCoverageReport",
     "build_trade_proposal_review_coverage_report",
 }
+EXPECTED_PROPOSAL_REVIEW_DOSSIER_EXPORTS = {
+    "TradeProposalReviewDossierConfig",
+    "TradeProposalReviewDossierFindingRow",
+    "TradeProposalReviewDossierGateResult",
+    "TradeProposalReviewDossierLog",
+    "TradeProposalReviewDossierReport",
+    "TradeProposalReviewDossierSourceRow",
+    "build_trade_proposal_review_dossier_report",
+}
 EXPECTED_LEVEL_2_ARTIFACT_EXPORTS = (
     EXPECTED_LEVEL_2_PROPOSAL_PACKET_EXPORTS
     | EXPECTED_PROPOSAL_REVIEW_EXPORTS
@@ -70,6 +79,7 @@ EXPECTED_LEVEL_2_ARTIFACT_EXPORTS = (
     | EXPECTED_PROPOSAL_REVIEW_QUALITY_EXPORTS
     | EXPECTED_PROPOSAL_REVIEW_DIAGNOSTIC_EXPORTS
     | EXPECTED_PROPOSAL_REVIEW_COVERAGE_EXPORTS
+    | EXPECTED_PROPOSAL_REVIEW_DOSSIER_EXPORTS
 )
 
 ALLOWED_IMPORT_PREFIXES = {

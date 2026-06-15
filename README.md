@@ -12,7 +12,7 @@ The long-term goal is an automated system that can screen markets, research cand
 
 ## Phase 1 Scope
 
-This repository currently contains the project design, research notes, implementation plans, a read-only market scanner, research packet assembly, bid/ask paper-fill simulation, JSONL paper-trade journaling, paper-only risk gates, rejected-candidate logs, paper position ledgers, executable NAV marks, paper-only portfolio analytics, exposure reports, executable-NAV drawdown reports, paper-only analytics history validation, paper-only forecast evidence reports, paper-only manual-review queues, human-review proposal packet artifacts, append-only proposal-review record artifacts, proposal-review summary report artifacts, proposal-review quality gate artifacts, proposal-review diagnostic artifacts, and proposal-review coverage report artifacts.
+This repository currently contains the project design, research notes, implementation plans, a read-only market scanner, research packet assembly, bid/ask paper-fill simulation, JSONL paper-trade journaling, paper-only risk gates, rejected-candidate logs, paper position ledgers, executable NAV marks, paper-only portfolio analytics, exposure reports, executable-NAV drawdown reports, paper-only analytics history validation, paper-only forecast evidence reports, paper-only manual-review queues, human-review proposal packet artifacts, append-only proposal-review record artifacts, proposal-review summary report artifacts, proposal-review quality gate artifacts, proposal-review diagnostic artifacts, proposal-review coverage report artifacts, and proposal-review dossier artifacts.
 
 The current phase does not contain:
 
@@ -224,6 +224,21 @@ Node 6 is exposed through Python APIs:
 - Inspect coverage gates with `TradeProposalReviewCoverageGateResult`, bucket rows with `TradeProposalReviewCoverageBucketRow`, and packet rows with `TradeProposalReviewCoveragePacketRow`.
 - Persist proposal-review coverage snapshots with `TradeProposalReviewCoverageLog(path).append(report)`.
 
+## Level 2 Node 7 Status
+
+Level 2 Node 7 adds report-only proposal-review dossier artifacts over supplied `TradeProposalReviewSummaryReport`, `TradeProposalReviewQualityReport`, `TradeProposalReviewDiagnosticReport`, and `TradeProposalReviewCoverageReport` values. It assembles review evidence, gaps, gate rows, source rows, and finding rows for audit only; it is not an approval workflow, trade instruction, order instruction, broker request, order request, account action, strategy-promotion signal, or live-execution signal.
+
+It does not fetch market, order-book, price-history, outcome, account, credential, or identity data; read external history or JSONL logs; scrape websites; authenticate; handle private keys or credentials; place, submit, sign, send, create, or cancel orders; open user WebSockets; run heartbeat logic; use a trading SDK, broker client, execution client, or transport client; build broker or order request payloads; reconcile exchange accounts; perform reconciliation; review settlement; import manual executions; run approval workflows; select latest decisions; resolve conflicting reviews; rank investments; recommend trades; or perform compliance/legal/geographic analysis.
+
+## Level 2 Node 7 Python API
+
+Node 7 is exposed through Python APIs:
+
+- Configure proposal-review dossiers with `TradeProposalReviewDossierConfig(config_version="dossier-v1")`.
+- Build proposal-review dossier reports with `build_trade_proposal_review_dossier_report(summary=summary, quality=quality, diagnostics=diagnostics, coverage=coverage, config=config, generated_at=datetime.now(UTC))`, which returns `TradeProposalReviewDossierReport`.
+- Inspect dossier gates with `TradeProposalReviewDossierGateResult`, source rows with `TradeProposalReviewDossierSourceRow`, and finding rows with `TradeProposalReviewDossierFindingRow`.
+- Persist proposal-review dossier snapshots with `TradeProposalReviewDossierLog(path).append(report)`.
+
 ## Automation Roadmap
 
 The recommended staged path is:
@@ -264,6 +279,8 @@ See:
 │       │   ├── 2026-06-14-level-1b-paper-manual-review-queue.md
 │       │   ├── 2026-06-14-level-2-proposal-packets.md
 │       │   ├── 2026-06-15-level-2-proposal-review-coverage.md
+│       │   ├── 2026-06-15-level-2-proposal-review-dossier-batch-health.md
+│       │   ├── 2026-06-15-level-2-proposal-review-dossier.md
 │       │   ├── 2026-06-14-level-2-proposal-review-diagnostics.md
 │       │   ├── 2026-06-14-level-2-proposal-review-records.md
 │       │   ├── 2026-06-14-level-2-proposal-review-quality-gates.md
@@ -292,6 +309,7 @@ See:
 │       ├── proposal_packet.py
 │       ├── proposal_review.py
 │       ├── proposal_review_coverage.py
+│       ├── proposal_review_dossier.py
 │       ├── proposal_review_diagnostics.py
 │       ├── proposal_review_quality.py
 │       ├── proposal_review_summary.py
@@ -323,6 +341,8 @@ See:
     ├── test_proposal_review.py
     ├── test_proposal_review_coverage.py
     ├── test_proposal_review_coverage_scope.py
+    ├── test_proposal_review_dossier.py
+    ├── test_proposal_review_dossier_scope.py
     ├── test_proposal_review_diagnostics.py
     ├── test_proposal_review_diagnostics_scope.py
     ├── test_proposal_review_quality.py

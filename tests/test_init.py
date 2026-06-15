@@ -82,6 +82,15 @@ from polymarket_alpha_lab.proposal_review_coverage import (
     TradeProposalReviewCoverageReport,
     build_trade_proposal_review_coverage_report,
 )
+from polymarket_alpha_lab.proposal_review_dossier import (
+    TradeProposalReviewDossierConfig,
+    TradeProposalReviewDossierFindingRow,
+    TradeProposalReviewDossierGateResult,
+    TradeProposalReviewDossierLog,
+    TradeProposalReviewDossierReport,
+    TradeProposalReviewDossierSourceRow,
+    build_trade_proposal_review_dossier_report,
+)
 from polymarket_alpha_lab.journal import PaperTradeJournal, PaperTradeRecord
 from polymarket_alpha_lab.paper import PaperFill, PaperOrder, simulate_order_book_fill
 from polymarket_alpha_lab.positions import (
@@ -396,4 +405,37 @@ def test_level_2_node_6_public_api_exports():
     assert (
         lab.build_trade_proposal_review_coverage_report
         is build_trade_proposal_review_coverage_report
+    )
+
+
+def test_level_2_node_7_public_api_exports():
+    expected_exports = {
+        "TradeProposalReviewDossierConfig",
+        "TradeProposalReviewDossierFindingRow",
+        "TradeProposalReviewDossierGateResult",
+        "TradeProposalReviewDossierLog",
+        "TradeProposalReviewDossierReport",
+        "TradeProposalReviewDossierSourceRow",
+        "build_trade_proposal_review_dossier_report",
+    }
+
+    assert expected_exports <= set(lab.__all__)
+    assert lab.TradeProposalReviewDossierConfig is TradeProposalReviewDossierConfig
+    assert (
+        lab.TradeProposalReviewDossierFindingRow
+        is TradeProposalReviewDossierFindingRow
+    )
+    assert (
+        lab.TradeProposalReviewDossierGateResult
+        is TradeProposalReviewDossierGateResult
+    )
+    assert lab.TradeProposalReviewDossierLog is TradeProposalReviewDossierLog
+    assert lab.TradeProposalReviewDossierReport is TradeProposalReviewDossierReport
+    assert (
+        lab.TradeProposalReviewDossierSourceRow
+        is TradeProposalReviewDossierSourceRow
+    )
+    assert (
+        lab.build_trade_proposal_review_dossier_report
+        is build_trade_proposal_review_dossier_report
     )
