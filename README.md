@@ -329,6 +329,21 @@ Node 13 is exposed through Python APIs:
 - Inspect trend-batch gates with `TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchGateResult`, status rows with `TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchStatusRow`, config-version summaries with `TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchConfigVersionSummary`, gate-status summaries with `TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchGateStatusSummary`, duplicate-generated-at summaries with `TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchDuplicateGeneratedAtSummary`, and duplicate-fingerprint summaries with `TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchDuplicateFingerprintSummary`.
 - Optionally append already-built trend-batch snapshots with `TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchLog(path).append(report)`; there is no JSONL reader, loader, replay, or from-file API.
 
+## Level 2 Node 14 Status
+
+Level 2 Node 14 adds report-only proposal evidence comparison history batch-health trend-batch health artifacts over supplied `TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchReport` values. It summarizes trend-batch status frequencies, Node 13 gate-status frequencies, config-version coverage, duplicate generated-at indicators, duplicate fingerprint indicators, and first/last trend-batch report time bounds for audit only, and it supports append-only JSONL persistence. This is no-read, no-fetch, no-outcome, no-settlement, no-ranking, no-recommendation, no-approval, and no-execution scope; it is not an approval workflow, proposal approval step, approved-proposal selector, latest-decision selector, decision-resolution process, investment ranking, trade recommendation, strategy-promotion signal, trade instruction, order instruction, broker request, order request, account action, credential workflow, external-history loader, JSONL reader, scraping workflow, outcome loader, settlement review, reconciliation process, compliance/legal/geographic analysis, realized false-positive analysis, profitability analysis, automatic order-placement authorization, or live-execution signal.
+
+It rejects loader-shaped inputs such as paths, mappings, strings, bytes, generators, arbitrary iterables, and log-shaped objects. It does not fetch data; read logs; scrape; authenticate; handle credentials/private keys; place or cancel orders; open WebSockets; run heartbeat logic; use trading SDK/broker/execution clients; build request payloads; approve proposals; select latest decisions; resolve conflicts; rank investments; recommend trades; perform outcome/settlement/reconciliation/profitability analysis; import manual executions; or perform compliance/legal/geographic analysis.
+
+## Level 2 Node 14 Python API
+
+Node 14 is exposed through Python APIs:
+
+- Configure trend-batch health reports with `TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthConfig(config_version="batch-health-trend-batch-health-v1")`.
+- Build trend-batch health reports from supplied, in-memory Node 13 `TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchReport` values with `build_trade_proposal_evidence_comparison_history_batch_health_trend_batch_health_report(trend_batch_reports, config=config, generated_at=datetime.now(UTC))`, which returns `TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthReport`.
+- Inspect trend-batch health gates with `TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthGateResult`, status rows with `TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthStatusRow`, config-version summaries with `TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthConfigVersionSummary`, gate-status summaries with `TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthGateStatusSummary`, duplicate-generated-at summaries with `TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthDuplicateGeneratedAtSummary`, and duplicate-fingerprint summaries with `TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthDuplicateFingerprintSummary`.
+- Optionally append already-built trend-batch health snapshots with `TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthLog(path).append(report)`; there is no JSONL reader, loader, replay, or from-file API.
+
 ## Automation Roadmap
 
 The recommended staged path is:
@@ -407,6 +422,7 @@ See:
 │       ├── proposal_evidence_comparison_history_batch_health.py
 │       ├── proposal_evidence_comparison_history_batch_health_trend.py
 │       ├── proposal_evidence_comparison_history_batch_health_trend_batch.py
+│       ├── proposal_evidence_comparison_history_batch_health_trend_batch_health.py
 │       ├── proposal_packet.py
 │       ├── proposal_review.py
 │       ├── proposal_review_coverage.py
@@ -448,6 +464,8 @@ See:
     ├── test_proposal_evidence_comparison_history_batch_health_trend_scope.py
     ├── test_proposal_evidence_comparison_history_batch_health_trend_batch.py
     ├── test_proposal_evidence_comparison_history_batch_health_trend_batch_scope.py
+    ├── test_proposal_evidence_comparison_history_batch_health_trend_batch_health.py
+    ├── test_proposal_evidence_comparison_history_batch_health_trend_batch_health_scope.py
     ├── test_proposal_packet.py
     ├── test_proposal_packet_scope.py
     ├── test_proposal_review.py

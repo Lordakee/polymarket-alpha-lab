@@ -927,3 +927,43 @@ Append actual evidence to this plan with node completed, commit/push status, rep
 - Spec coverage: The plan creates a supplied-input, report-only health layer over Node 13 trend-batch reports and does not add fetching, scraping, JSONL reads, raw upstream ingestion, outcome loading, realized false-positive analysis, profitability analysis, proposal approval, decision resolution, investment ranking, trade recommendations, credential handling, order placement, settlement/reconciliation work, manual execution import, or compliance/legal/geographic analysis.
 - Placeholder scan: The plan contains no TBD/TODO placeholders. Public API, statuses, gate rules, counting rules, validation rules, tests, README requirements, verification commands, Claude review policy, and handoff fields are specified.
 - Type consistency: The same names are used throughout: `TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthConfig`, `TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthGateResult`, `TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthStatusRow`, `TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthConfigVersionSummary`, `TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthGateStatusSummary`, `TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthDuplicateGeneratedAtSummary`, `TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthDuplicateFingerprintSummary`, `TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthReport`, `TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthLog`, and `build_trade_proposal_evidence_comparison_history_batch_health_trend_batch_health_report`.
+
+## Final Handoff Summary (Node 14 Completed)
+
+- Node completed: Level 2 Node 14 proposal evidence comparison history batch-health trend-batch health.
+- Base commit before Node 14 work: `fc50067b09c0337313abdcce57591deadd1c77f7` (`feat: add proposal evidence comparison history batch health trend batch`).
+- Main production artifact: `src/polymarket_alpha_lab/proposal_evidence_comparison_history_batch_health_trend_batch_health.py`.
+- Main behavior tests: `tests/test_proposal_evidence_comparison_history_batch_health_trend_batch_health.py`.
+- Main scope tests: `tests/test_proposal_evidence_comparison_history_batch_health_trend_batch_health_scope.py`.
+- Public API integration: `src/polymarket_alpha_lab/__init__.py` and `tests/test_init.py`.
+- Documentation integration: `README.md`.
+- Sibling scope allowlists updated for the new Node 14 public root exports.
+- Next implementation plan created: `docs/superpowers/plans/2026-06-15-level-2-proposal-evidence-comparison-history-batch-health-trend-batch-health-trend.md`.
+
+Verification evidence before commit:
+
+- RED behavior test was observed before production module existed: `tests/test_proposal_evidence_comparison_history_batch_health_trend_batch_health.py` failed with `ModuleNotFoundError`.
+- RED scope/export/docs tests were observed before root exports existed: focused scope/API command failed with missing Node 14 exports.
+- Review-driven regression RED was observed for non-quantized append-time ratio validation: `test_trend_batch_health_rejects_nonquantized_ratio_values_before_append_writes` failed before the production fix because no `ValueError` was raised.
+- Review-driven regression GREEN: `.venv/bin/python -m pytest tests/test_proposal_evidence_comparison_history_batch_health_trend_batch_health.py::test_trend_batch_health_rejects_nonquantized_ratio_values_before_append_writes -q` passed with `1 passed`.
+- Node 14 behavior suite: `.venv/bin/python -m pytest tests/test_proposal_evidence_comparison_history_batch_health_trend_batch_health.py -q` passed with `22 passed`.
+- Scope/API combination: `.venv/bin/python -m pytest tests/test_proposal_evidence_comparison_history_batch_health_trend_batch_health_scope.py tests/test_init.py tests/test_analytics_scope.py tests/test_analytics_history_scope.py tests/test_forecast_evidence_scope.py tests/test_manual_review_queue_scope.py tests/test_proposal_packet_scope.py tests/test_proposal_review_scope.py tests/test_proposal_review_summary_scope.py tests/test_proposal_review_quality_scope.py tests/test_proposal_review_diagnostics_scope.py tests/test_proposal_review_coverage_scope.py tests/test_proposal_review_dossier_scope.py tests/test_proposal_review_dossier_batch_scope.py tests/test_proposal_evidence_comparison_scope.py tests/test_proposal_evidence_comparison_history_scope.py tests/test_proposal_evidence_comparison_history_batch_health_scope.py tests/test_proposal_evidence_comparison_history_batch_health_trend_scope.py tests/test_proposal_evidence_comparison_history_batch_health_trend_batch_scope.py -q` passed with `168 passed`.
+- Full suite after ratio fix: `.venv/bin/python -m pytest -q` passed with `758 passed`.
+- `git diff --check` exited 0.
+- `codegraph sync && codegraph status .` reported the index up to date.
+- Secret scan over `README.md docs src tests` had no matches.
+
+Review evidence:
+
+- Claude Code implementation review (`claude-opus-4-8`, effort `max`, read-only) initially reported `Critical findings: 0`, `Important findings: 1`, `Verdict: Needs fixes` for append-time non-quantized Decimal ratio validation.
+- The important finding was fixed by adding `_ratio_value_matches()` and a regression test that rejects non-quantized top-level ratios, status-row ratios, and rate-gate observed values before append writes.
+- Claude Code implementation re-review (`claude-opus-4-8`, effort `max`, read-only) reported `Critical findings: 0`, `Important findings: 0`, `Minor findings: 1`, `Verdict: Proceed`.
+- Claude Code Node 15 plan review (`claude-opus-4-8`, effort `max`, read-only) initially reported `Critical findings: 0`, `Important findings: 0`, `Minor findings: 2`, `Verdict: Proceed`; those two minor clarity notes were addressed.
+- Claude Code Node 15 plan re-review after self-containedness fixes and minor clarity fixes reported `Critical findings: 0`, `Important findings: 0`, `Minor findings: 1`, `Verdict: Proceed`.
+
+Commit and push status:
+
+- Intended commit message: `feat: add proposal evidence comparison history batch health trend batch health`.
+- Intended push target: `origin/main`.
+- No GitHub token or other secret is stored in the repository.
+- After this summary is appended, run the final verification commands again, commit all intended Node 14 and Node 15 plan files, push to `origin/main`, then start Node 15 implementation from the reviewed plan.

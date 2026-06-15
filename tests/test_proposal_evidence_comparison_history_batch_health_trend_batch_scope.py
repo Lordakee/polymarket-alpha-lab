@@ -25,6 +25,18 @@ EXPECTED_PROPOSAL_EVIDENCE_COMPARISON_HISTORY_BATCH_HEALTH_TREND_BATCH_EXPORTS =
     "TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchLog",
     "build_trade_proposal_evidence_comparison_history_batch_health_trend_batch_report",
 }
+EXPECTED_PROPOSAL_EVIDENCE_COMPARISON_HISTORY_BATCH_HEALTH_TREND_BATCH_HEALTH_EXPORTS = {
+    "TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthConfig",
+    "TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthGateResult",
+    "TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthStatusRow",
+    "TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthConfigVersionSummary",
+    "TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthGateStatusSummary",
+    "TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthDuplicateGeneratedAtSummary",
+    "TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthDuplicateFingerprintSummary",
+    "TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthReport",
+    "TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthLog",
+    "build_trade_proposal_evidence_comparison_history_batch_health_trend_batch_health_report",
+}
 
 ALLOWED_IMPORT_PREFIXES = {
     "__future__",
@@ -460,9 +472,24 @@ def test_package_root_exports_batch_health_trend_batch_names_only_for_node_13():
     ):
         assert name in assigned_exports
         assert not public_export_fragment_matches(name), name
+    for name in (
+        EXPECTED_PROPOSAL_EVIDENCE_COMPARISON_HISTORY_BATCH_HEALTH_TREND_BATCH_HEALTH_EXPORTS
+    ):
+        assert name in assigned_exports
+        assert not public_export_fragment_matches(name), name
 
     for name in assigned_exports:
         if name.startswith(
+            "TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealth",
+        ) or (
+            name
+            == "build_trade_proposal_evidence_comparison_history_batch_health_trend_batch_health_report"
+        ):
+            assert (
+                name
+                in EXPECTED_PROPOSAL_EVIDENCE_COMPARISON_HISTORY_BATCH_HEALTH_TREND_BATCH_HEALTH_EXPORTS
+            )
+        elif name.startswith(
             "TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatch",
         ) or (
             name
