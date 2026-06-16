@@ -268,6 +268,7 @@ from polymarket_alpha_lab.performance_summary import (
 )
 from polymarket_alpha_lab.rejections import RejectedCandidateLog, RejectedCandidateRecord
 from polymarket_alpha_lab.research import ResearchPacket, build_research_packet
+from polymarket_alpha_lab.runner import RunLoopSummary, run_strategy_loop
 from polymarket_alpha_lab.risk import (
     RiskGateConfig,
     RiskGateDecision,
@@ -474,6 +475,8 @@ __all__ = [
     "build_trade_proposal_evidence_comparison_history_batch_health_trend_batch_health_trend_report",
     "build_paper_portfolio",
     "build_performance_summary",
+    "RunLoopSummary",
+    "run_strategy_loop",
     "build_research_packet",
     "build_trade_proposal_evidence_comparison_history_report",
     "build_trade_proposal_evidence_comparison_report",

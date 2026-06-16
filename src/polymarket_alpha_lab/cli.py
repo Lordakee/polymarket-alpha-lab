@@ -30,6 +30,7 @@ from polymarket_alpha_lab.performance_summary import (
     build_performance_summary,
 )
 from polymarket_alpha_lab.project_screening import PaperProjectScreeningConfig
+from polymarket_alpha_lab.runner import RunLoopSummary, run_strategy_loop
 from polymarket_alpha_lab.strategy_cycle import (
     PaperStrategyCycleConfig,
     PaperStrategyCycleLog,
@@ -43,6 +44,7 @@ CycleRunner = Callable[..., PaperStrategyCycleReport]
 ClientFactory = Callable[[], Any]
 NavRunner = Callable[..., PaperNavSnapshot]
 HistoryRunner = Callable[..., PerformanceSummary]
+LoopRunner = Callable[..., RunLoopSummary]
 
 
 def main(
@@ -53,6 +55,7 @@ def main(
     nav_runner: NavRunner = mark_paper_portfolio_nav,
     client_factory: ClientFactory = PolymarketPublicClient,
     history_runner: HistoryRunner | None = None,
+    loop_runner: LoopRunner = run_strategy_loop,
 ) -> int:
     parser = argparse.ArgumentParser(prog="polymarket-alpha-lab")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -132,6 +135,59 @@ def main(
         dest="nav_log",
     )
 
+    # Stage 7 continuous run: chains strategy-cycle + paper-execute + portfolio-nav.
+    run_loop = subparsers.add_parser("run")
+    run_loop.add_argument("--limit", type=int, default=25)
+    run_loop.add_argument("--archive-root", type=Path, default=Path("data/raw"))
+    run_loop.add_argument("--max-markets", type=int, default=50)
+    run_loop.add_argument(
+        "--prefilter",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        dest="prefilter",
+    )
+    run_loop.add_argument(
+        "--paper-execute",
+        action="store_true",
+        dest="paper_execute",
+    )
+    run_loop.add_argument(
+        "--paper-journal",
+        type=Path,
+        default=Path("artifacts/paper-trades.jsonl"),
+        dest="paper_journal",
+    )
+    run_loop.add_argument(
+        "--starting-cash",
+        type=Decimal,
+        required=True,
+        dest="starting_cash",
+    )
+    run_loop.add_argument(
+        "--cycle-log",
+        type=Path,
+        default=Path("artifacts/strategy-cycle.jsonl"),
+        dest="cycle_log",
+    )
+    run_loop.add_argument(
+        "--nav-log",
+        type=Path,
+        default=None,
+        dest="nav_log",
+    )
+    run_loop.add_argument(
+        "--repeat-interval",
+        type=int,
+        default=0,
+        dest="repeat_interval",
+    )
+    run_loop.add_argument(
+        "--max-iterations",
+        type=int,
+        default=1,
+        dest="max_iterations",
+    )
+
     args = parser.parse_args(argv)
 
     if args.command == "scan":
@@ -203,6 +259,38 @@ def main(
             return 0
         except Exception as exc:
             print(f"history failed: {exc}", file=sys.stderr)
+            return 1
+
+    if args.command == "run":
+        try:
+            scan_config = MarketScanConfig(
+                limit=args.limit,
+                archive_root=args.archive_root,
+                output_path=args.cycle_log,
+                fetch_books=True,
+            )
+            cycle_config = _build_default_cycle_config(
+                max_markets_per_cycle=args.max_markets,
+                prefilter_by_score=args.prefilter,
+                paper_execute=args.paper_execute,
+                paper_journal=args.paper_journal,
+            )
+            repeat_mode = "interval" if args.repeat_interval > 0 else "once"
+            summary = loop_runner(
+                client=client_factory(),
+                scan_config=scan_config,
+                cycle_config=cycle_config,
+                starting_cash=args.starting_cash,
+                nav_log_path=args.nav_log,
+                cycle_report_log_path=args.cycle_log,
+                repeat_mode=repeat_mode,
+                interval_seconds=args.repeat_interval,
+                max_iterations=args.max_iterations,
+            )
+            _print_run_loop_summary(summary)
+            return 0
+        except Exception as exc:
+            print(f"run failed: {exc}", file=sys.stderr)
             return 1
 
     return 2
@@ -370,3 +458,16 @@ def _print_performance_summary(summary: PerformanceSummary) -> None:
             f"  cycle_span={summary.first_cycle_at.isoformat()} "
             f"to {summary.last_cycle_at.isoformat()}",
         )
+
+
+def _print_run_loop_summary(summary: RunLoopSummary) -> None:
+    print(
+        "run: "
+        f"completed={summary.iterations_completed} "
+        f"failed={summary.iterations_failed} "
+        f"nav_skipped={summary.nav_marks_skipped} "
+        f"span={summary.first_iteration_at.isoformat()} "
+        f"to {summary.last_iteration_at.isoformat()}",
+    )
+    if summary.last_error is not None:
+        print(f"  last_error={summary.last_error}")

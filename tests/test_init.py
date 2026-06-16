@@ -269,6 +269,7 @@ from polymarket_alpha_lab.risk import (
     RiskGateReason,
     evaluate_research_packet_risk,
 )
+from polymarket_alpha_lab.runner import RunLoopSummary, run_strategy_loop
 
 
 def test_level_1_public_api_exports():
@@ -560,6 +561,14 @@ def test_paper_portfolio_nav_public_api_exports():
 
     assert expected_exports <= set(lab.__all__)
     assert lab.mark_paper_portfolio_nav is mark_paper_portfolio_nav
+
+
+def test_runner_public_api_exports():
+    expected_exports = {"RunLoopSummary", "run_strategy_loop"}
+
+    assert expected_exports <= set(lab.__all__)
+    assert lab.RunLoopSummary is RunLoopSummary
+    assert lab.run_strategy_loop is run_strategy_loop
 
 
 def test_level_2_node_1_public_api_exports():
