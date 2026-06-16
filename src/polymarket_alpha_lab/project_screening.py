@@ -67,11 +67,11 @@ class PaperProjectScreeningConfig:
     min_screening_score: Decimal = Decimal("0.010000")
     reference_ask_size: Decimal = Decimal("100.0000")
     net_edge_weight: Decimal = Decimal("1.0000")
-    confidence_weight: Decimal = Decimal("0.0000")
-    depth_weight: Decimal = Decimal("0.0000")
-    spread_penalty_weight: Decimal = Decimal("0.0000")
-    resolution_risk_penalty_weight: Decimal = Decimal("0.0000")
-    cost_penalty_weight: Decimal = Decimal("0.0000")
+    confidence_weight: Decimal = Decimal("0.3000")
+    depth_weight: Decimal = Decimal("0.1000")
+    spread_penalty_weight: Decimal = Decimal("0.5000")
+    resolution_risk_penalty_weight: Decimal = Decimal("0.5000")
+    cost_penalty_weight: Decimal = Decimal("0.3000")
 
     def __post_init__(self) -> None:
         _require_canonical_string("config_version", self.config_version)
