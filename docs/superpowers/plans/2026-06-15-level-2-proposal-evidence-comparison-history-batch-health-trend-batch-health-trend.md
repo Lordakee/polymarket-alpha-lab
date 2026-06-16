@@ -1294,3 +1294,56 @@ This section is the required evidence schema for the Node 15 worker to populate 
 - Commit and push: record commit hash, branch, remote, push result, and whether the branch is up to date.
 - Uncommitted files after push: list remaining files and mark which are unrelated pre-existing work from other agents.
 - Next safe step: state the next node or review action that can proceed without overlapping file edits.
+
+## Final Handoff Summary (Node 15 Worker Completes)
+
+- Node completed: Level 2 Node 15 Proposal Evidence Comparison History Batch Health Trend Batch Health Trend.
+- Changed files:
+  - `README.md`
+  - `src/polymarket_alpha_lab/__init__.py`
+  - `src/polymarket_alpha_lab/proposal_evidence_comparison_history_batch_health_trend_batch_health_trend.py`
+  - `tests/test_init.py`
+  - `tests/test_proposal_evidence_comparison_history_batch_health_trend_batch_health_trend.py`
+  - `tests/test_proposal_evidence_comparison_history_batch_health_trend_batch_health_trend_scope.py`
+  - `tests/test_analytics_scope.py`
+  - `tests/test_analytics_history_scope.py`
+  - `tests/test_forecast_evidence_scope.py`
+  - `tests/test_manual_review_queue_scope.py`
+  - `tests/test_proposal_packet_scope.py`
+  - `tests/test_proposal_review_scope.py`
+  - `tests/test_proposal_review_summary_scope.py`
+  - `tests/test_proposal_review_quality_scope.py`
+  - `tests/test_proposal_review_diagnostics_scope.py`
+  - `tests/test_proposal_review_coverage_scope.py`
+  - `tests/test_proposal_review_dossier_scope.py`
+  - `tests/test_proposal_review_dossier_batch_scope.py`
+  - `tests/test_proposal_evidence_comparison_scope.py`
+  - `tests/test_proposal_evidence_comparison_history_scope.py`
+  - `tests/test_proposal_evidence_comparison_history_batch_health_scope.py`
+  - `tests/test_proposal_evidence_comparison_history_batch_health_trend_scope.py`
+  - `tests/test_proposal_evidence_comparison_history_batch_health_trend_batch_scope.py`
+  - `tests/test_proposal_evidence_comparison_history_batch_health_trend_batch_health_scope.py`
+  - `docs/superpowers/plans/2026-06-15-level-2-proposal-evidence-comparison-history-batch-health-trend-batch-health-trend.md`
+  - `docs/superpowers/plans/2026-06-15-level-2-proposal-evidence-comparison-artifact-registry.md`
+- Verification evidence before commit:
+  - `.venv/bin/python -m pytest tests/test_proposal_evidence_comparison_history_batch_health_trend_batch_health_trend.py tests/test_proposal_evidence_comparison_history_batch_health_trend_batch_health_trend_scope.py tests/test_init.py -q` exited 0 with `54 passed in 0.64s`.
+  - `.venv/bin/python -m pytest tests/test_api.py tests/test_analytics_scope.py tests/test_analytics_history_scope.py tests/test_forecast_evidence_scope.py tests/test_manual_review_queue_scope.py tests/test_proposal_packet_scope.py tests/test_proposal_review_scope.py tests/test_proposal_review_summary_scope.py tests/test_proposal_review_quality_scope.py tests/test_proposal_review_diagnostics_scope.py tests/test_proposal_review_coverage_scope.py tests/test_proposal_review_dossier_scope.py tests/test_proposal_review_dossier_batch_scope.py tests/test_proposal_evidence_comparison_scope.py tests/test_proposal_evidence_comparison_history_scope.py tests/test_proposal_evidence_comparison_history_batch_health_scope.py tests/test_proposal_evidence_comparison_history_batch_health_trend_scope.py tests/test_proposal_evidence_comparison_history_batch_health_trend_batch_scope.py tests/test_proposal_evidence_comparison_history_batch_health_trend_batch_health_scope.py tests/test_proposal_evidence_comparison_history_batch_health_trend_batch_health_trend_scope.py -q` exited 0 with `158 passed in 3.84s`.
+  - `.venv/bin/python -m pytest -q` exited 0 with `791 passed in 7.02s`.
+  - `git diff --check` exited 0.
+  - `codegraph sync && codegraph status .` exited 0 and reported the index is up to date.
+  - `rg -n "ghp_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN (RSA |OPENSSH |EC |DSA )?PRIVATE KEY-----" README.md docs src tests` exited 1 with no matches.
+- Claude implementation review:
+  - Command target: current Node 15 implementation against this plan using local Claude Code with `--model claude-opus-4-8`, `--effort max`, `--permission-mode dontAsk`, and `--disallowed-tools "Edit,Write"`.
+  - Result: Critical findings count 0, Important findings count 0, Minor findings count 0, Verdict Proceed.
+- Claude next-plan review:
+  - Reviewed plan: `docs/superpowers/plans/2026-06-15-level-2-proposal-evidence-comparison-artifact-registry.md`.
+  - Final result after fixing earlier plan review findings: Critical findings count 0, Important findings count 0, Minor findings count 2, Verdict Proceed.
+  - Non-blocking minor findings: import instruction in Task 2 Step 2 could be formatted as a full import statement, and package `__all__` insertion ordering is left to existing local convention.
+- Known residual risks:
+  - Public leaf dataclasses still allow standalone non-canonical Decimal scale outside full report-tree validation, matching Node 14 behavior. Persisted reports and append paths reject noncanonical top-level ratios, status-row ratios, and rate-gate observed values before writes.
+  - Next plan is intentionally small and static; it does not continue the recursive batch/trend chain to avoid a plan that depends on copying a 1300-line implementation.
+- Commit and push:
+  - A pre-amend local commit was created as `d5e8d669427b5bfcbe3cc8e332b402a2e807fe6d` on branch `main`, then superseded by a handoff-only amend.
+  - Final commit hash, push target, and final clean status are recorded in the assistant closeout after commit finalization and `git push`; embedding the final commit hash in this same committed file would change that hash again.
+- Next safe step:
+  - After Node 15 is committed and pushed, execute `docs/superpowers/plans/2026-06-15-level-2-proposal-evidence-comparison-artifact-registry.md` with disjoint agent file ownership.

@@ -3,40 +3,16 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-TREND_BATCH_PATH = (
+TREND_BATCH_HEALTH_TREND_PATH = (
     REPO_ROOT
     / "src"
     / "polymarket_alpha_lab"
-    / "proposal_evidence_comparison_history_batch_health_trend_batch.py"
+    / "proposal_evidence_comparison_history_batch_health_trend_batch_health_trend.py"
 )
 PACKAGE_ROOT_PATH = REPO_ROOT / "src" / "polymarket_alpha_lab" / "__init__.py"
 README_PATH = REPO_ROOT / "README.md"
 
 
-EXPECTED_PROPOSAL_EVIDENCE_COMPARISON_HISTORY_BATCH_HEALTH_TREND_BATCH_EXPORTS = {
-    "TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchConfig",
-    "TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchGateResult",
-    "TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchStatusRow",
-    "TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchConfigVersionSummary",
-    "TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchGateStatusSummary",
-    "TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchDuplicateGeneratedAtSummary",
-    "TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchDuplicateFingerprintSummary",
-    "TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchReport",
-    "TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchLog",
-    "build_trade_proposal_evidence_comparison_history_batch_health_trend_batch_report",
-}
-EXPECTED_PROPOSAL_EVIDENCE_COMPARISON_HISTORY_BATCH_HEALTH_TREND_BATCH_HEALTH_EXPORTS = {
-    "TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthConfig",
-    "TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthGateResult",
-    "TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthStatusRow",
-    "TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthConfigVersionSummary",
-    "TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthGateStatusSummary",
-    "TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthDuplicateGeneratedAtSummary",
-    "TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthDuplicateFingerprintSummary",
-    "TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthReport",
-    "TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthLog",
-    "build_trade_proposal_evidence_comparison_history_batch_health_trend_batch_health_report",
-}
 EXPECTED_PROPOSAL_EVIDENCE_COMPARISON_HISTORY_BATCH_HEALTH_TREND_BATCH_HEALTH_TREND_EXPORTS = {
     "TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthTrendConfig",
     "TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthTrendGateResult",
@@ -59,18 +35,18 @@ ALLOWED_IMPORT_PREFIXES = {
     "decimal",
     "pathlib",
     "typing",
-    "polymarket_alpha_lab.proposal_evidence_comparison_history_batch_health_trend",
+    "polymarket_alpha_lab.proposal_evidence_comparison_history_batch_health_trend_batch_health",
 }
 
 EXPECTED_FIRST_PARTY_IMPORTS = {
-    "polymarket_alpha_lab.proposal_evidence_comparison_history_batch_health_trend": {
-        "TradeProposalEvidenceComparisonHistoryBatchHealthTrendConfigVersionSummary",
-        "TradeProposalEvidenceComparisonHistoryBatchHealthTrendDuplicateFingerprintSummary",
-        "TradeProposalEvidenceComparisonHistoryBatchHealthTrendDuplicateGeneratedAtSummary",
-        "TradeProposalEvidenceComparisonHistoryBatchHealthTrendGateResult",
-        "TradeProposalEvidenceComparisonHistoryBatchHealthTrendGateStatusSummary",
-        "TradeProposalEvidenceComparisonHistoryBatchHealthTrendReport",
-        "TradeProposalEvidenceComparisonHistoryBatchHealthTrendStatusRow",
+    "polymarket_alpha_lab.proposal_evidence_comparison_history_batch_health_trend_batch_health": {
+        "TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthConfigVersionSummary",
+        "TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthDuplicateFingerprintSummary",
+        "TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthDuplicateGeneratedAtSummary",
+        "TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthGateResult",
+        "TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthGateStatusSummary",
+        "TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthReport",
+        "TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthStatusRow",
     },
 }
 
@@ -91,6 +67,8 @@ FORBIDDEN_IMPORT_PREFIXES = {
     "polymarket_alpha_lab.proposal_evidence_comparison",
     "polymarket_alpha_lab.proposal_evidence_comparison_history",
     "polymarket_alpha_lab.proposal_evidence_comparison_history_batch_health",
+    "polymarket_alpha_lab.proposal_evidence_comparison_history_batch_health_trend",
+    "polymarket_alpha_lab.proposal_evidence_comparison_history_batch_health_trend_batch",
     "polymarket_alpha_lab.proposal_packet",
     "polymarket_alpha_lab.proposal_review",
     "polymarket_alpha_lab.proposal_review_coverage",
@@ -141,8 +119,10 @@ FORBIDDEN_IMPORT_PREFIXES = {
 FORBIDDEN_NAME_FRAGMENTS = {
     "accountaction",
     "accountauthentication",
+    "accountautomation",
     "accountclient",
     "apikey",
+    "apiclient",
     "apitoken",
     "authtoken",
     "approvalat",
@@ -185,6 +165,7 @@ FORBIDDEN_NAME_FRAGMENTS = {
     "fetchorderbook",
     "fetchpricehistory",
     "fetchsummaryreport",
+    "financialadvice",
     "fromfile",
     "fromlog",
     "geographicaccessanalysis",
@@ -344,8 +325,8 @@ FORBIDDEN_PUBLIC_EXPORT_FRAGMENTS = {
 }
 
 
-def parse_trend_batch_module():
-    return ast.parse(TREND_BATCH_PATH.read_text(encoding="utf-8"))
+def parse_trend_batch_health_trend_module():
+    return ast.parse(TREND_BATCH_HEALTH_TREND_PATH.read_text(encoding="utf-8"))
 
 
 def normalize_identifier(value):
@@ -395,8 +376,8 @@ def module_exports(tree):
     return tuple(assigned_exports)
 
 
-def test_trend_batch_module_imports_only_allowed_dependencies():
-    tree = parse_trend_batch_module()
+def test_trend_batch_health_trend_module_imports_only_allowed_dependencies():
+    tree = parse_trend_batch_health_trend_module()
     for module_name in imported_modules(tree):
         assert any(
             module_matches_prefix(module_name, allowed)
@@ -404,8 +385,8 @@ def test_trend_batch_module_imports_only_allowed_dependencies():
         ), module_name
 
 
-def test_trend_batch_module_does_not_import_forbidden_surfaces():
-    tree = parse_trend_batch_module()
+def test_trend_batch_health_trend_module_does_not_import_forbidden_surfaces():
+    tree = parse_trend_batch_health_trend_module()
     for module_name in imported_modules(tree):
         assert not any(
             module_matches_prefix(module_name, forbidden)
@@ -413,13 +394,13 @@ def test_trend_batch_module_does_not_import_forbidden_surfaces():
         ), module_name
 
 
-def test_trend_batch_uses_only_allowed_first_party_symbols():
-    tree = parse_trend_batch_module()
+def test_trend_batch_health_trend_uses_only_allowed_first_party_symbols():
+    tree = parse_trend_batch_health_trend_module()
     assert imported_first_party_symbols(tree) == EXPECTED_FIRST_PARTY_IMPORTS
 
 
-def test_trend_batch_does_not_import_first_party_modules_wholesale():
-    tree = parse_trend_batch_module()
+def test_trend_batch_health_trend_does_not_import_first_party_modules_wholesale():
+    tree = parse_trend_batch_health_trend_module()
     for node in ast.walk(tree):
         if not isinstance(node, ast.Import):
             continue
@@ -427,8 +408,8 @@ def test_trend_batch_does_not_import_first_party_modules_wholesale():
             assert alias.name not in EXPECTED_FIRST_PARTY_IMPORTS, alias.name
 
 
-def test_trend_batch_does_not_define_forbidden_names():
-    tree = parse_trend_batch_module()
+def test_trend_batch_health_trend_does_not_define_forbidden_names():
+    tree = parse_trend_batch_health_trend_module()
     names = set()
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
@@ -454,38 +435,33 @@ def test_trend_batch_does_not_define_forbidden_names():
         )
 
 
-def test_trend_batch_public_exports_are_report_only():
-    tree = parse_trend_batch_module()
+def test_trend_batch_health_trend_public_exports_are_report_only():
+    tree = parse_trend_batch_health_trend_module()
     assigned_exports = module_exports(tree)
     assert (
         set(assigned_exports)
-        == EXPECTED_PROPOSAL_EVIDENCE_COMPARISON_HISTORY_BATCH_HEALTH_TREND_BATCH_EXPORTS
+        == EXPECTED_PROPOSAL_EVIDENCE_COMPARISON_HISTORY_BATCH_HEALTH_TREND_BATCH_HEALTH_TREND_EXPORTS
     )
     for name in assigned_exports:
         assert name.startswith(
-            "TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatch",
+            "TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthTrend",
         ) or (
             name
-            == "build_trade_proposal_evidence_comparison_history_batch_health_trend_batch_report"
+            == "build_trade_proposal_evidence_comparison_history_batch_health_trend_batch_health_trend_report"
         )
         assert not public_export_fragment_matches(name), name
 
     boundary_constant = (
-        "DEFAULT_PROPOSAL_EVIDENCE_COMPARISON_HISTORY_BATCH_HEALTH_TREND_BATCH_BOUNDARY_STATEMENT"
+        "DEFAULT_PROPOSAL_EVIDENCE_COMPARISON_HISTORY_BATCH_HEALTH_TREND_BATCH_HEALTH_TREND_BOUNDARY_STATEMENT"
     )
     assert boundary_constant not in assigned_exports
 
 
-def test_package_root_exports_batch_health_trend_batch_names_only_for_node_13():
+def test_package_root_exports_batch_health_trend_batch_health_trend_names_only_for_node_15():
     tree = ast.parse(PACKAGE_ROOT_PATH.read_text(encoding="utf-8"))
     assigned_exports = module_exports(tree)
     for name in (
-        EXPECTED_PROPOSAL_EVIDENCE_COMPARISON_HISTORY_BATCH_HEALTH_TREND_BATCH_EXPORTS
-    ):
-        assert name in assigned_exports
-        assert not public_export_fragment_matches(name), name
-    for name in (
-        EXPECTED_PROPOSAL_EVIDENCE_COMPARISON_HISTORY_BATCH_HEALTH_TREND_BATCH_HEALTH_EXPORTS
+        EXPECTED_PROPOSAL_EVIDENCE_COMPARISON_HISTORY_BATCH_HEALTH_TREND_BATCH_HEALTH_TREND_EXPORTS
     ):
         assert name in assigned_exports
         assert not public_export_fragment_matches(name), name
@@ -501,95 +477,87 @@ def test_package_root_exports_batch_health_trend_batch_names_only_for_node_13():
                 name
                 in EXPECTED_PROPOSAL_EVIDENCE_COMPARISON_HISTORY_BATCH_HEALTH_TREND_BATCH_HEALTH_TREND_EXPORTS
             )
-        elif name.startswith(
-            "TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealth",
-        ) or (
-            name
-            == "build_trade_proposal_evidence_comparison_history_batch_health_trend_batch_health_report"
-        ):
-            assert (
-                name
-                in EXPECTED_PROPOSAL_EVIDENCE_COMPARISON_HISTORY_BATCH_HEALTH_TREND_BATCH_HEALTH_EXPORTS
-            )
-        elif name.startswith(
-            "TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatch",
-        ) or (
-            name
-            == "build_trade_proposal_evidence_comparison_history_batch_health_trend_batch_report"
-        ):
-            assert (
-                name
-                in EXPECTED_PROPOSAL_EVIDENCE_COMPARISON_HISTORY_BATCH_HEALTH_TREND_BATCH_EXPORTS
-            )
+
+    boundary_constant = (
+        "DEFAULT_PROPOSAL_EVIDENCE_COMPARISON_HISTORY_BATCH_HEALTH_TREND_BATCH_HEALTH_TREND_BOUNDARY_STATEMENT"
+    )
+    assert boundary_constant not in assigned_exports
 
 
-def test_readme_level_2_node_13_section_keeps_report_only_boundaries():
+def test_readme_level_2_node_15_section_keeps_report_only_boundaries():
     readme = README_PATH.read_text(encoding="utf-8")
-    start = readme.index("## Level 2 Node 13 Status")
-    end = readme.index("## Automation Roadmap", start)
-    normalized = normalize_identifier(readme[start:end])
-    required_fragments = (
-        "level2node13status",
-        "level2node13pythonapi",
-        "reportonly",
-        "suppliedtradeproposalevidencecomparisonhistorybatchhealthtrendreport",
-        "trendstatusfrequencies",
-        "gatestatusfrequencies",
+    start = readme.index("## Level 2 Node 15 Status")
+    python_api_start = readme.index("## Level 2 Node 15 Python API", start)
+    end = readme.index("## Automation Roadmap", python_api_start)
+    status_normalized = normalize_identifier(readme[start:python_api_start])
+    api_normalized = normalize_identifier(readme[python_api_start:end])
+    required_status_fragments = (
+        "level2node15status",
+        "addsreportonlyproposalevidencecomparisonhistorybatchhealthtrendbatchhealthtrendartifactsoversupplied",
+        "suppliedtradeproposalevidencecomparisonhistorybatchhealthtrendbatchhealthreport",
+        "trendbatchhealthstatusfrequencies",
+        "node14gatestatusfrequencies",
         "duplicategeneratedat",
         "duplicatefingerprint",
-        "appendonlyjsonl",
+        "forauditonly",
+        "supportsappendonlyjsonlpersistence",
+    )
+    no_scope_fragments = (
         "noread",
         "nofetch",
+        "noscrape",
+        "nobrowserautomation",
+        "noaccountautomation",
+        "noapiclients",
         "nooutcome",
         "nosettlement",
+        "noreconciliation",
         "noranking",
         "norecommendation",
+        "nofinancialadvice",
         "noapproval",
         "noexecution",
-        "notanapprovalworkflow",
-        "proposalapproval",
-        "approvedproposalselector",
-        "latestdecisionselector",
-        "decisionresolution",
-        "investmentranking",
-        "traderecommendation",
-        "strategypromotionsignal",
-        "tradeinstruction",
-        "orderinstruction",
-        "brokerrequest",
-        "orderrequest",
-        "accountaction",
-        "credentialworkflow",
-        "doesnotfetchdata",
-        "readlogs",
-        "scrape",
-        "authenticate",
-        "credentialsprivatekeys",
-        "placeorcancelorders",
-        "openwebsockets",
-        "heartbeat",
-        "tradingsdkbrokerexecutionclients",
-        "requestpayloads",
-        "approveproposals",
-        "selectlatestdecisions",
-        "resolveconflicts",
-        "rankinvestments",
-        "recommendtrades",
-        "outcomesettlementreconciliationprofitabilityanalysis",
-        "importmanualexecutions",
-        "compliancelegalgeographicanalysis",
+        "noorderplacement",
+        "nojsonlreaders",
+        "noexternalloaders",
+    )
+    report_only_boundary_fragments = (
+        "thisisnoreadnofetchnoscrapenobrowserautomationnoaccountautomationnoapiclients",
+        "nooutcomenosettlementnoreconciliationnorankingnorecommendationnofinancialadvice",
+        "noapprovalnoexecutionnoorderplacementnojsonlreadersandnoexternalloadersscope",
+        "itisnotanapprovalworkflowproposalapprovalstepapprovedproposalselector",
+        "latestdecisionselectordecisionresolutionprocessinvestmentrankingtraderecommendation",
+        "strategypromotionsignaltradeinstructionorderinstructionbrokerrequestorderrequest",
+        "accountactioncredentialworkflowprivatekeyhandlingexternalhistoryloaderjsonlreader",
+        "scrapingworkflowoutcomeloadersettlementreviewreconciliationprocess",
+        "compliancelegalgeographicanalysisrealizedfalsepositiveanalysisprofitabilityanalysis",
+        "automaticorderplacementauthorizationorliveexecutionsignal",
+        "itdoesnotfetchdatareadlogsscrapeusebrowserautomationuseaccountautomation",
+        "authenticatehandlecredentialsprivatekeysplaceorcancelordersopenwebsockets",
+        "runheartbeatlogicusetradingsdkbrokerexecutionclientsbuildrequestpayloads",
+        "approveproposalsselectlatestdecisionsresolveconflictsrankinvestments",
+        "recommendtradesperformoutcomesettlementreconciliationprofitabilityanalysis",
+        "importmanualexecutionsorperformcompliancelegalgeographicanalysis",
     )
 
-    for fragment in required_fragments:
-        assert fragment in normalized, fragment
+    for fragment in required_status_fragments:
+        assert fragment in status_normalized, fragment
+
+    for fragment in no_scope_fragments:
+        assert fragment in status_normalized, fragment
+
+    for fragment in report_only_boundary_fragments:
+        assert fragment in status_normalized, fragment
+
+    assert "level2node15pythonapi" in api_normalized
 
 
-def test_readme_repository_layout_lists_level_2_node_13_artifacts():
+def test_readme_repository_layout_lists_level_2_node_15_artifacts():
     readme = README_PATH.read_text(encoding="utf-8")
     for expected_path in (
-        "2026-06-15-level-2-proposal-evidence-comparison-history-batch-health-trend-batch.md",
-        "proposal_evidence_comparison_history_batch_health_trend_batch.py",
-        "test_proposal_evidence_comparison_history_batch_health_trend_batch.py",
-        "test_proposal_evidence_comparison_history_batch_health_trend_batch_scope.py",
+        "2026-06-15-level-2-proposal-evidence-comparison-history-batch-health-trend-batch-health-trend.md",
+        "proposal_evidence_comparison_history_batch_health_trend_batch_health_trend.py",
+        "test_proposal_evidence_comparison_history_batch_health_trend_batch_health_trend.py",
+        "test_proposal_evidence_comparison_history_batch_health_trend_batch_health_trend_scope.py",
     ):
         assert expected_path in readme

@@ -12,7 +12,7 @@ The long-term goal is an automated system that can screen markets, research cand
 
 ## Phase 1 Scope
 
-This repository currently contains the project design, research notes, implementation plans, a read-only market scanner, research packet assembly, bid/ask paper-fill simulation, JSONL paper-trade journaling, paper-only risk gates, rejected-candidate logs, paper position ledgers, executable NAV marks, paper-only portfolio analytics, exposure reports, executable-NAV drawdown reports, paper-only analytics history validation, paper-only forecast evidence reports, paper-only manual-review queues, human-review proposal packet artifacts, append-only proposal-review record artifacts, proposal-review summary report artifacts, proposal-review quality gate artifacts, proposal-review diagnostic artifacts, proposal-review coverage report artifacts, proposal-review dossier artifacts, proposal-review dossier batch health artifacts, proposal evidence comparison artifacts, proposal evidence comparison history artifacts, proposal evidence comparison history batch-health artifacts, proposal evidence comparison history batch-health trend artifacts, and proposal evidence comparison history batch-health trend-batch artifacts.
+This repository currently contains the project design, research notes, implementation plans, a read-only market scanner, research packet assembly, bid/ask paper-fill simulation, JSONL paper-trade journaling, paper-only risk gates, rejected-candidate logs, paper position ledgers, executable NAV marks, paper-only portfolio analytics, exposure reports, executable-NAV drawdown reports, paper-only analytics history validation, paper-only forecast evidence reports, paper-only manual-review queues, human-review proposal packet artifacts, append-only proposal-review record artifacts, proposal-review summary report artifacts, proposal-review quality gate artifacts, proposal-review diagnostic artifacts, proposal-review coverage report artifacts, proposal-review dossier artifacts, proposal-review dossier batch health artifacts, proposal evidence comparison artifacts, proposal evidence comparison history artifacts, proposal evidence comparison history batch-health artifacts, proposal evidence comparison history batch-health trend artifacts, proposal evidence comparison history batch-health trend-batch artifacts, proposal evidence comparison history batch-health trend-batch health artifacts, and proposal evidence comparison history batch-health trend-batch health trend artifacts.
 
 The current phase does not contain:
 
@@ -344,6 +344,21 @@ Node 14 is exposed through Python APIs:
 - Inspect trend-batch health gates with `TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthGateResult`, status rows with `TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthStatusRow`, config-version summaries with `TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthConfigVersionSummary`, gate-status summaries with `TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthGateStatusSummary`, duplicate-generated-at summaries with `TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthDuplicateGeneratedAtSummary`, and duplicate-fingerprint summaries with `TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthDuplicateFingerprintSummary`.
 - Optionally append already-built trend-batch health snapshots with `TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthLog(path).append(report)`; there is no JSONL reader, loader, replay, or from-file API.
 
+## Level 2 Node 15 Status
+
+Level 2 Node 15 adds report-only proposal evidence comparison history batch-health trend-batch health trend artifacts over supplied `TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthReport` values. It summarizes trend-batch health status frequencies, Node 14 gate-status frequencies, config-version coverage, duplicate generated-at indicators, duplicate fingerprint indicators, and first/last trend-batch health report time bounds for audit only, and it supports append-only JSONL persistence. This is no-read, no-fetch, no-scrape, no-browser automation, no-account automation, no-API clients, no-outcome, no-settlement, no-reconciliation, no-ranking, no-recommendation, no-financial advice, no-approval, no-execution, no-order placement, no-JSONL readers, and no-external loaders scope; it is not an approval workflow, proposal approval step, approved-proposal selector, latest-decision selector, decision-resolution process, investment ranking, trade recommendation, strategy-promotion signal, trade instruction, order instruction, broker request, order request, account action, credential workflow, private-key handling, external-history loader, JSONL reader, scraping workflow, outcome loader, settlement review, reconciliation process, compliance/legal/geographic analysis, realized false-positive analysis, profitability analysis, automatic order-placement authorization, or live-execution signal.
+
+It rejects loader-shaped inputs such as paths, mappings, strings, bytes, generators, arbitrary iterables, and log-shaped objects. It does not fetch data; read logs; scrape; use browser automation; use account automation; authenticate; handle credentials/private keys; place or cancel orders; open WebSockets; run heartbeat logic; use trading SDK/broker/execution clients; build request payloads; approve proposals; select latest decisions; resolve conflicts; rank investments; recommend trades; perform outcome/settlement/reconciliation/profitability analysis; import manual executions; or perform compliance/legal/geographic analysis.
+
+## Level 2 Node 15 Python API
+
+Node 15 is exposed through Python APIs:
+
+- Configure trend-batch health trend reports with `TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthTrendConfig(config_version="batch-health-trend-batch-health-trend-v1")`.
+- Build trend-batch health trend reports from supplied, in-memory Node 14 `TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthReport` values with `build_trade_proposal_evidence_comparison_history_batch_health_trend_batch_health_trend_report(trend_batch_health_reports, config=config, generated_at=datetime.now(UTC))`, which returns `TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthTrendReport`.
+- Inspect trend-batch health trend gates with `TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthTrendGateResult`, status rows with `TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthTrendStatusRow`, config-version summaries with `TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthTrendConfigVersionSummary`, gate-status summaries with `TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthTrendGateStatusSummary`, duplicate-generated-at summaries with `TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthTrendDuplicateGeneratedAtSummary`, and duplicate-fingerprint summaries with `TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthTrendDuplicateFingerprintSummary`.
+- Optionally append already-built trend-batch health trend snapshots with `TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthTrendLog(path).append(report)`; there is no JSONL reader, loader, replay, or from-file API.
+
 ## Automation Roadmap
 
 The recommended staged path is:
@@ -389,6 +404,7 @@ See:
 │       │   ├── 2026-06-15-level-2-proposal-evidence-comparison-history-batch-health-trend.md
 │       │   ├── 2026-06-15-level-2-proposal-evidence-comparison-history-batch-health-trend-batch.md
 │       │   ├── 2026-06-15-level-2-proposal-evidence-comparison-history-batch-health-trend-batch-health.md
+│       │   ├── 2026-06-15-level-2-proposal-evidence-comparison-history-batch-health-trend-batch-health-trend.md
 │       │   ├── 2026-06-15-level-2-proposal-review-coverage.md
 │       │   ├── 2026-06-15-level-2-proposal-review-dossier-batch-health.md
 │       │   ├── 2026-06-15-level-2-proposal-review-dossier.md
@@ -423,6 +439,7 @@ See:
 │       ├── proposal_evidence_comparison_history_batch_health_trend.py
 │       ├── proposal_evidence_comparison_history_batch_health_trend_batch.py
 │       ├── proposal_evidence_comparison_history_batch_health_trend_batch_health.py
+│       ├── proposal_evidence_comparison_history_batch_health_trend_batch_health_trend.py
 │       ├── proposal_packet.py
 │       ├── proposal_review.py
 │       ├── proposal_review_coverage.py
@@ -466,6 +483,8 @@ See:
     ├── test_proposal_evidence_comparison_history_batch_health_trend_batch_scope.py
     ├── test_proposal_evidence_comparison_history_batch_health_trend_batch_health.py
     ├── test_proposal_evidence_comparison_history_batch_health_trend_batch_health_scope.py
+    ├── test_proposal_evidence_comparison_history_batch_health_trend_batch_health_trend.py
+    ├── test_proposal_evidence_comparison_history_batch_health_trend_batch_health_trend_scope.py
     ├── test_proposal_packet.py
     ├── test_proposal_packet_scope.py
     ├── test_proposal_review.py

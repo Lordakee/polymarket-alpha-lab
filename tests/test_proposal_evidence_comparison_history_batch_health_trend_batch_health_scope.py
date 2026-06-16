@@ -25,6 +25,18 @@ EXPECTED_PROPOSAL_EVIDENCE_COMPARISON_HISTORY_BATCH_HEALTH_TREND_BATCH_HEALTH_EX
     "TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthLog",
     "build_trade_proposal_evidence_comparison_history_batch_health_trend_batch_health_report",
 }
+EXPECTED_PROPOSAL_EVIDENCE_COMPARISON_HISTORY_BATCH_HEALTH_TREND_BATCH_HEALTH_TREND_EXPORTS = {
+    "TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthTrendConfig",
+    "TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthTrendGateResult",
+    "TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthTrendStatusRow",
+    "TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthTrendConfigVersionSummary",
+    "TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthTrendGateStatusSummary",
+    "TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthTrendDuplicateGeneratedAtSummary",
+    "TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthTrendDuplicateFingerprintSummary",
+    "TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthTrendReport",
+    "TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthTrendLog",
+    "build_trade_proposal_evidence_comparison_history_batch_health_trend_batch_health_trend_report",
+}
 
 ALLOWED_IMPORT_PREFIXES = {
     "__future__",
@@ -464,6 +476,16 @@ def test_package_root_exports_batch_health_trend_batch_health_names_only_for_nod
 
     for name in assigned_exports:
         if name.startswith(
+            "TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthTrend",
+        ) or (
+            name
+            == "build_trade_proposal_evidence_comparison_history_batch_health_trend_batch_health_trend_report"
+        ):
+            assert (
+                name
+                in EXPECTED_PROPOSAL_EVIDENCE_COMPARISON_HISTORY_BATCH_HEALTH_TREND_BATCH_HEALTH_TREND_EXPORTS
+            )
+        elif name.startswith(
             "TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealth",
         ) or (
             name
