@@ -5,6 +5,10 @@ from decimal import Decimal
 
 import pytest
 
+from polymarket_alpha_lab.book_imbalance_forecast import (
+    PaperBookImbalanceForecastConfig,
+    build_paper_book_imbalance_forecast,
+)
 from polymarket_alpha_lab.cost_aware_event_strategy import PaperCostAwareEventMarketSnapshot
 from polymarket_alpha_lab.cost_aware_snapshot_builder import (
     PaperCostAwareSnapshotAttempt,
@@ -157,6 +161,33 @@ def test_cost_aware_snapshot_builder_builds_snapshot_from_binary_market_and_book
     assert result.snapshot.question == "Will the Fed cut rates by June 2026?"
     assert result.snapshot.fair_probability_yes == Decimal("0.540000")
     assert result.snapshot.confidence == Decimal("0.750000")
+
+
+def test_cost_aware_snapshot_builder_accepts_book_imbalance_forecast_via_protocol():
+    # Stage 3 fix: the snapshot builder accepts any forecast satisfying the
+    # Forecast Protocol (fair_probability_yes + confidence), not just PaperForecast.
+    # PaperBookImbalanceForecast must now reach snapshot_ready end-to-end.
+    from polymarket_alpha_lab.book_imbalance_forecast import (
+        PaperBookImbalanceForecastConfig,
+        build_paper_book_imbalance_forecast,
+    )
+
+    bi_forecast = build_paper_book_imbalance_forecast(
+        normalized_market(),
+        yes_book(),
+        no_book(),
+        config=PaperBookImbalanceForecastConfig(
+            config_version="book-imbalance-forecast-v1"
+        ),
+        generated_at=GENERATED_AT,
+    )
+
+    result = build_snapshot(forecast_value=bi_forecast)
+
+    assert result.status == "snapshot_ready"
+    assert isinstance(result.snapshot, PaperCostAwareEventMarketSnapshot)
+    assert result.snapshot.fair_probability_yes == bi_forecast.fair_probability_yes
+    assert result.snapshot.confidence == bi_forecast.confidence
     assert result.snapshot.yes_bid == Decimal("0.5200")
     assert result.snapshot.yes_ask == Decimal("0.5400")
     assert result.snapshot.yes_ask_size == Decimal("250.0000")
@@ -165,6 +196,86 @@ def test_cost_aware_snapshot_builder_builds_snapshot_from_binary_market_and_book
     assert result.snapshot.no_ask_size == Decimal("200.0000")
     assert result.snapshot.spread == Decimal("0.020000")
     assert result.snapshot.resolution_risk == Decimal("0.100000")
+
+
+def test_cost_aware_snapshot_builder_accepts_paper_book_imbalance_forecast():
+    # Stage 2 regression / bug-fix proof: the builder must accept ANY forecast
+    # that structurally exposes fair_probability_yes + confidence, including
+    # PaperBookImbalanceForecast (a separate frozen dataclass from the naive
+    # PaperForecast). Previously the leaf's isinstance(forecast, PaperForecast)
+    # guard hard-rejected it with ValueError, which -- caught by strategy_cycle's
+    # per-market isolation -- zeroed out the book_imbalance selector end-to-end
+    # (every market -> blocked_fetch_error, empty screening queue). This test
+    # builds a real PaperBookImbalanceForecast via its public builder and proves
+    # the snapshot now reaches snapshot_ready with the nudged fair value.
+    yes = yes_book(
+        bids=(book_level("0.5200", "300.0000"),),
+        asks=(book_level("0.5400", "100.0000"),),
+    )
+    imbalance_forecast = build_paper_book_imbalance_forecast(
+        normalized_market(),
+        yes,
+        no_book(),
+        config=PaperBookImbalanceForecastConfig(
+            config_version="book-imbalance-forecast-v1",
+            imbalance_strength=Decimal("0.0200"),
+            max_nudge=Decimal("0.0500"),
+            min_book_depth=Decimal("1.0000"),
+            low_confidence_value=Decimal("0.5000"),
+            high_confidence_value=Decimal("0.7500"),
+            max_spread_for_high_confidence=Decimal("0.0300"),
+        ),
+        generated_at=GENERATED_AT,
+    )
+
+    result = build_paper_cost_aware_event_market_snapshot(
+        normalized_market(),
+        yes,
+        no_book(),
+        imbalance_forecast,
+        config=snapshot_config(),
+        generated_at=GENERATED_AT,
+    )
+
+    assert result.status == "snapshot_ready"
+    assert isinstance(result.snapshot, PaperCostAwareEventMarketSnapshot)
+    assert result.reason_codes == ("snapshot_built",)
+    assert result.snapshot.market_slug == "fed-cut-june-2026"
+    # Bid-heavy YES book (bid_size 300 vs ask_size 100) -> imbalance +0.5 ->
+    # nudge +0.01 -> fair_probability_yes nudged up from the 0.5400 yes_ask
+    # baseline to 0.550000. This proves the PaperBookImbalanceForecast value
+    # (not a naive PaperForecast) flowed through the builder unchanged.
+    assert result.snapshot.fair_probability_yes == Decimal("0.550000")
+    assert result.snapshot.confidence == Decimal("0.750000")
+    assert result.snapshot.yes_ask == Decimal("0.5400")
+    assert result.snapshot.yes_ask_size == Decimal("100.0000")
+
+
+def test_cost_aware_snapshot_builder_still_accepts_naive_paper_forecast():
+    # Regression guard: widening the forecast guard to the structural protocol
+    # must NOT regress the original naive PaperForecast path. The same canned
+    # PaperForecast that always worked must still reach snapshot_ready.
+    result = build_snapshot(forecast_value=forecast())
+
+    assert result.status == "snapshot_ready"
+    assert isinstance(result.snapshot, PaperCostAwareEventMarketSnapshot)
+    assert result.snapshot.fair_probability_yes == Decimal("0.540000")
+    assert result.snapshot.confidence == Decimal("0.750000")
+
+
+def test_cost_aware_snapshot_builder_rejects_forecast_missing_protocol_fields():
+    # The widened protocol guard is structural but still a guard: an object that
+    # does NOT expose fair_probability_yes + confidence must be rejected with a
+    # clear ValueError (not silently accepted).
+    with pytest.raises(ValueError, match="fair_probability_yes and confidence"):
+        build_paper_cost_aware_event_market_snapshot(
+            normalized_market(),
+            yes_book(),
+            no_book(),
+            object(),  # no fair_probability_yes / confidence attributes
+            config=snapshot_config(),
+            generated_at=GENERATED_AT,
+        )
 
 
 def test_cost_aware_snapshot_builder_uses_no_side_spread_when_yes_side_is_unavailable():

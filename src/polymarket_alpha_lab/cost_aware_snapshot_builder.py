@@ -7,7 +7,7 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 from polymarket_alpha_lab.domain import NormalizedMarket, OrderBookSnapshot
 from polymarket_alpha_lab.forecast_provider import PaperForecast
@@ -36,6 +36,29 @@ SNAPSHOT_STATUSES = (
     "blocked_book_token_mismatch",
     "blocked_missing_forecast",
 )
+
+
+@runtime_checkable
+class _CostAwareForecast(Protocol):
+    """Structural contract for a paper forecast usable by this builder.
+
+    The builder reads only ``fair_probability_yes`` and ``confidence`` from the
+    forecast (both finite Decimals in ``[0, 1]``). Any paper-only / report-only
+    forecast type that exposes these two fields satisfies the contract -- the
+    naive ``PaperForecast`` and the Stage 2 ``PaperBookImbalanceForecast`` both
+    do. The members are declared read-only (``@property``) to match the frozen
+    dataclass forecast types, so a frozen ``PaperForecast`` structurally
+    satisfies the protocol. Kept underscore-prefixed and intentionally OUT of
+    ``__all__``: this is an internal widening of the leaf's input guard, not a
+    new public surface, and it deliberately does NOT import any concrete
+    forecast module so the leaf stays a dependency-light Stage 1a boundary.
+    """
+
+    @property
+    def fair_probability_yes(self) -> Decimal: ...
+
+    @property
+    def confidence(self) -> Decimal: ...
 
 
 @dataclass(frozen=True)
@@ -121,7 +144,7 @@ def build_paper_cost_aware_event_market_snapshot(
     market: NormalizedMarket,
     yes_book: OrderBookSnapshot,
     no_book: OrderBookSnapshot,
-    forecast: PaperForecast,
+    forecast: _CostAwareForecast,
     *,
     config: PaperCostAwareSnapshotConfig,
     generated_at: datetime,
@@ -132,8 +155,10 @@ def build_paper_cost_aware_event_market_snapshot(
         raise ValueError("yes_book must be an OrderBookSnapshot")
     if not isinstance(no_book, OrderBookSnapshot):
         raise ValueError("no_book must be an OrderBookSnapshot")
-    if not isinstance(forecast, PaperForecast):
-        raise ValueError("forecast must be a PaperForecast")
+    if not isinstance(forecast, _CostAwareForecast):
+        raise ValueError(
+            "forecast must expose fair_probability_yes and confidence as Decimals"
+        )
     if not isinstance(config, PaperCostAwareSnapshotConfig):
         raise ValueError("config must be a PaperCostAwareSnapshotConfig")
     if not isinstance(generated_at, datetime):

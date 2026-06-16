@@ -620,19 +620,22 @@ def test_strategy_cycle_config_rejects_invalid_forecast_provider_inputs(override
         cycle_config(**overrides)
 
 
-def test_strategy_cycle_book_imbalance_provider_alters_dispatch_vs_naive_on_same_market(
-    tmp_path,
-):
-    # Same binary market with a bid-heavy YES book under both providers. Under
-    # the naive provider the market reaches snapshot_ready. Under the
-    # book_imbalance provider the dispatch routes through
-    # build_paper_book_imbalance_forecast; cost_aware_snapshot_builder (a frozen
-    # Stage 1a leaf) enforces isinstance(forecast, PaperForecast) and rejects
-    # the book_imbalance forecast type, so run_strategy_cycle's per-market
-    # isolation records blocked_fetch_error. The status delta between the two
-    # providers on identical inputs proves the forecast_provider selector
-    # changes dispatch. (Producing real screening candidates for the
-    # book_imbalance provider requires widening that leaf's forecast guard.)
+def test_strategy_cycle_book_imbalance_provider_reaches_snapshot_ready_end_to_end(tmp_path):
+    # Stage 2 end-to-end value proof. The forecast_provider="book_imbalance"
+    # selector routes through build_paper_book_imbalance_forecast, producing a
+    # PaperBookImbalanceForecast. cost_aware_snapshot_builder now accepts any
+    # forecast that structurally exposes fair_probability_yes + confidence
+    # (PaperForecast AND PaperBookImbalanceForecast), so the cycle must reach
+    # snapshot_ready and deliver a non-zero screening candidate end-to-end --
+    # the entire point of the Stage 2 book_imbalance selector.
+    #
+    # Books are bid/ask-size balanced, so the book-imbalance nudge is zero and
+    # the PaperBookImbalanceForecast collapses to the same fair_probability_yes
+    # + confidence as the naive PaperForecast on the same books. That means the
+    # book_imbalance snapshot is identical to the naive one, so by parity with
+    # the naive cycle (which yields candidate_count == 1 on these books) the
+    # book_imbalance cycle must also deliver candidate_count == 1. The naive
+    # comparison below pins that parity invariant.
     market, books = binary_market_pair(
         condition_id="0xcondDispatch",
         slug="market-dispatch",
@@ -662,20 +665,30 @@ def test_strategy_cycle_book_imbalance_provider_alters_dispatch_vs_naive_on_same
         ),
     )
 
-    # Naive provider: book has a usable ask -> snapshot_ready, screening built.
+    # Naive provider baseline (unchanged): book has a usable ask -> snapshot_ready,
+    # cost-aware report built, one screening candidate.
     assert naive_report.snapshot_ready_count == 1
     assert naive_report.cost_aware_report_count == 1
     assert naive_report.blocked_counts == ()
     assert naive_report.screening_report is not None
     assert naive_report.screening_report.candidate_count == 1
 
-    # book_imbalance provider: dispatch selected -> forecast type changed ->
-    # snapshot builder's isinstance guard rejects it -> blocked_fetch_error.
-    # The observable difference vs naive proves the selector routed dispatch.
-    assert bi_report.snapshot_ready_count == 0
-    assert bi_report.cost_aware_report_count == 0
-    assert bi_report.blocked_counts == (("blocked_fetch_error", 1),)
-    assert bi_report.screening_report is None
-    # Both providers still fetched the same books (dispatch is downstream of fetch).
+    # book_imbalance provider (Stage 2 value proof): the snapshot builder now
+    # accepts the PaperBookImbalanceForecast, so the cycle reaches snapshot_ready
+    # (previously: isinstance guard rejected it -> blocked_fetch_error -> zero
+    # screening candidates, defeating Stage 2). snapshot_ready_count == 1 is
+    # guaranteed by the snapshot-build path (binary market + resolvable outcome
+    # pair + matching token ids) once the forecast guard is widened; the
+    # screening candidate parity follows from the identical fair_probability_yes
+    # + confidence produced on these balanced books.
+    assert bi_report.scan_market_count == 1
+    assert bi_report.considered_count == 1
+    assert bi_report.snapshot_ready_count == 1
+    assert bi_report.cost_aware_report_count == 1
+    # The bug is gone: no per-market exception -> no blocked_fetch_error.
+    assert bi_report.blocked_counts == ()
+    assert bi_report.screening_report is not None
+    assert bi_report.screening_report.candidate_count == 1
+    # Dispatch is downstream of fetch: both providers fetched the same books.
     assert set(client_naive.get_order_book_calls) == {"yes-dispatch", "no-dispatch"}
     assert set(client_bi.get_order_book_calls) == {"yes-dispatch", "no-dispatch"}
