@@ -359,6 +359,14 @@ Node 15 is exposed through Python APIs:
 - Inspect trend-batch health trend gates with `TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthTrendGateResult`, status rows with `TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthTrendStatusRow`, config-version summaries with `TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthTrendConfigVersionSummary`, gate-status summaries with `TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthTrendGateStatusSummary`, duplicate-generated-at summaries with `TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthTrendDuplicateGeneratedAtSummary`, and duplicate-fingerprint summaries with `TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthTrendDuplicateFingerprintSummary`.
 - Optionally append already-built trend-batch health trend snapshots with `TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthTrendLog(path).append(report)`; there is no JSONL reader, loader, replay, or from-file API.
 
+## Proposal Evidence Comparison Artifact Registry
+
+The proposal evidence comparison artifact registry is a static report-only registry with string metadata only. It describes the existing proposal evidence comparison artifact chain, builder names, report class names, upstream report class names, append-only-log availability, and report-only forbidden surfaces. It does not import artifact implementation modules and does not create reports.
+
+The registry does not fetch, does not read JSONL, does not load, does not replay, does not scrape, does not use browser automation, does not use account automation, does not use API clients, does not place orders, does not rank investments, does not recommend trades, and does not provide financial advice.
+
+Use `list_proposal_evidence_comparison_artifacts()` to inspect the static tuple and `get_proposal_evidence_comparison_artifact(artifact_id)` to look up one registry row by canonical artifact ID.
+
 ## Automation Roadmap
 
 The recommended staged path is:

@@ -698,3 +698,57 @@ git push
 ```
 
 Expected: commit and push succeed.
+
+## Implementation Handoff
+
+- Changed files:
+  - `README.md`
+  - `src/polymarket_alpha_lab/proposal_evidence_comparison_artifact_registry.py`
+  - `src/polymarket_alpha_lab/__init__.py`
+  - `tests/test_proposal_evidence_comparison_artifact_registry.py`
+  - `tests/test_proposal_evidence_comparison_artifact_registry_scope.py`
+  - `tests/test_init.py`
+  - Existing package-root scope allowlist tests:
+    - `tests/test_analytics_scope.py`
+    - `tests/test_analytics_history_scope.py`
+    - `tests/test_forecast_evidence_scope.py`
+    - `tests/test_manual_review_queue_scope.py`
+    - `tests/test_proposal_packet_scope.py`
+    - `tests/test_proposal_review_scope.py`
+    - `tests/test_proposal_review_summary_scope.py`
+    - `tests/test_proposal_review_quality_scope.py`
+    - `tests/test_proposal_review_diagnostics_scope.py`
+    - `tests/test_proposal_review_coverage_scope.py`
+    - `tests/test_proposal_review_dossier_scope.py`
+    - `tests/test_proposal_review_dossier_batch_scope.py`
+    - `tests/test_proposal_evidence_comparison_scope.py`
+    - `tests/test_proposal_evidence_comparison_history_scope.py`
+    - `tests/test_proposal_evidence_comparison_history_batch_health_scope.py`
+- Implementation notes:
+  - Added the static report-only registry as string metadata only.
+  - The registry module imports only `__future__` and `dataclasses`; it does not import artifact implementation modules.
+  - The helper functions are intentionally defined before `PROPOSAL_EVIDENCE_COMPARISON_ARTIFACTS` so dataclass validation is available during tuple construction.
+  - Added package-root exports for the five planned registry public names.
+  - Added the README section before `## Automation Roadmap`.
+  - Full-suite verification showed existing package-root scope tests each had local Level 2 export allowlists; those allowlists were updated with only the four `proposal`-prefixed registry names. `REPORT_ONLY_FORBIDDEN_SURFACES` was not added to those allowlists because it does not contain `proposal` or `tradeproposal` and remains covered by the existing forbidden-fragment fallthrough checks.
+- Verification:
+  - Initial RED behavior/export run failed during collection with `ModuleNotFoundError: No module named 'polymarket_alpha_lab.proposal_evidence_comparison_artifact_registry'`.
+  - Focused GREEN after implementation: `.venv/bin/python -m pytest tests/test_proposal_evidence_comparison_artifact_registry.py tests/test_proposal_evidence_comparison_artifact_registry_scope.py tests/test_init.py -q` -> `31 passed in 0.40s`.
+  - Strengthened registry-focused tests after review feedback: `.venv/bin/python -m pytest tests/test_proposal_evidence_comparison_artifact_registry.py tests/test_proposal_evidence_comparison_artifact_registry_scope.py tests/test_init.py::test_proposal_evidence_comparison_artifact_registry_public_api_exports -q` -> `10 passed in 0.37s`.
+  - Proposal evidence comparison suite after allowlist fixes: `.venv/bin/python -m pytest tests/test_proposal_evidence_comparison*.py tests/test_init.py -q` -> `211 passed in 3.58s`.
+  - Full suite: `.venv/bin/python -m pytest -q` -> `801 passed in 8.05s`.
+  - `git diff --check` exited 0.
+  - Secret scan over `README.md docs src tests` exited 1 with no matches.
+  - `codegraph sync && codegraph status .` reported the index is up to date.
+- Claude implementation review:
+  - Model: `claude-opus-4-8`
+  - Effort: `max`
+  - Mode: read-only review over supplied plan excerpts, tracked diff, and untracked file contents.
+  - Critical 0, Important 0.
+  - Minor notes were explanatory only: `REPORT_ONLY_FORBIDDEN_SURFACES` is deliberately exported but not part of proposal-prefixed allowlists; helper definitions are intentionally before tuple construction to avoid import-time `NameError`.
+  - Verdict: Proceed.
+- Known residual risks:
+  - The registry is discovery metadata only; it intentionally has no loader, reader, replay, API client, browser/account automation, ranking, recommendation, order-placement, or financial-advice behavior.
+  - Future package-root scope tests that introduce another independent Level 2 export allowlist must include the four proposal-prefixed registry names or centralize the allowlist to avoid repeated updates.
+- Next recommended node:
+  - Continue with the next report-only/static-metadata planning node only after preserving the same no-loader/no-reader/no-live-execution boundaries.

@@ -193,6 +193,13 @@ from polymarket_alpha_lab.proposal_evidence_comparison_history_batch_health_tren
     TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthTrendStatusRow,
     build_trade_proposal_evidence_comparison_history_batch_health_trend_batch_health_trend_report,
 )
+from polymarket_alpha_lab.proposal_evidence_comparison_artifact_registry import (
+    PROPOSAL_EVIDENCE_COMPARISON_ARTIFACTS,
+    REPORT_ONLY_FORBIDDEN_SURFACES,
+    ProposalEvidenceComparisonArtifactDefinition,
+    get_proposal_evidence_comparison_artifact,
+    list_proposal_evidence_comparison_artifacts,
+)
 from polymarket_alpha_lab.journal import PaperTradeJournal, PaperTradeRecord
 from polymarket_alpha_lab.paper import PaperFill, PaperOrder, simulate_order_book_fill
 from polymarket_alpha_lab.positions import (
@@ -253,6 +260,9 @@ __all__ = [
     "PaperPositionMark",
     "PaperTradeJournal",
     "PaperTradeRecord",
+    "PROPOSAL_EVIDENCE_COMPARISON_ARTIFACTS",
+    "ProposalEvidenceComparisonArtifactDefinition",
+    "REPORT_ONLY_FORBIDDEN_SURFACES",
     "RejectedCandidateLog",
     "RejectedCandidateRecord",
     "ResearchPacket",
@@ -385,6 +395,8 @@ __all__ = [
     "build_trade_proposal_review_record",
     "build_trade_proposal_review_summary_report",
     "evaluate_research_packet_risk",
+    "get_proposal_evidence_comparison_artifact",
+    "list_proposal_evidence_comparison_artifacts",
     "mark_paper_nav",
     "simulate_order_book_fill",
 ]

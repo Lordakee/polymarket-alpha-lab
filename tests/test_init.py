@@ -193,6 +193,13 @@ from polymarket_alpha_lab.proposal_evidence_comparison_history_batch_health_tren
     TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthTrendStatusRow,
     build_trade_proposal_evidence_comparison_history_batch_health_trend_batch_health_trend_report,
 )
+from polymarket_alpha_lab.proposal_evidence_comparison_artifact_registry import (
+    PROPOSAL_EVIDENCE_COMPARISON_ARTIFACTS,
+    REPORT_ONLY_FORBIDDEN_SURFACES,
+    ProposalEvidenceComparisonArtifactDefinition,
+    get_proposal_evidence_comparison_artifact,
+    list_proposal_evidence_comparison_artifacts,
+)
 from polymarket_alpha_lab.journal import PaperTradeJournal, PaperTradeRecord
 from polymarket_alpha_lab.paper import PaperFill, PaperOrder, simulate_order_book_fill
 from polymarket_alpha_lab.positions import (
@@ -972,6 +979,32 @@ def test_level_2_node_15_public_api_exports():
     assert (
         lab.build_trade_proposal_evidence_comparison_history_batch_health_trend_batch_health_trend_report
         is build_trade_proposal_evidence_comparison_history_batch_health_trend_batch_health_trend_report
+    )
+
+
+def test_proposal_evidence_comparison_artifact_registry_public_api_exports():
+    expected_exports = {
+        "PROPOSAL_EVIDENCE_COMPARISON_ARTIFACTS",
+        "REPORT_ONLY_FORBIDDEN_SURFACES",
+        "ProposalEvidenceComparisonArtifactDefinition",
+        "get_proposal_evidence_comparison_artifact",
+        "list_proposal_evidence_comparison_artifacts",
+    }
+
+    assert expected_exports <= set(lab.__all__)
+    assert lab.PROPOSAL_EVIDENCE_COMPARISON_ARTIFACTS is PROPOSAL_EVIDENCE_COMPARISON_ARTIFACTS
+    assert lab.REPORT_ONLY_FORBIDDEN_SURFACES is REPORT_ONLY_FORBIDDEN_SURFACES
+    assert (
+        lab.ProposalEvidenceComparisonArtifactDefinition
+        is ProposalEvidenceComparisonArtifactDefinition
+    )
+    assert (
+        lab.get_proposal_evidence_comparison_artifact
+        is get_proposal_evidence_comparison_artifact
+    )
+    assert (
+        lab.list_proposal_evidence_comparison_artifacts
+        is list_proposal_evidence_comparison_artifacts
     )
 
 
