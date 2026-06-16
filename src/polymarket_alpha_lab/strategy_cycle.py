@@ -62,6 +62,7 @@ from polymarket_alpha_lab.forecast_provider import (
 # dependency because journaling paper trades IS the cycle's new Stage 4 job
 # (scope contract evolved; was forbidden under Stage 1b read-only boundary).
 from polymarket_alpha_lab.journal import PaperTradeJournal
+from polymarket_alpha_lab.json_recovery import from_jsonable
 from polymarket_alpha_lab.normalize import normalize_gamma_market, normalize_order_book
 from polymarket_alpha_lab.paper_execution import (
     PaperExecutionConfig,
@@ -292,6 +293,39 @@ class PaperStrategyCycleLog:
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as handle:
             handle.write(line)
+
+    @staticmethod
+    def read(path: Path | str) -> tuple[PaperStrategyCycleReport, ...]:
+        """Read a strategy-cycle JSONL log back into fully-typed reports.
+
+        Reverses ``append``'s ``_json_ready(asdict(...))`` serialization using
+        the shared recursive ``json_recovery.from_jsonable`` helper. Unlike
+        Stage 5's flat ``PaperTradeRecord`` reader, ``PaperStrategyCycleReport``
+        has a validating ``__post_init__`` that checks the nested
+        ``screening_report`` via ``isinstance`` and normalizes
+        ``blocked_counts: tuple[tuple[str, int], ...]`` -- a flat coercion would
+        raise on every report with a populated screening tree or blocked
+        markets. ``from_jsonable`` reconstructs the FULL nested dataclass tree
+        (including the PaperProjectScreeningReport subtree and the C2 deep
+        tuple-of-tuples) so ``__post_init__`` re-validates each report. Blank
+        lines are skipped; a non-JSON line raises ``ValueError`` with the line
+        number. An empty file yields an empty tuple.
+        """
+        target = Path(path)
+        records: list[PaperStrategyCycleReport] = []
+        with target.open("r", encoding="utf-8") as handle:
+            for line_number, raw_line in enumerate(handle, start=1):
+                stripped = raw_line.strip()
+                if not stripped:
+                    continue
+                try:
+                    row = json.loads(stripped)
+                except json.JSONDecodeError as exc:
+                    raise ValueError(
+                        f"strategy cycle log line {line_number} is not valid JSON: {exc}"
+                    ) from exc
+                records.append(from_jsonable(PaperStrategyCycleReport, row))
+        return tuple(records)
 
 
 def run_strategy_cycle(

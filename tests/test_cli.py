@@ -2,6 +2,10 @@ from datetime import UTC, datetime
 from decimal import Decimal
 
 from polymarket_alpha_lab.cli import main
+from polymarket_alpha_lab.performance_summary import (
+    PerformanceSummary,
+    PerformanceSummaryConfig,
+)
 from polymarket_alpha_lab.positions import PaperNavSnapshot
 from polymarket_alpha_lab.strategy_cycle import PaperStrategyCycleReport
 

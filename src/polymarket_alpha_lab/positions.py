@@ -14,6 +14,7 @@ from typing import Any, Iterator
 
 from polymarket_alpha_lab.domain import OrderBookLevel, OrderBookSnapshot
 from polymarket_alpha_lab.journal import PaperTradeRecord
+from polymarket_alpha_lab.json_recovery import from_jsonable
 from polymarket_alpha_lab.paper import PaperOrder, simulate_order_book_fill
 
 PRICE_QUANTUM = Decimal("0.001")
@@ -286,6 +287,36 @@ class PaperNavLog:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.path.open("a", encoding="utf-8") as handle:
             handle.write(line)
+
+    @staticmethod
+    def read(path: Path | str) -> tuple[PaperNavSnapshot, ...]:
+        """Read a NAV JSONL log back into fully-typed snapshots.
+
+        Reverses ``append``'s ``_json_ready(asdict(...))`` serialization using
+        the shared recursive ``json_recovery.from_jsonable`` helper.
+        ``PaperNavSnapshot`` has a validating ``__post_init__`` that checks the
+        nested ``marks: tuple[PaperPositionMark, ...]`` via ``isinstance`` and
+        enforces accounting identities -- a flat coercion would raise. The
+        helper reconstructs each ``PaperPositionMark`` (Decimal/datetime/
+        optional fields) so ``__post_init__`` re-validates each snapshot. Blank
+        lines are skipped; a non-JSON line raises ``ValueError`` with the line
+        number. An empty file yields an empty tuple.
+        """
+        target = Path(path)
+        records: list[PaperNavSnapshot] = []
+        with target.open("r", encoding="utf-8") as handle:
+            for line_number, raw_line in enumerate(handle, start=1):
+                stripped = raw_line.strip()
+                if not stripped:
+                    continue
+                try:
+                    row = json.loads(stripped)
+                except json.JSONDecodeError as exc:
+                    raise ValueError(
+                        f"nav log line {line_number} is not valid JSON: {exc}"
+                    ) from exc
+                records.append(from_jsonable(PaperNavSnapshot, row))
+        return tuple(records)
 
 
 def build_paper_portfolio(

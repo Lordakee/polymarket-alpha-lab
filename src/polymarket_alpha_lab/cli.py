@@ -19,10 +19,16 @@ from polymarket_alpha_lab.cost_aware_snapshot_builder import (
     PaperCostAwareSnapshotConfig,
 )
 from polymarket_alpha_lab.forecast_provider import PaperForecastConfig
+from polymarket_alpha_lab.journal import PaperTradeJournal
 from polymarket_alpha_lab.paper_execution import PaperExecutionConfig
 from polymarket_alpha_lab.paper_portfolio_nav import mark_paper_portfolio_nav
 from polymarket_alpha_lab.pipeline import MarketScanConfig, run_market_scan
-from polymarket_alpha_lab.positions import PaperNavSnapshot
+from polymarket_alpha_lab.positions import PaperNavLog, PaperNavSnapshot
+from polymarket_alpha_lab.performance_summary import (
+    PerformanceSummary,
+    PerformanceSummaryConfig,
+    build_performance_summary,
+)
 from polymarket_alpha_lab.project_screening import PaperProjectScreeningConfig
 from polymarket_alpha_lab.strategy_cycle import (
     PaperStrategyCycleConfig,
@@ -36,6 +42,7 @@ Runner = Callable[..., object]
 CycleRunner = Callable[..., PaperStrategyCycleReport]
 ClientFactory = Callable[[], Any]
 NavRunner = Callable[..., PaperNavSnapshot]
+HistoryRunner = Callable[..., PerformanceSummary]
 
 
 def main(
@@ -45,6 +52,7 @@ def main(
     cycle_runner: CycleRunner = run_strategy_cycle,
     nav_runner: NavRunner = mark_paper_portfolio_nav,
     client_factory: ClientFactory = PolymarketPublicClient,
+    history_runner: HistoryRunner | None = None,
 ) -> int:
     parser = argparse.ArgumentParser(prog="polymarket-alpha-lab")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -101,6 +109,26 @@ def main(
         "--nav-log",
         type=Path,
         default=None,
+        dest="nav_log",
+    )
+
+    history = subparsers.add_parser("history")
+    history.add_argument(
+        "--cycle-log",
+        type=Path,
+        required=True,
+        dest="cycle_log",
+    )
+    history.add_argument(
+        "--trade-log",
+        type=Path,
+        required=True,
+        dest="trade_log",
+    )
+    history.add_argument(
+        "--nav-log",
+        type=Path,
+        required=True,
         dest="nav_log",
     )
 
@@ -161,6 +189,20 @@ def main(
             return 0
         except Exception as exc:
             print(f"portfolio-nav failed: {exc}", file=sys.stderr)
+            return 1
+
+    if args.command == "history":
+        try:
+            summary = _run_history(
+                cycle_log=args.cycle_log,
+                trade_log=args.trade_log,
+                nav_log=args.nav_log,
+                runner=history_runner,
+            )
+            _print_performance_summary(summary)
+            return 0
+        except Exception as exc:
+            print(f"history failed: {exc}", file=sys.stderr)
             return 1
 
     return 2
@@ -267,3 +309,64 @@ def _print_portfolio_nav_summary(snapshot: PaperNavSnapshot) -> None:
         f"unrealized_pnl={snapshot.unrealized_exit_pnl} "
         f"position_count={len(snapshot.marks)}",
     )
+
+
+def _run_history(
+    *,
+    cycle_log: Path,
+    trade_log: Path,
+    nav_log: Path,
+    runner: HistoryRunner | None,
+) -> PerformanceSummary:
+    """Read the three JSONL history logs and build a performance summary.
+
+    When ``runner`` is supplied (for tests), it is called with the three paths
+    and returns the summary directly -- no file reads. Otherwise the default
+    reads each JSONL log via its typed reader and aggregates via
+    ``build_performance_summary``. ``generated_at`` is stamped now.
+    """
+    generated_at = datetime.now(UTC)
+    config = PerformanceSummaryConfig(config_version="performance-summary-v1")
+    if runner is not None:
+        return runner(
+            cycle_log=cycle_log,
+            trade_log=trade_log,
+            nav_log=nav_log,
+            config=config,
+            generated_at=generated_at,
+        )
+    cycle_reports = PaperStrategyCycleLog.read(cycle_log)
+    trade_records = PaperTradeJournal.read(trade_log)
+    nav_snapshots = PaperNavLog.read(nav_log)
+    return build_performance_summary(
+        cycle_reports,
+        trade_records,
+        nav_snapshots,
+        config=config,
+        generated_at=generated_at,
+    )
+
+
+def _print_performance_summary(summary: PerformanceSummary) -> None:
+    """Print a human-readable performance summary to stdout."""
+
+    print(
+        "history: "
+        f"cycles={summary.cycle_count} "
+        f"markets_scanned={summary.total_scan_market_count} "
+        f"candidates_ready={summary.total_snapshot_ready_count} "
+        f"cost_aware_reports={summary.total_cost_aware_report_count} "
+        f"paper_trades={summary.paper_trade_count} "
+        f"nav_snapshots={summary.nav_snapshot_count}",
+    )
+    if summary.last_exit_nav is not None:
+        print(f"  last_exit_nav={summary.last_exit_nav}")
+    if summary.last_starting_cash is not None:
+        print(f"  last_starting_cash={summary.last_starting_cash}")
+    if summary.total_realized_pnl is not None:
+        print(f"  total_realized_pnl={summary.total_realized_pnl}")
+    if summary.first_cycle_at is not None and summary.last_cycle_at is not None:
+        print(
+            f"  cycle_span={summary.first_cycle_at.isoformat()} "
+            f"to {summary.last_cycle_at.isoformat()}",
+        )

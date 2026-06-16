@@ -261,6 +261,11 @@ from polymarket_alpha_lab.positions import (
     mark_paper_nav,
 )
 from polymarket_alpha_lab.paper_portfolio_nav import mark_paper_portfolio_nav
+from polymarket_alpha_lab.performance_summary import (
+    PerformanceSummary,
+    PerformanceSummaryConfig,
+    build_performance_summary,
+)
 from polymarket_alpha_lab.rejections import RejectedCandidateLog, RejectedCandidateRecord
 from polymarket_alpha_lab.research import ResearchPacket, build_research_packet
 from polymarket_alpha_lab.risk import (
@@ -336,6 +341,8 @@ __all__ = [
     "PaperPosition",
     "PaperPositionExposure",
     "PaperPositionMark",
+    "PerformanceSummary",
+    "PerformanceSummaryConfig",
     "PaperTradeJournal",
     "PaperTradeRecord",
     "PROPOSAL_EVIDENCE_COMPARISON_ARTIFACTS",
@@ -466,6 +473,7 @@ __all__ = [
     "build_trade_proposal_evidence_comparison_history_batch_health_trend_batch_health_report",
     "build_trade_proposal_evidence_comparison_history_batch_health_trend_batch_health_trend_report",
     "build_paper_portfolio",
+    "build_performance_summary",
     "build_research_packet",
     "build_trade_proposal_evidence_comparison_history_report",
     "build_trade_proposal_evidence_comparison_report",
