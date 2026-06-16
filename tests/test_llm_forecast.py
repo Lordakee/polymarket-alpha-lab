@@ -552,3 +552,103 @@ def test_transport_rejects_blank_api_token():
         GLMChatTransport(api_token="")
     with pytest.raises(ValueError, match="api_token must be a nonblank string"):
         GLMChatTransport(api_token="   ")
+
+
+# ---------------------------------------------------------------------------
+# Stage 10: market_context prompt enrichment
+# ---------------------------------------------------------------------------
+
+
+def test_transport_estimate_none_market_context_is_byte_identical_to_legacy():
+    # Backward-compat: market_context=None must produce the exact same prompt
+    # as the pre-Stage-10 behavior.
+    captured: dict = {}
+
+    def _capture(request, timeout):  # noqa: ARG001
+        payload = json.loads(request.data.decode("utf-8"))
+        captured["prompt"] = payload["messages"][0]["content"]
+        return _FakeResponse(
+            json.dumps(_zhipu_envelope('{"p_yes": 0.5, "confidence": 0.5}')).encode(
+                "utf-8"
+            )
+        )
+
+    transport = GLMChatTransport(api_token="secret-token")
+    with patch("polymarket_alpha_lab.llm_research_transport.urlopen", side_effect=_capture):
+        transport.estimate(
+            market_question="Will X happen?",
+            outcome_names=("Yes", "No"),
+        )
+    legacy = (
+        'Estimate P(YES) for: Will X happen?. Outcomes: Yes, No. '
+        'Return JSON: {"p_yes": <0-1>, "confidence": <0-1>}'
+    )
+    assert captured["prompt"] == legacy
+
+
+def test_transport_estimate_appends_market_context_to_prompt_before_instruction():
+    # Stage 10: each key/value pair appears in the prompt, positioned BEFORE
+    # the "Return JSON" instruction. Decimal values are str()-coerced upstream.
+    captured: dict = {}
+
+    def _capture(request, timeout):  # noqa: ARG001
+        payload = json.loads(request.data.decode("utf-8"))
+        captured["prompt"] = payload["messages"][0]["content"]
+        return _FakeResponse(
+            json.dumps(_zhipu_envelope('{"p_yes": 0.5, "confidence": 0.5}')).encode(
+                "utf-8"
+            )
+        )
+
+    transport = GLMChatTransport(api_token="secret-token")
+    market_context = {
+        "volume_24h": "1000",
+        "liquidity": "500",
+        "end_time": "2026-12-31T00:00:00+00:00",
+        "rules": "Resolves per public source.",
+    }
+    with patch("polymarket_alpha_lab.llm_research_transport.urlopen", side_effect=_capture):
+        transport.estimate(
+            market_question="Will X happen?",
+            outcome_names=("Yes", "No"),
+            market_context=market_context,
+        )
+
+    prompt = captured["prompt"]
+    # Question/outcomes header still leads the prompt.
+    assert prompt.startswith(
+        "Estimate P(YES) for: Will X happen?. Outcomes: Yes, No."
+    )
+    # Every context pair is present.
+    for key, value in market_context.items():
+        assert f"{key}: {value}" in prompt, key
+    # All context lines precede the "Return JSON" instruction.
+    return_idx = prompt.index("Return JSON")
+    for key, value in market_context.items():
+        assert prompt.index(f"{key}: {value}") < return_idx, key
+
+
+def test_transport_estimate_empty_market_context_omits_context_lines():
+    # Empty dict is falsy -> behaves like None (no context lines appended).
+    captured: dict = {}
+
+    def _capture(request, timeout):  # noqa: ARG001
+        payload = json.loads(request.data.decode("utf-8"))
+        captured["prompt"] = payload["messages"][0]["content"]
+        return _FakeResponse(
+            json.dumps(_zhipu_envelope('{"p_yes": 0.5, "confidence": 0.5}')).encode(
+                "utf-8"
+            )
+        )
+
+    transport = GLMChatTransport(api_token="secret-token")
+    with patch("polymarket_alpha_lab.llm_research_transport.urlopen", side_effect=_capture):
+        transport.estimate(
+            market_question="Will X happen?",
+            outcome_names=("Yes", "No"),
+            market_context={},
+        )
+    assert "volume_24h" not in captured["prompt"]
+    assert captured["prompt"].endswith(
+        'Return JSON: {"p_yes": <0-1>, "confidence": <0-1>}'
+    )

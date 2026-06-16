@@ -500,9 +500,34 @@ def run_strategy_cycle(
                 question_for_estimate = nm.market.question[
                     : llm_config.max_question_chars
                 ]
+                # Stage 10: enrich the GLM prompt with market metadata so the
+                # probability estimate is grounded in volume / liquidity /
+                # end_time / rules. Decimal fields are str()-coerced (never
+                # float). spread is intentionally excluded here -- the
+                # cost-aware snapshot is built downstream of this dispatch, so
+                # the live book spread is not yet available.
+                market_context = {
+                    "volume_24h": (
+                        str(nm.market.volume_24h)
+                        if nm.market.volume_24h
+                        else "unknown"
+                    ),
+                    "liquidity": (
+                        str(nm.market.liquidity)
+                        if nm.market.liquidity
+                        else "unknown"
+                    ),
+                    "end_time": (
+                        nm.market.end_time.isoformat()
+                        if nm.market.end_time
+                        else "unknown"
+                    ),
+                    "rules": (nm.rules_text or "unknown")[:500],
+                }
                 llm_result = cycle_config.llm_transport.estimate(
                     market_question=question_for_estimate,
                     outcome_names=outcome_names,
+                    market_context=market_context,
                 )
                 forecast = build_paper_llm_forecast(
                     nm,

@@ -62,8 +62,15 @@ class ProbabilityModelTransport(Protocol):
         *,
         market_question: str,
         outcome_names: tuple[str, ...],
+        market_context: dict[str, str] | None = None,
     ) -> "ProbabilityModelResult":
-        """Estimate P(YES) for one market question and return the raw result."""
+        """Estimate P(YES) for one market question and return the raw result.
+
+        ``market_context`` (optional) carries market metadata (volume,
+        liquidity, end_time, rules, ...) that is appended to the prompt so the
+        model can produce a better-grounded probability estimate. When ``None``
+        (default) the prompt is identical to the pre-Stage-10 behavior.
+        """
         ...
 
 
@@ -116,6 +123,7 @@ class GLMChatTransport:
         *,
         market_question: str,
         outcome_names: tuple[str, ...],
+        market_context: dict[str, str] | None = None,
     ) -> "ProbabilityModelResult":
         """Perform one read-only GLM estimate and return the parsed result.
 
@@ -123,8 +131,15 @@ class GLMChatTransport:
         captured into a ``ProbabilityModelResult`` with ``raw_p_yes=None`` /
         ``raw_confidence=None`` so the caller's per-market isolation can turn a
         failed estimate into a low-confidence forecast rather than aborting.
+
+        ``market_context`` (optional, Stage 10) carries market metadata that is
+        appended to the prompt for a better-grounded estimate. When ``None``
+        the prompt is byte-identical to the pre-Stage-10 behavior (backward
+        compatible).
         """
-        prompt = _build_prompt(market_question, outcome_names)
+        prompt = _build_prompt(
+            market_question, outcome_names, market_context=market_context
+        )
         # temperature/max_tokens/timeout are ephemeral wire values (analogous to
         # api.py's float timeout); the only numbers RETAINED are Decimals.
         body = json.dumps(
@@ -265,14 +280,23 @@ class ProbabilityModelResult:
             raise ValueError("elapsed_seconds must be a nonnegative finite Decimal")
 
 
-def _build_prompt(market_question: str, outcome_names: tuple[str, ...]) -> str:
+def _build_prompt(
+    market_question: str,
+    outcome_names: tuple[str, ...],
+    market_context: dict[str, str] | None = None,
+) -> str:
     question = market_question if isinstance(market_question, str) else ""
     names = ", ".join(outcome_names) if outcome_names else "Yes, No"
-    return (
-        "Estimate P(YES) for: "
-        f"{question}. Outcomes: {names}. "
-        'Return JSON: {"p_yes": <0-1>, "confidence": <0-1>}'
-    )
+    prompt = "Estimate P(YES) for: " f"{question}. Outcomes: {names}."
+    # Stage 10: when market metadata is supplied, append each key/value pair to
+    # the prompt BEFORE the "Return JSON" instruction so the model grounds its
+    # estimate in volume / liquidity / end_time / rules. An empty/None context
+    # leaves the prompt byte-identical to the pre-Stage-10 behavior.
+    if market_context:
+        for key, value in market_context.items():
+            prompt += f"\n{key}: {value}"
+    prompt += ' Return JSON: {"p_yes": <0-1>, "confidence": <0-1>}'
+    return prompt
 
 
 def _parse_probability_content(

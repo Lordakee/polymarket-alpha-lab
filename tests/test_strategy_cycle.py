@@ -711,7 +711,7 @@ def _make_stub_glm_transport(result):
 
     @dataclass(frozen=True)
     class _StubGLMTransport(GLMChatTransport):
-        def estimate(self, *, market_question, outcome_names):
+        def estimate(self, *, market_question, outcome_names, market_context=None):
             return result
 
     return _StubGLMTransport(api_token="stub-token")
@@ -790,6 +790,97 @@ def test_strategy_cycle_llm_parse_fail_falls_back_to_low_confidence(tmp_path):
     assert report.snapshot_ready_count == 1
     assert report.cost_aware_report_count == 1
     assert report.blocked_counts == ()
+
+
+def _make_recording_glm_transport(result):
+    """Build a GLMChatTransport stub that records forwarded market_context.
+
+    Stage 10 proof: the cycle's "llm" dispatch must construct a market_context
+    dict from the NormalizedMarket and forward it to transport.estimate. Returns
+    ``(transport, captured)`` where ``captured`` is the list of market_context
+    values the cycle passed in. No real network call is performed.
+    """
+    captured: list = []
+
+    @dataclass(frozen=True)
+    class _RecordingGLMTransport(GLMChatTransport):
+        def estimate(self, *, market_question, outcome_names, market_context=None):
+            captured.append(market_context)
+            return result
+
+    return _RecordingGLMTransport(api_token="stub-token"), captured
+
+
+def test_strategy_cycle_llm_dispatch_forwards_market_context_to_transport(tmp_path):
+    # Stage 10: the "llm" dispatch branch builds a market_context dict from the
+    # NormalizedMarket (volume_24h, liquidity, end_time, rules) and forwards it
+    # to transport.estimate. Decimal fields are str()-coerced (never float);
+    # missing fields fall back to "unknown".
+    market, books = _screening_ready_market_and_books()
+    stub_result = ProbabilityModelResult(
+        raw_p_yes=Decimal("0.35"),
+        raw_confidence=Decimal("0.8"),
+        raw_content='{"p_yes": 0.35, "confidence": 0.8}',
+        model_name="glm-4-flash",
+        finish_reason="stop",
+        token_usage=125,
+        elapsed_seconds=Decimal("1.0"),
+    )
+    transport, captured = _make_recording_glm_transport(stub_result)
+
+    run_cycle(
+        FakeMarketDataClient([market], books),
+        tmp_path,
+        config=cycle_config(
+            forecast_provider="llm",
+            llm_transport=transport,
+            llm_forecast_config=PaperLLMForecastConfig(),
+        ),
+    )
+
+    # Exactly one estimate call was made for the single binary market.
+    assert len(captured) == 1
+    ctx = captured[0]
+    # Stage 10 contract: exactly these four keys, sourced from NormalizedMarket.
+    assert set(ctx) == {"volume_24h", "liquidity", "end_time", "rules"}
+    # raw_market has volume24hr="5000" / liquidity="10000" -> str(Decimal(...)).
+    assert ctx["volume_24h"] == str(Decimal("5000"))
+    assert ctx["liquidity"] == str(Decimal("10000"))
+    # raw_market has no endDate -> end_time None -> "unknown" fallback.
+    assert ctx["end_time"] == "unknown"
+    # rules_text comes from the market description.
+    assert ctx["rules"] == "Market resolves according to the public source."
+
+
+def test_strategy_cycle_llm_dispatch_omits_spread_from_market_context(tmp_path):
+    # The live book spread is NOT part of market_context: the cost-aware
+    # snapshot (which carries the spread) is built downstream of the dispatch,
+    # so the spread is unavailable here. This pins the intentional deviation
+    # from the spec's spread mention.
+    market, books = _screening_ready_market_and_books()
+    stub_result = ProbabilityModelResult(
+        raw_p_yes=Decimal("0.35"),
+        raw_confidence=Decimal("0.8"),
+        raw_content='{"p_yes": 0.35, "confidence": 0.8}',
+        model_name="glm-4-flash",
+        finish_reason="stop",
+        token_usage=125,
+        elapsed_seconds=Decimal("1.0"),
+    )
+    transport, captured = _make_recording_glm_transport(stub_result)
+
+    run_cycle(
+        FakeMarketDataClient([market], books),
+        tmp_path,
+        config=cycle_config(
+            forecast_provider="llm",
+            llm_transport=transport,
+            llm_forecast_config=PaperLLMForecastConfig(),
+        ),
+    )
+
+    ctx = captured[0]
+    assert "spread" not in ctx
 
 
 # ---------------------------------------------------------------------------
