@@ -57,6 +57,48 @@ LoopRunner = Callable[..., RunLoopSummary]
 OutcomeRunner = Callable[..., OutcomeTrackingReport]
 
 
+def _apply_json_config(args: argparse.Namespace) -> None:
+    """Override argparse defaults from a JSON config file (--config flag).
+
+    Reads the JSON file referenced by ``args.config`` and sets any missing
+    attributes on ``args`` from the config. Explicit CLI flags always win
+    over config values (CLI is checked first via ``hasattr`` + sentinel).
+    """
+    if not getattr(args, "config", None):
+        return
+    import json
+    with open(args.config, "r", encoding="utf-8") as f:
+        cfg = json.load(f)
+    key_map = {
+        "forecast_provider": "forecast_provider",
+        "llm_api_token": "llm_api_token",
+        "max_markets_per_cycle": "max_markets",
+        "scan_limit": "limit",
+        "prefilter_by_score": "prefilter",
+        "paper_execute": "paper_execute",
+        "paper_journal": "paper_journal",
+        "nav_log": "nav_log",
+        "cycle_log": "cycle_log",
+        "archive_root": "archive_root",
+        "repeat_interval_seconds": "repeat_interval",
+        "max_iterations": "max_iterations",
+        "starting_cash": "starting_cash",
+        "market_search": "market_search",
+    }
+    for json_key, arg_key in key_map.items():
+        if json_key not in cfg:
+            continue
+        val = cfg[json_key]
+        current = getattr(args, arg_key, None)
+        if current is not None and arg_key != "prefilter":
+            continue
+        if arg_key == "starting_cash" and val is not None:
+            val = Decimal(str(val))
+        if arg_key in ("paper_journal", "nav_log", "cycle_log", "archive_root") and val is not None:
+            val = Path(val)
+        setattr(args, arg_key, val)
+
+
 def main(
     argv: list[str] | None = None,
     *,
@@ -131,7 +173,7 @@ def main(
     nav.add_argument(
         "--starting-cash",
         type=Decimal,
-        required=True,
+        default=None,
         dest="starting_cash",
     )
     nav.add_argument(
@@ -221,7 +263,7 @@ def main(
     run_loop.add_argument(
         "--starting-cash",
         type=Decimal,
-        required=True,
+        default=None,
         dest="starting_cash",
     )
     run_loop.add_argument(
@@ -248,8 +290,15 @@ def main(
         default=1,
         dest="max_iterations",
     )
+    run_loop.add_argument(
+        "--config",
+        type=Path,
+        default=None,
+        dest="config",
+    )
 
     args = parser.parse_args(argv)
+    _apply_json_config(args)
 
     if args.command == "scan":
         try:
