@@ -534,17 +534,27 @@ def run_strategy_cycle(
                     ),
                     "rules": (nm.rules_text or "unknown")[:500],
                 }
-                llm_result = cycle_config.llm_transport.estimate(
-                    market_question=question_for_estimate,
-                    outcome_names=outcome_names,
-                    market_context=market_context,
-                )
-                forecast = build_paper_llm_forecast(
-                    nm,
-                    result=llm_result,
-                    config=llm_config,
-                    generated_at=timestamp,
-                )
+                try:
+                    llm_result = cycle_config.llm_transport.estimate(
+                        market_question=question_for_estimate,
+                        outcome_names=outcome_names,
+                        market_context=market_context,
+                    )
+                    forecast = build_paper_llm_forecast(
+                        nm,
+                        result=llm_result,
+                        config=llm_config,
+                        generated_at=timestamp,
+                    )
+                except Exception:
+                    bi_config = cycle_config.book_imbalance_config
+                    if bi_config is None:
+                        raise
+                    forecast = build_paper_book_imbalance_forecast(
+                        nm, yes_book, no_book,
+                        config=bi_config,
+                        generated_at=timestamp,
+                    )
             attempt = build_paper_cost_aware_event_market_snapshot(
                 nm,
                 yes_book,
