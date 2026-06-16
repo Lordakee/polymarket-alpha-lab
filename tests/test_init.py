@@ -50,6 +50,12 @@ from polymarket_alpha_lab.book_imbalance_forecast import (
     PaperBookImbalanceForecastLog,
     build_paper_book_imbalance_forecast,
 )
+from polymarket_alpha_lab.llm_forecast import (
+    PaperLLMForecast,
+    PaperLLMForecastConfig,
+    PaperLLMForecastLog,
+    build_paper_llm_forecast,
+)
 from polymarket_alpha_lab.cost_aware_snapshot_builder import (
     PaperCostAwareSnapshotAttempt,
     PaperCostAwareSnapshotConfig,
@@ -252,6 +258,11 @@ from polymarket_alpha_lab.paper_execution import (
     execute_paper_trade_from_screening,
 )
 from polymarket_alpha_lab.paper_portfolio_nav import mark_paper_portfolio_nav
+from polymarket_alpha_lab.outcome_tracker import (
+    OutcomeTrackingConfig,
+    OutcomeTrackingReport,
+    check_outcomes,
+)
 from polymarket_alpha_lab.positions import (
     PaperNavLog,
     PaperNavSnapshot,
@@ -508,6 +519,21 @@ def test_book_imbalance_forecast_public_api_exports():
     )
 
 
+def test_llm_forecast_public_api_exports():
+    expected_exports = {
+        "PaperLLMForecastConfig",
+        "PaperLLMForecast",
+        "PaperLLMForecastLog",
+        "build_paper_llm_forecast",
+    }
+
+    assert expected_exports <= set(lab.__all__)
+    assert lab.PaperLLMForecastConfig is PaperLLMForecastConfig
+    assert lab.PaperLLMForecast is PaperLLMForecast
+    assert lab.PaperLLMForecastLog is PaperLLMForecastLog
+    assert lab.build_paper_llm_forecast is build_paper_llm_forecast
+
+
 def test_cost_aware_snapshot_builder_public_api_exports():
     expected_exports = {
         "PaperCostAwareSnapshotConfig",
@@ -561,6 +587,19 @@ def test_paper_portfolio_nav_public_api_exports():
 
     assert expected_exports <= set(lab.__all__)
     assert lab.mark_paper_portfolio_nav is mark_paper_portfolio_nav
+
+
+def test_outcome_tracker_public_api_exports():
+    expected_exports = {
+        "OutcomeTrackingConfig",
+        "OutcomeTrackingReport",
+        "check_outcomes",
+    }
+
+    assert expected_exports <= set(lab.__all__)
+    assert lab.OutcomeTrackingConfig is OutcomeTrackingConfig
+    assert lab.OutcomeTrackingReport is OutcomeTrackingReport
+    assert lab.check_outcomes is check_outcomes
 
 
 def test_runner_public_api_exports():

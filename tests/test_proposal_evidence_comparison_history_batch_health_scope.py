@@ -202,6 +202,9 @@ EXPECTED_NON_LEVEL_2_PACKAGE_ROOT_EXPORTS_WITH_NODE_11_TERMS = {
     "PaperTradeJournal",
     "PaperTradeRecord",
     "simulate_order_book_fill",
+    "OutcomeTrackingConfig",
+    "OutcomeTrackingReport",
+    "check_outcomes",
 }
 
 ALLOWED_IMPORT_PREFIXES = {

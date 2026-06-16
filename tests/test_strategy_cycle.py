@@ -700,6 +700,98 @@ def test_strategy_cycle_book_imbalance_provider_reaches_snapshot_ready_end_to_en
     assert set(client_bi.get_order_book_calls) == {"yes-dispatch", "no-dispatch"}
 
 
+def _make_stub_glm_transport(result):
+    """Build a frozen GLMChatTransport subclass whose estimate returns ``result``.
+
+    The cycle config validates ``isinstance(llm_transport, GLMChatTransport)``,
+    so the stub must be a GLMChatTransport instance. A fresh frozen subclass is
+    built per call so the canned result is bound in a closure (no frozen-attr
+    mutation needed). No real network is performed.
+    """
+
+    @dataclass(frozen=True)
+    class _StubGLMTransport(GLMChatTransport):
+        def estimate(self, *, market_question, outcome_names):
+            return result
+
+    return _StubGLMTransport(api_token="stub-token")
+
+
+def test_strategy_cycle_llm_provider_dispatches_transport_and_reaches_snapshot_ready(
+    tmp_path,
+):
+    # Stage 8 end-to-end dispatch proof. forecast_provider="llm" routes each
+    # binary market through transport.estimate -> build_paper_llm_forecast,
+    # producing a PaperLLMForecast. The cost-aware snapshot builder accepts any
+    # forecast exposing fair_probability_yes + confidence (the _CostAwareForecast
+    # Protocol), so the cycle must reach snapshot_ready + a screening_ready
+    # candidate end-to-end -- the entire point of the LLM provider.
+    market, books = _screening_ready_market_and_books()
+    stub_result = ProbabilityModelResult(
+        raw_p_yes=Decimal("0.35"),
+        raw_confidence=Decimal("0.8"),
+        raw_content='{"p_yes": 0.35, "confidence": 0.8}',
+        model_name="glm-4-flash",
+        finish_reason="stop",
+        token_usage=125,
+        elapsed_seconds=Decimal("1.0"),
+    )
+    transport = _make_stub_glm_transport(stub_result)
+
+    llm_report = run_cycle(
+        FakeMarketDataClient([market], books),
+        tmp_path,
+        config=cycle_config(
+            forecast_provider="llm",
+            llm_transport=transport,
+            llm_forecast_config=PaperLLMForecastConfig(),
+        ),
+    )
+
+    assert llm_report.scan_market_count == 1
+    assert llm_report.considered_count == 1
+    assert llm_report.snapshot_ready_count == 1
+    assert llm_report.cost_aware_report_count == 1
+    assert llm_report.blocked_counts == ()
+    assert llm_report.screening_report is not None
+    # NO side edge: model_p_no = 1 - 0.35 = 0.65, no_ask = 0.40 -> net_edge 0.25.
+    assert llm_report.screening_report.candidate_count == 1
+
+
+def test_strategy_cycle_llm_parse_fail_falls_back_to_low_confidence(tmp_path):
+    # When the transport returns a parse-failed result (raw_p_yes=None), the
+    # leaf falls back to low_confidence_value (0.5). With fair_p=0.5 on these
+    # books (yes_ask 0.55), the YES edge is -0.05 and the NO edge is 0.10, so
+    # the candidate still reaches screening_ready on the NO side (net_edge 0.10
+    # >= 0.01). Proves the parse-fail -> low-confidence fallback survives the
+    # cycle without aborting.
+    market, books = _screening_ready_market_and_books()
+    stub_result = ProbabilityModelResult(
+        raw_p_yes=None,
+        raw_confidence=None,
+        raw_content="not json",
+        model_name="glm-4-flash",
+        finish_reason="stop",
+        token_usage=0,
+        elapsed_seconds=Decimal("0.1"),
+    )
+    transport = _make_stub_glm_transport(stub_result)
+
+    report = run_cycle(
+        FakeMarketDataClient([market], books),
+        tmp_path,
+        config=cycle_config(
+            forecast_provider="llm",
+            llm_transport=transport,
+            llm_forecast_config=PaperLLMForecastConfig(),
+        ),
+    )
+
+    assert report.snapshot_ready_count == 1
+    assert report.cost_aware_report_count == 1
+    assert report.blocked_counts == ()
+
+
 # ---------------------------------------------------------------------------
 # Stage 4 inline paper execution (additive/default-off)
 # ---------------------------------------------------------------------------

@@ -19,7 +19,15 @@ from polymarket_alpha_lab.cost_aware_snapshot_builder import (
     PaperCostAwareSnapshotConfig,
 )
 from polymarket_alpha_lab.forecast_provider import PaperForecastConfig
+from polymarket_alpha_lab.forecast_evidence import PaperForecastEvidenceLog
+from polymarket_alpha_lab.llm_forecast import PaperLLMForecastConfig
+from polymarket_alpha_lab.llm_research_transport import GLMChatTransport
 from polymarket_alpha_lab.journal import PaperTradeJournal
+from polymarket_alpha_lab.outcome_tracker import (
+    OutcomeTrackingConfig,
+    OutcomeTrackingReport,
+    check_outcomes,
+)
 from polymarket_alpha_lab.paper_execution import PaperExecutionConfig
 from polymarket_alpha_lab.paper_portfolio_nav import mark_paper_portfolio_nav
 from polymarket_alpha_lab.pipeline import MarketScanConfig, run_market_scan
@@ -45,6 +53,7 @@ ClientFactory = Callable[[], Any]
 NavRunner = Callable[..., PaperNavSnapshot]
 HistoryRunner = Callable[..., PerformanceSummary]
 LoopRunner = Callable[..., RunLoopSummary]
+OutcomeRunner = Callable[..., OutcomeTrackingReport]
 
 
 def main(
@@ -56,6 +65,7 @@ def main(
     client_factory: ClientFactory = PolymarketPublicClient,
     history_runner: HistoryRunner | None = None,
     loop_runner: LoopRunner = run_strategy_loop,
+    outcome_runner: OutcomeRunner = check_outcomes,
 ) -> int:
     parser = argparse.ArgumentParser(prog="polymarket-alpha-lab")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -80,6 +90,20 @@ def main(
         action=argparse.BooleanOptionalAction,
         default=True,
         dest="prefilter",
+    )
+    # Stage 8: --forecast-provider selects the per-market forecast model.
+    # --llm-api-token is caller-supplied (never read from env/disk); it is
+    # threaded into a GLMChatTransport only when the provider is "llm".
+    cycle.add_argument(
+        "--forecast-provider",
+        choices=("naive", "book_imbalance", "llm"),
+        default="naive",
+        dest="forecast_provider",
+    )
+    cycle.add_argument(
+        "--llm-api-token",
+        default=None,
+        dest="llm_api_token",
     )
     # Stage 4 (default-off): --paper-execute turns on the inline paper-execution
     # pass inside run_strategy_cycle; --paper-journal selects the JSONL sink.
@@ -135,6 +159,22 @@ def main(
         dest="nav_log",
     )
 
+    # Stage 9 outcome tracker: re-list closed markets from Gamma and build a
+    # forecast-evidence calibration report over resolved paper-trade legs.
+    check_outcomes_parser = subparsers.add_parser("check-outcomes")
+    check_outcomes_parser.add_argument(
+        "--journal",
+        type=Path,
+        default=Path("artifacts/paper-trades.jsonl"),
+        dest="journal",
+    )
+    check_outcomes_parser.add_argument(
+        "--evidence-log",
+        type=Path,
+        default=None,
+        dest="evidence_log",
+    )
+
     # Stage 7 continuous run: chains strategy-cycle + paper-execute + portfolio-nav.
     run_loop = subparsers.add_parser("run")
     run_loop.add_argument("--limit", type=int, default=25)
@@ -145,6 +185,17 @@ def main(
         action=argparse.BooleanOptionalAction,
         default=True,
         dest="prefilter",
+    )
+    run_loop.add_argument(
+        "--forecast-provider",
+        choices=("naive", "book_imbalance", "llm"),
+        default="naive",
+        dest="forecast_provider",
+    )
+    run_loop.add_argument(
+        "--llm-api-token",
+        default=None,
+        dest="llm_api_token",
     )
     run_loop.add_argument(
         "--paper-execute",
@@ -219,6 +270,8 @@ def main(
                 prefilter_by_score=args.prefilter,
                 paper_execute=args.paper_execute,
                 paper_journal=args.paper_journal,
+                forecast_provider=args.forecast_provider,
+                llm_api_token=args.llm_api_token,
             )
             report = cycle_runner(
                 client=client_factory(),
@@ -274,6 +327,8 @@ def main(
                 prefilter_by_score=args.prefilter,
                 paper_execute=args.paper_execute,
                 paper_journal=args.paper_journal,
+                forecast_provider=args.forecast_provider,
+                llm_api_token=args.llm_api_token,
             )
             repeat_mode = "interval" if args.repeat_interval > 0 else "once"
             summary = loop_runner(
@@ -293,6 +348,29 @@ def main(
             print(f"run failed: {exc}", file=sys.stderr)
             return 1
 
+    if args.command == "check-outcomes":
+        try:
+            report = outcome_runner(
+                client=client_factory(),
+                journal_path=args.journal,
+                config=OutcomeTrackingConfig(
+                    config_version="outcome-tracker-v1",
+                ),
+                generated_at=datetime.now(UTC),
+            )
+            if (
+                args.evidence_log is not None
+                and report.forecast_evidence_report is not None
+            ):
+                PaperForecastEvidenceLog(args.evidence_log).append(
+                    report.forecast_evidence_report,
+                )
+            _print_outcome_tracking_summary(report)
+            return 0
+        except Exception as exc:
+            print(f"check-outcomes failed: {exc}", file=sys.stderr)
+            return 1
+
     return 2
 
 
@@ -302,6 +380,8 @@ def _build_default_cycle_config(
     prefilter_by_score: bool,
     paper_execute: bool = False,
     paper_journal: Path | None = None,
+    forecast_provider: str = "naive",
+    llm_api_token: str | None = None,
 ) -> PaperStrategyCycleConfig:
     """Assemble the frozen paper-only cycle config used by the strategy-cycle CLI.
 
@@ -310,6 +390,9 @@ def _build_default_cycle_config(
     is given zero-cost Decimal assumptions for the research/paper baseline.
     When ``paper_execute`` is set, the Stage 4 inline paper-execution pass is
     enabled with the canonical ``PaperExecutionConfig`` and the journal sink.
+    When ``forecast_provider`` is ``llm`` and ``llm_api_token`` is supplied, a
+    caller-supplied ``GLMChatTransport`` is wired alongside the canonical
+    ``PaperLLMForecastConfig`` (the token is never read from env/disk here).
     """
 
     base = PaperStrategyCycleConfig(
@@ -335,6 +418,15 @@ def _build_default_cycle_config(
         max_markets_per_cycle=max_markets_per_cycle,
         prefilter_by_score=prefilter_by_score,
     )
+    if forecast_provider == "llm" and llm_api_token:
+        base = replace(
+            base,
+            forecast_provider="llm",
+            llm_transport=GLMChatTransport(api_token=llm_api_token),
+            llm_forecast_config=PaperLLMForecastConfig(
+                config_version="strategy-cycle-v1",
+            ),
+        )
     if not paper_execute:
         return base
     journal_path = paper_journal if paper_journal is not None else Path(
@@ -471,3 +563,29 @@ def _print_run_loop_summary(summary: RunLoopSummary) -> None:
     )
     if summary.last_error is not None:
         print(f"  last_error={summary.last_error}")
+
+
+def _print_outcome_tracking_summary(report: OutcomeTrackingReport) -> None:
+    """Print a human-readable outcome-tracking summary to stdout."""
+
+    print(
+        "check-outcomes: "
+        f"checked={report.total_markets_checked} "
+        f"resolved={report.resolved_count} "
+        f"pending={report.pending_count} "
+        f"observations={len(report.observations)}",
+    )
+    evidence = report.forecast_evidence_report
+    if evidence is None:
+        print("  forecast_evidence: none (no resolved observations yet)")
+        return
+    print(
+        "  forecast_evidence: "
+        f"status={evidence.status} "
+        f"observation_count={evidence.observation_count} "
+        f"unique_markets={evidence.unique_market_count}",
+    )
+    if evidence.mean_probability_loss is not None:
+        print(f"  mean_probability_loss={evidence.mean_probability_loss}")
+    if evidence.worst_bucket_error is not None:
+        print(f"  worst_bucket_error={evidence.worst_bucket_error}")

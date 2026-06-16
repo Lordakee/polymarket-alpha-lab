@@ -2,6 +2,15 @@ from datetime import UTC, datetime
 from decimal import Decimal
 
 from polymarket_alpha_lab.cli import main
+from polymarket_alpha_lab.forecast_evidence import (
+    PaperForecastEvidenceConfig,
+    PaperForecastEvidenceReport,
+    build_paper_forecast_evidence_report,
+)
+from polymarket_alpha_lab.outcome_tracker import (
+    OutcomeTrackingConfig,
+    OutcomeTrackingReport,
+)
 from polymarket_alpha_lab.performance_summary import (
     PerformanceSummary,
     PerformanceSummaryConfig,
@@ -227,6 +236,79 @@ def test_strategy_cycle_cli_default_omits_paper_execute(tmp_path):
     cycle_config = calls[0]
     assert cycle_config.paper_execution_config is None
     assert cycle_config.paper_trade_journal_path is None
+
+
+def test_strategy_cycle_cli_forecast_provider_llm_wires_transport(tmp_path):
+    calls = []
+
+    def fake_cycle_runner(*, client, scan_config, cycle_config):
+        calls.append(cycle_config)
+        return PaperStrategyCycleReport(
+            generated_at=datetime.now(UTC),
+            config_version="strategy-cycle-v1",
+            scan_market_count=0,
+            considered_count=0,
+            snapshot_ready_count=0,
+            cost_aware_report_count=0,
+            blocked_counts=(),
+            screening_report=None,
+        )
+
+    exit_code = main(
+        [
+            "strategy-cycle",
+            "--archive-root",
+            str(tmp_path / "raw"),
+            "--output",
+            str(tmp_path / "strategy-cycle.jsonl"),
+            "--forecast-provider",
+            "llm",
+            "--llm-api-token",
+            "caller-supplied-token",
+        ],
+        cycle_runner=fake_cycle_runner,
+        client_factory=lambda: "fake-client",
+    )
+
+    assert exit_code == 0
+    cycle_config = calls[0]
+    assert cycle_config.forecast_provider == "llm"
+    assert cycle_config.llm_transport is not None
+    assert cycle_config.llm_transport.api_token == "caller-supplied-token"
+    assert cycle_config.llm_forecast_config is not None
+
+
+def test_strategy_cycle_cli_default_forecast_provider_is_naive(tmp_path):
+    calls = []
+
+    def fake_cycle_runner(*, client, scan_config, cycle_config):
+        calls.append(cycle_config)
+        return PaperStrategyCycleReport(
+            generated_at=datetime.now(UTC),
+            config_version="strategy-cycle-v1",
+            scan_market_count=0,
+            considered_count=0,
+            snapshot_ready_count=0,
+            cost_aware_report_count=0,
+            blocked_counts=(),
+            screening_report=None,
+        )
+
+    exit_code = main(
+        [
+            "strategy-cycle",
+            "--archive-root",
+            str(tmp_path / "raw"),
+            "--output",
+            str(tmp_path / "strategy-cycle.jsonl"),
+        ],
+        cycle_runner=fake_cycle_runner,
+        client_factory=lambda: "fake-client",
+    )
+
+    assert exit_code == 0
+    assert calls[0].forecast_provider == "naive"
+    assert calls[0].llm_transport is None
 
 
 def _empty_nav_snapshot() -> PaperNavSnapshot:
@@ -647,3 +729,216 @@ def test_run_cli_prints_last_error_when_iterations_failed(tmp_path, capsys):
     assert "completed=2" in captured.out
     assert "failed=1" in captured.out
     assert "last_error=RuntimeError: boom" in captured.out
+
+
+def _empty_outcome_report() -> OutcomeTrackingReport:
+    return OutcomeTrackingReport(
+        generated_at=datetime(2026, 6, 16, 12, 0, tzinfo=UTC),
+        config_version="outcome-tracker-v1",
+        total_markets_checked=0,
+        resolved_count=0,
+        pending_count=0,
+        observations=(),
+        forecast_evidence_report=None,
+    )
+
+
+def test_check_outcomes_cli_invokes_runner_and_prints_summary(tmp_path, capsys):
+    calls = []
+
+    def fake_outcome_runner(*, client, journal_path, config, generated_at):
+        calls.append(
+            {
+                "client": client,
+                "journal_path": journal_path,
+                "config": config,
+                "generated_at": generated_at,
+            }
+        )
+        return _empty_outcome_report()
+
+    def fake_client_factory():
+        return "fake-client"
+
+    journal_path = tmp_path / "paper-trades.jsonl"
+
+    exit_code = main(
+        ["check-outcomes", "--journal", str(journal_path)],
+        outcome_runner=fake_outcome_runner,
+        client_factory=fake_client_factory,
+    )
+
+    assert exit_code == 0
+    assert len(calls) == 1
+    call = calls[0]
+    assert call["client"] == "fake-client"
+    assert call["journal_path"] == journal_path
+    assert isinstance(call["config"], OutcomeTrackingConfig)
+    assert call["config"].config_version == "outcome-tracker-v1"
+    assert isinstance(call["generated_at"], datetime)
+    captured = capsys.readouterr()
+    assert "check-outcomes:" in captured.out
+    assert "checked=0" in captured.out
+    assert "resolved=0" in captured.out
+    assert "pending=0" in captured.out
+    assert "no resolved observations yet" in captured.out
+
+
+def test_check_outcomes_cli_prints_evidence_status_when_resolved(tmp_path, capsys):
+    from polymarket_alpha_lab.forecast_evidence import (
+        PaperForecastEvidenceObservation,
+    )
+
+    observation = PaperForecastEvidenceObservation(
+        observed_at=datetime(2026, 6, 16, 12, 0, tzinfo=UTC),
+        source_packet_id="pkt-1",
+        condition_id="0x1",
+        token_id="111",
+        market_slug="m1",
+        strategy_type="market_quality",
+        risk_tags=("liquidity",),
+        predicted_probability=Decimal("0.60"),
+        actual_outcome_value=Decimal("1"),
+    )
+    evidence = build_paper_forecast_evidence_report(
+        (observation,),
+        config=PaperForecastEvidenceConfig(config_version="outcome-tracker-v1"),
+        generated_at=datetime(2026, 6, 16, 12, 0, tzinfo=UTC),
+    )
+    report = OutcomeTrackingReport(
+        generated_at=datetime(2026, 6, 16, 12, 0, tzinfo=UTC),
+        config_version="outcome-tracker-v1",
+        total_markets_checked=1,
+        resolved_count=1,
+        pending_count=0,
+        observations=(observation,),
+        forecast_evidence_report=evidence,
+    )
+
+    exit_code = main(
+        ["check-outcomes", "--journal", str(tmp_path / "paper-trades.jsonl")],
+        outcome_runner=lambda **_: report,
+        client_factory=lambda: "fake-client",
+    )
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    assert "check-outcomes:" in captured.out
+    assert "resolved=1" in captured.out
+    assert "forecast_evidence:" in captured.out
+    assert f"status={evidence.status}" in captured.out
+    assert "observation_count=1" in captured.out
+
+
+def test_check_outcomes_cli_writes_evidence_log_when_resolved(tmp_path):
+    # One resolved observation -> non-None evidence report -> appended to log.
+    from polymarket_alpha_lab.forecast_evidence import (
+        PaperForecastEvidenceObservation,
+    )
+
+    observation = PaperForecastEvidenceObservation(
+        observed_at=datetime(2026, 6, 16, 12, 0, tzinfo=UTC),
+        source_packet_id="pkt-1",
+        condition_id="0x1",
+        token_id="111",
+        market_slug="m1",
+        strategy_type="market_quality",
+        risk_tags=("liquidity",),
+        predicted_probability=Decimal("0.60"),
+        actual_outcome_value=Decimal("1"),
+    )
+    evidence = build_paper_forecast_evidence_report(
+        (observation,),
+        config=PaperForecastEvidenceConfig(config_version="outcome-tracker-v1"),
+        generated_at=datetime(2026, 6, 16, 12, 0, tzinfo=UTC),
+    )
+    report = OutcomeTrackingReport(
+        generated_at=datetime(2026, 6, 16, 12, 0, tzinfo=UTC),
+        config_version="outcome-tracker-v1",
+        total_markets_checked=1,
+        resolved_count=1,
+        pending_count=0,
+        observations=(observation,),
+        forecast_evidence_report=evidence,
+    )
+
+    def fake_outcome_runner(*, client, journal_path, config, generated_at):
+        return report
+
+    evidence_log = tmp_path / "evidence.jsonl"
+    journal_path = tmp_path / "paper-trades.jsonl"
+
+    exit_code = main(
+        [
+            "check-outcomes",
+            "--journal",
+            str(journal_path),
+            "--evidence-log",
+            str(evidence_log),
+        ],
+        outcome_runner=fake_outcome_runner,
+        client_factory=lambda: "fake-client",
+    )
+
+    assert exit_code == 0
+    assert evidence_log.exists()
+    line = evidence_log.read_text(encoding="utf-8").strip()
+    assert '"observation_count": 1' in line
+    assert '"config_version": "outcome-tracker-v1"' in line
+
+
+def test_check_outcomes_cli_skips_evidence_log_when_no_observations(tmp_path):
+    # Zero observations -> evidence_report is None -> --evidence-log NOT written.
+    evidence_log = tmp_path / "evidence.jsonl"
+
+    exit_code = main(
+        [
+            "check-outcomes",
+            "--journal",
+            str(tmp_path / "paper-trades.jsonl"),
+            "--evidence-log",
+            str(evidence_log),
+        ],
+        outcome_runner=lambda **_: _empty_outcome_report(),
+        client_factory=lambda: "fake-client",
+    )
+
+    assert exit_code == 0
+    assert not evidence_log.exists()
+
+
+def test_check_outcomes_cli_returns_one_when_runner_fails(tmp_path, capsys):
+    def broken_outcome_runner(*, client, journal_path, config, generated_at):
+        raise RuntimeError("outcome failed")
+
+    exit_code = main(
+        [
+            "check-outcomes",
+            "--journal",
+            str(tmp_path / "paper-trades.jsonl"),
+        ],
+        outcome_runner=broken_outcome_runner,
+        client_factory=lambda: "fake-client",
+    )
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert "check-outcomes failed: outcome failed" in captured.err
+
+
+def test_check_outcomes_cli_uses_default_journal_path(tmp_path):
+    calls = []
+
+    def fake_outcome_runner(*, client, journal_path, config, generated_at):
+        calls.append(journal_path)
+        return _empty_outcome_report()
+
+    exit_code = main(
+        ["check-outcomes"],
+        outcome_runner=fake_outcome_runner,
+        client_factory=lambda: "fake-client",
+    )
+
+    assert exit_code == 0
+    assert len(calls) == 1
+    assert calls[0] == __import__("pathlib").Path("artifacts/paper-trades.jsonl")

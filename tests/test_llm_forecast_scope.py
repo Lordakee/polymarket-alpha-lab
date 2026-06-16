@@ -227,7 +227,6 @@ def test_llm_forecast_does_not_define_forbidden_live_or_advice_surface_names():
         )
 
 
-@pytest.mark.skip(reason="package-root export wiring is enabled in the wiring step")
 def test_package_root_exports_llm_forecast_api_only():
     tree = parse_module(PACKAGE_ROOT_PATH)
     package_exports = module_exports(tree)
@@ -246,30 +245,27 @@ def test_package_root_exports_llm_forecast_api_only():
     assert imported_names == set(EXPECTED_EXPORTS)
 
 
-# README section test -- uncommented once the README LLM Forecast section is
-# wired in the wiring step.
-#
-# def test_readme_llm_forecast_sections_keep_paper_boundaries():
-#     readme = README_PATH.read_text(encoding="utf-8")
-#     status_start = readme.index("## LLM Forecast v0 Status")
-#     api_start = readme.index("## LLM Forecast v0 Python API", status_start)
-#     next_section = readme.find("\n## ", api_start + 1)
-#     if next_section == -1:
-#         next_section = len(readme)
-#     normalized = normalize_identifier(readme[status_start:next_section])
-#
-#     required_fragments = (
-#         "llmforecastv0status",
-#         "llmforecastv0pythonapi",
-#         "paperonly",
-#         "reportonly",
-#         "nofetch",
-#         "noauth",
-#         "nowallet",
-#         "noorder",
-#         "norank",
-#         "norecommend",
-#         "nofinancialadvice",
-#     )
-#     for fragment in required_fragments:
-#         assert fragment in normalized, fragment
+def test_readme_llm_forecast_sections_keep_paper_boundaries():
+    readme = README_PATH.read_text(encoding="utf-8")
+    status_start = readme.index("## LLM Forecast v0 Status")
+    api_start = readme.index("## LLM Forecast v0 Python API", status_start)
+    next_section = readme.find("\n## ", api_start + 1)
+    if next_section == -1:
+        next_section = len(readme)
+    normalized = normalize_identifier(readme[status_start:next_section])
+
+    required_fragments = (
+        "llmforecastv0status",
+        "llmforecastv0pythonapi",
+        "paperonly",
+        "reportonly",
+        "nofetch",
+        "noauth",
+        "nowallet",
+        "noorder",
+        "norank",
+        "norecommend",
+        "nofinancialadvice",
+    )
+    for fragment in required_fragments:
+        assert fragment in normalized, fragment
