@@ -669,3 +669,9 @@ def _print_outcome_tracking_summary(report: OutcomeTrackingReport) -> None:
         print(f"  mean_probability_loss={evidence.mean_probability_loss}")
     if evidence.worst_bucket_error is not None:
         print(f"  worst_bucket_error={evidence.worst_bucket_error}")
+
+
+if __name__ == "__main__":  # pragma: no cover - thin entry shim
+    import sys as _sys
+
+    _sys.exit(main())
