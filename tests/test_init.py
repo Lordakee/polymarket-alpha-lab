@@ -44,6 +44,12 @@ from polymarket_alpha_lab.forecast_provider import (
     PaperForecastLog,
     build_paper_naive_forecast,
 )
+from polymarket_alpha_lab.book_imbalance_forecast import (
+    PaperBookImbalanceForecast,
+    PaperBookImbalanceForecastConfig,
+    PaperBookImbalanceForecastLog,
+    build_paper_book_imbalance_forecast,
+)
 from polymarket_alpha_lab.cost_aware_snapshot_builder import (
     PaperCostAwareSnapshotAttempt,
     PaperCostAwareSnapshotConfig,
@@ -474,6 +480,24 @@ def test_forecast_provider_public_api_exports():
     assert lab.PaperForecast is PaperForecast
     assert lab.PaperForecastLog is PaperForecastLog
     assert lab.build_paper_naive_forecast is build_paper_naive_forecast
+
+
+def test_book_imbalance_forecast_public_api_exports():
+    expected_exports = {
+        "PaperBookImbalanceForecastConfig",
+        "PaperBookImbalanceForecast",
+        "PaperBookImbalanceForecastLog",
+        "build_paper_book_imbalance_forecast",
+    }
+
+    assert expected_exports <= set(lab.__all__)
+    assert lab.PaperBookImbalanceForecastConfig is PaperBookImbalanceForecastConfig
+    assert lab.PaperBookImbalanceForecast is PaperBookImbalanceForecast
+    assert lab.PaperBookImbalanceForecastLog is PaperBookImbalanceForecastLog
+    assert (
+        lab.build_paper_book_imbalance_forecast
+        is build_paper_book_imbalance_forecast
+    )
 
 
 def test_cost_aware_snapshot_builder_public_api_exports():

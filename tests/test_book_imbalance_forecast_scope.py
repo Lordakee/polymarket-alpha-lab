@@ -1,11 +1,3 @@
-"""First live-layer scope contract for strategy_cycle.py.
-
-First live-layer scope contract (pipeline.py has none); strategy_cycle.py is
-Protocol-only (does NOT import api -- depends on a local MarketDataClient
-Protocol; cli.py constructs the concrete client and injects it), setting a
-tighter live-layer precedent than pipeline.py.
-"""
-
 import ast
 from pathlib import Path
 
@@ -13,15 +5,15 @@ import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-MODULE_PATH = REPO_ROOT / "src" / "polymarket_alpha_lab" / "strategy_cycle.py"
+MODULE_PATH = REPO_ROOT / "src" / "polymarket_alpha_lab" / "book_imbalance_forecast.py"
 PACKAGE_ROOT_PATH = REPO_ROOT / "src" / "polymarket_alpha_lab" / "__init__.py"
 README_PATH = REPO_ROOT / "README.md"
 
 EXPECTED_EXPORTS = (
-    "PaperStrategyCycleConfig",
-    "PaperStrategyCycleReport",
-    "PaperStrategyCycleLog",
-    "run_strategy_cycle",
+    "PaperBookImbalanceForecastConfig",
+    "PaperBookImbalanceForecast",
+    "PaperBookImbalanceForecastLog",
+    "build_paper_book_imbalance_forecast",
 )
 
 ALLOWED_IMPORT_MODULES = {
@@ -32,20 +24,7 @@ ALLOWED_IMPORT_MODULES = {
     "decimal",
     "pathlib",
     "typing",
-    # Q5: strategy_cycle.py is Protocol-only -- it does NOT import api. It reuses
-    # pipeline.MarketScanConfig (live-layer precedent), and wires the frozen
-    # Stage 1a leaves + cost-aware + screening + read-only normalize/archive/
-    # scoring/domain helpers. The concrete MarketDataClient is injected by cli.py.
-    "polymarket_alpha_lab.archive",
-    "polymarket_alpha_lab.book_imbalance_forecast",
-    "polymarket_alpha_lab.cost_aware_event_strategy",
-    "polymarket_alpha_lab.cost_aware_snapshot_builder",
     "polymarket_alpha_lab.domain",
-    "polymarket_alpha_lab.forecast_provider",
-    "polymarket_alpha_lab.normalize",
-    "polymarket_alpha_lab.pipeline",
-    "polymarket_alpha_lab.project_screening",
-    "polymarket_alpha_lab.scoring",
 }
 
 FORBIDDEN_IMPORT_PREFIXES = {
@@ -70,17 +49,24 @@ FORBIDDEN_IMPORT_PREFIXES = {
     "polymarket_alpha_lab.analytics",
     "polymarket_alpha_lab.analytics_history",
     "polymarket_alpha_lab.api",
+    "polymarket_alpha_lab.archive",
     "polymarket_alpha_lab.cli",
+    "polymarket_alpha_lab.cost_aware_event_strategy",
     "polymarket_alpha_lab.forecast_evidence",
+    "polymarket_alpha_lab.forecast_provider",
     "polymarket_alpha_lab.journal",
     "polymarket_alpha_lab.manual_review_queue",
+    "polymarket_alpha_lab.normalize",
     "polymarket_alpha_lab.paper",
+    "polymarket_alpha_lab.pipeline",
     "polymarket_alpha_lab.positions",
+    "polymarket_alpha_lab.project_screening",
     "polymarket_alpha_lab.proposal_packet",
     "polymarket_alpha_lab.proposal_review",
     "polymarket_alpha_lab.rejections",
     "polymarket_alpha_lab.research",
     "polymarket_alpha_lab.risk",
+    "polymarket_alpha_lab.scoring",
     "py_clob_client",
     "requests",
     "requests_html",
@@ -98,91 +84,39 @@ FORBIDDEN_IMPORT_PREFIXES = {
     "websockets",
 }
 
-# NOTE: bare "client" is intentionally NOT forbidden here -- the mandated
-# public API is run_strategy_cycle(*, client: MarketDataClient, ...) and the
-# local Protocol is named MarketDataClient (Q5). The dangerous composed client
-# surfaces (liveclient, executionclient, transportclient, orderclient) remain
-# forbidden so no real execution/broker client type can slip in.
 FORBIDDEN_NAME_FRAGMENTS = {
     "account",
-    "accountstate",
-    "advice",
-    "advisor",
-    "apikey",
-    "apitoken",
     "auth",
-    "authenticate",
     "broker",
-    "browser",
+    "client",
     "credential",
-    "credentialloader",
-    "credentialmanager",
-    "credentials",
-    "dataloader",
     "execution",
-    "executionclient",
     "fetch",
-    "financialadvice",
-    "fromfile",
-    "golive",
-    "historyloader",
-    "investmentranking",
-    "jsonlloader",
-    "jsonlreader",
-    "killswitch",
     "live",
-    "liveclient",
-    "liveexecution",
-    "loader",
-    "orderclient",
-    "orderinstruction",
-    "orderpayload",
-    "orderplacement",
-    "orderrequest",
-    "placeorder",
-    "privatekey",
     "rank",
-    "rankinvestment",
-    "ranking",
     "recommend",
-    "recommendation",
-    "routeorder",
     "sdk",
-    "sign",
-    "signorder",
-    "submitorder",
-    "tradeinstruction",
-    "transport",
-    "transportclient",
     "wallet",
     "websocket",
 }
 
 FORBIDDEN_PUBLIC_EXPORT_FRAGMENTS = {
     "account",
-    "advice",
-    "advisor",
     "auth",
     "broker",
-    "browser",
     "client",
     "credential",
     "execution",
-    "financialadvice",
-    "investment",
     "live",
-    "orderclient",
-    "orderinstruction",
-    "orderplacement",
-    "orderrequest",
-    "placeorder",
     "rank",
-    "ranking",
     "recommend",
-    "recommendation",
-    "transport",
+    "sdk",
     "wallet",
     "websocket",
+}
+
+ALLOWED_REQUIRED_DOMAIN_NAMES = {
+    "OrderBookSnapshot",
 }
 
 
@@ -221,13 +155,8 @@ def module_exports(tree):
     return tuple(assigned_exports)
 
 
-def strategy_cycle_exports(exports):
-    return tuple(
-        name
-        for name in exports
-        if name.startswith("PaperStrategyCycle")
-        or name == "run_strategy_cycle"
-    )
+def book_imbalance_forecast_exports(exports):
+    return tuple(name for name in exports if name in EXPECTED_EXPORTS)
 
 
 def public_export_fragment_matches(name):
@@ -238,13 +167,13 @@ def public_export_fragment_matches(name):
     )
 
 
-def test_strategy_cycle_imports_only_allowed_dependencies():
+def test_book_imbalance_forecast_imports_only_allowed_dependencies():
     tree = parse_module()
     for module_name in imported_modules(tree):
         assert module_name in ALLOWED_IMPORT_MODULES, module_name
 
 
-def test_strategy_cycle_does_not_import_live_or_loader_surfaces():
+def test_book_imbalance_forecast_does_not_import_live_or_loader_surfaces():
     tree = parse_module()
     for module_name in imported_modules(tree):
         assert not any(
@@ -253,7 +182,7 @@ def test_strategy_cycle_does_not_import_live_or_loader_surfaces():
         ), module_name
 
 
-def test_strategy_cycle_public_exports_exactly_paper_report_api():
+def test_book_imbalance_forecast_public_exports_exactly_book_report_api():
     tree = parse_module()
     assigned_exports = module_exports(tree)
 
@@ -262,7 +191,7 @@ def test_strategy_cycle_public_exports_exactly_paper_report_api():
         assert not public_export_fragment_matches(name), name
 
 
-def test_strategy_cycle_does_not_define_forbidden_live_or_advice_surface_names():
+def test_book_imbalance_forecast_does_not_define_forbidden_live_or_advice_surface_names():
     tree = parse_module()
     names = set()
     for node in ast.walk(tree):
@@ -281,7 +210,11 @@ def test_strategy_cycle_does_not_define_forbidden_live_or_advice_surface_names()
             if node.asname is not None:
                 names.add(node.asname)
 
-    lowered = {normalize_identifier(name) for name in names}
+    lowered = {
+        normalize_identifier(name)
+        for name in names
+        if name not in ALLOWED_REQUIRED_DOMAIN_NAMES
+    }
     for fragment in FORBIDDEN_NAME_FRAGMENTS:
         assert not any(normalize_identifier(fragment) in name for name in lowered), (
             fragment,
@@ -289,36 +222,41 @@ def test_strategy_cycle_does_not_define_forbidden_live_or_advice_surface_names()
         )
 
 
-def test_package_root_exports_strategy_cycle_api_only():
+def test_package_root_exports_book_imbalance_forecast_api_only():
     tree = parse_module(PACKAGE_ROOT_PATH)
     package_exports = module_exports(tree)
 
-    assert strategy_cycle_exports(package_exports) == EXPECTED_EXPORTS
-    for name in strategy_cycle_exports(package_exports):
+    assert book_imbalance_forecast_exports(package_exports) == EXPECTED_EXPORTS
+    for name in book_imbalance_forecast_exports(package_exports):
         assert not public_export_fragment_matches(name), name
 
     imported_names = set()
     for node in ast.walk(tree):
         if (
             isinstance(node, ast.ImportFrom)
-            and node.module == "polymarket_alpha_lab.strategy_cycle"
+            and node.module == "polymarket_alpha_lab.book_imbalance_forecast"
         ):
             imported_names.update(alias.name for alias in node.names)
     assert imported_names == set(EXPECTED_EXPORTS)
 
 
-def test_readme_strategy_cycle_sections_keep_paper_boundaries():
+def test_readme_book_imbalance_forecast_sections_keep_paper_boundaries():
     readme = README_PATH.read_text(encoding="utf-8")
-    status_start = readme.index("## Strategy Cycle v0 Status")
-    api_start = readme.index("## Strategy Cycle v0 Python API", status_start)
+    status_start = readme.index(
+        "## Book-Imbalance Forecast v0 Status",
+    )
+    api_start = readme.index(
+        "## Book-Imbalance Forecast v0 Python API",
+        status_start,
+    )
     next_section = readme.find("\n## ", api_start + 1)
     if next_section == -1:
         next_section = len(readme)
     normalized = normalize_identifier(readme[status_start:next_section])
 
     required_fragments = (
-        "strategycyclev0status",
-        "strategycyclev0pythonapi",
+        "bookimbalanceforecastv0status",
+        "bookimbalanceforecastv0pythonapi",
         "paperonly",
         "reportonly",
         "nofetch",

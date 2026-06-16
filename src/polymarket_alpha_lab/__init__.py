@@ -45,6 +45,12 @@ from polymarket_alpha_lab.forecast_provider import (
     PaperForecastLog,
     build_paper_naive_forecast,
 )
+from polymarket_alpha_lab.book_imbalance_forecast import (
+    PaperBookImbalanceForecast,
+    PaperBookImbalanceForecastConfig,
+    PaperBookImbalanceForecastLog,
+    build_paper_book_imbalance_forecast,
+)
 from polymarket_alpha_lab.cost_aware_snapshot_builder import (
     PaperCostAwareSnapshotAttempt,
     PaperCostAwareSnapshotConfig,
@@ -293,6 +299,9 @@ __all__ = [
     "PaperStrategyCycleLog",
     "PaperAnalyticsLog",
     "PaperAnalyticsReport",
+    "PaperBookImbalanceForecastConfig",
+    "PaperBookImbalanceForecast",
+    "PaperBookImbalanceForecastLog",
     "PaperDrawdownPoint",
     "PaperFill",
     "PaperForecastConfig",
@@ -433,6 +442,7 @@ __all__ = [
     "TradeProposalReviewSummaryReport",
     "build_paper_analytics_history_report",
     "build_paper_analytics_report",
+    "build_paper_book_imbalance_forecast",
     "build_paper_cost_aware_event_strategy_report",
     "build_paper_cost_aware_event_market_snapshot",
     "build_paper_project_screening_report",

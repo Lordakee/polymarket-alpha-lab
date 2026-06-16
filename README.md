@@ -191,6 +191,25 @@ Forecast Provider v0 is exposed through Python APIs:
 - Inspect the fair probability, confidence, basis, and reason codes via `PaperForecast`.
 - Optionally append already-built forecasts with `PaperForecastLog(path).append(forecast)`; there is no market fetcher, account reader, order API, JSONL reader, loader, replay, or from-file API.
 
+## Book-Imbalance Forecast v0 Status
+
+Book-Imbalance Forecast v0 adds a paper-only and report-only improved forecast primitive that derives `fair_probability_yes` from YES order-book depth imbalance rather than from the executable ask alone. It quantizes the YES bid-vs-ask size imbalance first, then derives a bounded `nudge` off the executable YES ask, so the screening research queue carries non-zero-edge candidates instead of the naive baseline (`yes_ask_naive_v0`) whose stored edge is exactly 0. The `basis` field names the model (`book_imbalance_v0`) so downstream audits know this is a book-imbalance heuristic, not a real forecast model.
+
+The forecast is research-triage only; it is not a trade instruction, investment ranking, recommendation, financial advice, or live-execution signal. `paper_only is True` and `report_only is True` are hard-enforced on every report.
+
+It consumes only caller-supplied markets and order books. It does not fetch market data, read account data, authenticate, handle wallets, private keys, or credentials, use API clients, use browser automation, place, submit, sign, or cancel orders, rank investments, recommend trades, provide financial advice, or perform compliance/legal/geographic analysis.
+
+Boundary shorthand: no fetch, no auth, no wallet, no order, no rank, no recommend, no financial advice.
+
+## Book-Imbalance Forecast v0 Python API
+
+Book-Imbalance Forecast v0 is exposed through Python APIs:
+
+- Configure the imbalance heuristic thresholds with `PaperBookImbalanceForecastConfig(config_version="book-imbalance-v1")` (imbalance strength, max nudge, min book depth, and low/high confidence cutoffs).
+- Build book-imbalance forecasts from caller-supplied markets and YES/NO order books with `build_paper_book_imbalance_forecast(market, yes_book, no_book, config=config, generated_at=datetime.now(UTC))`, which returns `PaperBookImbalanceForecast`. `no_book` is accepted for signature parity with the naive provider and for future cross-side sanity checks; it is not used by the v0 nudge math.
+- Inspect the fair probability, confidence, `basis`, audit fields `yes_best_ask`, `yes_bid_size`, `yes_ask_size`, `imbalance`, and `nudge`, plus reason codes via `PaperBookImbalanceForecast`.
+- Optionally append already-built forecasts with `PaperBookImbalanceForecastLog(path).append(forecast)`; there is no market fetcher, account reader, order API, JSONL reader, loader, replay, or from-file API.
+
 ## Cost-Aware Snapshot Builder v0 Status
 
 Cost-Aware Snapshot Builder v0 adds a paper-only and report-only extractor that converts a caller-supplied `NormalizedMarket`, YES/NO order books, and a `PaperForecast` into the already-built `PaperCostAwareEventMarketSnapshot` that the Cost-Aware Event Strategy consumes. It resolves YES/NO by outcome name (with outcome index fallback) and derives spread and a v0 resolution-risk heuristic from market metadata.

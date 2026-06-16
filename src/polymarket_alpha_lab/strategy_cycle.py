@@ -38,6 +38,10 @@ from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
 from polymarket_alpha_lab.archive import RawArchive
+from polymarket_alpha_lab.book_imbalance_forecast import (
+    PaperBookImbalanceForecastConfig,
+    build_paper_book_imbalance_forecast,
+)
 from polymarket_alpha_lab.cost_aware_event_strategy import (
     PaperCostAwareEventCostAssumptions,
     PaperCostAwareEventStrategyConfig,
@@ -105,6 +109,8 @@ class PaperStrategyCycleConfig:
     cost_assumptions: PaperCostAwareEventCostAssumptions
     max_markets_per_cycle: int = 50
     prefilter_by_score: bool = True
+    forecast_provider: str = "naive"
+    book_imbalance_config: PaperBookImbalanceForecastConfig | None = None
 
     def __post_init__(self) -> None:
         _require_canonical_string("config_version", self.config_version)
@@ -136,6 +142,30 @@ class PaperStrategyCycleConfig:
         _require_positive_int("max_markets_per_cycle", self.max_markets_per_cycle)
         if not isinstance(self.prefilter_by_score, bool):
             raise ValueError("prefilter_by_score must be a bool")
+        _require_canonical_string("forecast_provider", self.forecast_provider)
+        if self.forecast_provider not in ("naive", "book_imbalance"):
+            raise ValueError(
+                "forecast_provider must be one of "
+                "('naive', 'book_imbalance')",
+            )
+        if self.book_imbalance_config is not None and not isinstance(
+            self.book_imbalance_config,
+            PaperBookImbalanceForecastConfig,
+        ):
+            raise ValueError(
+                "book_imbalance_config must be a "
+                "PaperBookImbalanceForecastConfig",
+            )
+        # C1 fix: run_strategy_cycle dereferences book_imbalance_config without a
+        # None guard, so it must be supplied when the dispatch selects that provider.
+        if (
+            self.forecast_provider == "book_imbalance"
+            and self.book_imbalance_config is None
+        ):
+            raise ValueError(
+                "book_imbalance_config is required when "
+                "forecast_provider == 'book_imbalance'",
+            )
 
 
 @dataclass(frozen=True)
@@ -322,13 +352,29 @@ def run_strategy_cycle(
             )
             yes_book = normalize_order_book(yes_book_raw, captured_at=timestamp)
             no_book = normalize_order_book(no_book_raw, captured_at=timestamp)
-            forecast = build_paper_naive_forecast(
-                nm,
-                yes_book,
-                no_book,
-                config=cycle_config.forecast_config,
-                generated_at=timestamp,
-            )
+            # cost_aware_snapshot_builder enforces isinstance(forecast, PaperForecast),
+            # so a book_imbalance forecast is rejected downstream until that leaf
+            # accepts both forecast types.
+            forecast: Any
+            if cycle_config.forecast_provider == "naive":
+                forecast = build_paper_naive_forecast(
+                    nm,
+                    yes_book,
+                    no_book,
+                    config=cycle_config.forecast_config,
+                    generated_at=timestamp,
+                )
+            else:  # "book_imbalance"
+                bi_config = cycle_config.book_imbalance_config
+                if bi_config is None:
+                    raise ValueError("book_imbalance_config is required")
+                forecast = build_paper_book_imbalance_forecast(
+                    nm,
+                    yes_book,
+                    no_book,
+                    config=bi_config,
+                    generated_at=timestamp,
+                )
             attempt = build_paper_cost_aware_event_market_snapshot(
                 nm,
                 yes_book,

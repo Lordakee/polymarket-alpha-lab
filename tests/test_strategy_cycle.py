@@ -6,6 +6,9 @@ from pathlib import Path
 
 import pytest
 
+from polymarket_alpha_lab.book_imbalance_forecast import (
+    PaperBookImbalanceForecastConfig,
+)
 from polymarket_alpha_lab.cost_aware_event_strategy import (
     PaperCostAwareEventCostAssumptions,
     PaperCostAwareEventStrategyConfig,
@@ -123,6 +126,20 @@ def forecast_config(**overrides):
     }
     values.update(overrides)
     return PaperForecastConfig(**values)
+
+
+def book_imbalance_config(**overrides):
+    values = {
+        "config_version": "book-imbalance-v1",
+        "imbalance_strength": Decimal("0.0200"),
+        "max_nudge": Decimal("0.0500"),
+        "min_book_depth": Decimal("1.0000"),
+        "low_confidence_value": Decimal("0.5000"),
+        "high_confidence_value": Decimal("0.7500"),
+        "max_spread_for_high_confidence": Decimal("0.0300"),
+    }
+    values.update(overrides)
+    return PaperBookImbalanceForecastConfig(**values)
 
 
 def snapshot_config(**overrides):
@@ -550,3 +567,115 @@ def test_strategy_cycle_writes_distinct_per_token_book_archive_files_c2b(tmp_pat
         assert any(f"book-{token_id}" in name for name in book_names), token_id
     # distinct file names -> no token overwrote another
     assert len(book_names) == len(book_files)
+
+
+# ---------------------------------------------------------------------------
+# forecast_provider selector (Stage 2 Task 2): additive dispatch plumbing
+# ---------------------------------------------------------------------------
+
+
+def test_strategy_cycle_config_default_forecast_provider_is_naive_with_no_book_config():
+    config = cycle_config()
+
+    assert config.forecast_provider == "naive"
+    assert config.book_imbalance_config is None
+
+
+def test_strategy_cycle_config_accepts_book_imbalance_provider_with_config():
+    bi_config = book_imbalance_config()
+
+    config = cycle_config(
+        forecast_provider="book_imbalance",
+        book_imbalance_config=bi_config,
+    )
+
+    assert config.forecast_provider == "book_imbalance"
+    assert config.book_imbalance_config is bi_config
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    (
+        ({"forecast_provider": "magic"}, "forecast_provider must be one of"),
+        ({"forecast_provider": " book_imbalance "}, "forecast_provider"),
+        ({"forecast_provider": ""}, "forecast_provider"),
+        (
+            {
+                "forecast_provider": "book_imbalance",
+                "book_imbalance_config": None,
+            },
+            "book_imbalance_config is required",
+        ),
+        (
+            {
+                "forecast_provider": "book_imbalance",
+                "book_imbalance_config": "not-a-config",
+            },
+            "book_imbalance_config must be a",
+        ),
+    ),
+)
+def test_strategy_cycle_config_rejects_invalid_forecast_provider_inputs(overrides, message):
+    with pytest.raises(ValueError, match=message):
+        cycle_config(**overrides)
+
+
+def test_strategy_cycle_book_imbalance_provider_alters_dispatch_vs_naive_on_same_market(
+    tmp_path,
+):
+    # Same binary market with a bid-heavy YES book under both providers. Under
+    # the naive provider the market reaches snapshot_ready. Under the
+    # book_imbalance provider the dispatch routes through
+    # build_paper_book_imbalance_forecast; cost_aware_snapshot_builder (a frozen
+    # Stage 1a leaf) enforces isinstance(forecast, PaperForecast) and rejects
+    # the book_imbalance forecast type, so run_strategy_cycle's per-market
+    # isolation records blocked_fetch_error. The status delta between the two
+    # providers on identical inputs proves the forecast_provider selector
+    # changes dispatch. (Producing real screening candidates for the
+    # book_imbalance provider requires widening that leaf's forecast guard.)
+    market, books = binary_market_pair(
+        condition_id="0xcondDispatch",
+        slug="market-dispatch",
+        question="Will Dispatch happen?",
+        yes_token_id="yes-dispatch",
+        no_token_id="no-dispatch",
+    )
+    bid_heavy_books = {
+        "yes-dispatch": raw_book(
+            "yes-dispatch",
+            bid="0.5200",
+            ask="0.5400",
+            size="200.0000",
+        ),
+        "no-dispatch": raw_book("no-dispatch"),
+    }
+    client_naive = FakeMarketDataClient([market], bid_heavy_books)
+    client_bi = FakeMarketDataClient([market], bid_heavy_books)
+
+    naive_report = run_cycle(client_naive, tmp_path, config=cycle_config())
+    bi_report = run_cycle(
+        client_bi,
+        tmp_path,
+        config=cycle_config(
+            forecast_provider="book_imbalance",
+            book_imbalance_config=book_imbalance_config(),
+        ),
+    )
+
+    # Naive provider: book has a usable ask -> snapshot_ready, screening built.
+    assert naive_report.snapshot_ready_count == 1
+    assert naive_report.cost_aware_report_count == 1
+    assert naive_report.blocked_counts == ()
+    assert naive_report.screening_report is not None
+    assert naive_report.screening_report.candidate_count == 1
+
+    # book_imbalance provider: dispatch selected -> forecast type changed ->
+    # snapshot builder's isinstance guard rejects it -> blocked_fetch_error.
+    # The observable difference vs naive proves the selector routed dispatch.
+    assert bi_report.snapshot_ready_count == 0
+    assert bi_report.cost_aware_report_count == 0
+    assert bi_report.blocked_counts == (("blocked_fetch_error", 1),)
+    assert bi_report.screening_report is None
+    # Both providers still fetched the same books (dispatch is downstream of fetch).
+    assert set(client_naive.get_order_book_calls) == {"yes-dispatch", "no-dispatch"}
+    assert set(client_bi.get_order_book_calls) == {"yes-dispatch", "no-dispatch"}
