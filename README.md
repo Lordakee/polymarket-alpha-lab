@@ -172,6 +172,63 @@ Project Screening v0 is exposed through Python APIs:
 - Inspect source candidate details with `PaperProjectScreeningCandidate`, queue rows with `PaperProjectScreeningQueueItem`, and screening gates with `PaperProjectScreeningGateResult`.
 - Optionally append already-built screening reports with `PaperProjectScreeningLog(path).append(report)`; the only persistence surface is append-only JSONL for already-built reports. There are no data-fetch, exchange-state read, JSONL-read, replay, external-load, capital-action, or exchange-action helpers.
 
+## Forecast Provider v0 Status
+
+Forecast Provider v0 adds a paper-only and report-only naive forecast primitive that produces the `fair_probability_yes` and `confidence` values the Cost-Aware Event Strategy consumes but no module previously produced. The naive v0 baseline uses the executable YES ask as the fair probability and buckets confidence from book depth and spread; the `basis` field names the model (`yes_ask_naive_v0`) so downstream audits know this is a placeholder, not a real forecast model.
+
+The forecast is research-triage only; it is not a trade instruction, investment ranking, recommendation, financial advice, or live-execution signal.
+
+It consumes only caller-supplied markets and order books. It does not fetch market data, read account data, authenticate, handle wallets, private keys, or credentials, use API clients, use browser automation, place, submit, sign, or cancel orders, rank investments, recommend trades, provide financial advice, or perform compliance/legal/geographic analysis.
+
+Boundary shorthand: no fetch, no auth, no wallet, no order, no rank, no recommend, no financial advice.
+
+## Forecast Provider v0 Python API
+
+Forecast Provider v0 is exposed through Python APIs:
+
+- Configure naive forecast thresholds with `PaperForecastConfig(config_version="naive-forecast-v1")`.
+- Build naive forecasts from caller-supplied markets and YES/NO order books with `build_paper_naive_forecast(market, yes_book, no_book, config=config, generated_at=datetime.now(UTC))`, which returns `PaperForecast`.
+- Inspect the fair probability, confidence, basis, and reason codes via `PaperForecast`.
+- Optionally append already-built forecasts with `PaperForecastLog(path).append(forecast)`; there is no market fetcher, account reader, order API, JSONL reader, loader, replay, or from-file API.
+
+## Cost-Aware Snapshot Builder v0 Status
+
+Cost-Aware Snapshot Builder v0 adds a paper-only and report-only extractor that converts a caller-supplied `NormalizedMarket`, YES/NO order books, and a `PaperForecast` into the already-built `PaperCostAwareEventMarketSnapshot` that the Cost-Aware Event Strategy consumes. It resolves YES/NO by outcome name (with outcome index fallback) and derives spread and a v0 resolution-risk heuristic from market metadata.
+
+The snapshot attempt envelope is research-triage only; it is not a trade instruction, investment ranking, recommendation, financial advice, or live-execution signal.
+
+It consumes only caller-supplied markets, order books, and forecasts. It does not fetch market data, read account data, authenticate, handle wallets, private keys, or credentials, use API clients, use browser automation, place, submit, sign, or cancel orders, rank investments, recommend trades, provide financial advice, or perform compliance/legal/geographic analysis.
+
+Boundary shorthand: no fetch, no auth, no wallet, no order, no rank, no recommend, no financial advice.
+
+## Cost-Aware Snapshot Builder v0 Python API
+
+Cost-Aware Snapshot Builder v0 is exposed through Python APIs:
+
+- Configure snapshot extraction thresholds with `PaperCostAwareSnapshotConfig(config_version="snapshot-builder-v1")`.
+- Build cost-aware market snapshot attempts from caller-supplied markets, YES/NO books, and a forecast with `build_paper_cost_aware_event_market_snapshot(market, yes_book, no_book, forecast, config=config, generated_at=datetime.now(UTC))`, which returns `PaperCostAwareSnapshotAttempt` whose `snapshot` field holds the already-built `PaperCostAwareEventMarketSnapshot` when `status == "snapshot_ready"`.
+- Inspect per-attempt status and reason codes via `PaperCostAwareSnapshotAttempt`.
+- Optionally append already-built attempts with `PaperCostAwareSnapshotLog(path).append(attempt)`; there is no market fetcher, account reader, order API, JSONL reader, loader, replay, or from-file API.
+
+## Strategy Cycle v0 Status
+
+Strategy Cycle v0 adds the first live-layer orchestrator: a paper-only and report-only research envelope that runs a self-contained read-only scan of the public Polymarket market universe. For each cycle it fetches the public Gamma market list, normalizes each market, archives the raw payloads, optionally ranks by the deterministic Level 0 scorer, truncates to a per-cycle budget, then evaluates each binary market through paired YES/NO order books, the frozen Stage 1a naive forecast, the cost-aware snapshot builder, and the cost-aware event strategy, finally aggregating into a deterministic project-screening research queue. Per-market isolation is mandatory: every market's fetch/normalize/snapshot path is wrapped in try/except, so one bad market is recorded as a cycle-layer or snapshot-builder `blocked_*` status and the cycle continues. This resolves the NormalizedMarket pipeline end to end.
+
+The cycle's output `PaperStrategyCycleReport` is paper-only and report-only: it is a research audit envelope, never a trade instruction, investment ranking, recommendation, financial advice, or live-execution signal. `paper_only is True` and `report_only is True` are hard-enforced on the report.
+
+It performs read-only public Gamma `/markets` and CLOB `/book` fetches only. It does not place, submit, sign, send, create, or cancel orders; does not authenticate; does not handle wallets, private keys, or credentials; does not read account, position, or exchange state; does not rank investments, recommend trades, or provide financial advice; and does not perform compliance/legal/geographic analysis.
+
+Boundary shorthand: paper-only, report-only; read-only public Gamma/CLOB fetch only — no fetch of private, account, wallet, credential, or order data; no auth, no wallet, no order, no rank, no recommend, no financial advice.
+
+## Strategy Cycle v0 Python API
+
+Strategy Cycle v0 is exposed through Python APIs:
+
+- Configure a cycle with `PaperStrategyCycleConfig(config_version=..., forecast_config=..., snapshot_config=..., strategy_config=..., screening_config=..., cost_assumptions=..., max_markets_per_cycle=50, prefilter_by_score=True)`.
+- Run a paper-only strategy cycle with `run_strategy_cycle(*, client, scan_config, cycle_config, generated_at=None)`, which returns a `PaperStrategyCycleReport`. `client` is a caller-injected `MarketDataClient` (a local Protocol; this module does not import `api` — `cli.py` constructs the concrete public Gamma/CLOB reader and injects it).
+- Inspect cycle counts, deterministic `blocked_counts`, and the nested `PaperProjectScreeningReport` via `PaperStrategyCycleReport`.
+- Optionally append already-built cycle reports with `PaperStrategyCycleLog(path).append(report)`; there is no account reader, order API, wallet signer, JSONL reader, loader, replay, or from-file API.
+
 ## Level 2 Node 1 Status
 
 Level 2 Node 1 adds reviewable proposal-packet artifacts over supplied paper-trading, analytics, forecast-evidence, and manual-review artifacts. A proposal packet is for human review only; it is not an approval workflow, trade instruction, order instruction, broker request, strategy-promotion signal, or live-execution signal. No order may leave the system without explicit human approval.

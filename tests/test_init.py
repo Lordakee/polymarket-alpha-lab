@@ -38,6 +38,24 @@ from polymarket_alpha_lab.cost_aware_event_strategy import (
     PaperCostAwareEventStrategyReport,
     build_paper_cost_aware_event_strategy_report,
 )
+from polymarket_alpha_lab.forecast_provider import (
+    PaperForecast,
+    PaperForecastConfig,
+    PaperForecastLog,
+    build_paper_naive_forecast,
+)
+from polymarket_alpha_lab.cost_aware_snapshot_builder import (
+    PaperCostAwareSnapshotAttempt,
+    PaperCostAwareSnapshotConfig,
+    PaperCostAwareSnapshotLog,
+    build_paper_cost_aware_event_market_snapshot,
+)
+from polymarket_alpha_lab.strategy_cycle import (
+    PaperStrategyCycleConfig,
+    PaperStrategyCycleReport,
+    PaperStrategyCycleLog,
+    run_strategy_cycle,
+)
 from polymarket_alpha_lab.project_screening import (
     PaperProjectScreeningCandidate,
     PaperProjectScreeningConfig,
@@ -441,6 +459,54 @@ def test_project_screening_public_api_exports():
         lab.build_paper_project_screening_report
         is build_paper_project_screening_report
     )
+
+
+def test_forecast_provider_public_api_exports():
+    expected_exports = {
+        "PaperForecastConfig",
+        "PaperForecast",
+        "PaperForecastLog",
+        "build_paper_naive_forecast",
+    }
+
+    assert expected_exports <= set(lab.__all__)
+    assert lab.PaperForecastConfig is PaperForecastConfig
+    assert lab.PaperForecast is PaperForecast
+    assert lab.PaperForecastLog is PaperForecastLog
+    assert lab.build_paper_naive_forecast is build_paper_naive_forecast
+
+
+def test_cost_aware_snapshot_builder_public_api_exports():
+    expected_exports = {
+        "PaperCostAwareSnapshotConfig",
+        "PaperCostAwareSnapshotAttempt",
+        "PaperCostAwareSnapshotLog",
+        "build_paper_cost_aware_event_market_snapshot",
+    }
+
+    assert expected_exports <= set(lab.__all__)
+    assert lab.PaperCostAwareSnapshotConfig is PaperCostAwareSnapshotConfig
+    assert lab.PaperCostAwareSnapshotAttempt is PaperCostAwareSnapshotAttempt
+    assert lab.PaperCostAwareSnapshotLog is PaperCostAwareSnapshotLog
+    assert (
+        lab.build_paper_cost_aware_event_market_snapshot
+        is build_paper_cost_aware_event_market_snapshot
+    )
+
+
+def test_strategy_cycle_public_api_exports():
+    expected_exports = {
+        "PaperStrategyCycleConfig",
+        "PaperStrategyCycleReport",
+        "PaperStrategyCycleLog",
+        "run_strategy_cycle",
+    }
+
+    assert expected_exports <= set(lab.__all__)
+    assert lab.PaperStrategyCycleConfig is PaperStrategyCycleConfig
+    assert lab.PaperStrategyCycleReport is PaperStrategyCycleReport
+    assert lab.PaperStrategyCycleLog is PaperStrategyCycleLog
+    assert lab.run_strategy_cycle is run_strategy_cycle
 
 
 def test_level_2_node_1_public_api_exports():

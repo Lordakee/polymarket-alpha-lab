@@ -1,0 +1,552 @@
+import json
+from dataclasses import FrozenInstanceError, replace
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal
+from pathlib import Path
+
+import pytest
+
+from polymarket_alpha_lab.cost_aware_event_strategy import (
+    PaperCostAwareEventCostAssumptions,
+    PaperCostAwareEventStrategyConfig,
+)
+from polymarket_alpha_lab.cost_aware_snapshot_builder import PaperCostAwareSnapshotConfig
+from polymarket_alpha_lab.forecast_provider import PaperForecastConfig
+from polymarket_alpha_lab.pipeline import MarketScanConfig
+from polymarket_alpha_lab.project_screening import PaperProjectScreeningConfig
+from polymarket_alpha_lab.strategy_cycle import (
+    PaperStrategyCycleConfig,
+    PaperStrategyCycleLog,
+    PaperStrategyCycleReport,
+    run_strategy_cycle,
+)
+
+
+GENERATED_AT = datetime(2026, 6, 16, 13, 0, tzinfo=UTC)
+
+
+# ---------------------------------------------------------------------------
+# Canned raw Gamma market / CLOB book payload builders + fake client
+# ---------------------------------------------------------------------------
+
+
+def raw_market(
+    *,
+    condition_id,
+    slug,
+    question,
+    token_ids,
+    outcomes=("Yes", "No"),
+    **overrides,
+):
+    payload = {
+        "conditionId": condition_id,
+        "outcomes": list(outcomes),
+        "clobTokenIds": list(token_ids),
+        "slug": slug,
+        "question": question,
+        "active": True,
+        "closed": False,
+        "acceptingOrders": True,
+        "enableOrderBook": True,
+        "volume24hr": "5000",
+        "liquidity": "10000",
+        "description": "Market resolves according to the public source.",
+        "resolutionSource": "public-source",
+    }
+    payload.update(overrides)
+    return payload
+
+
+def raw_book(token_id, *, bid="0.5000", ask="0.5500", size="100.0000"):
+    return {
+        "asset_id": token_id,
+        "bids": [{"price": bid, "size": size}],
+        "asks": [{"price": ask, "size": size}],
+    }
+
+
+class FakeMarketDataClient:
+    """A canned, no-network MarketDataClient implementation."""
+
+    def __init__(self, markets, books):
+        self._markets = list(markets)
+        self._books = dict(books)
+        self.list_markets_calls = []
+        self.get_order_book_calls = []
+
+    def list_markets(self, *, active, closed, limit):
+        self.list_markets_calls.append({"active": active, "closed": closed, "limit": limit})
+        return list(self._markets)
+
+    def get_order_book(self, *, token_id):
+        self.get_order_book_calls.append(token_id)
+        if token_id not in self._books:
+            raise KeyError(token_id)
+        return self._books[token_id]
+
+
+def binary_market_pair(
+    *,
+    condition_id,
+    slug,
+    question,
+    yes_token_id,
+    no_token_id,
+):
+    market = raw_market(
+        condition_id=condition_id,
+        slug=slug,
+        question=question,
+        token_ids=(yes_token_id, no_token_id),
+        outcomes=("Yes", "No"),
+    )
+    books = {
+        yes_token_id: raw_book(yes_token_id),
+        no_token_id: raw_book(no_token_id),
+    }
+    return market, books
+
+
+# ---------------------------------------------------------------------------
+# Cycle config factory
+# ---------------------------------------------------------------------------
+
+
+def forecast_config(**overrides):
+    values = {
+        "config_version": "naive-forecast-v1",
+        "min_book_depth": Decimal("1.0000"),
+        "low_confidence_value": Decimal("0.5000"),
+        "high_confidence_value": Decimal("0.7500"),
+        "max_spread_for_high_confidence": Decimal("0.0300"),
+    }
+    values.update(overrides)
+    return PaperForecastConfig(**values)
+
+
+def snapshot_config(**overrides):
+    values = {
+        "config_version": "snapshot-builder-v1",
+        "default_resolution_risk": Decimal("0.1000"),
+        "missing_rules_resolution_risk": Decimal("0.3000"),
+        "imminent_resolution_risk_cap": Decimal("0.0500"),
+        "imminent_resolution_horizon_hours": 24,
+    }
+    values.update(overrides)
+    return PaperCostAwareSnapshotConfig(**values)
+
+
+def strategy_config(**overrides):
+    values = {
+        "config_version": "cost-aware-event-v1",
+        "min_confidence": Decimal("0.7000"),
+        "max_spread": Decimal("0.0500"),
+        "max_resolution_risk": Decimal("0.2000"),
+        "min_ask_size": Decimal("10.0000"),
+        "min_net_edge": Decimal("0.0100"),
+    }
+    values.update(overrides)
+    return PaperCostAwareEventStrategyConfig(**values)
+
+
+def screening_config(**overrides):
+    values = {
+        "config_version": "project-screening-v1",
+        "min_screening_score": Decimal("0.010000"),
+        "reference_ask_size": Decimal("100.0000"),
+        "net_edge_weight": Decimal("1.0000"),
+        "confidence_weight": Decimal("0.0000"),
+        "depth_weight": Decimal("0.0000"),
+        "spread_penalty_weight": Decimal("0.0000"),
+        "resolution_risk_penalty_weight": Decimal("0.0000"),
+        "cost_penalty_weight": Decimal("0.0000"),
+    }
+    values.update(overrides)
+    return PaperProjectScreeningConfig(**values)
+
+
+def cost_assumptions(**overrides):
+    values = {
+        "taker_fee_rate": Decimal("0.0000"),
+        "slippage_cost_per_share": Decimal("0.0000"),
+        "funding_cost_per_share": Decimal("0.0000"),
+        "finalization_cost_per_share": Decimal("0.0000"),
+        "time_cost_per_share": Decimal("0.0000"),
+        "risk_cost_per_share": Decimal("0.0000"),
+    }
+    values.update(overrides)
+    return PaperCostAwareEventCostAssumptions(**values)
+
+
+def cycle_config(**overrides):
+    values = {
+        "config_version": "strategy-cycle-v1",
+        "forecast_config": forecast_config(),
+        "snapshot_config": snapshot_config(),
+        "strategy_config": strategy_config(),
+        "screening_config": screening_config(),
+        "cost_assumptions": cost_assumptions(),
+        "max_markets_per_cycle": 50,
+        "prefilter_by_score": True,
+    }
+    values.update(overrides)
+    return PaperStrategyCycleConfig(**values)
+
+
+def scan_config(archive_root, *, limit=50):
+    return MarketScanConfig(
+        limit=limit,
+        archive_root=Path(archive_root),
+        output_path=Path(archive_root) / "ignored.json",
+    )
+
+
+def run_cycle(client, archive_root, *, config=None, generated_at=GENERATED_AT):
+    return run_strategy_cycle(
+        client=client,
+        scan_config=scan_config(archive_root),
+        cycle_config=config or cycle_config(),
+        generated_at=generated_at,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Behavior tests (a)-(m)
+# ---------------------------------------------------------------------------
+
+
+def test_strategy_cycle_single_binary_market_produces_snapshot_and_screening(tmp_path):
+    market, books = binary_market_pair(
+        condition_id="0xcondA",
+        slug="market-a",
+        question="Will A happen?",
+        yes_token_id="yes-a",
+        no_token_id="no-a",
+    )
+    client = FakeMarketDataClient([market], books)
+
+    report = run_cycle(client, tmp_path)
+
+    assert isinstance(report, PaperStrategyCycleReport)
+    assert report.paper_only is True
+    assert report.report_only is True
+    assert report.generated_at == GENERATED_AT
+    assert report.config_version == "strategy-cycle-v1"
+    assert report.scan_market_count == 1
+    assert report.considered_count == 1
+    assert report.snapshot_ready_count == 1
+    assert report.cost_aware_report_count == 1
+    assert report.blocked_counts == ()
+    assert report.screening_report is not None
+    assert report.screening_report.candidate_count == 1
+    assert client.list_markets_calls == [
+        {"active": True, "closed": False, "limit": 50},
+    ]
+    assert set(client.get_order_book_calls) == {"yes-a", "no-a"}
+
+
+def test_strategy_cycle_records_non_binary_market_as_blocked_without_fetching_books(tmp_path):
+    market = raw_market(
+        condition_id="0xcondNonBinary",
+        slug="market-non-binary",
+        question="Will a multi-outcome resolve?",
+        token_ids=("alpha-token", "beta-token", "gamma-token"),
+        outcomes=("Alpha", "Beta", "Gamma"),
+    )
+    client = FakeMarketDataClient([market], {})
+
+    report = run_cycle(client, tmp_path)
+
+    assert report.scan_market_count == 1
+    assert report.considered_count == 1
+    assert report.snapshot_ready_count == 0
+    assert report.cost_aware_report_count == 0
+    assert report.blocked_counts == (("blocked_non_binary_market", 1),)
+    assert report.screening_report is None
+    assert client.get_order_book_calls == []
+
+
+def test_strategy_cycle_records_fetch_error_and_continues_other_markets(tmp_path):
+    good_market, good_books = binary_market_pair(
+        condition_id="0xcondGood",
+        slug="market-good",
+        question="Will Good happen?",
+        yes_token_id="yes-good",
+        no_token_id="no-good",
+    )
+    bad_market = raw_market(
+        condition_id="0xcondBad",
+        slug="market-bad",
+        question="Will Bad happen?",
+        token_ids=("yes-bad", "no-bad"),
+    )
+    books = dict(good_books)
+    # leave "yes-bad" missing so get_order_book raises KeyError for the bad market
+    books["no-bad"] = raw_book("no-bad")
+    client = FakeMarketDataClient([good_market, bad_market], books)
+
+    report = run_cycle(client, tmp_path)
+
+    assert report.scan_market_count == 2
+    assert report.considered_count == 2
+    assert report.snapshot_ready_count == 1
+    assert report.cost_aware_report_count == 1
+    assert report.blocked_counts == (("blocked_fetch_error", 1),)
+    assert report.screening_report is not None
+    assert report.screening_report.candidate_count == 1
+
+
+def test_strategy_cycle_empty_scan_has_no_screening_report(tmp_path):
+    client = FakeMarketDataClient([], {})
+
+    report = run_cycle(client, tmp_path)
+
+    assert report.scan_market_count == 0
+    assert report.considered_count == 0
+    assert report.snapshot_ready_count == 0
+    assert report.cost_aware_report_count == 0
+    assert report.blocked_counts == ()
+    assert report.screening_report is None
+
+
+def test_strategy_cycle_truncates_retained_markets_to_max_per_cycle(tmp_path):
+    markets = [
+        raw_market(
+            condition_id=f"0xcond{label}",
+            slug=f"market-{label.lower()}",
+            question=f"Will {label} happen?",
+            token_ids=(f"yes-{label.lower()}", f"no-{label.lower()}"),
+        )
+        for label in ("Alpha", "Bravo", "Charlie")
+    ]
+    config = cycle_config(
+        max_markets_per_cycle=2,
+        prefilter_by_score=False,
+    )
+    client = FakeMarketDataClient(markets, {})
+
+    report = run_cycle(client, tmp_path, config=config)
+
+    assert report.scan_market_count == 3
+    assert report.considered_count == 2
+    # the two retained binary markets have no books available -> fetch_error
+    assert report.blocked_counts == (("blocked_fetch_error", 2),)
+    assert report.snapshot_ready_count == 0
+
+
+def test_strategy_cycle_defaults_generated_at_to_utc_now(tmp_path):
+    market, books = binary_market_pair(
+        condition_id="0xcondNow",
+        slug="market-now",
+        question="Will Now happen?",
+        yes_token_id="yes-now",
+        no_token_id="no-now",
+    )
+    client = FakeMarketDataClient([market], books)
+
+    before = datetime.now(UTC)
+    report = run_strategy_cycle(
+        client=client,
+        scan_config=scan_config(tmp_path),
+        cycle_config=cycle_config(),
+        generated_at=None,
+    )
+    after = datetime.now(UTC)
+
+    assert report.generated_at.tzinfo == UTC
+    assert before - timedelta(seconds=1) <= report.generated_at <= after + timedelta(seconds=1)
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    (
+        ({"config_version": ""}, "config_version"),
+        ({"config_version": " strategy-cycle-v1 "}, "config_version"),
+        ({"max_markets_per_cycle": 0}, "max_markets_per_cycle|positive"),
+        ({"max_markets_per_cycle": -1}, "max_markets_per_cycle|positive"),
+        ({"max_markets_per_cycle": True}, "max_markets_per_cycle|int"),
+        ({"forecast_config": "not-a-config"}, "forecast_config"),
+        ({"snapshot_config": object()}, "snapshot_config"),
+        ({"strategy_config": None}, "strategy_config"),
+        ({"screening_config": 123}, "screening_config"),
+        ({"cost_assumptions": "bad"}, "cost_assumptions"),
+    ),
+)
+def test_strategy_cycle_config_rejects_invalid_inputs(overrides, message):
+    with pytest.raises(ValueError, match=message):
+        cycle_config(**overrides)
+
+
+def test_strategy_cycle_report_is_frozen_and_revalidates_report_flags(tmp_path):
+    market, books = binary_market_pair(
+        condition_id="0xcondFrozen",
+        slug="market-frozen",
+        question="Will Frozen happen?",
+        yes_token_id="yes-frozen",
+        no_token_id="no-frozen",
+    )
+    client = FakeMarketDataClient([market], books)
+    report = run_cycle(client, tmp_path)
+
+    with pytest.raises(FrozenInstanceError):
+        report.snapshot_ready_count = 99
+    with pytest.raises(ValueError, match="paper_only"):
+        replace(report, paper_only=False)
+    with pytest.raises(ValueError, match="report_only"):
+        replace(report, report_only=False)
+
+
+def test_strategy_cycle_log_appends_jsonl_decimal_strings_and_preserves_file(tmp_path):
+    market, books = binary_market_pair(
+        condition_id="0xcondLog",
+        slug="market-log",
+        question="Will Log happen?",
+        yes_token_id="yes-log",
+        no_token_id="no-log",
+    )
+    client = FakeMarketDataClient([market], books)
+    report = run_cycle(client, tmp_path)
+    log = PaperStrategyCycleLog(path=tmp_path / "nested" / "strategy-cycle.jsonl")
+
+    log.append(report)
+    log.append(report)
+
+    lines = log.path.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 2
+    stored = json.loads(lines[0])
+    assert stored["paper_only"] is True
+    assert stored["report_only"] is True
+    assert stored["generated_at"] == "2026-06-16T13:00:00+00:00"
+    assert stored["config_version"] == "strategy-cycle-v1"
+    assert stored["scan_market_count"] == 1
+    assert stored["considered_count"] == 1
+    assert stored["snapshot_ready_count"] == 1
+    assert stored["cost_aware_report_count"] == 1
+    assert stored["blocked_counts"] == []
+    assert stored["screening_report"]["candidate_count"] == 1
+    assert stored["screening_report"]["queue_items"][0]["screening_score"] is not None
+
+    existing_log_path = tmp_path / "existing.jsonl"
+    existing_log_path.write_text("existing\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="PaperStrategyCycleReport"):
+        PaperStrategyCycleLog(path=existing_log_path).append(object())
+    assert existing_log_path.read_text(encoding="utf-8") == "existing\n"
+
+
+def test_strategy_cycle_report_rejects_count_invariant_violations(tmp_path):
+    market, books = binary_market_pair(
+        condition_id="0xcondInvariant",
+        slug="market-invariant",
+        question="Will Invariant happen?",
+        yes_token_id="yes-invariant",
+        no_token_id="no-invariant",
+    )
+    client = FakeMarketDataClient([market], books)
+    report = run_cycle(client, tmp_path)
+
+    with pytest.raises(ValueError, match="cost_aware_report_count"):
+        replace(report, cost_aware_report_count=report.snapshot_ready_count + 1)
+    with pytest.raises(ValueError, match="considered_count"):
+        replace(report, considered_count=report.scan_market_count + 5)
+    with pytest.raises(ValueError, match="screening_report"):
+        replace(report, screening_report=None)
+
+
+def test_strategy_cycle_blocked_counts_are_sorted_and_sum_with_snapshot_ready(tmp_path):
+    market_good, good_books = binary_market_pair(
+        condition_id="0xcondSumGood",
+        slug="market-sum-good",
+        question="Will Sum Good happen?",
+        yes_token_id="yes-sum-good",
+        no_token_id="no-sum-good",
+    )
+    market_bad = raw_market(
+        condition_id="0xcondSumBad",
+        slug="market-sum-bad",
+        question="Will Sum Bad happen?",
+        token_ids=("yes-sum-bad", "no-sum-bad"),
+    )
+    market_non_binary = raw_market(
+        condition_id="0xcondSumNonBinary",
+        slug="market-sum-non-binary",
+        question="Will Sum NonBinary happen?",
+        token_ids=("only-token",),
+        outcomes=("Only",),
+    )
+    books = dict(good_books)
+    books["no-sum-bad"] = raw_book("no-sum-bad")
+    client = FakeMarketDataClient([market_good, market_bad, market_non_binary], books)
+
+    report = run_cycle(client, tmp_path)
+
+    statuses = tuple(name for name, _count in report.blocked_counts)
+    assert statuses == tuple(sorted(statuses))
+    blocked_total = sum(count for _name, count in report.blocked_counts)
+    assert blocked_total + report.snapshot_ready_count == report.considered_count
+    assert set(statuses) == {"blocked_fetch_error", "blocked_non_binary_market"}
+
+
+def test_strategy_cycle_dedupes_duplicate_market_slug_for_screening_c1b(tmp_path):
+    market_one, books_one = binary_market_pair(
+        condition_id="0xcondDupOne",
+        slug="same-slug",
+        question="Will the same slug resolve one?",
+        yes_token_id="yes-dup-one",
+        no_token_id="no-dup-one",
+    )
+    market_two, books_two = binary_market_pair(
+        condition_id="0xcondDupTwo",
+        slug="same-slug",
+        question="Will the same slug resolve two?",
+        yes_token_id="yes-dup-two",
+        no_token_id="no-dup-two",
+    )
+    books = {**books_one, **books_two}
+    client = FakeMarketDataClient([market_one, market_two], books)
+
+    report = run_cycle(client, tmp_path)
+
+    assert report.scan_market_count == 2
+    assert report.considered_count == 2
+    assert report.snapshot_ready_count == 2
+    assert report.cost_aware_report_count == 2
+    assert report.blocked_counts == ()
+    assert report.screening_report is not None
+    # C1b: dedupe keeps first -> screening sees exactly one candidate
+    assert report.screening_report.candidate_count == 1
+
+
+def test_strategy_cycle_writes_distinct_per_token_book_archive_files_c2b(tmp_path):
+    market_one, books_one = binary_market_pair(
+        condition_id="0xcondArchiveOne",
+        slug="market-archive-one",
+        question="Will Archive One happen?",
+        yes_token_id="yes-archive-one",
+        no_token_id="no-archive-one",
+    )
+    market_two, books_two = binary_market_pair(
+        condition_id="0xcondArchiveTwo",
+        slug="market-archive-two",
+        question="Will Archive Two happen?",
+        yes_token_id="yes-archive-two",
+        no_token_id="no-archive-two",
+    )
+    books = {**books_one, **books_two}
+    client = FakeMarketDataClient([market_one, market_two], books)
+
+    run_cycle(client, tmp_path)
+
+    book_files = list((tmp_path / "clob_book").glob("*.json"))
+    book_names = {path.name for path in book_files}
+    # C2b: each market's YES/NO books land in DISTINCT files (>= 4, names contain token_id)
+    assert len(book_files) >= 4
+    for token_id in (
+        "yes-archive-one",
+        "no-archive-one",
+        "yes-archive-two",
+        "no-archive-two",
+    ):
+        assert any(f"book-{token_id}" in name for name in book_names), token_id
+    # distinct file names -> no token overwrote another
+    assert len(book_names) == len(book_files)

@@ -54,3 +54,66 @@ Avoid using website scraping as a primary data path unless a needed field is una
 - Codex subagents dispatched for this project should use model `gpt-5.5` with reasoning effort `xhigh`.
 - Local opencode reviews for this project should use model `zhipuai-coding-plan/glm-5.2` with variant/thinking level `max`.
 - If the user informally writes `xhign` for the Codex subagent reasoning level, treat it as the executable setting `xhigh`.
+
+## OMO / Sisyphus Session Workflow (opencode only — codex ignores this section)
+
+This section binds every opencode/Sisyphus session working on this repository. It is set by the user on 2026-06-16 and survives across sessions. Codex does not use this section; codex resume continues from the latest main commit.
+
+### Authority and handoff
+
+- The user has fully handed the project to opencode/Sisyphus. Codex is paused; it may resume later or run in parallel.
+- Work directly in `/home/ubuntu/polymarket-alpha-lab` on the `main` branch. Do not use worktrees or copies.
+- A rollback tag `codex-handoff-20260616` is placed at the last codex commit (currently `8182787 feat: add project screening v0`). Keep commits granular and independently revertable so codex can selectively roll back.
+
+### Git strategy
+
+- Commit locally on `main` as work progresses.
+- Do NOT push to `origin/main` unless the user explicitly asks. Keep the remote pinned at the codex handoff commit so codex can resume from a clean remote.
+- Push only when the user explicitly authorizes it.
+
+### Model configuration (oh-my-openagent.json)
+
+- All OMO agents and categories use `zhipuai-coding-plan/glm-5.2` with variant `max`.
+- Subagent parallelism: maximize throughput. Default to firing 5-8 background subagents for independent work, reclaim finished subagents promptly, and redeploy capacity to the next independent task. Drop to 3-4 only if the API returns rate-limit errors. Never serialize independent tasks.
+
+### Dual review gate with reviewer fallback (MANDATORY — never skip)
+
+External review uses TWO reviewers with a fallback policy. **Primary reviewer: Claude Code.** If Claude Code fails twice consecutively (API error / connection / gateway), **fall back to Codex** for that gate.
+
+**Primary reviewer — Claude Code** (`claude-opus-4-8`, effort `max`):
+
+```bash
+claude -p --model claude-opus-4-8 --effort max "<review prompt>"
+```
+
+**Fallback reviewer — Codex** (`gpt-5.5`, reasoning `xhigh`, bypass sandbox + read-only prompt):
+
+```bash
+codex exec -m gpt-5.5 --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check -c model_reasoning_effort=xhigh "<review prompt>"
+```
+
+(Codex reads the prompt as an argument or via stdin. NOTE: `-s read-only` sandbox's bwrap loopback fails in this environment (`bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted`), so use `--dangerously-bypass-approvals-and-sandbox` instead and append a HARD read-only constraint to the prompt: "DO NOT modify/create/delete ANY file; output ONLY verdict + findings." Run from the project root.)
+
+**Fallback rule:** Count consecutive Claude Code failures (API/connection/gateway errors, NOT substantive findings). After the 2nd consecutive failure, switch to Codex for that gate. A substantive Claude verdict (Proceed/Block with findings) always resets the failure counter to 0. Record which reviewer produced each verdict and the failure count.
+
+Two gates are mandatory for every stage:
+
+1. **Pre-stage plan gate** — Before any implementation work begins in a stage:
+   - Sisyphus drafts the stage plan (goal, scope, files, approach, risks, tests).
+   - Submit the plan to the primary reviewer (Claude Code); fall back to Codex after 2 failures.
+   - Implementation may start ONLY after the reviewer approves. If the reviewer requests changes, revise the plan and re-review until approved.
+
+2. **Post-stage code gate** — After a stage's implementation is complete and tests pass:
+   - Submit the stage plan plus the resulting code/diffs to the primary reviewer (Claude Code); fall back to Codex after 2 failures.
+   - The next stage may begin ONLY after the reviewer approves. If the reviewer requests changes, fix them and re-review until approved.
+
+Stage boundary definition: a stage is any meaningful unit of work that has its own plan and deliverable (typically one Node in the existing plan/spec cadence, or a Sisyphus todowrite milestone). Do not collapse multiple stages into one review.
+
+### Workflow summary per stage
+
+1. Draft stage plan → pre-stage review (Claude Code primary, Codex fallback after 2 failures) → approval.
+2. Execute with maximum parallel subagents (5-8 background).
+3. Run tests, verify diagnostics clean on changed files.
+4. Commit locally on main (granular commits).
+5. Submit plan + code to post-stage review (Claude Code primary, Codex fallback after 2 failures) → approval.
+6. Only then proceed to the next stage.
