@@ -12,7 +12,7 @@ The long-term goal is an automated system that can screen markets, research cand
 
 ## Phase 1 Scope
 
-This repository currently contains the project design, research notes, implementation plans, a read-only market scanner, research packet assembly, bid/ask paper-fill simulation, JSONL paper-trade journaling, paper-only risk gates, rejected-candidate logs, paper position ledgers, executable NAV marks, paper-only portfolio analytics, exposure reports, executable-NAV drawdown reports, paper-only analytics history validation, paper-only forecast evidence reports, paper-only cost-aware event strategy reports, paper-only manual-review queues, human-review proposal packet artifacts, append-only proposal-review record artifacts, proposal-review summary report artifacts, proposal-review quality gate artifacts, proposal-review diagnostic artifacts, proposal-review coverage report artifacts, proposal-review dossier artifacts, proposal-review dossier batch health artifacts, proposal evidence comparison artifacts, proposal evidence comparison history artifacts, proposal evidence comparison history batch-health artifacts, proposal evidence comparison history batch-health trend artifacts, proposal evidence comparison history batch-health trend-batch artifacts, proposal evidence comparison history batch-health trend-batch health artifacts, and proposal evidence comparison history batch-health trend-batch health trend artifacts.
+This repository currently contains the project design, research notes, implementation plans, a read-only market scanner, research packet assembly, bid/ask paper-fill simulation, JSONL paper-trade journaling, paper-only risk gates, rejected-candidate logs, paper position ledgers, executable NAV marks, paper-only portfolio analytics, exposure reports, executable-NAV drawdown reports, paper-only analytics history validation, paper-only forecast evidence reports, paper-only cost-aware event strategy reports, paper-only project screening research queues, paper-only manual-review queues, human-review proposal packet artifacts, append-only proposal-review record artifacts, proposal-review summary report artifacts, proposal-review quality gate artifacts, proposal-review diagnostic artifacts, proposal-review coverage report artifacts, proposal-review dossier artifacts, proposal-review dossier batch health artifacts, proposal evidence comparison artifacts, proposal evidence comparison history artifacts, proposal evidence comparison history batch-health artifacts, proposal evidence comparison history batch-health trend artifacts, proposal evidence comparison history batch-health trend-batch artifacts, proposal evidence comparison history batch-health trend-batch health artifacts, and proposal evidence comparison history batch-health trend-batch health trend artifacts.
 
 The current phase does not contain:
 
@@ -154,6 +154,23 @@ Cost-Aware Event Strategy v0 is exposed through Python APIs:
 - Build cost-aware event strategy reports with `build_paper_cost_aware_event_strategy_report(...)`, which returns `PaperCostAwareEventStrategyReport`.
 - Inspect side results and gates with `PaperCostAwareEventSideResult` and `PaperCostAwareEventStrategyGateResult`.
 - Optionally append already-built reports with `PaperCostAwareEventStrategyLog(path).append(report)`; there is no market fetcher, account reader, order API, JSONL reader, loader, replay, or from-file API.
+
+## Project Screening v0 Status
+
+Project Screening v0 adds a paper-only and report-only screening layer over already-built `PaperCostAwareEventStrategyReport` values. It turns supplied cost-aware event strategy reports into a deterministic human research queue for review workflow ergonomics. Queue sequence and screening scores are research-triage artifacts only; they are not investment rankings, not trade recommendations, not trade instructions, not financial advice, not approval workflow outputs, and not live-execution signals.
+
+It consumes only caller-supplied cost-aware reports. It does not fetch market data, read account data, authenticate, handle wallets, private keys, or credentials, use API clients, use browser automation, place, submit, sign, or cancel orders, rank investments, recommend trades, provide financial advice, or perform compliance/legal/geographic analysis.
+
+Boundary shorthand: no fetch, no auth, no wallet, no order, no rank, no recommend, no trade, no financial advice.
+
+## Project Screening v0 Python API
+
+Project Screening v0 is exposed through Python APIs:
+
+- Configure screening thresholds and weights with `PaperProjectScreeningConfig(config_version="project-screening-v1")`.
+- Build project screening reports from already-built `PaperCostAwareEventStrategyReport` values with `build_paper_project_screening_report(reports, config=config, generated_at=datetime.now(UTC))`, which returns `PaperProjectScreeningReport`.
+- Inspect source candidate details with `PaperProjectScreeningCandidate`, queue rows with `PaperProjectScreeningQueueItem`, and screening gates with `PaperProjectScreeningGateResult`.
+- Optionally append already-built screening reports with `PaperProjectScreeningLog(path).append(report)`; the only persistence surface is append-only JSONL for already-built reports. There are no data-fetch, exchange-state read, JSONL-read, replay, external-load, capital-action, or exchange-action helpers.
 
 ## Level 2 Node 1 Status
 
@@ -441,9 +458,13 @@ See:
 │       │   ├── 2026-06-14-level-2-proposal-review-records.md
 │       │   ├── 2026-06-14-level-2-proposal-review-quality-gates.md
 │       │   ├── 2026-06-14-level-2-proposal-review-summary-reports.md
+│       │   ├── 2026-06-16-cost-aware-event-strategy-v0.md
+│       │   ├── 2026-06-16-project-screening-v0.md
 │       │   └── 2026-06-13-project-bootstrap.md
 │       └── specs
 │           ├── 2026-06-13-automated-investment-roadmap.md
+│           ├── 2026-06-16-cost-aware-event-strategy-v0.md
+│           ├── 2026-06-16-project-screening-v0.md
 │           └── 2026-06-13-polymarket-alpha-lab-design.md
 ├── pyproject.toml
 ├── src
@@ -454,6 +475,7 @@ See:
 │       ├── api.py
 │       ├── archive.py
 │       ├── cli.py
+│       ├── cost_aware_event_strategy.py
 │       ├── domain.py
 │       ├── forecast_evidence.py
 │       ├── journal.py
@@ -462,6 +484,7 @@ See:
 │       ├── paper.py
 │       ├── pipeline.py
 │       ├── positions.py
+│       ├── project_screening.py
 │       ├── proposal_evidence_comparison.py
 │       ├── proposal_evidence_comparison_history.py
 │       ├── proposal_evidence_comparison_history_batch_health.py
@@ -489,6 +512,8 @@ See:
     ├── test_api.py
     ├── test_archive.py
     ├── test_cli.py
+    ├── test_cost_aware_event_strategy.py
+    ├── test_cost_aware_event_strategy_scope.py
     ├── test_domain.py
     ├── test_forecast_evidence.py
     ├── test_forecast_evidence_scope.py
@@ -500,6 +525,8 @@ See:
     ├── test_paper.py
     ├── test_pipeline.py
     ├── test_positions.py
+    ├── test_project_screening.py
+    ├── test_project_screening_scope.py
     ├── test_proposal_evidence_comparison.py
     ├── test_proposal_evidence_comparison_scope.py
     ├── test_proposal_evidence_comparison_history.py

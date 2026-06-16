@@ -38,6 +38,15 @@ from polymarket_alpha_lab.cost_aware_event_strategy import (
     PaperCostAwareEventStrategyReport,
     build_paper_cost_aware_event_strategy_report,
 )
+from polymarket_alpha_lab.project_screening import (
+    PaperProjectScreeningCandidate,
+    PaperProjectScreeningConfig,
+    PaperProjectScreeningGateResult,
+    PaperProjectScreeningLog,
+    PaperProjectScreeningQueueItem,
+    PaperProjectScreeningReport,
+    build_paper_project_screening_report,
+)
 from polymarket_alpha_lab.forecast_evidence import (
     PaperForecastEvidenceBucket,
     PaperForecastEvidenceConfig,
@@ -407,6 +416,30 @@ def test_cost_aware_event_strategy_public_api_exports():
     assert (
         lab.build_paper_cost_aware_event_strategy_report
         is build_paper_cost_aware_event_strategy_report
+    )
+
+
+def test_project_screening_public_api_exports():
+    expected_exports = {
+        "PaperProjectScreeningConfig",
+        "PaperProjectScreeningCandidate",
+        "PaperProjectScreeningGateResult",
+        "PaperProjectScreeningQueueItem",
+        "PaperProjectScreeningReport",
+        "PaperProjectScreeningLog",
+        "build_paper_project_screening_report",
+    }
+
+    assert expected_exports <= set(lab.__all__)
+    assert lab.PaperProjectScreeningConfig is PaperProjectScreeningConfig
+    assert lab.PaperProjectScreeningCandidate is PaperProjectScreeningCandidate
+    assert lab.PaperProjectScreeningGateResult is PaperProjectScreeningGateResult
+    assert lab.PaperProjectScreeningQueueItem is PaperProjectScreeningQueueItem
+    assert lab.PaperProjectScreeningReport is PaperProjectScreeningReport
+    assert lab.PaperProjectScreeningLog is PaperProjectScreeningLog
+    assert (
+        lab.build_paper_project_screening_report
+        is build_paper_project_screening_report
     )
 
 

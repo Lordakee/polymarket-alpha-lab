@@ -30,6 +30,15 @@ from polymarket_alpha_lab.cost_aware_event_strategy import (
     PaperCostAwareEventStrategyReport,
     build_paper_cost_aware_event_strategy_report,
 )
+from polymarket_alpha_lab.project_screening import (
+    PaperProjectScreeningCandidate,
+    PaperProjectScreeningConfig,
+    PaperProjectScreeningGateResult,
+    PaperProjectScreeningLog,
+    PaperProjectScreeningQueueItem,
+    PaperProjectScreeningReport,
+    build_paper_project_screening_report,
+)
 from polymarket_alpha_lab.domain import (
     MarketScore,
     MarketSnapshot,
@@ -252,6 +261,12 @@ __all__ = [
     "PaperCostAwareEventStrategyGateResult",
     "PaperCostAwareEventStrategyLog",
     "PaperCostAwareEventStrategyReport",
+    "PaperProjectScreeningConfig",
+    "PaperProjectScreeningCandidate",
+    "PaperProjectScreeningGateResult",
+    "PaperProjectScreeningQueueItem",
+    "PaperProjectScreeningReport",
+    "PaperProjectScreeningLog",
     "PaperAnalyticsLog",
     "PaperAnalyticsReport",
     "PaperDrawdownPoint",
@@ -392,6 +407,7 @@ __all__ = [
     "build_paper_analytics_history_report",
     "build_paper_analytics_report",
     "build_paper_cost_aware_event_strategy_report",
+    "build_paper_project_screening_report",
     "build_paper_drawdown_points",
     "build_paper_forecast_evidence_report",
     "build_paper_manual_review_queue",
