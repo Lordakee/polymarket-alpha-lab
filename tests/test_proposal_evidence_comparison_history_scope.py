@@ -191,6 +191,7 @@ EXPECTED_NON_LEVEL_2_PACKAGE_ROOT_EXPORTS_WITH_NODE_10_TERMS = {
     "NormalizedMarket",
     "PaperCostAwareEventMarketSnapshot",
     "build_paper_cost_aware_event_market_snapshot",
+    "polymarket_default_cost_assumptions",
     "PaperExecutionConfig",
     "PaperExecutionResult",
     "PaperExecutionLog",
@@ -205,6 +206,7 @@ EXPECTED_NON_LEVEL_2_PACKAGE_ROOT_EXPORTS_WITH_NODE_10_TERMS = {
     "OutcomeTrackingConfig",
     "OutcomeTrackingReport",
     "check_outcomes",
+    "polymarket_default_cost_assumptions",
 }
 
 ALLOWED_IMPORT_PREFIXES = {

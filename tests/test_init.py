@@ -37,6 +37,7 @@ from polymarket_alpha_lab.cost_aware_event_strategy import (
     PaperCostAwareEventStrategyLog,
     PaperCostAwareEventStrategyReport,
     build_paper_cost_aware_event_strategy_report,
+    polymarket_default_cost_assumptions,
 )
 from polymarket_alpha_lab.forecast_provider import (
     PaperForecast,
@@ -443,6 +444,7 @@ def test_cost_aware_event_strategy_public_api_exports():
         "PaperCostAwareEventStrategyLog",
         "PaperCostAwareEventStrategyReport",
         "build_paper_cost_aware_event_strategy_report",
+        "polymarket_default_cost_assumptions",
     }
 
     assert expected_exports <= set(lab.__all__)
@@ -459,6 +461,10 @@ def test_cost_aware_event_strategy_public_api_exports():
     assert (
         lab.build_paper_cost_aware_event_strategy_report
         is build_paper_cost_aware_event_strategy_report
+    )
+    assert (
+        lab.polymarket_default_cost_assumptions
+        is polymarket_default_cost_assumptions
     )
 
 

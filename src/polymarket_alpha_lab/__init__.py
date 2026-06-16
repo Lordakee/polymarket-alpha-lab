@@ -29,6 +29,7 @@ from polymarket_alpha_lab.cost_aware_event_strategy import (
     PaperCostAwareEventStrategyLog,
     PaperCostAwareEventStrategyReport,
     build_paper_cost_aware_event_strategy_report,
+    polymarket_default_cost_assumptions,
 )
 from polymarket_alpha_lab.project_screening import (
     PaperProjectScreeningCandidate,
@@ -323,6 +324,7 @@ __all__ = [
     "PaperStrategyCycleConfig",
     "PaperStrategyCycleReport",
     "PaperStrategyCycleLog",
+    "polymarket_default_cost_assumptions",
     "PaperAnalyticsLog",
     "PaperAnalyticsReport",
     "PaperBookImbalanceForecastConfig",

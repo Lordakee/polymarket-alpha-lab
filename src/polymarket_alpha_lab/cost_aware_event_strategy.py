@@ -19,6 +19,7 @@ __all__ = (
     "PaperCostAwareEventStrategyLog",
     "PaperCostAwareEventStrategyReport",
     "build_paper_cost_aware_event_strategy_report",
+    "polymarket_default_cost_assumptions",
 )
 
 
@@ -94,6 +95,24 @@ class PaperCostAwareEventCostAssumptions:
             + self.time_cost_per_share
             + self.risk_cost_per_share
         )
+
+
+def polymarket_default_cost_assumptions() -> PaperCostAwareEventCostAssumptions:
+    """Return cost assumptions with realistic Polymarket fees (2% taker rate + small slippage).
+
+    Polymarket charges a taker fee of ``fee_rate * price * (1 - price)`` with a
+    typical 2% rate. A small slippage assumption is layered on top so paper
+    trades reflect execution friction. Edges must exceed these costs to be
+    profitable, keeping paper trading realistic instead of free.
+    """
+    return PaperCostAwareEventCostAssumptions(
+        taker_fee_rate=Decimal("0.02"),
+        slippage_cost_per_share=Decimal("0.001"),
+        funding_cost_per_share=Decimal("0"),
+        finalization_cost_per_share=Decimal("0"),
+        time_cost_per_share=Decimal("0"),
+        risk_cost_per_share=Decimal("0"),
+    )
 
 
 @dataclass(frozen=True)

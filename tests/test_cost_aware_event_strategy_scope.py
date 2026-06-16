@@ -16,6 +16,7 @@ EXPECTED_EXPORTS = (
     "PaperCostAwareEventStrategyLog",
     "PaperCostAwareEventStrategyReport",
     "build_paper_cost_aware_event_strategy_report",
+    "polymarket_default_cost_assumptions",
 )
 
 ALLOWED_IMPORT_MODULES = {
@@ -195,6 +196,7 @@ def cost_aware_exports(exports):
         for name in exports
         if name.startswith("PaperCostAwareEvent")
         or name == "build_paper_cost_aware_event_strategy_report"
+        or name == "polymarket_default_cost_assumptions"
     )
 
 

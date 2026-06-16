@@ -14,6 +14,7 @@ from polymarket_alpha_lab.api import PolymarketPublicClient
 from polymarket_alpha_lab.cost_aware_event_strategy import (
     PaperCostAwareEventCostAssumptions,
     PaperCostAwareEventStrategyConfig,
+    polymarket_default_cost_assumptions,
 )
 from polymarket_alpha_lab.cost_aware_snapshot_builder import (
     PaperCostAwareSnapshotConfig,
@@ -387,7 +388,8 @@ def _build_default_cycle_config(
 
     All nested configs use the same canonical ``config_version`` and rely on
     their dataclass defaults except ``cost_assumptions`` (no defaults), which
-    is given zero-cost Decimal assumptions for the research/paper baseline.
+    is given realistic Polymarket fee assumptions via
+    ``polymarket_default_cost_assumptions`` (2% taker fee + small slippage).
     When ``paper_execute`` is set, the Stage 4 inline paper-execution pass is
     enabled with the canonical ``PaperExecutionConfig`` and the journal sink.
     When ``forecast_provider`` is ``llm`` and ``llm_api_token`` is supplied, a
@@ -407,14 +409,7 @@ def _build_default_cycle_config(
         screening_config=PaperProjectScreeningConfig(
             config_version="strategy-cycle-v1",
         ),
-        cost_assumptions=PaperCostAwareEventCostAssumptions(
-            taker_fee_rate=Decimal("0"),
-            slippage_cost_per_share=Decimal("0"),
-            funding_cost_per_share=Decimal("0"),
-            finalization_cost_per_share=Decimal("0"),
-            time_cost_per_share=Decimal("0"),
-            risk_cost_per_share=Decimal("0"),
-        ),
+        cost_assumptions=polymarket_default_cost_assumptions(),
         max_markets_per_cycle=max_markets_per_cycle,
         prefilter_by_score=prefilter_by_score,
     )
