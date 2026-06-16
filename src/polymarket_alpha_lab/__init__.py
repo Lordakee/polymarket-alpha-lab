@@ -263,6 +263,12 @@ from polymarket_alpha_lab.paper_execution import (
     PaperExecutionLog,
     execute_paper_trade_from_screening,
 )
+from polymarket_alpha_lab.nav_risk_metrics import (
+    PaperNavRiskMetricsConfig,
+    PaperNavRiskExposureRow,
+    PaperNavRiskMetricsReport,
+    build_paper_nav_risk_metrics_report,
+)
 from polymarket_alpha_lab.positions import (
     PaperNavLog,
     PaperNavSnapshot,
@@ -352,6 +358,9 @@ __all__ = [
     "PaperManualReviewQueue",
     "PaperManualReviewQueueItem",
     "PaperNavLog",
+    "PaperNavRiskMetricsConfig",
+    "PaperNavRiskExposureRow",
+    "PaperNavRiskMetricsReport",
     "PaperNavSnapshot",
     "PaperOrder",
     "PaperPerformanceSummary",
@@ -487,6 +496,7 @@ __all__ = [
     "build_paper_forecast_evidence_report",
     "build_paper_naive_forecast",
     "build_paper_manual_review_queue",
+    "build_paper_nav_risk_metrics_report",
     "check_outcomes",
     "build_trade_proposal_evidence_comparison_history_batch_health_report",
     "build_trade_proposal_evidence_comparison_history_batch_health_trend_report",

@@ -24,6 +24,25 @@ The current phase does not contain:
 
 These are Phase 1 scope boundaries. They are not permanent non-goals. Future execution work is tracked in the automated investment roadmap and must pass documented validation gates before live capital is introduced.
 
+## Phase 1 Operational Freeze
+
+Phase 1 decision behavior is frozen while markets are pending settlement. Do not tune screening weights or change strategy-cycle behavior while markets are pending settlement, and do not change forecast prompts/providers, paper-execution triggers, or sizing rules from unresolved NAV marks.
+
+Allowed additions during the freeze are limited to `paper_only`, `report_only`, `readonly` observability over existing local artifacts. Boundary shorthand: no fetch, no auth, no wallet, no order, no rank, no recommend, no trade instruction, no financial advice.
+
+## NAV Risk Metrics v0 Status
+
+NAV Risk Metrics v0 is a paper-only/report-only risk summary over existing paper NAV logs. It consumes typed `PaperNavSnapshot` values normally read through the existing `PaperNavLog.read(...)`; it computes NAV time-series risk, latest mark-status counts, pending notional, and latest exposure concentration for audit visibility only.
+
+The `nav-risk` command is separate from strategy-cycle, NAV marking, outcome tracking, and paper execution. It does not fetch market/account/order data, authenticate, handle wallets or private keys, place/sign/submit/cancel orders, rank investments, recommend trades, provide trade instruction, provide financial advice, or alter any strategy behavior.
+
+## NAV Risk Metrics v0 Python API
+
+- Configure the report with `PaperNavRiskMetricsConfig(config_version="nav-risk-metrics-v0")`.
+- Build risk summaries with `build_paper_nav_risk_metrics_report(nav_snapshots, config=config, generated_at=...)`, which returns `PaperNavRiskMetricsReport`.
+- Inspect latest exposure concentration with `PaperNavRiskExposureRow` values on `report.exposure_rows`.
+- Print local metrics from the CLI with `polymarket-alpha-lab nav-risk --nav-log <path>`; the command reads local NAV JSONL logs only and preserves the same `paper_only`, `report_only`, `readonly` boundary: no fetch, no auth, no wallet, no order, no rank, no recommend, no trade instruction, no financial advice.
+
 ## Recommended Direction
 
 The strongest first product is a market-quality and edge-scanning system:

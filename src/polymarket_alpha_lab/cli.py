@@ -8,7 +8,7 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from polymarket_alpha_lab.api import PolymarketPublicClient
 from polymarket_alpha_lab.cost_aware_event_strategy import (
@@ -47,6 +47,9 @@ from polymarket_alpha_lab.strategy_cycle import (
     run_strategy_cycle,
 )
 
+if TYPE_CHECKING:
+    from polymarket_alpha_lab.nav_risk_metrics import PaperNavRiskMetricsReport
+
 
 Runner = Callable[..., object]
 CycleRunner = Callable[..., PaperStrategyCycleReport]
@@ -55,6 +58,7 @@ NavRunner = Callable[..., PaperNavSnapshot]
 HistoryRunner = Callable[..., PerformanceSummary]
 LoopRunner = Callable[..., RunLoopSummary]
 OutcomeRunner = Callable[..., OutcomeTrackingReport]
+NavRiskRunner = Callable[..., "PaperNavRiskMetricsReport"]
 
 
 def _apply_json_config(args: argparse.Namespace) -> None:
@@ -107,6 +111,7 @@ def main(
     nav_runner: NavRunner = mark_paper_portfolio_nav,
     client_factory: ClientFactory = PolymarketPublicClient,
     history_runner: HistoryRunner | None = None,
+    nav_risk_runner: NavRiskRunner | None = None,
     loop_runner: LoopRunner = run_strategy_loop,
     outcome_runner: OutcomeRunner = check_outcomes,
 ) -> int:
@@ -180,6 +185,14 @@ def main(
         "--nav-log",
         type=Path,
         default=None,
+        dest="nav_log",
+    )
+
+    nav_risk = subparsers.add_parser("nav-risk")
+    nav_risk.add_argument(
+        "--nav-log",
+        type=Path,
+        required=True,
         dest="nav_log",
     )
 
@@ -361,6 +374,18 @@ def main(
             return 0
         except Exception as exc:
             print(f"portfolio-nav failed: {exc}", file=sys.stderr)
+            return 1
+
+    if args.command == "nav-risk":
+        try:
+            report = _run_nav_risk(
+                nav_log=args.nav_log,
+                runner=nav_risk_runner,
+            )
+            _print_nav_risk_summary(report)
+            return 0
+        except Exception as exc:
+            print(f"nav-risk failed: {exc}", file=sys.stderr)
             return 1
 
     if args.command == "history":
@@ -604,6 +629,46 @@ def _run_history(
         nav_snapshots,
         config=config,
         generated_at=generated_at,
+    )
+
+
+def _run_nav_risk(
+    *,
+    nav_log: Path,
+    runner: NavRiskRunner | None,
+) -> "PaperNavRiskMetricsReport":
+    """Read typed NAV snapshots and build the paper-only risk report."""
+
+    from polymarket_alpha_lab.nav_risk_metrics import (
+        PaperNavRiskMetricsConfig,
+        build_paper_nav_risk_metrics_report,
+    )
+
+    nav_snapshots = PaperNavLog.read(nav_log)
+    config = PaperNavRiskMetricsConfig(config_version="nav-risk-metrics-v0")
+    generated_at = datetime.now(UTC)
+    if runner is not None:
+        return runner(
+            nav_snapshots=nav_snapshots,
+            config=config,
+            generated_at=generated_at,
+        )
+    return build_paper_nav_risk_metrics_report(
+        nav_snapshots,
+        config=config,
+        generated_at=generated_at,
+    )
+
+
+def _print_nav_risk_summary(report: "PaperNavRiskMetricsReport") -> None:
+    """Print a compact NAV risk report summary to stdout."""
+
+    print(
+        "nav-risk: "
+        f"snapshots={report.nav_snapshot_count} "
+        f"latest_exit_nav={report.latest_exit_nav} "
+        f"max_drawdown={report.max_drawdown} "
+        f"max_drawdown_pct={report.max_drawdown_pct}",
     )
 
 

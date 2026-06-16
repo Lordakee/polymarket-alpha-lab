@@ -258,6 +258,12 @@ from polymarket_alpha_lab.paper_execution import (
     PaperExecutionLog,
     execute_paper_trade_from_screening,
 )
+from polymarket_alpha_lab.nav_risk_metrics import (
+    PaperNavRiskMetricsConfig,
+    PaperNavRiskExposureRow,
+    PaperNavRiskMetricsReport,
+    build_paper_nav_risk_metrics_report,
+)
 from polymarket_alpha_lab.paper_portfolio_nav import mark_paper_portfolio_nav
 from polymarket_alpha_lab.outcome_tracker import (
     OutcomeTrackingConfig,
@@ -593,6 +599,24 @@ def test_paper_portfolio_nav_public_api_exports():
 
     assert expected_exports <= set(lab.__all__)
     assert lab.mark_paper_portfolio_nav is mark_paper_portfolio_nav
+
+
+def test_nav_risk_metrics_public_api_exports():
+    expected_exports = {
+        "PaperNavRiskMetricsConfig",
+        "PaperNavRiskExposureRow",
+        "PaperNavRiskMetricsReport",
+        "build_paper_nav_risk_metrics_report",
+    }
+
+    assert expected_exports <= set(lab.__all__)
+    assert lab.PaperNavRiskMetricsConfig is PaperNavRiskMetricsConfig
+    assert lab.PaperNavRiskExposureRow is PaperNavRiskExposureRow
+    assert lab.PaperNavRiskMetricsReport is PaperNavRiskMetricsReport
+    assert (
+        lab.build_paper_nav_risk_metrics_report
+        is build_paper_nav_risk_metrics_report
+    )
 
 
 def test_outcome_tracker_public_api_exports():

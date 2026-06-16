@@ -11,11 +11,15 @@ from polymarket_alpha_lab.outcome_tracker import (
     OutcomeTrackingConfig,
     OutcomeTrackingReport,
 )
+from polymarket_alpha_lab.nav_risk_metrics import (
+    PaperNavRiskMetricsConfig,
+    PaperNavRiskMetricsReport,
+)
 from polymarket_alpha_lab.performance_summary import (
     PerformanceSummary,
     PerformanceSummaryConfig,
 )
-from polymarket_alpha_lab.positions import PaperNavSnapshot
+from polymarket_alpha_lab.positions import PaperNavLog, PaperNavSnapshot
 from polymarket_alpha_lab.runner import RunLoopSummary
 from polymarket_alpha_lab.strategy_cycle import PaperStrategyCycleReport
 
@@ -509,6 +513,150 @@ def test_history_cli_returns_one_when_history_runner_fails(tmp_path, capsys):
     assert exit_code == 1
     captured = capsys.readouterr()
     assert "history failed: history failed" in captured.err
+
+
+def _empty_nav_risk_report() -> PaperNavRiskMetricsReport:
+    return PaperNavRiskMetricsReport(
+        generated_at=datetime(2026, 6, 16, 12, 0, tzinfo=UTC),
+        config_version="nav-risk-metrics-v0",
+        nav_snapshot_count=1,
+        first_marked_at=datetime(2026, 6, 14, tzinfo=UTC),
+        last_marked_at=datetime(2026, 6, 14, tzinfo=UTC),
+        latest_exit_nav=Decimal("10000"),
+        latest_starting_cash=Decimal("10000"),
+        latest_cash_balance=Decimal("10000"),
+        latest_total_cost_basis=Decimal("0"),
+        latest_unrealized_exit_pnl=Decimal("0"),
+        peak_exit_nav=Decimal("10000"),
+        trough_exit_nav=Decimal("10000"),
+        cumulative_return=Decimal("0.000000"),
+        max_drawdown=Decimal("0"),
+        max_drawdown_pct=Decimal("0.000000"),
+        worst_nav_delta=None,
+        nav_return_volatility=None,
+        pending_notional=Decimal("0"),
+        open_position_count=0,
+        fully_executable_count=0,
+        partially_executable_count=0,
+        no_exit_depth_count=0,
+        largest_market_exposure_value=None,
+        largest_market_exposure_share=None,
+        exposure_rows=(),
+    )
+
+
+def test_nav_risk_cli_reads_nav_log_and_prints_summary(tmp_path, capsys):
+    calls = []
+
+    def fake_nav_risk_runner(*, nav_snapshots, config, generated_at):
+        calls.append(
+            {
+                "nav_snapshots": nav_snapshots,
+                "config": config,
+                "generated_at": generated_at,
+            }
+        )
+        return _empty_nav_risk_report()
+
+    def forbidden_client_factory():
+        raise AssertionError("client should not be constructed")
+
+    nav_log = tmp_path / "nav.jsonl"
+    PaperNavLog(nav_log).append(_empty_nav_snapshot())
+
+    exit_code = main(
+        [
+            "nav-risk",
+            "--nav-log",
+            str(nav_log),
+        ],
+        nav_risk_runner=fake_nav_risk_runner,
+        client_factory=forbidden_client_factory,
+    )
+
+    assert exit_code == 0
+    assert len(calls) == 1
+    call = calls[0]
+    assert call["nav_snapshots"] == (_empty_nav_snapshot(),)
+    assert isinstance(call["config"], PaperNavRiskMetricsConfig)
+    assert call["config"].config_version == "nav-risk-metrics-v0"
+    assert isinstance(call["generated_at"], datetime)
+
+    captured = capsys.readouterr()
+    assert "nav-risk:" in captured.out
+    assert "snapshots=1" in captured.out
+    assert "latest_exit_nav=10000" in captured.out
+    assert "max_drawdown=0" in captured.out
+    assert "max_drawdown_pct=0.000000" in captured.out
+
+
+def test_nav_risk_cli_returns_one_when_runner_fails(tmp_path, capsys):
+    def broken_nav_risk_runner(*, nav_snapshots, config, generated_at):
+        raise RuntimeError("nav risk failed")
+
+    nav_log = tmp_path / "nav.jsonl"
+    PaperNavLog(nav_log).append(_empty_nav_snapshot())
+
+    exit_code = main(
+        [
+            "nav-risk",
+            "--nav-log",
+            str(nav_log),
+        ],
+        nav_risk_runner=broken_nav_risk_runner,
+    )
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert "nav-risk failed: nav risk failed" in captured.err
+
+
+def test_nav_risk_cli_default_runner_reads_nav_log(tmp_path, capsys):
+    def forbidden_client_factory():
+        raise AssertionError("client should not be constructed")
+
+    nav_log = tmp_path / "nav.jsonl"
+    PaperNavLog(nav_log).append(_empty_nav_snapshot())
+
+    exit_code = main(
+        [
+            "nav-risk",
+            "--nav-log",
+            str(nav_log),
+        ],
+        client_factory=forbidden_client_factory,
+    )
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    assert "nav-risk:" in captured.out
+    assert "snapshots=1" in captured.out
+    assert "latest_exit_nav=10000" in captured.out
+    assert "max_drawdown=0.000000" not in captured.out
+    assert "max_drawdown_pct=0.000000" in captured.out
+
+
+def test_nav_risk_cli_does_not_construct_client(tmp_path):
+    def fake_nav_risk_runner(*, nav_snapshots, config, generated_at):
+        return _empty_nav_risk_report()
+
+    def forbidden_client_factory():
+        raise AssertionError("client should not be constructed")
+
+    nav_log = tmp_path / "nav.jsonl"
+    PaperNavLog(nav_log).append(_empty_nav_snapshot())
+
+    exit_code = main(
+        [
+            "nav-risk",
+            "--nav-log",
+            str(nav_log),
+        ],
+        nav_risk_runner=fake_nav_risk_runner,
+        client_factory=forbidden_client_factory,
+    )
+
+    assert exit_code == 0
 
 
 def _empty_run_summary() -> RunLoopSummary:
