@@ -86,7 +86,7 @@ class FakeMarketDataClient:
         self.list_markets_calls = []
         self.get_order_book_calls = []
 
-    def list_markets(self, *, active, closed, limit):
+    def list_markets(self, *, active, closed, limit, search=None):
         self.list_markets_calls.append({"active": active, "closed": closed, "limit": limit})
         return list(self._markets)
 
@@ -104,7 +104,7 @@ class FailingMarketDataClient:
         self._error = error
         self.list_markets_calls = 0
 
-    def list_markets(self, *, active, closed, limit):
+    def list_markets(self, *, active, closed, limit, search=None):
         self.list_markets_calls += 1
         raise self._error
 
@@ -403,7 +403,7 @@ def test_error_isolation_continues_after_a_failed_iteration_then_succeeds(tmp_pa
         def __init__(self):
             self.working = FakeMarketDataClient([market], books)
 
-        def list_markets(self, *, active, closed, limit):
+        def list_markets(self, *, active, closed, limit, search=None):
             if call_state["failures_left"] > 0:
                 call_state["failures_left"] -= 1
                 raise RuntimeError("transient outage")

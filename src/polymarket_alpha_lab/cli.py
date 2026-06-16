@@ -86,6 +86,7 @@ def main(
         default=Path("artifacts/strategy-cycle.jsonl"),
     )
     cycle.add_argument("--max-markets", type=int, default=50)
+    cycle.add_argument("--search", default=None, dest="market_search")
     cycle.add_argument(
         "--prefilter",
         action=argparse.BooleanOptionalAction,
@@ -282,6 +283,10 @@ def main(
                 forecast_provider=args.forecast_provider,
                 llm_api_token=args.llm_api_token,
             )
+            if args.market_search is not None:
+                cycle_config = replace(
+                    cycle_config, market_search=args.market_search
+                )
             report = cycle_runner(
                 client=client_factory(),
                 scan_config=scan_config,

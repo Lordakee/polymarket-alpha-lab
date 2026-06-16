@@ -113,7 +113,7 @@ class MarketDataClient(Protocol):
     and injected into ``run_strategy_cycle``. This module never imports ``api``.
     """
 
-    def list_markets(self, *, active: bool, closed: bool, limit: int) -> Any:
+    def list_markets(self, *, active: bool, closed: bool, limit: int, search: str | None = None) -> Any:
         """Return the raw public Gamma market list payload."""
 
     def get_order_book(self, *, token_id: str) -> Any:
@@ -144,6 +144,7 @@ class PaperStrategyCycleConfig:
     # None or both non-None. Default None = Stage 1b/2/3 behavior unchanged.
     paper_execution_config: PaperExecutionConfig | None = None
     paper_trade_journal_path: Path | None = None
+    market_search: str | None = None
 
     def __post_init__(self) -> None:
         _require_canonical_string("config_version", self.config_version)
@@ -396,6 +397,7 @@ def run_strategy_cycle(
         active=True,
         closed=False,
         limit=scan_config.limit,
+        search=cycle_config.market_search,
     )
     market_raw_archive_entry = archive.write(
         source="gamma_markets",

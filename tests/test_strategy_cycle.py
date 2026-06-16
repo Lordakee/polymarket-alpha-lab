@@ -84,7 +84,7 @@ class FakeMarketDataClient:
         self.list_markets_calls = []
         self.get_order_book_calls = []
 
-    def list_markets(self, *, active, closed, limit):
+    def list_markets(self, *, active, closed, limit, search=None):
         self.list_markets_calls.append({"active": active, "closed": closed, "limit": limit})
         return list(self._markets)
 
