@@ -12,7 +12,7 @@ The long-term goal is an automated system that can screen markets, research cand
 
 ## Phase 1 Scope
 
-This repository currently contains the project design, research notes, implementation plans, a read-only market scanner, research packet assembly, bid/ask paper-fill simulation, JSONL paper-trade journaling, paper-only risk gates, rejected-candidate logs, paper position ledgers, executable NAV marks, paper-only portfolio analytics, exposure reports, executable-NAV drawdown reports, paper-only analytics history validation, paper-only forecast evidence reports, paper-only manual-review queues, human-review proposal packet artifacts, append-only proposal-review record artifacts, proposal-review summary report artifacts, proposal-review quality gate artifacts, proposal-review diagnostic artifacts, proposal-review coverage report artifacts, proposal-review dossier artifacts, proposal-review dossier batch health artifacts, proposal evidence comparison artifacts, proposal evidence comparison history artifacts, proposal evidence comparison history batch-health artifacts, proposal evidence comparison history batch-health trend artifacts, proposal evidence comparison history batch-health trend-batch artifacts, proposal evidence comparison history batch-health trend-batch health artifacts, and proposal evidence comparison history batch-health trend-batch health trend artifacts.
+This repository currently contains the project design, research notes, implementation plans, a read-only market scanner, research packet assembly, bid/ask paper-fill simulation, JSONL paper-trade journaling, paper-only risk gates, rejected-candidate logs, paper position ledgers, executable NAV marks, paper-only portfolio analytics, exposure reports, executable-NAV drawdown reports, paper-only analytics history validation, paper-only forecast evidence reports, paper-only cost-aware event strategy reports, paper-only manual-review queues, human-review proposal packet artifacts, append-only proposal-review record artifacts, proposal-review summary report artifacts, proposal-review quality gate artifacts, proposal-review diagnostic artifacts, proposal-review coverage report artifacts, proposal-review dossier artifacts, proposal-review dossier batch health artifacts, proposal evidence comparison artifacts, proposal evidence comparison history artifacts, proposal evidence comparison history batch-health artifacts, proposal evidence comparison history batch-health trend artifacts, proposal evidence comparison history batch-health trend-batch artifacts, proposal evidence comparison history batch-health trend-batch health artifacts, and proposal evidence comparison history batch-health trend-batch health trend artifacts.
 
 The current phase does not contain:
 
@@ -133,6 +133,27 @@ Node 6 is exposed through Python APIs:
 - Build paper manual-review queues with `build_paper_manual_review_queue(candidates, market_scores=..., analytics_history=..., forecast_evidence=..., config=..., generated_at=...)`, which returns `PaperManualReviewQueue`.
 - Inspect ranked rows with `PaperManualReviewQueueItem`.
 - Persist manual-review snapshots with `PaperManualReviewLog(path).append(queue)`.
+
+## Cost-Aware Event Strategy v0 Status
+
+Cost-Aware Event Strategy v0 adds a paper-only and report-only event-contract evaluator over caller-supplied fair probability, confidence, YES/NO bid/ask, ask depth, spread, resolution risk, and cost assumptions. It treats Polymarket markets as event probability YES/NO outcome-token contracts and evaluates buy-side research against executable YES/NO ask prices, not midpoint, last price, displayed probability, or chart price. Supplied bids are preserved in the report for audit context, but entry-edge math uses asks.
+
+The report models taker fees and explicit non-fee costs for slippage, funding, finalization, time, and risk before computing net paper edge. A selected side only means the supplied inputs create a paper-review candidate under the configured thresholds; it is not a trade instruction, investment ranking, recommendation, financial advice, or live-execution signal.
+
+It does not fetch market data, read account data, authenticate, handle wallets, private keys, or credentials, use API clients, use browser automation, place, submit, sign, or cancel orders, rank investments, recommend trades, provide financial advice, or perform compliance/legal/geographic analysis.
+
+Boundary shorthand: no fetch, no auth, no wallet, no order, no rank, no recommend, no financial advice.
+
+## Cost-Aware Event Strategy v0 Python API
+
+Cost-Aware Event Strategy v0 is exposed through Python APIs:
+
+- Create paper market snapshots with `PaperCostAwareEventMarketSnapshot(...)`.
+- Configure explicit research costs with `PaperCostAwareEventCostAssumptions(...)`.
+- Configure paper-review thresholds with `PaperCostAwareEventStrategyConfig(...)`.
+- Build cost-aware event strategy reports with `build_paper_cost_aware_event_strategy_report(...)`, which returns `PaperCostAwareEventStrategyReport`.
+- Inspect side results and gates with `PaperCostAwareEventSideResult` and `PaperCostAwareEventStrategyGateResult`.
+- Optionally append already-built reports with `PaperCostAwareEventStrategyLog(path).append(report)`; there is no market fetcher, account reader, order API, JSONL reader, loader, replay, or from-file API.
 
 ## Level 2 Node 1 Status
 

@@ -189,6 +189,7 @@ EXPECTED_NON_LEVEL_2_PACKAGE_ROOT_EXPORTS_WITH_NODE_11_TERMS = {
     "MarketScore",
     "MarketSnapshot",
     "NormalizedMarket",
+    "PaperCostAwareEventMarketSnapshot",
     "OrderBookLevel",
     "OrderBookSnapshot",
     "OutcomeToken",

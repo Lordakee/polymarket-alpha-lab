@@ -20,6 +20,16 @@ from polymarket_alpha_lab.analytics_history import (
     PaperAnalyticsHistoryTrend,
     build_paper_analytics_history_report,
 )
+from polymarket_alpha_lab.cost_aware_event_strategy import (
+    PaperCostAwareEventCostAssumptions,
+    PaperCostAwareEventMarketSnapshot,
+    PaperCostAwareEventSideResult,
+    PaperCostAwareEventStrategyConfig,
+    PaperCostAwareEventStrategyGateResult,
+    PaperCostAwareEventStrategyLog,
+    PaperCostAwareEventStrategyReport,
+    build_paper_cost_aware_event_strategy_report,
+)
 from polymarket_alpha_lab.domain import (
     MarketScore,
     MarketSnapshot,
@@ -235,6 +245,13 @@ __all__ = [
     "PaperAnalyticsHistoryLog",
     "PaperAnalyticsHistoryReport",
     "PaperAnalyticsHistoryTrend",
+    "PaperCostAwareEventCostAssumptions",
+    "PaperCostAwareEventMarketSnapshot",
+    "PaperCostAwareEventSideResult",
+    "PaperCostAwareEventStrategyConfig",
+    "PaperCostAwareEventStrategyGateResult",
+    "PaperCostAwareEventStrategyLog",
+    "PaperCostAwareEventStrategyReport",
     "PaperAnalyticsLog",
     "PaperAnalyticsReport",
     "PaperDrawdownPoint",
@@ -374,6 +391,7 @@ __all__ = [
     "TradeProposalReviewSummaryReport",
     "build_paper_analytics_history_report",
     "build_paper_analytics_report",
+    "build_paper_cost_aware_event_strategy_report",
     "build_paper_drawdown_points",
     "build_paper_forecast_evidence_report",
     "build_paper_manual_review_queue",

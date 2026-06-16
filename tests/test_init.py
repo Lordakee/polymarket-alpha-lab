@@ -28,6 +28,16 @@ from polymarket_alpha_lab.analytics_history import (
     PaperAnalyticsHistoryTrend,
     build_paper_analytics_history_report,
 )
+from polymarket_alpha_lab.cost_aware_event_strategy import (
+    PaperCostAwareEventCostAssumptions,
+    PaperCostAwareEventMarketSnapshot,
+    PaperCostAwareEventSideResult,
+    PaperCostAwareEventStrategyConfig,
+    PaperCostAwareEventStrategyGateResult,
+    PaperCostAwareEventStrategyLog,
+    PaperCostAwareEventStrategyReport,
+    build_paper_cost_aware_event_strategy_report,
+)
 from polymarket_alpha_lab.forecast_evidence import (
     PaperForecastEvidenceBucket,
     PaperForecastEvidenceConfig,
@@ -369,6 +379,35 @@ def test_level_1b_node_6_public_api_exports():
     assert lab.PaperManualReviewQueue is PaperManualReviewQueue
     assert lab.PaperManualReviewQueueItem is PaperManualReviewQueueItem
     assert lab.build_paper_manual_review_queue is build_paper_manual_review_queue
+
+
+def test_cost_aware_event_strategy_public_api_exports():
+    expected_exports = {
+        "PaperCostAwareEventCostAssumptions",
+        "PaperCostAwareEventMarketSnapshot",
+        "PaperCostAwareEventSideResult",
+        "PaperCostAwareEventStrategyConfig",
+        "PaperCostAwareEventStrategyGateResult",
+        "PaperCostAwareEventStrategyLog",
+        "PaperCostAwareEventStrategyReport",
+        "build_paper_cost_aware_event_strategy_report",
+    }
+
+    assert expected_exports <= set(lab.__all__)
+    assert lab.PaperCostAwareEventCostAssumptions is PaperCostAwareEventCostAssumptions
+    assert lab.PaperCostAwareEventMarketSnapshot is PaperCostAwareEventMarketSnapshot
+    assert lab.PaperCostAwareEventSideResult is PaperCostAwareEventSideResult
+    assert lab.PaperCostAwareEventStrategyConfig is PaperCostAwareEventStrategyConfig
+    assert (
+        lab.PaperCostAwareEventStrategyGateResult
+        is PaperCostAwareEventStrategyGateResult
+    )
+    assert lab.PaperCostAwareEventStrategyLog is PaperCostAwareEventStrategyLog
+    assert lab.PaperCostAwareEventStrategyReport is PaperCostAwareEventStrategyReport
+    assert (
+        lab.build_paper_cost_aware_event_strategy_report
+        is build_paper_cost_aware_event_strategy_report
+    )
 
 
 def test_level_2_node_1_public_api_exports():
