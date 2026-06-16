@@ -504,9 +504,19 @@ def run_strategy_cycle(
                 # probability estimate is grounded in volume / liquidity /
                 # end_time / rules. Decimal fields are str()-coerced (never
                 # float). spread is intentionally excluded here -- the
-                # cost-aware snapshot is built downstream of this dispatch, so
-                # the live book spread is not yet available.
+                # cost-aware snapshot is built downstream of this dispatch, but
+                # the live books ARE available here (fetched earlier in the loop).
                 market_context = {
+                    "current_yes_ask": (
+                        str(yes_book.asks[0].price)
+                        if yes_book.asks
+                        else "unknown"
+                    ),
+                    "current_spread": (
+                        str(yes_book.asks[0].price - yes_book.bids[0].price)
+                        if yes_book.asks and yes_book.bids
+                        else "unknown"
+                    ),
                     "volume_24h": (
                         str(nm.market.volume_24h)
                         if nm.market.volume_24h

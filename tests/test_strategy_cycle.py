@@ -842,7 +842,7 @@ def test_strategy_cycle_llm_dispatch_forwards_market_context_to_transport(tmp_pa
     assert len(captured) == 1
     ctx = captured[0]
     # Stage 10 contract: exactly these four keys, sourced from NormalizedMarket.
-    assert set(ctx) == {"volume_24h", "liquidity", "end_time", "rules"}
+    assert set(ctx) == {"current_yes_ask", "current_spread", "volume_24h", "liquidity", "end_time", "rules"}
     # raw_market has volume24hr="5000" / liquidity="10000" -> str(Decimal(...)).
     assert ctx["volume_24h"] == str(Decimal("5000"))
     assert ctx["liquidity"] == str(Decimal("10000"))
