@@ -1,6 +1,8 @@
 from datetime import UTC, datetime
+from decimal import Decimal
 
 from polymarket_alpha_lab.cli import main
+from polymarket_alpha_lab.positions import PaperNavSnapshot
 from polymarket_alpha_lab.strategy_cycle import PaperStrategyCycleReport
 
 
@@ -220,3 +222,112 @@ def test_strategy_cycle_cli_default_omits_paper_execute(tmp_path):
     cycle_config = calls[0]
     assert cycle_config.paper_execution_config is None
     assert cycle_config.paper_trade_journal_path is None
+
+
+def _empty_nav_snapshot() -> PaperNavSnapshot:
+    return PaperNavSnapshot(
+        marked_at=datetime(2026, 6, 14, tzinfo=UTC),
+        starting_cash=Decimal("10000"),
+        cash_balance=Decimal("10000"),
+        realized_pnl=Decimal("0"),
+        exit_nav=Decimal("10000"),
+        midpoint_nav=Decimal("10000"),
+        total_cost_basis=Decimal("0"),
+        unrealized_exit_pnl=Decimal("0"),
+        marks=(),
+    )
+
+
+def test_portfolio_nav_cli_builds_nav_call_and_prints_summary(tmp_path, capsys):
+    calls = []
+
+    def fake_client_factory():
+        return "fake-client"
+
+    def fake_nav_runner(*, journal_path, starting_cash, client, marked_at, nav_log_path):
+        calls.append(
+            {
+                "journal_path": journal_path,
+                "starting_cash": starting_cash,
+                "client": client,
+                "marked_at": marked_at,
+                "nav_log_path": nav_log_path,
+            }
+        )
+        return _empty_nav_snapshot()
+
+    journal_path = tmp_path / "paper-trades.jsonl"
+    nav_log_path = tmp_path / "nav.jsonl"
+
+    exit_code = main(
+        [
+            "portfolio-nav",
+            "--journal",
+            str(journal_path),
+            "--starting-cash",
+            "10000",
+            "--nav-log",
+            str(nav_log_path),
+        ],
+        nav_runner=fake_nav_runner,
+        client_factory=fake_client_factory,
+    )
+
+    assert exit_code == 0
+    assert len(calls) == 1
+    call = calls[0]
+    assert call["journal_path"] == journal_path
+    assert call["starting_cash"] == Decimal("10000")
+    assert call["client"] == "fake-client"
+    assert call["nav_log_path"] == nav_log_path
+    assert isinstance(call["marked_at"], datetime)
+
+    captured = capsys.readouterr()
+    assert "portfolio-nav:" in captured.out
+    assert "starting_cash=10000" in captured.out
+    assert "exit_nav=10000" in captured.out
+    assert "position_count=0" in captured.out
+
+
+def test_portfolio_nav_cli_defaults_nav_log_to_none(tmp_path):
+    calls = []
+
+    def fake_nav_runner(*, journal_path, starting_cash, client, marked_at, nav_log_path):
+        calls.append(nav_log_path)
+        return _empty_nav_snapshot()
+
+    exit_code = main(
+        [
+            "portfolio-nav",
+            "--journal",
+            str(tmp_path / "paper-trades.jsonl"),
+            "--starting-cash",
+            "10000",
+        ],
+        nav_runner=fake_nav_runner,
+        client_factory=lambda: "fake-client",
+    )
+
+    assert exit_code == 0
+    assert calls == [None]
+
+
+def test_portfolio_nav_cli_returns_one_when_nav_runner_fails(tmp_path, capsys):
+    def broken_nav_runner(*, journal_path, starting_cash, client, marked_at, nav_log_path):
+        raise RuntimeError("nav failed")
+
+    exit_code = main(
+        [
+            "portfolio-nav",
+            "--journal",
+            str(tmp_path / "paper-trades.jsonl"),
+            "--starting-cash",
+            "10000",
+        ],
+        nav_runner=broken_nav_runner,
+        client_factory=lambda: "fake-client",
+    )
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert "portfolio-nav failed: nav failed" in captured.err

@@ -7,7 +7,7 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args, get_origin, get_type_hints
 
 from polymarket_alpha_lab.paper import PaperFill
 from polymarket_alpha_lab.research import ResearchPacket
@@ -250,6 +250,41 @@ class PaperTradeJournal:
         with self.path.open("a", encoding="utf-8") as handle:
             handle.write(line)
 
+    @staticmethod
+    def read(path: Path | str) -> tuple[PaperTradeRecord, ...]:
+        """Read a paper-trade JSONL journal back into fully-typed records.
+
+        Reverses ``_json_ready`` keyed to each field's resolved annotation
+        (resolved via ``typing.get_type_hints``, never the string annotation,
+        because ``from __future__ import annotations`` makes ``field.type`` a
+        raw string): ``Decimal`` str -> ``Decimal``, ISO ``str`` -> ``datetime``,
+        ``list`` -> ``tuple`` for ``tuple[str, ...]``; ``None`` passes through
+        unchanged (covering the optional ``fill_*`` fields). Blank lines are
+        skipped; a non-JSON line raises ``ValueError`` carrying the line number.
+        ``build_paper_portfolio`` re-validates every record, so this reader only
+        performs type coercion.
+        """
+        hints = get_type_hints(PaperTradeRecord)
+        target = Path(path)
+        records: list[PaperTradeRecord] = []
+        with target.open("r", encoding="utf-8") as handle:
+            for line_number, raw_line in enumerate(handle, start=1):
+                stripped = raw_line.strip()
+                if not stripped:
+                    continue
+                try:
+                    row = json.loads(stripped)
+                except json.JSONDecodeError as exc:
+                    raise ValueError(
+                        f"paper trade journal line {line_number} is not valid JSON: {exc}"
+                    ) from exc
+                coerced = {
+                    name: _coerce_field_value(value, hints.get(name))
+                    for name, value in row.items()
+                }
+                records.append(PaperTradeRecord(**coerced))
+        return tuple(records)
+
 
 def _as_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
@@ -308,4 +343,41 @@ def _json_ready(value: Any) -> Any:
         return {key: _json_ready(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
         return [_json_ready(item) for item in value]
+    return value
+
+
+def _coercion_target(annotation: Any) -> Any:
+    """Resolve an annotation to the concrete type used for coercion.
+
+    Unwraps ``X | None`` unions (and ``tuple[str, ...]`` to ``tuple``) by
+    inspecting ``typing.get_args``; never string-compares annotations. A bare
+    annotation with no args is returned unchanged.
+    """
+    args = get_args(annotation)
+    if not args:
+        return annotation
+    none_type = type(None)
+    if none_type in args:
+        non_none = tuple(arg for arg in args if arg is not none_type)
+        if len(non_none) == 1:
+            return non_none[0]
+    if get_origin(annotation) is tuple:
+        return tuple
+    return annotation
+
+
+def _coerce_field_value(value: Any, annotation: Any) -> Any:
+    """Reverse ``_json_ready`` for one field, keyed to its resolved annotation."""
+    if value is None:
+        return None
+    target = _coercion_target(annotation)
+    if target is Decimal and isinstance(value, str):
+        decimal = Decimal(value)
+        if not decimal.is_finite():
+            raise ValueError("journal Decimal values must be finite")
+        return decimal
+    if target is datetime and isinstance(value, str):
+        return datetime.fromisoformat(value)
+    if target is tuple and isinstance(value, list):
+        return tuple(value)
     return value

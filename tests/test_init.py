@@ -251,6 +251,7 @@ from polymarket_alpha_lab.paper_execution import (
     PaperExecutionLog,
     execute_paper_trade_from_screening,
 )
+from polymarket_alpha_lab.paper_portfolio_nav import mark_paper_portfolio_nav
 from polymarket_alpha_lab.positions import (
     PaperNavLog,
     PaperNavSnapshot,
@@ -552,6 +553,13 @@ def test_paper_execution_public_api_exports():
     assert lab.PaperExecutionResult is PaperExecutionResult
     assert lab.PaperExecutionLog is PaperExecutionLog
     assert lab.execute_paper_trade_from_screening is execute_paper_trade_from_screening
+
+
+def test_paper_portfolio_nav_public_api_exports():
+    expected_exports = {"mark_paper_portfolio_nav"}
+
+    assert expected_exports <= set(lab.__all__)
+    assert lab.mark_paper_portfolio_nav is mark_paper_portfolio_nav
 
 
 def test_level_2_node_1_public_api_exports():

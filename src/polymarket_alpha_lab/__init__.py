@@ -260,6 +260,7 @@ from polymarket_alpha_lab.positions import (
     build_paper_portfolio,
     mark_paper_nav,
 )
+from polymarket_alpha_lab.paper_portfolio_nav import mark_paper_portfolio_nav
 from polymarket_alpha_lab.rejections import RejectedCandidateLog, RejectedCandidateRecord
 from polymarket_alpha_lab.research import ResearchPacket, build_research_packet
 from polymarket_alpha_lab.risk import (
@@ -481,6 +482,7 @@ __all__ = [
     "get_proposal_evidence_comparison_artifact",
     "list_proposal_evidence_comparison_artifacts",
     "mark_paper_nav",
+    "mark_paper_portfolio_nav",
     "run_strategy_cycle",
     "simulate_order_book_fill",
 ]

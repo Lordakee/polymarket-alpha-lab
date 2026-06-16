@@ -191,6 +191,91 @@ def test_paper_trade_journal_creates_parent_directories(tmp_path):
     assert len(journal.path.read_text().splitlines()) == 1
 
 
+def test_paper_trade_journal_read_round_trips_fully_populated_record(tmp_path):
+    journal = PaperTradeJournal(path=tmp_path / "paper-trades.jsonl")
+    record = record_from(complete_packet(), complete_fill())
+    journal.append(record)
+
+    (read_record,) = PaperTradeJournal.read(journal.path)
+
+    # dataclass __eq__ over all 47 fields: type-keyed coercion must reproduce
+    # the exact Decimal/datetime/tuple values, never float/string stand-ins.
+    assert read_record == record
+    assert isinstance(read_record.model_probability, Decimal)
+    assert isinstance(read_record.packet_created_at, datetime)
+    assert isinstance(read_record.risk_tags, tuple)
+    assert read_record.account_equity_before_trade == Decimal("10000")
+
+
+def test_paper_trade_journal_read_round_trips_record_with_none_optional_fill_fields(
+    tmp_path,
+):
+    journal = PaperTradeJournal(path=tmp_path / "paper-trades.jsonl")
+    record = record_from(
+        complete_packet(),
+        complete_fill(
+            best_bid=None,
+            best_ask=None,
+            midpoint=None,
+            spread=None,
+            slippage_estimate=None,
+        ),
+    )
+    journal.append(record)
+
+    (read_record,) = PaperTradeJournal.read(journal.path)
+
+    # None pass-through must hold for the five optional Decimal | None fields;
+    # this catches both value-sniff coercion (Decimal(None) crash) and the
+    # accidental coercion of a present str into a stray type.
+    assert read_record == record
+    assert read_record.fill_best_bid is None
+    assert read_record.fill_best_ask is None
+    assert read_record.fill_midpoint is None
+    assert read_record.fill_spread is None
+    assert read_record.fill_slippage_estimate is None
+
+
+def test_paper_trade_journal_read_returns_empty_tuple_for_empty_file(tmp_path):
+    journal_path = tmp_path / "empty.jsonl"
+    journal_path.write_text("", encoding="utf-8")
+
+    assert PaperTradeJournal.read(journal_path) == ()
+
+
+def test_paper_trade_journal_read_skips_blank_lines(tmp_path):
+    journal = PaperTradeJournal(path=tmp_path / "paper-trades.jsonl")
+    record = record_from(complete_packet(), complete_fill())
+    journal.append(record)
+
+    # Inject surrounding blank lines (and whitespace-only lines).
+    original = journal.path.read_text(encoding="utf-8")
+    journal.path.write_text(f"\n   \n{original}\n\n", encoding="utf-8")
+
+    (read_record,) = PaperTradeJournal.read(journal.path)
+    assert read_record == record
+
+
+def test_paper_trade_journal_read_preserves_record_order(tmp_path):
+    journal = PaperTradeJournal(path=tmp_path / "paper-trades.jsonl")
+    first = record_from(complete_packet(), complete_fill(order_book_snapshot_sha256="a" * 64))
+    second = record_from(complete_packet(), complete_fill(order_book_snapshot_sha256="b" * 64))
+    journal.append(first)
+    journal.append(second)
+
+    first_read, second_read = PaperTradeJournal.read(journal.path)
+    assert first_read == first
+    assert second_read == second
+
+
+def test_paper_trade_journal_read_rejects_non_json_line_with_line_number(tmp_path):
+    journal_path = tmp_path / "paper-trades.jsonl"
+    journal_path.write_text("this is not json at all\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="line 1"):
+        PaperTradeJournal.read(journal_path)
+
+
 def test_paper_trade_record_normalizes_decision_and_order_book_timestamps():
     eastern = timezone(timedelta(hours=-4))
     fill = complete_fill(

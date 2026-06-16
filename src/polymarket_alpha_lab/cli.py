@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import sys
 from dataclasses import replace
+from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Callable
@@ -19,7 +20,9 @@ from polymarket_alpha_lab.cost_aware_snapshot_builder import (
 )
 from polymarket_alpha_lab.forecast_provider import PaperForecastConfig
 from polymarket_alpha_lab.paper_execution import PaperExecutionConfig
+from polymarket_alpha_lab.paper_portfolio_nav import mark_paper_portfolio_nav
 from polymarket_alpha_lab.pipeline import MarketScanConfig, run_market_scan
+from polymarket_alpha_lab.positions import PaperNavSnapshot
 from polymarket_alpha_lab.project_screening import PaperProjectScreeningConfig
 from polymarket_alpha_lab.strategy_cycle import (
     PaperStrategyCycleConfig,
@@ -32,6 +35,7 @@ from polymarket_alpha_lab.strategy_cycle import (
 Runner = Callable[..., object]
 CycleRunner = Callable[..., PaperStrategyCycleReport]
 ClientFactory = Callable[[], Any]
+NavRunner = Callable[..., PaperNavSnapshot]
 
 
 def main(
@@ -39,6 +43,7 @@ def main(
     *,
     runner: Runner = run_market_scan,
     cycle_runner: CycleRunner = run_strategy_cycle,
+    nav_runner: NavRunner = mark_paper_portfolio_nav,
     client_factory: ClientFactory = PolymarketPublicClient,
 ) -> int:
     parser = argparse.ArgumentParser(prog="polymarket-alpha-lab")
@@ -77,6 +82,26 @@ def main(
         type=Path,
         default=Path("artifacts/paper-trades.jsonl"),
         dest="paper_journal",
+    )
+
+    nav = subparsers.add_parser("portfolio-nav")
+    nav.add_argument(
+        "--journal",
+        type=Path,
+        default=Path("artifacts/paper-trades.jsonl"),
+        dest="journal",
+    )
+    nav.add_argument(
+        "--starting-cash",
+        type=Decimal,
+        required=True,
+        dest="starting_cash",
+    )
+    nav.add_argument(
+        "--nav-log",
+        type=Path,
+        default=None,
+        dest="nav_log",
     )
 
     args = parser.parse_args(argv)
@@ -121,6 +146,21 @@ def main(
             return 0
         except Exception as exc:
             print(f"strategy-cycle failed: {exc}", file=sys.stderr)
+            return 1
+
+    if args.command == "portfolio-nav":
+        try:
+            snapshot = nav_runner(
+                journal_path=args.journal,
+                starting_cash=args.starting_cash,
+                client=client_factory(),
+                marked_at=datetime.now(UTC),
+                nav_log_path=args.nav_log,
+            )
+            _print_portfolio_nav_summary(snapshot)
+            return 0
+        except Exception as exc:
+            print(f"portfolio-nav failed: {exc}", file=sys.stderr)
             return 1
 
     return 2
@@ -213,3 +253,17 @@ def _print_strategy_cycle_summary(report: PaperStrategyCycleReport) -> None:
             f"  #{item.queue_position} [{item.research_bucket}] "
             f"{item.market_slug} score={item.screening_score}",
         )
+
+
+def _print_portfolio_nav_summary(snapshot: PaperNavSnapshot) -> None:
+    """Print a human-readable NAV summary (starting cash, balances, P&L)."""
+
+    print(
+        "portfolio-nav: "
+        f"starting_cash={snapshot.starting_cash} "
+        f"cash_balance={snapshot.cash_balance} "
+        f"realized_pnl={snapshot.realized_pnl} "
+        f"exit_nav={snapshot.exit_nav} "
+        f"unrealized_pnl={snapshot.unrealized_exit_pnl} "
+        f"position_count={len(snapshot.marks)}",
+    )

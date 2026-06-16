@@ -266,6 +266,22 @@ Paper Execution v0 is exposed through Python APIs:
 - Execute one paper trade from a screening-ready candidate with `execute_paper_trade_from_screening(*, candidate, cost_aware_report, market, book, raw_book_archive_entry, market_raw_archive_entry, config, generated_at)`, which returns a `PaperExecutionResult` (paper-only/report-only; `fill` and `record` are populated on execution, otherwise a canonical `skipped_reason`).
 - Inspect the per-attempt outcome via `PaperExecutionResult` (generated_at, market_slug, condition_id, token_id, side, fill, record, skipped_reason) and append results to a `PaperExecutionLog(path)`; the inline strategy-cycle pass instead journals the resulting `PaperTradeRecord` via `PaperTradeJournal`. There is no account reader, order API, wallet signer, live client, loader, replay, or from-file API.
 
+## Paper Portfolio NAV v0 Status
+
+Paper Portfolio NAV v0 gives paper trades an observable mark-to-market P&L. It reads a paper-trade journal back, rebuilds the portfolio, fetches the current public order book for every held token, and marks NAV -- closing the "did I make money?" loop. The only net-new logic is the composition: the new `PaperTradeJournal.read()` JSONL reader plus an orchestrator that chains the already-tested primitives (`build_paper_portfolio`, `normalize_order_book`, `mark_paper_nav`). An empty journal yields an empty portfolio, so no order books are fetched and the NAV collapses to `starting_cash`.
+
+The result is paper-only and report-only: it is a research/audit NAV mark, never a trade instruction, investment ranking, recommendation, financial advice, or live-execution signal. `paper_only is True` is hard-enforced on every `PaperNavSnapshot`.
+
+Phase 1 boundary: it only reads the local JSONL journal, performs read-only `get_order_book` fetches (already used by pipeline/strategy_cycle), and runs pure local NAV math. It does not fetch private, account, wallet, credential, or order data; no auth; no wallet; no order placement, submission, signing, sending, creation, or cancellation; no account, position, or exchange-state reads; no rank, no recommend, no financial advice; and no compliance/legal/geographic analysis.
+
+Boundary shorthand: paper-only, report-only; read journal + read-only book fetch + pure NAV only -- no fetch of private/account/wallet/credential data, no auth, no wallet, no order, no rank, no recommend, no financial advice.
+
+## Paper Portfolio NAV v0 Python API
+
+- Read a paper-trade journal back into fully-typed records with `PaperTradeJournal.read(path)`, a static JSONL reader that reverses `PaperTradeJournal.append`'s serialization keyed to each field's resolved annotation (`Decimal` str -> `Decimal`, ISO str -> `datetime`, `list` -> `tuple` for `risk_tags`; `None` passes through for the optional `fill_*` fields). It skips blank lines, raises `ValueError` (with a line number) on non-JSON lines, and returns an empty tuple for an empty file. `build_paper_portfolio` re-validates every record.
+- Mark the portfolio NAV end-to-end with `mark_paper_portfolio_nav(journal_path, *, starting_cash, client, marked_at, nav_log_path=None)`, which returns a `PaperNavSnapshot`. It reads the journal, builds the portfolio, fetches one book per held token via the injected client, marks NAV, and optionally appends the snapshot to a `PaperNavLog`. `starting_cash` must be a positive `Decimal` (`> 0`); the client is a local `MarketNavClient` Protocol (only `get_order_book(token_id=)`) so this module never imports `api` -- the concrete `PolymarketPublicClient` is constructed in `cli.py` and injected. `marked_at` is caller-supplied (deterministic for tests).
+- Mark NAV from the CLI with `polymarket-alpha-lab portfolio-nav --journal <path> --starting-cash <Decimal> [--nav-log <path>]`, which prints a NAV summary (starting_cash, cash_balance, realized_pnl, exit_nav, unrealized_pnl, position_count). There is no account reader, order API, wallet signer, live-execution client, scheduler, or time-series replay.
+
 ## Level 2 Node 1 Status
 
 Level 2 Node 1 adds reviewable proposal-packet artifacts over supplied paper-trading, analytics, forecast-evidence, and manual-review artifacts. A proposal packet is for human review only; it is not an approval workflow, trade instruction, order instruction, broker request, strategy-promotion signal, or live-execution signal. No order may leave the system without explicit human approval.
