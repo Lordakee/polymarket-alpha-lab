@@ -1,0 +1,16 @@
+{
+  "forecast_provider": "llm",
+  "llm_api_token": "YOUR_ZHIPU_API_KEY",
+  "llm_model": "glm-4-flash",
+  "max_markets_per_cycle": 20,
+  "scan_limit": 20,
+  "prefilter_by_score": false,
+  "paper_execute": true,
+  "paper_journal": "artifacts/paper-trades.jsonl",
+  "nav_log": "artifacts/nav.jsonl",
+  "cycle_log": "artifacts/cycles.jsonl",
+  "archive_root": "data/raw",
+  "repeat_interval_seconds": 600,
+  "max_iterations": 20,
+  "starting_cash": "10000"
+}
