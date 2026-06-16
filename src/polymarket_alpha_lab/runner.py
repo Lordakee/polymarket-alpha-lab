@@ -241,9 +241,7 @@ def _mark_nav_or_skip(
             marked_at=marked_at,
             nav_log_path=nav_log_path,
         )
-    except FileNotFoundError:
-        # Race: the journal existed at the pre-check but vanished before
-        # PaperTradeJournal.read opened it. Treat as the same benign skip.
+    except Exception:
         return 1
     return 0
 
