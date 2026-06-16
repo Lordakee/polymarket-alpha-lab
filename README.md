@@ -210,6 +210,25 @@ Book-Imbalance Forecast v0 is exposed through Python APIs:
 - Inspect the fair probability, confidence, `basis`, audit fields `yes_best_ask`, `yes_bid_size`, `yes_ask_size`, `imbalance`, and `nudge`, plus reason codes via `PaperBookImbalanceForecast`.
 - Optionally append already-built forecasts with `PaperBookImbalanceForecastLog(path).append(forecast)`; there is no market fetcher, account reader, order API, JSONL reader, loader, replay, or from-file API.
 
+## LLM Forecast v0 Status
+
+LLM Forecast v0 adds a paper-only and report-only forecast primitive that produces a real epistemic P(YES) estimate from a probability model (Zhipu GLM-4-flash via stdlib urllib), rather than a microstructure heuristic. Unlike the naive (`yes_ask_naive_v0`) and book-imbalance (`book_imbalance_v0`) baselines, this estimate can pass calibration evidence gates, so it is the project's first "self-judge" primitive. It is split into two modules: `llm_research_transport` (the read-only outbound HTTPS network layer) and `llm_forecast` (the pure, network-free transform leaf). The `basis` field names the model (`llm_glm_v0`) so downstream audits know this is an LLM estimate, not a book heuristic.
+
+The forecast is research-triage only; it is not a trade instruction, investment ranking, recommendation, financial advice, or live-execution signal. `paper_only is True` and `report_only is True` are hard-enforced on every report.
+
+The transform leaf consumes only a caller-supplied market and an already-fetched probability-model result (dependency-injected); it does not fetch market data, read account data, authenticate, handle wallets, private keys, or credentials, use API clients, use browser automation, place, submit, sign, or cancel orders, rank investments, recommend trades, provide financial advice, or perform compliance/legal/geographic analysis. The transport layer performs a single read-only outbound HTTPS estimate to the public Zhipu endpoint (the same research-fetch class as `api.py`'s public Polymarket reads) and never authenticates to an exchange, reads accounts or positions, handles wallets or private keys, or places orders. The caller-supplied API token stays on the transport only and never reaches the forecast, logs, or archives.
+
+Boundary shorthand: no fetch of private, account, wallet, credential, or order data; no auth, no wallet, no order, no rank, no recommend, no financial advice.
+
+## LLM Forecast v0 Python API
+
+LLM Forecast v0 is exposed through Python APIs:
+
+- Configure the LLM forecast thresholds with `PaperLLMForecastConfig(config_version="llm-forecast-v1")` (model name, low/high confidence cutoffs, max question length).
+- Build LLM forecasts from a caller-supplied market and an already-fetched probability-model result with `build_paper_llm_forecast(market, result=result, config=config, generated_at=datetime.now(UTC))`, which returns `PaperLLMForecast`. The `result` is typed against a leaf-local `_ProbabilityModelResult` Protocol so the leaf stays network-free; the transport's concrete result satisfies it structurally.
+- Inspect the fair probability, confidence, `basis`, audit field `raw_p_yes` (pre-clamp), `model_name`, and reason codes via `PaperLLMForecast`. A `None` `raw_p_yes` falls back to `low_confidence_value` and records `("llm_parse_failed",)`; otherwise the value is clamped to `[0, 1]` and `("llm_probability_estimated",)` is recorded.
+- Optionally append already-built forecasts with `PaperLLMForecastLog(path).append(forecast)`; there is no market fetcher, account reader, order API, JSONL reader, loader, replay, or from-file API.
+
 ## Cost-Aware Snapshot Builder v0 Status
 
 Cost-Aware Snapshot Builder v0 adds a paper-only and report-only extractor that converts a caller-supplied `NormalizedMarket`, YES/NO order books, and a `PaperForecast` into the already-built `PaperCostAwareEventMarketSnapshot` that the Cost-Aware Event Strategy consumes. It resolves YES/NO by outcome name (with outcome index fallback) and derives spread and a v0 resolution-risk heuristic from market metadata.
@@ -316,6 +335,21 @@ Boundary shorthand: paper-only, report-only, no auth, no wallet, no order, no ra
 - Isolate per-iteration failures with `on_cycle_error`: `"log_and_continue"` (default) increments `iterations_failed`, records `last_error`, and continues to the next iteration (a failed cycle skips the inter-iteration sleep); `"raise"` propagates the exception immediately. When `repeat_mode="interval"`, `time.sleep(interval_seconds)` runs between iterations only (never after the last, never after a failed one). The loop is synchronous by design (v0); async/scheduler is a later stage.
 - Inspect the run with `RunLoopSummary` (frozen): `iterations_completed`, `iterations_failed`, `first_iteration_at`/`last_iteration_at`, `last_error`, `nav_marks_skipped`, with `paper_only is True` / `report_only is True` hard-enforced.
 - Run from the CLI with `polymarket-alpha-lab run --starting-cash <Decimal> [--cycle-log <path>] [--nav-log <path>] [--repeat-interval <seconds>] [--max-iterations <n>] [--paper-execute --paper-journal <path>]`, which reuses the strategy-cycle scan/cycle args, maps `--repeat-interval 0` to single-shot, and prints completed/failed/skipped counts plus the time span. There is no account reader, order API, wallet signer, live-execution client, scheduler daemon, or async runtime.
+
+## Outcome Tracker v0 Status
+
+Outcome Tracker v0 (Stage 9) closes the self-judge verification loop. It reads paper-traded markets from the journal, re-lists the CLOSED slice from Gamma, and for each resolved market derives the winning side from `outcomePrices` (the resolved payout array paired with `outcomes`), then builds one `PaperForecastEvidenceObservation` per resolved trade LEG and feeds the forecast-evidence calibration report. This tells the user whether the LLM forecast's probability estimates are actually accurate over time. It is paper-only and report-only: it is a research/audit calibration aggregate, never a trade instruction, investment ranking, recommendation, financial advice, or live-execution signal.
+
+Phase 1 boundary: read-only Gamma `/markets` re-list + pure Decimal computation. It does not place, submit, sign, or cancel orders; does not authenticate; does not handle wallets, private keys, or credentials; does not read account state; and does not perform compliance/legal/geographic analysis. The winning outcome is read from `outcomePrices` on the RAW Gamma payload (NEVER from `resolutionStatus`, which is unreliable); outcome labels are matched case-insensitively through the SAME `YES_NAMES`/`NO_NAMES` alias sets as the cost-aware snapshot builder (never direct string equality); and YES/NO legs are independent calibration points, so one resolved trade record produces exactly one observation (never deduplicated by `condition_id`).
+
+Boundary shorthand: paper-only, report-only, no auth, no wallet, no order, no rank, no recommend, no financial advice.
+
+## Outcome Tracker v0 Python API
+
+- Configure the tracker with `OutcomeTrackingConfig(config_version="outcome-tracker-v1")` (frozen); its nested `forecast_evidence_config` defaults to a synced `PaperForecastEvidenceConfig`.
+- Run a check with `check_outcomes(*, client, journal_path, config, generated_at)`, which returns a paper-only/report-only `OutcomeTrackingReport`. `client` is the injected `OutcomeTrackerClient` Protocol (this module never imports `api`; `cli.py` constructs the concrete `PolymarketPublicClient` and injects it). It reads `PaperTradeJournal.read(journal_path)` (a missing journal is treated as zero records — benign first-run condition), lists closed markets via `client.list_markets(active=False, closed=True, limit=500)`, and for each closed market with a parseable `outcomePrices` winner builds one observation (`predicted_probability = research_fair_value_estimate`, `actual_outcome_value = Decimal("1")` if the traded side won else `Decimal("0")`).
+- Inspect the result with `OutcomeTrackingReport` (frozen): `generated_at`, `config_version`, `total_markets_checked`, `resolved_count`, `pending_count`, `observations` (tuple of `PaperForecastEvidenceObservation`), and `forecast_evidence_report` (`PaperForecastEvidenceReport | None`, None iff zero observations). Hard-enforced invariants: `resolved_count == len(observations)`, `resolved_count + pending_count == total_markets_checked`, and `paper_only is True` / `report_only is True`.
+- Run from the CLI with `polymarket-alpha-lab check-outcomes --journal <path> [--evidence-log <path>]`, which builds the report and prints checked/resolved/pending/observation counts plus the forecast-evidence status. When `--evidence-log` is supplied and at least one observation resolved, the `PaperForecastEvidenceReport` is appended to that JSONL log via `PaperForecastEvidenceLog`. There is no account reader, order API, wallet signer, live-execution client, scheduler daemon, or async runtime.
 
 ## Level 2 Node 1 Status
 

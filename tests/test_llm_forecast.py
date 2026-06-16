@@ -559,14 +559,15 @@ def test_transport_rejects_blank_api_token():
 # ---------------------------------------------------------------------------
 
 
-def test_transport_estimate_none_market_context_is_byte_identical_to_legacy():
-    # Backward-compat: market_context=None must produce the exact same prompt
-    # as the pre-Stage-10 behavior.
+def test_transport_estimate_none_market_context_omits_context_lines_and_includes_system_prompt():
+    # Backward-compat: market_context=None must still produce a working estimate.
+    # The user prompt carries Question/Outcomes + the Estimate instruction with
+    # NO market-context lines, and a superforecaster system prompt is attached.
     captured: dict = {}
 
     def _capture(request, timeout):  # noqa: ARG001
         payload = json.loads(request.data.decode("utf-8"))
-        captured["prompt"] = payload["messages"][0]["content"]
+        captured["messages"] = payload["messages"]
         return _FakeResponse(
             json.dumps(_zhipu_envelope('{"p_yes": 0.5, "confidence": 0.5}')).encode(
                 "utf-8"
@@ -579,21 +580,31 @@ def test_transport_estimate_none_market_context_is_byte_identical_to_legacy():
             market_question="Will X happen?",
             outcome_names=("Yes", "No"),
         )
-    legacy = (
-        'Estimate P(YES) for: Will X happen?. Outcomes: Yes, No. '
-        'Return JSON: {"p_yes": <0-1>, "confidence": <0-1>}'
+    messages = captured["messages"]
+    # A superforecaster system prompt leads the messages list.
+    assert messages[0]["role"] == "system"
+    assert "superforecaster" in messages[0]["content"]
+    assert "Base rate" in messages[0]["content"]
+    # The user prompt has the new structured format and no context lines.
+    user_prompt = messages[-1]["content"]
+    assert user_prompt == (
+        "Question: Will X happen?\n"
+        "Outcomes: Yes, No\n"
+        "\n"
+        'Estimate P(YES). Return JSON: {"p_yes": <number 0-1>, "confidence": <number 0-1>}'
     )
-    assert captured["prompt"] == legacy
+    assert "volume_24h" not in user_prompt
 
 
 def test_transport_estimate_appends_market_context_to_prompt_before_instruction():
-    # Stage 10: each key/value pair appears in the prompt, positioned BEFORE
-    # the "Return JSON" instruction. Decimal values are str()-coerced upstream.
+    # Stage 10: each key/value pair appears in the USER prompt, positioned
+    # BEFORE the "Estimate P(YES)" instruction. Decimal values are
+    # str()-coerced upstream.
     captured: dict = {}
 
     def _capture(request, timeout):  # noqa: ARG001
         payload = json.loads(request.data.decode("utf-8"))
-        captured["prompt"] = payload["messages"][0]["content"]
+        captured["messages"] = payload["messages"]
         return _FakeResponse(
             json.dumps(_zhipu_envelope('{"p_yes": 0.5, "confidence": 0.5}')).encode(
                 "utf-8"
@@ -614,18 +625,17 @@ def test_transport_estimate_appends_market_context_to_prompt_before_instruction(
             market_context=market_context,
         )
 
-    prompt = captured["prompt"]
-    # Question/outcomes header still leads the prompt.
-    assert prompt.startswith(
-        "Estimate P(YES) for: Will X happen?. Outcomes: Yes, No."
-    )
+    # The user message is the last message in the list.
+    user_prompt = captured["messages"][-1]["content"]
+    # Question/outcomes header still leads the user prompt.
+    assert user_prompt.startswith("Question: Will X happen?\nOutcomes: Yes, No")
     # Every context pair is present.
     for key, value in market_context.items():
-        assert f"{key}: {value}" in prompt, key
-    # All context lines precede the "Return JSON" instruction.
-    return_idx = prompt.index("Return JSON")
+        assert f"{key}: {value}" in user_prompt, key
+    # All context lines precede the "Estimate P(YES)" instruction.
+    estimate_idx = user_prompt.index("Estimate P(YES)")
     for key, value in market_context.items():
-        assert prompt.index(f"{key}: {value}") < return_idx, key
+        assert user_prompt.index(f"{key}: {value}") < estimate_idx, key
 
 
 def test_transport_estimate_empty_market_context_omits_context_lines():
@@ -634,7 +644,7 @@ def test_transport_estimate_empty_market_context_omits_context_lines():
 
     def _capture(request, timeout):  # noqa: ARG001
         payload = json.loads(request.data.decode("utf-8"))
-        captured["prompt"] = payload["messages"][0]["content"]
+        captured["messages"] = payload["messages"]
         return _FakeResponse(
             json.dumps(_zhipu_envelope('{"p_yes": 0.5, "confidence": 0.5}')).encode(
                 "utf-8"
@@ -648,7 +658,8 @@ def test_transport_estimate_empty_market_context_omits_context_lines():
             outcome_names=("Yes", "No"),
             market_context={},
         )
-    assert "volume_24h" not in captured["prompt"]
-    assert captured["prompt"].endswith(
-        'Return JSON: {"p_yes": <0-1>, "confidence": <0-1>}'
+    user_prompt = captured["messages"][-1]["content"]
+    assert "volume_24h" not in user_prompt
+    assert user_prompt.endswith(
+        'Estimate P(YES). Return JSON: {"p_yes": <number 0-1>, "confidence": <number 0-1>}'
     )

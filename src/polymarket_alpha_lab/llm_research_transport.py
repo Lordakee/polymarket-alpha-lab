@@ -48,6 +48,25 @@ _ONE = Decimal("1")
 _MICROSECONDS_PER_SECOND = Decimal("1000000")
 
 
+# Superforecaster-style system prompt sent as the ``system`` role message.
+# Surfaces base rate / evidence / time horizon / market efficiency / rules
+# clarity as explicit reasoning factors to keep GLM-4-flash well-calibrated.
+_SYSTEM_PROMPT = (
+    "You are a superforecaster estimating the probability of a prediction market outcome. "
+    "Consider these factors in your assessment:\n"
+    "1. Base rate: How often do similar events occur historically?\n"
+    "2. Evidence: What concrete evidence supports or contradicts each outcome?\n"
+    "3. Time horizon: How much time remains, and does it favor YES or NO?\n"
+    "4. Market efficiency: High volume/liquidity suggests the current price is informative; "
+    "large spreads suggest uncertainty.\n"
+    "5. Rules clarity: Clear resolution criteria increase confidence; ambiguous criteria decrease it.\n"
+    "\n"
+    "Use the provided market context (volume, liquidity, spread, end_time, rules) to inform your estimate. "
+    "Be well-calibrated: avoid extreme confidence (0.0 or 1.0) without overwhelming evidence. "
+    "Your output must be valid JSON."
+)
+
+
 class ProbabilityModelTransport(Protocol):
     """Read-only probability-estimation surface (Protocol-only DI contract).
 
@@ -67,9 +86,10 @@ class ProbabilityModelTransport(Protocol):
         """Estimate P(YES) for one market question and return the raw result.
 
         ``market_context`` (optional) carries market metadata (volume,
-        liquidity, end_time, rules, ...) that is appended to the prompt so the
-        model can produce a better-grounded probability estimate. When ``None``
-        (default) the prompt is identical to the pre-Stage-10 behavior.
+        liquidity, end_time, rules, ...) that is appended to the user prompt so
+        the model can produce a better-grounded probability estimate. When
+        ``None`` (default) no market-context lines are appended to the user
+        prompt.
         """
         ...
 
@@ -133,11 +153,12 @@ class GLMChatTransport:
         failed estimate into a low-confidence forecast rather than aborting.
 
         ``market_context`` (optional, Stage 10) carries market metadata that is
-        appended to the prompt for a better-grounded estimate. When ``None``
-        the prompt is byte-identical to the pre-Stage-10 behavior (backward
-        compatible).
+        appended to the user prompt for a better-grounded estimate. When
+        ``None`` no market-context lines are appended (the estimate still works
+        and returns a parsed result; the superforecaster system prompt is sent
+        regardless).
         """
-        prompt = _build_prompt(
+        user_prompt = _build_prompt(
             market_question, outcome_names, market_context=market_context
         )
         # temperature/max_tokens/timeout are ephemeral wire values (analogous to
@@ -145,7 +166,10 @@ class GLMChatTransport:
         body = json.dumps(
             {
                 "model": self.model,
-                "messages": [{"role": "user", "content": prompt}],
+                "messages": [
+                    {"role": "system", "content": _SYSTEM_PROMPT},
+                    {"role": "user", "content": user_prompt},
+                ],
                 "temperature": float(self.temperature),
                 "max_tokens": self.max_tokens,
                 "response_format": {"type": "json_object"},
@@ -287,16 +311,21 @@ def _build_prompt(
 ) -> str:
     question = market_question if isinstance(market_question, str) else ""
     names = ", ".join(outcome_names) if outcome_names else "Yes, No"
-    prompt = "Estimate P(YES) for: " f"{question}. Outcomes: {names}."
+    lines = [f"Question: {question}", f"Outcomes: {names}"]
     # Stage 10: when market metadata is supplied, append each key/value pair to
-    # the prompt BEFORE the "Return JSON" instruction so the model grounds its
-    # estimate in volume / liquidity / end_time / rules. An empty/None context
-    # leaves the prompt byte-identical to the pre-Stage-10 behavior.
+    # the user prompt BEFORE the "Estimate P(YES)" instruction so the model
+    # grounds its estimate in volume / liquidity / end_time / rules. An
+    # empty/None context appends no context lines (the superforecaster system
+    # prompt still describes how to use such context when present).
     if market_context:
         for key, value in market_context.items():
-            prompt += f"\n{key}: {value}"
-    prompt += ' Return JSON: {"p_yes": <0-1>, "confidence": <0-1>}'
-    return prompt
+            lines.append(f"{key}: {value}")
+    lines.append("")
+    lines.append(
+        'Estimate P(YES). Return JSON: '
+        '{"p_yes": <number 0-1>, "confidence": <number 0-1>}'
+    )
+    return "\n".join(lines)
 
 
 def _parse_probability_content(
