@@ -160,6 +160,14 @@ def main(
         dest="nav_log",
     )
 
+    # Stage 17 market search: search Polymarket markets by keyword.
+    search_parser = subparsers.add_parser("search")
+    search_parser.add_argument(
+        "--query", required=True, dest="query",
+    )
+    search_parser.add_argument("--limit", type=int, default=25)
+    search_parser.add_argument("--closed", action="store_true")
+
     # Stage 9 outcome tracker: re-list closed markets from Gamma and build a
     # forecast-evidence calibration report over resolved paper-trade legs.
     check_outcomes_parser = subparsers.add_parser("check-outcomes")
@@ -347,6 +355,29 @@ def main(
             return 0
         except Exception as exc:
             print(f"run failed: {exc}", file=sys.stderr)
+            return 1
+
+    if args.command == "search":
+        try:
+            client = client_factory()
+            payload = client.list_markets(
+                active=not args.closed,
+                closed=args.closed,
+                limit=args.limit,
+                search=args.query,
+            )
+            if isinstance(payload, list):
+                for m in payload:
+                    slug = m.get("slug", "?") if isinstance(m, dict) else "?"
+                    q = m.get("question", "?") if isinstance(m, dict) else "?"
+                    outs = m.get("outcomes", []) if isinstance(m, dict) else []
+                    print(f"{slug}: {q} [{', '.join(str(o) for o in outs)}]")
+                print(f"\n{len(payload) if isinstance(payload, list) else 0} markets found")
+            else:
+                print("unexpected response format")
+            return 0
+        except Exception as exc:
+            print(f"search failed: {exc}", file=sys.stderr)
             return 1
 
     if args.command == "check-outcomes":

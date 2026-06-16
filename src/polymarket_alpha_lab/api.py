@@ -36,12 +36,24 @@ class PolymarketPublicClient:
     data_base_url: str = "https://data-api.polymarket.com"
 
     def list_markets(
-        self, *, active: bool = True, closed: bool = False, limit: int = 100
+        self,
+        *,
+        active: bool = True,
+        closed: bool = False,
+        limit: int = 100,
+        search: str | None = None,
     ) -> JsonValue:
+        params: dict[str, object] = {
+            "active": active,
+            "closed": closed,
+            "limit": limit,
+        }
+        if search is not None:
+            params["search"] = search
         return self._get(
             self.gamma_base_url,
             "/markets",
-            {"active": active, "closed": closed, "limit": limit},
+            params,
         )
 
     def get_order_book(self, *, token_id: str) -> JsonValue:
