@@ -142,3 +142,81 @@ def test_strategy_cycle_cli_returns_one_when_cycle_runner_fails(tmp_path):
     )
 
     assert exit_code == 1
+
+
+def test_strategy_cycle_cli_paper_execute_flag_enables_inline_paper_pass(tmp_path):
+    calls = []
+
+    def fake_client_factory():
+        return "fake-client"
+
+    def fake_cycle_runner(*, client, scan_config, cycle_config):
+        calls.append(cycle_config)
+        return PaperStrategyCycleReport(
+            generated_at=datetime.now(UTC),
+            config_version="strategy-cycle-v1",
+            scan_market_count=0,
+            considered_count=0,
+            snapshot_ready_count=0,
+            cost_aware_report_count=0,
+            blocked_counts=(),
+            screening_report=None,
+        )
+
+    journal_path = tmp_path / "paper-trades.jsonl"
+
+    exit_code = main(
+        [
+            "strategy-cycle",
+            "--paper-execute",
+            "--paper-journal",
+            str(journal_path),
+            "--archive-root",
+            str(tmp_path / "raw"),
+            "--output",
+            str(tmp_path / "strategy-cycle.jsonl"),
+        ],
+        cycle_runner=fake_cycle_runner,
+        client_factory=fake_client_factory,
+    )
+
+    assert exit_code == 0
+    assert len(calls) == 1
+    cycle_config = calls[0]
+    assert cycle_config.paper_execution_config is not None
+    assert cycle_config.paper_execution_config.config_version == "paper-execution-v1"
+    assert cycle_config.paper_trade_journal_path == journal_path
+
+
+def test_strategy_cycle_cli_default_omits_paper_execute(tmp_path):
+    calls = []
+
+    def fake_cycle_runner(*, client, scan_config, cycle_config):
+        calls.append(cycle_config)
+        return PaperStrategyCycleReport(
+            generated_at=datetime.now(UTC),
+            config_version="strategy-cycle-v1",
+            scan_market_count=0,
+            considered_count=0,
+            snapshot_ready_count=0,
+            cost_aware_report_count=0,
+            blocked_counts=(),
+            screening_report=None,
+        )
+
+    exit_code = main(
+        [
+            "strategy-cycle",
+            "--archive-root",
+            str(tmp_path / "raw"),
+            "--output",
+            str(tmp_path / "strategy-cycle.jsonl"),
+        ],
+        cycle_runner=fake_cycle_runner,
+        client_factory=lambda: "fake-client",
+    )
+
+    assert exit_code == 0
+    cycle_config = calls[0]
+    assert cycle_config.paper_execution_config is None
+    assert cycle_config.paper_trade_journal_path is None

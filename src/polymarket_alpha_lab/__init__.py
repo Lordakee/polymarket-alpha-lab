@@ -245,6 +245,12 @@ from polymarket_alpha_lab.proposal_evidence_comparison_artifact_registry import 
 )
 from polymarket_alpha_lab.journal import PaperTradeJournal, PaperTradeRecord
 from polymarket_alpha_lab.paper import PaperFill, PaperOrder, simulate_order_book_fill
+from polymarket_alpha_lab.paper_execution import (
+    PaperExecutionConfig,
+    PaperExecutionResult,
+    PaperExecutionLog,
+    execute_paper_trade_from_screening,
+)
 from polymarket_alpha_lab.positions import (
     PaperNavLog,
     PaperNavSnapshot,
@@ -303,6 +309,9 @@ __all__ = [
     "PaperBookImbalanceForecast",
     "PaperBookImbalanceForecastLog",
     "PaperDrawdownPoint",
+    "PaperExecutionConfig",
+    "PaperExecutionResult",
+    "PaperExecutionLog",
     "PaperFill",
     "PaperForecastConfig",
     "PaperForecast",
@@ -467,6 +476,7 @@ __all__ = [
     "build_trade_proposal_review_quality_report",
     "build_trade_proposal_review_record",
     "build_trade_proposal_review_summary_report",
+    "execute_paper_trade_from_screening",
     "evaluate_research_packet_risk",
     "get_proposal_evidence_comparison_artifact",
     "list_proposal_evidence_comparison_artifacts",

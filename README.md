@@ -248,6 +248,24 @@ Strategy Cycle v0 is exposed through Python APIs:
 - Inspect cycle counts, deterministic `blocked_counts`, and the nested `PaperProjectScreeningReport` via `PaperStrategyCycleReport`.
 - Optionally append already-built cycle reports with `PaperStrategyCycleLog(path).append(report)`; there is no account reader, order API, wallet signer, JSONL reader, loader, replay, or from-file API.
 
+## Paper Execution v0 Status
+
+Paper Execution v0 closes the self-invest half of Phase 1: a paper-only and report-only leaf that turns each screening_ready candidate produced by the strategy cycle into an auditable paper trade. It runs INLINE inside `run_strategy_cycle` (never from replayed JSONL), where every snapshot_ready market's full in-memory context is available: the NormalizedMarket, both YES/NO OrderBookSnapshots, each book's RawArchiveEntry, the cost-aware event strategy report, and the project screening candidate. For each screening_ready candidate it walks `simulate_order_book_fill` against the chosen side's executable ask depth and journals a `PaperTradeRecord` to the configured paper trade journal. The evidence-gate chain (manual_review_queue / proposal_packet) is deliberately bypassed; paper-executed records carry a marker `strategy_type` (default `book_imbalance_screening_paper`) so they are filterable downstream.
+
+The result is paper-only and report-only: it is a research/audit envelope, never a trade instruction, investment ranking, recommendation, financial advice, or live-execution signal. `paper_only is True` and `report_only is True` are hard-enforced on every result. Default-off: when `paper_execution_config is None` the cycle behaves byte-identically to Stage 1b/2/3 (no paper pass, no journal writes), and one bad paper execution never aborts the cycle (per-candidate try/except isolation, mirroring per-market isolation).
+
+Phase 1 boundary: it only simulates a fill against the in-memory order book and appends to a paper journal. It does not fetch private, account, wallet, credential, or order data; no auth; no wallet; no order placement, submission, signing, sending, creation, or cancellation; no account, position, or exchange-state reads; no rank, no recommend, no financial advice; and no compliance/legal/geographic analysis.
+
+Boundary shorthand: paper-only, report-only; simulate + journal only — no fetch of private/account/wallet/credential data, no auth, no wallet, no order, no rank, no recommend, no financial advice.
+
+## Paper Execution v0 Python API
+
+Paper Execution v0 is exposed through Python APIs:
+
+- Configure the paper lane with `PaperExecutionConfig(config_version="paper-execution-v1", strategy_type="book_imbalance_screening_paper", paper_budget_size=Decimal("10.0000"), sizing_limiter="screening_book_depth", planned_exit_rule="hold_to_resolution", account_equity_before_trade=Decimal("10000.0000"), thesis_template=..., invalidating_conditions_template=..., rule_text=..., resolution_source_fallback="polymarket_event_resolution")` (frozen; all defaults paper-only/report-only).
+- Execute one paper trade from a screening-ready candidate with `execute_paper_trade_from_screening(*, candidate, cost_aware_report, market, book, raw_book_archive_entry, market_raw_archive_entry, config, generated_at)`, which returns a `PaperExecutionResult` (paper-only/report-only; `fill` and `record` are populated on execution, otherwise a canonical `skipped_reason`).
+- Inspect the per-attempt outcome via `PaperExecutionResult` (generated_at, market_slug, condition_id, token_id, side, fill, record, skipped_reason) and append results to a `PaperExecutionLog(path)`; the inline strategy-cycle pass instead journals the resulting `PaperTradeRecord` via `PaperTradeJournal`. There is no account reader, order API, wallet signer, live client, loader, replay, or from-file API.
+
 ## Level 2 Node 1 Status
 
 Level 2 Node 1 adds reviewable proposal-packet artifacts over supplied paper-trading, analytics, forecast-evidence, and manual-review artifacts. A proposal packet is for human review only; it is not an approval workflow, trade instruction, order instruction, broker request, strategy-promotion signal, or live-execution signal. No order may leave the system without explicit human approval.

@@ -57,7 +57,16 @@ from polymarket_alpha_lab.forecast_provider import (
     PaperForecastConfig,
     build_paper_naive_forecast,
 )
+# Stage 4 (additive/default-off): inline paper-execution pass journals a
+# PaperTradeRecord per screening_ready candidate. ``journal`` is now a permitted
+# dependency because journaling paper trades IS the cycle's new Stage 4 job
+# (scope contract evolved; was forbidden under Stage 1b read-only boundary).
+from polymarket_alpha_lab.journal import PaperTradeJournal
 from polymarket_alpha_lab.normalize import normalize_gamma_market, normalize_order_book
+from polymarket_alpha_lab.paper_execution import (
+    PaperExecutionConfig,
+    execute_paper_trade_from_screening,
+)
 from polymarket_alpha_lab.pipeline import MarketScanConfig
 from polymarket_alpha_lab.project_screening import (
     PaperProjectScreeningConfig,
@@ -111,6 +120,11 @@ class PaperStrategyCycleConfig:
     prefilter_by_score: bool = True
     forecast_provider: str = "naive"
     book_imbalance_config: PaperBookImbalanceForecastConfig | None = None
+    # Stage 4 (additive/default-off): when both are set, run_strategy_cycle
+    # runs an inline paper-execution pass after screening. Invariant: both
+    # None or both non-None. Default None = Stage 1b/2/3 behavior unchanged.
+    paper_execution_config: PaperExecutionConfig | None = None
+    paper_trade_journal_path: Path | None = None
 
     def __post_init__(self) -> None:
         _require_canonical_string("config_version", self.config_version)
@@ -166,6 +180,27 @@ class PaperStrategyCycleConfig:
                 "book_imbalance_config is required when "
                 "forecast_provider == 'book_imbalance'",
             )
+        # Stage 4 invariant: paper_execution_config and paper_trade_journal_path
+        # must both be set or both be None (the inline pass needs both).
+        if (self.paper_execution_config is None) != (
+            self.paper_trade_journal_path is None
+        ):
+            raise ValueError(
+                "paper_execution_config and paper_trade_journal_path must both "
+                "be set or both be None",
+            )
+        if self.paper_execution_config is not None and not isinstance(
+            self.paper_execution_config,
+            PaperExecutionConfig,
+        ):
+            raise ValueError(
+                "paper_execution_config must be a PaperExecutionConfig",
+            )
+        if self.paper_trade_journal_path is not None and not isinstance(
+            self.paper_trade_journal_path,
+            Path,
+        ):
+            raise ValueError("paper_trade_journal_path must be a Path")
 
 
 @dataclass(frozen=True)
@@ -287,7 +322,7 @@ def run_strategy_cycle(
         closed=False,
         limit=scan_config.limit,
     )
-    archive.write(
+    market_raw_archive_entry = archive.write(
         source="gamma_markets",
         name="markets",
         payload=markets_payload,
@@ -326,6 +361,11 @@ def run_strategy_cycle(
     # builder's own "blocked_*" status, or "snapshot_ready".
     statuses: list[str] = []
     collected_reports: list[PaperCostAwareEventStrategyReport] = []
+    # Stage 4: stash per-market context for the inline paper-execution pass.
+    # Only populated when paper execution is enabled (default-off). Keyed by
+    # market_slug with first-occurrence wins (mirrors the screening dedupe).
+    paper_pass_enabled = cycle_config.paper_execution_config is not None
+    paper_trade_context: dict[str, tuple[Any, ...]] = {}
     for nm in retained:
         try:
             if len(nm.tokens) != 2:
@@ -338,13 +378,13 @@ def run_strategy_cycle(
             yes_book_raw = client.get_order_book(token_id=yes_token_id)
             no_book_raw = client.get_order_book(token_id=no_token_id)
             # C2b: token-unique archive names (pipeline precedent name=f"book-{token_id}").
-            archive.write(
+            yes_archive_entry = archive.write(
                 source="clob_book",
                 name=f"book-{yes_token_id}",
                 payload=yes_book_raw,
                 captured_at=timestamp,
             )
-            archive.write(
+            no_archive_entry = archive.write(
                 source="clob_book",
                 name=f"book-{no_token_id}",
                 payload=no_book_raw,
@@ -398,6 +438,20 @@ def run_strategy_cycle(
                     generated_at=timestamp,
                 )
                 collected_reports.append(report)
+                if paper_pass_enabled:
+                    # setdefault: first-occurrence wins to match the screening
+                    # dedupe (keeps the first report per market_slug).
+                    paper_trade_context.setdefault(
+                        nm.market.market_slug,
+                        (
+                            nm,
+                            yes_book,
+                            no_book,
+                            yes_archive_entry,
+                            no_archive_entry,
+                            report,
+                        ),
+                    )
                 statuses.append("snapshot_ready")
             else:
                 statuses.append(attempt.status)
@@ -419,6 +473,55 @@ def run_strategy_cycle(
         if deduped
         else None
     )
+
+    # 4b. Inline paper-execution pass (Stage 4, additive/default-off). Turn
+    #     each screening_ready candidate into an auditable PaperTradeRecord
+    #     against the in-memory book captured during the cycle, then journal
+    #     it. Per-candidate try/except isolation: one bad paper execution must
+    #     never abort the cycle (mirrors per-market isolation). Default-off:
+    #     when paper_execution_config is None this block is skipped entirely.
+    if (
+        cycle_config.paper_execution_config is not None
+        and cycle_config.paper_trade_journal_path is not None
+        and screening is not None
+    ):
+        journal = PaperTradeJournal(cycle_config.paper_trade_journal_path)
+        paper_pass_config = cycle_config.paper_execution_config
+        for candidate in screening.candidates:
+            if candidate.screening_status != "screening_ready":
+                continue
+            context = paper_trade_context.get(candidate.market_slug)
+            if context is None:
+                continue
+            (
+                nm,
+                yes_book,
+                no_book,
+                yes_archive_entry,
+                no_archive_entry,
+                cost_aware_report,
+            ) = context
+            if candidate.scoring_side == "yes":
+                chosen_book = yes_book
+                chosen_archive_entry = yes_archive_entry
+            else:
+                chosen_book = no_book
+                chosen_archive_entry = no_archive_entry
+            try:
+                paper_result = execute_paper_trade_from_screening(
+                    candidate=candidate,
+                    cost_aware_report=cost_aware_report,
+                    market=nm,
+                    book=chosen_book,
+                    raw_book_archive_entry=chosen_archive_entry,
+                    market_raw_archive_entry=market_raw_archive_entry,
+                    config=paper_pass_config,
+                    generated_at=timestamp,
+                )
+            except Exception:
+                continue
+            if paper_result.record is not None:
+                journal.append(paper_result.record)
 
     # 5. Assemble + validate invariants in __post_init__.
     return PaperStrategyCycleReport(

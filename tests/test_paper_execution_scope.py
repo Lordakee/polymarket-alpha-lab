@@ -1,58 +1,45 @@
-"""First live-layer scope contract for strategy_cycle.py.
+"""Scope contract for ``polymarket_alpha_lab.paper_execution``.
 
-First live-layer scope contract (pipeline.py has none); strategy_cycle.py is
-Protocol-only (does NOT import api -- depends on a local MarketDataClient
-Protocol; cli.py constructs the concrete client and injects it), setting a
-tighter live-layer precedent than pipeline.py.
+Stage 4 Task 1 leaf: paper-only in-memory execution. Pure function turning a
+screening-ready candidate + in-cycle context into a ``PaperTradeRecord`` via
+``simulate_order_book_fill``. No live/auth/wallet/order-placement surfaces.
+
+Six canonical scope tests plus the package-root export check and the README
+section boundary check (both wired by Stage 4 Task 2-4).
 """
 
 import ast
+import sys
 from pathlib import Path
-
-import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-MODULE_PATH = REPO_ROOT / "src" / "polymarket_alpha_lab" / "strategy_cycle.py"
+MODULE_PATH = REPO_ROOT / "src" / "polymarket_alpha_lab" / "paper_execution.py"
 PACKAGE_ROOT_PATH = REPO_ROOT / "src" / "polymarket_alpha_lab" / "__init__.py"
 README_PATH = REPO_ROOT / "README.md"
 
 EXPECTED_EXPORTS = (
-    "PaperStrategyCycleConfig",
-    "PaperStrategyCycleReport",
-    "PaperStrategyCycleLog",
-    "run_strategy_cycle",
+    "PaperExecutionConfig",
+    "PaperExecutionResult",
+    "PaperExecutionLog",
+    "execute_paper_trade_from_screening",
 )
 
 ALLOWED_IMPORT_MODULES = {
     "__future__",
-    "json",
     "dataclasses",
     "datetime",
     "decimal",
+    "hashlib",
+    "json",
     "pathlib",
     "typing",
-    # Q5: strategy_cycle.py is Protocol-only -- it does NOT import api. It reuses
-    # pipeline.MarketScanConfig (live-layer precedent), and wires the frozen
-    # Stage 1a leaves + cost-aware + screening + read-only normalize/archive/
-    # scoring/domain helpers. The concrete MarketDataClient is injected by cli.py.
-    "polymarket_alpha_lab.archive",
-    "polymarket_alpha_lab.book_imbalance_forecast",
-    "polymarket_alpha_lab.cost_aware_event_strategy",
-    "polymarket_alpha_lab.cost_aware_snapshot_builder",
     "polymarket_alpha_lab.domain",
-    "polymarket_alpha_lab.forecast_provider",
-    # Stage 4: the inline paper-execution pass journals a PaperTradeRecord per
-    # screening_ready candidate. ``journal`` (PaperTradeJournal) and
-    # ``paper_execution`` (PaperExecutionConfig + execute_paper_trade_from_screening)
-    # are now permitted because journaling paper trades IS the cycle's new Stage
-    # 4 responsibility (previously forbidden under the Stage 1b read-only boundary).
+    "polymarket_alpha_lab.paper",
     "polymarket_alpha_lab.journal",
-    "polymarket_alpha_lab.normalize",
-    "polymarket_alpha_lab.paper_execution",
-    "polymarket_alpha_lab.pipeline",
+    "polymarket_alpha_lab.research",
+    "polymarket_alpha_lab.cost_aware_event_strategy",
     "polymarket_alpha_lab.project_screening",
-    "polymarket_alpha_lab.scoring",
 }
 
 FORBIDDEN_IMPORT_PREFIXES = {
@@ -77,20 +64,20 @@ FORBIDDEN_IMPORT_PREFIXES = {
     "polymarket_alpha_lab.analytics",
     "polymarket_alpha_lab.analytics_history",
     "polymarket_alpha_lab.api",
+    "polymarket_alpha_lab.archive",
+    "polymarket_alpha_lab.book_imbalance_forecast",
     "polymarket_alpha_lab.cli",
     "polymarket_alpha_lab.forecast_evidence",
-    # NOTE: ``polymarket_alpha_lab.journal`` is intentionally NOT forbidden
-    # here -- Stage 4 wires an inline paper-execution pass that journals a
-    # PaperTradeRecord per screening_ready candidate via PaperTradeJournal
-    # (permitted in ALLOWED_IMPORT_MODULES; was forbidden under Stage 1b).
     "polymarket_alpha_lab.manual_review_queue",
-    "polymarket_alpha_lab.paper",
+    "polymarket_alpha_lab.normalize",
+    "polymarket_alpha_lab.pipeline",
     "polymarket_alpha_lab.positions",
     "polymarket_alpha_lab.proposal_packet",
     "polymarket_alpha_lab.proposal_review",
     "polymarket_alpha_lab.rejections",
-    "polymarket_alpha_lab.research",
     "polymarket_alpha_lab.risk",
+    "polymarket_alpha_lab.scoring",
+    "polymarket_alpha_lab.strategy_cycle",
     "py_clob_client",
     "requests",
     "requests_html",
@@ -108,13 +95,14 @@ FORBIDDEN_IMPORT_PREFIXES = {
     "websockets",
 }
 
-# NOTE: bare "client" is intentionally NOT forbidden here -- the mandated
-# public API is run_strategy_cycle(*, client: MarketDataClient, ...) and the
-# local Protocol is named MarketDataClient (Q5). The dangerous composed client
-# surfaces (liveclient, executionclient, transportclient, orderclient) remain
-# forbidden so no real execution/broker client type can slip in.
+# NOTE: bare "execution" is intentionally NOT forbidden here -- the module is
+# named ``paper_execution`` and its mandated public API is
+# ``execute_paper_trade_from_screening`` plus the ``PaperExecution*`` types.
+# Bare "order" is also NOT forbidden -- the leaf legitimately handles paper
+# orders via ``PaperOrder`` / ``PaperFill`` / ``simulate_order_book_fill``
+# (the pure paper simulate surface). Only the concrete LIVE surfaces are
+# forbidden so no real execution/broker/credential client can slip in.
 FORBIDDEN_NAME_FRAGMENTS = {
-    "account",
     "accountstate",
     "advice",
     "advisor",
@@ -129,8 +117,6 @@ FORBIDDEN_NAME_FRAGMENTS = {
     "credentialmanager",
     "credentials",
     "dataloader",
-    "execution",
-    "executionclient",
     "fetch",
     "financialadvice",
     "fromfile",
@@ -144,11 +130,7 @@ FORBIDDEN_NAME_FRAGMENTS = {
     "liveclient",
     "liveexecution",
     "loader",
-    "orderclient",
-    "orderinstruction",
-    "orderpayload",
     "orderplacement",
-    "orderrequest",
     "placeorder",
     "privatekey",
     "rank",
@@ -156,10 +138,9 @@ FORBIDDEN_NAME_FRAGMENTS = {
     "ranking",
     "recommend",
     "recommendation",
-    "routeorder",
     "sdk",
-    "sign",
     "signorder",
+    "sign",
     "submitorder",
     "tradeinstruction",
     "transport",
@@ -169,7 +150,6 @@ FORBIDDEN_NAME_FRAGMENTS = {
 }
 
 FORBIDDEN_PUBLIC_EXPORT_FRAGMENTS = {
-    "account",
     "advice",
     "advisor",
     "auth",
@@ -177,49 +157,94 @@ FORBIDDEN_PUBLIC_EXPORT_FRAGMENTS = {
     "browser",
     "client",
     "credential",
-    "execution",
     "financialadvice",
     "investment",
+    "killswitch",
     "live",
-    "orderclient",
-    "orderinstruction",
+    "liveexecution",
     "orderplacement",
-    "orderrequest",
     "placeorder",
+    "privatekey",
     "rank",
     "ranking",
     "recommend",
     "recommendation",
+    "submitorder",
     "transport",
     "wallet",
     "websocket",
 }
 
+# Names this leaf is permitted to reference even though they overlap with
+# paper-domain vocabulary (PaperOrder/PaperFill/simulate_order_book_fill are
+# the pure paper simulate surface imported from ``polymarket_alpha_lab.paper``).
+ALLOWED_REQUIRED_DOMAIN_NAMES = {
+    "OrderBookSnapshot",
+    "OrderBookLevel",
+    "NormalizedMarket",
+    "PaperOrder",
+    "PaperFill",
+    "PaperTradeRecord",
+    "ResearchPacket",
+    "PaperCostAwareEventStrategyReport",
+    "PaperCostAwareEventSideResult",
+    "PaperProjectScreeningCandidate",
+    "simulate_order_book_fill",
+    "RawArchiveEntry",
+    "TYPE_CHECKING",
+}
 
-def normalize_identifier(value):
+
+def normalize_identifier(value: str) -> str:
     return "".join(character for character in value.lower() if character.isalnum())
 
 
-def module_matches_prefix(module_name, prefix):
+def module_matches_prefix(module_name: str, prefix: str) -> bool:
     return module_name == prefix or module_name.startswith(f"{prefix}.")
 
 
-def parse_module(path=MODULE_PATH):
+def parse_module(path: Path = MODULE_PATH) -> ast.AST:
     return ast.parse(path.read_text(encoding="utf-8"))
 
 
-def imported_modules(tree):
-    modules = []
-    for node in ast.walk(tree):
+def _is_type_checking_guard(node: ast.AST) -> bool:
+    # Matches `if TYPE_CHECKING:` (the canonical runtime-false guard).
+    if not isinstance(node, ast.If):
+        return False
+    test = node.test
+    return isinstance(test, ast.Name) and test.id == "TYPE_CHECKING"
+
+
+def imported_modules(tree: ast.AST) -> list[str]:
+    """Return runtime-imported module names.
+
+    Imports guarded by ``if TYPE_CHECKING:`` are SKIPPED -- they never execute
+    at runtime, so they are invisible to the runtime dependency boundary. This
+    mirrors how the leaf legitimately references ``RawArchiveEntry`` for the
+    ``raw_book_archive_entry`` / ``raw_market_archive_entry`` annotations
+    (duck-typed at runtime) without importing ``archive`` at runtime.
+    """
+    modules: list[str] = []
+
+    def visit(node: ast.AST, guarded: bool) -> None:
         if isinstance(node, ast.Import):
-            modules.extend(alias.name for alias in node.names)
-        elif isinstance(node, ast.ImportFrom):
-            assert node.level == 0
-            modules.append(node.module or "")
+            if not guarded:
+                modules.extend(alias.name for alias in node.names)
+            return
+        if isinstance(node, ast.ImportFrom):
+            if not guarded:
+                assert node.level == 0
+                modules.append(node.module or "")
+            return
+        child_guarded = guarded or _is_type_checking_guard(node)
+        for child in ast.iter_child_nodes(node):
+            visit(child, child_guarded)
+
+    visit(tree, False)
     return modules
 
 
-def module_exports(tree):
+def module_exports(tree: ast.AST) -> tuple[str, ...]:
     assigned_exports = None
     for node in ast.walk(tree):
         if not isinstance(node, ast.Assign):
@@ -231,16 +256,15 @@ def module_exports(tree):
     return tuple(assigned_exports)
 
 
-def strategy_cycle_exports(exports):
+def paper_execution_exports(exports: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(
         name
         for name in exports
-        if name.startswith("PaperStrategyCycle")
-        or name == "run_strategy_cycle"
+        if name.startswith("PaperExecution") or name == "execute_paper_trade_from_screening"
     )
 
 
-def public_export_fragment_matches(name):
+def public_export_fragment_matches(name: str) -> bool:
     normalized = normalize_identifier(name)
     return any(
         normalize_identifier(fragment) in normalized
@@ -248,25 +272,13 @@ def public_export_fragment_matches(name):
     )
 
 
-# Names the Stage 4 inline paper-execution pass legitimately references even
-# though they overlap with the otherwise-forbidden "execution" fragment. The
-# leaf is ``paper_execution`` (paper-only/report-only); ``PaperExecutionConfig``
-# is its frozen config and ``paper_execution_config`` is the optional cycle
-# field that enables the default-off inline pass. Mirrors the
-# ALLOWED_REQUIRED_DOMAIN_NAMES carve-out in test_paper_execution_scope.
-ALLOWED_REQUIRED_DOMAIN_NAMES = {
-    "PaperExecutionConfig",
-    "paper_execution_config",
-}
-
-
-def test_strategy_cycle_imports_only_allowed_dependencies():
+def test_paper_execution_imports_only_allowed_dependencies():
     tree = parse_module()
     for module_name in imported_modules(tree):
         assert module_name in ALLOWED_IMPORT_MODULES, module_name
 
 
-def test_strategy_cycle_does_not_import_live_or_loader_surfaces():
+def test_paper_execution_does_not_import_live_or_loader_surfaces():
     tree = parse_module()
     for module_name in imported_modules(tree):
         assert not any(
@@ -275,7 +287,7 @@ def test_strategy_cycle_does_not_import_live_or_loader_surfaces():
         ), module_name
 
 
-def test_strategy_cycle_public_exports_exactly_paper_report_api():
+def test_paper_execution_public_exports_exactly_paper_report_api():
     tree = parse_module()
     assigned_exports = module_exports(tree)
 
@@ -284,9 +296,9 @@ def test_strategy_cycle_public_exports_exactly_paper_report_api():
         assert not public_export_fragment_matches(name), name
 
 
-def test_strategy_cycle_does_not_define_forbidden_live_or_advice_surface_names():
+def test_paper_execution_does_not_define_forbidden_live_or_advice_surface_names():
     tree = parse_module()
-    names = set()
+    names: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             names.add(node.name)
@@ -315,36 +327,49 @@ def test_strategy_cycle_does_not_define_forbidden_live_or_advice_surface_names()
         )
 
 
-def test_package_root_exports_strategy_cycle_api_only():
+def test_paper_execution_archive_reference_is_type_checking_only():
+    # MINOR (a): archive import MUST live under `if TYPE_CHECKING:` only so it
+    # never executes at runtime (duck-typed payload_path/payload_sha256).
+    tree = parse_module()
+    runtime_imports = imported_modules(tree)
+    assert not any(
+        module_matches_prefix(name, "polymarket_alpha_lab.archive")
+        for name in runtime_imports
+    ), runtime_imports
+    # And TYPE_CHECKING must be imported (used for the guard).
+    assert "typing" in runtime_imports
+
+
+def test_package_root_exports_paper_execution_api_only():
     tree = parse_module(PACKAGE_ROOT_PATH)
     package_exports = module_exports(tree)
 
-    assert strategy_cycle_exports(package_exports) == EXPECTED_EXPORTS
-    for name in strategy_cycle_exports(package_exports):
+    assert paper_execution_exports(package_exports) == EXPECTED_EXPORTS
+    for name in paper_execution_exports(package_exports):
         assert not public_export_fragment_matches(name), name
 
     imported_names = set()
     for node in ast.walk(tree):
         if (
             isinstance(node, ast.ImportFrom)
-            and node.module == "polymarket_alpha_lab.strategy_cycle"
+            and node.module == "polymarket_alpha_lab.paper_execution"
         ):
             imported_names.update(alias.name for alias in node.names)
     assert imported_names == set(EXPECTED_EXPORTS)
 
 
-def test_readme_strategy_cycle_sections_keep_paper_boundaries():
+def test_readme_paper_execution_sections_keep_paper_boundaries():
     readme = README_PATH.read_text(encoding="utf-8")
-    status_start = readme.index("## Strategy Cycle v0 Status")
-    api_start = readme.index("## Strategy Cycle v0 Python API", status_start)
+    status_start = readme.index("## Paper Execution v0 Status")
+    api_start = readme.index("## Paper Execution v0 Python API", status_start)
     next_section = readme.find("\n## ", api_start + 1)
     if next_section == -1:
         next_section = len(readme)
     normalized = normalize_identifier(readme[status_start:next_section])
 
     required_fragments = (
-        "strategycyclev0status",
-        "strategycyclev0pythonapi",
+        "paperexecutionv0status",
+        "paperexecutionv0pythonapi",
         "paperonly",
         "reportonly",
         "nofetch",

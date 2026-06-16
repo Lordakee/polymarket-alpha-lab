@@ -15,6 +15,7 @@ from polymarket_alpha_lab.cost_aware_event_strategy import (
 )
 from polymarket_alpha_lab.cost_aware_snapshot_builder import PaperCostAwareSnapshotConfig
 from polymarket_alpha_lab.forecast_provider import PaperForecastConfig
+from polymarket_alpha_lab.paper_execution import PaperExecutionConfig
 from polymarket_alpha_lab.pipeline import MarketScanConfig
 from polymarket_alpha_lab.project_screening import PaperProjectScreeningConfig
 from polymarket_alpha_lab.strategy_cycle import (
@@ -692,3 +693,143 @@ def test_strategy_cycle_book_imbalance_provider_reaches_snapshot_ready_end_to_en
     # Dispatch is downstream of fetch: both providers fetched the same books.
     assert set(client_naive.get_order_book_calls) == {"yes-dispatch", "no-dispatch"}
     assert set(client_bi.get_order_book_calls) == {"yes-dispatch", "no-dispatch"}
+
+
+# ---------------------------------------------------------------------------
+# Stage 4 inline paper execution (additive/default-off)
+# ---------------------------------------------------------------------------
+
+
+def _screening_ready_market_and_books():
+    """Binary market whose NO side yields a screening_ready candidate.
+
+    Naive forecast: fair_probability_yes = yes_ask = 0.55, so the NO model
+    probability is 0.45 and the NO ask is 0.40 -> net_edge_no = 0.05 (>=
+    min_net_edge 0.01). Tight yes spread (0.02 <= 0.03) + depth 100 -> high
+    confidence (0.75 >= 0.70). screening_score = net_edge * weight = 0.05
+    >= min_screening_score 0.01 -> screening_ready on the NO side.
+    """
+    market = raw_market(
+        condition_id="0xcondPaper",
+        slug="market-paper",
+        question="Will Paper happen?",
+        token_ids=("yes-paper", "no-paper"),
+    )
+    books = {
+        "yes-paper": raw_book(
+            "yes-paper",
+            bid="0.5300",
+            ask="0.5500",
+            size="100.0000",
+        ),
+        "no-paper": raw_book(
+            "no-paper",
+            bid="0.3700",
+            ask="0.4000",
+            size="100.0000",
+        ),
+    }
+    return market, books
+
+
+def test_strategy_cycle_executes_paper_trades_inline_when_configured(tmp_path):
+    market, books = _screening_ready_market_and_books()
+    client = FakeMarketDataClient([market], books)
+    journal_path = tmp_path / "paper-trades.jsonl"
+    config = cycle_config(
+        paper_execution_config=PaperExecutionConfig(
+            config_version="paper-execution-v1",
+        ),
+        paper_trade_journal_path=journal_path,
+    )
+
+    report = run_cycle(client, tmp_path, config=config)
+
+    # Sanity: the candidate really is screening_ready (the gate for execution).
+    assert report.snapshot_ready_count == 1
+    assert report.screening_report is not None
+    ready = [
+        c
+        for c in report.screening_report.candidates
+        if c.screening_status == "screening_ready"
+    ]
+    assert len(ready) == 1
+    assert ready[0].scoring_side == "no"
+
+    # Stage 4 acceptance: the inline pass journaled exactly one paper trade
+    # for the screening_ready candidate (NO side, marker strategy_type).
+    assert journal_path.exists()
+    lines = journal_path.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1
+    record = json.loads(lines[0])
+    assert record["market_slug"] == "market-paper"
+    assert record["outcome_name"] == "NO"
+    assert record["strategy_type"] == "book_imbalance_screening_paper"
+    assert record["order_side"] == "buy"
+    # PaperTradeRecord is paper-only by construction (decimal-string fills,
+    # marker strategy_type, sizing_limiter + planned_exit_rule populated).
+    assert record["sizing_limiter"] == "screening_book_depth"
+    assert record["planned_exit_rule"] == "hold_to_resolution"
+
+
+def test_strategy_cycle_no_paper_execution_when_config_is_none(tmp_path):
+    market, books = _screening_ready_market_and_books()
+    client = FakeMarketDataClient([market], books)
+    journal_path = tmp_path / "absent-paper-trades.jsonl"
+    # Default config: paper_execution_config is None -> no inline pass, no
+    # journal write. Stage 1b/2/3 behavior preserved byte-identically.
+    config = cycle_config()
+
+    report = run_cycle(client, tmp_path, config=config)
+
+    assert config.paper_execution_config is None
+    assert config.paper_trade_journal_path is None
+    # The cycle still produces the screening candidate (default path intact)...
+    assert report.snapshot_ready_count == 1
+    assert report.screening_report is not None
+    assert report.screening_report.ready_count == 1
+    # ...but NO paper journal was written.
+    assert not journal_path.exists()
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    (
+        (
+            {
+                "paper_execution_config": PaperExecutionConfig(
+                    config_version="paper-execution-v1",
+                ),
+            },
+            "paper_execution_config and paper_trade_journal_path must both",
+        ),
+        (
+            {
+                "paper_trade_journal_path": Path("paper-trades.jsonl"),
+            },
+            "paper_execution_config and paper_trade_journal_path must both",
+        ),
+        (
+            {
+                "paper_execution_config": "not-a-config",
+                "paper_trade_journal_path": Path("paper-trades.jsonl"),
+            },
+            "paper_execution_config must be a PaperExecutionConfig",
+        ),
+        (
+            {
+                "paper_execution_config": PaperExecutionConfig(
+                    config_version="paper-execution-v1",
+                ),
+                "paper_trade_journal_path": "not-a-path",
+            },
+            "paper_trade_journal_path must be a Path",
+        ),
+    ),
+)
+def test_strategy_cycle_config_rejects_invalid_paper_execution_inputs(
+    overrides,
+    message,
+):
+    with pytest.raises(ValueError, match=message):
+        cycle_config(**overrides)

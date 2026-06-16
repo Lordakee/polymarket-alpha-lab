@@ -245,6 +245,12 @@ from polymarket_alpha_lab.proposal_evidence_comparison_artifact_registry import 
 )
 from polymarket_alpha_lab.journal import PaperTradeJournal, PaperTradeRecord
 from polymarket_alpha_lab.paper import PaperFill, PaperOrder, simulate_order_book_fill
+from polymarket_alpha_lab.paper_execution import (
+    PaperExecutionConfig,
+    PaperExecutionResult,
+    PaperExecutionLog,
+    execute_paper_trade_from_screening,
+)
 from polymarket_alpha_lab.positions import (
     PaperNavLog,
     PaperNavSnapshot,
@@ -531,6 +537,21 @@ def test_strategy_cycle_public_api_exports():
     assert lab.PaperStrategyCycleReport is PaperStrategyCycleReport
     assert lab.PaperStrategyCycleLog is PaperStrategyCycleLog
     assert lab.run_strategy_cycle is run_strategy_cycle
+
+
+def test_paper_execution_public_api_exports():
+    expected_exports = {
+        "PaperExecutionConfig",
+        "PaperExecutionResult",
+        "PaperExecutionLog",
+        "execute_paper_trade_from_screening",
+    }
+
+    assert expected_exports <= set(lab.__all__)
+    assert lab.PaperExecutionConfig is PaperExecutionConfig
+    assert lab.PaperExecutionResult is PaperExecutionResult
+    assert lab.PaperExecutionLog is PaperExecutionLog
+    assert lab.execute_paper_trade_from_screening is execute_paper_trade_from_screening
 
 
 def test_level_2_node_1_public_api_exports():

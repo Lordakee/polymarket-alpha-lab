@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Callable
@@ -17,6 +18,7 @@ from polymarket_alpha_lab.cost_aware_snapshot_builder import (
     PaperCostAwareSnapshotConfig,
 )
 from polymarket_alpha_lab.forecast_provider import PaperForecastConfig
+from polymarket_alpha_lab.paper_execution import PaperExecutionConfig
 from polymarket_alpha_lab.pipeline import MarketScanConfig, run_market_scan
 from polymarket_alpha_lab.project_screening import PaperProjectScreeningConfig
 from polymarket_alpha_lab.strategy_cycle import (
@@ -63,6 +65,19 @@ def main(
         default=True,
         dest="prefilter",
     )
+    # Stage 4 (default-off): --paper-execute turns on the inline paper-execution
+    # pass inside run_strategy_cycle; --paper-journal selects the JSONL sink.
+    cycle.add_argument(
+        "--paper-execute",
+        action="store_true",
+        dest="paper_execute",
+    )
+    cycle.add_argument(
+        "--paper-journal",
+        type=Path,
+        default=Path("artifacts/paper-trades.jsonl"),
+        dest="paper_journal",
+    )
 
     args = parser.parse_args(argv)
 
@@ -93,6 +108,8 @@ def main(
             cycle_config = _build_default_cycle_config(
                 max_markets_per_cycle=args.max_markets,
                 prefilter_by_score=args.prefilter,
+                paper_execute=args.paper_execute,
+                paper_journal=args.paper_journal,
             )
             report = cycle_runner(
                 client=client_factory(),
@@ -113,15 +130,19 @@ def _build_default_cycle_config(
     *,
     max_markets_per_cycle: int,
     prefilter_by_score: bool,
+    paper_execute: bool = False,
+    paper_journal: Path | None = None,
 ) -> PaperStrategyCycleConfig:
     """Assemble the frozen paper-only cycle config used by the strategy-cycle CLI.
 
     All nested configs use the same canonical ``config_version`` and rely on
     their dataclass defaults except ``cost_assumptions`` (no defaults), which
     is given zero-cost Decimal assumptions for the research/paper baseline.
+    When ``paper_execute`` is set, the Stage 4 inline paper-execution pass is
+    enabled with the canonical ``PaperExecutionConfig`` and the journal sink.
     """
 
-    return PaperStrategyCycleConfig(
+    base = PaperStrategyCycleConfig(
         config_version="strategy-cycle-v1",
         forecast_config=PaperForecastConfig(config_version="strategy-cycle-v1"),
         snapshot_config=PaperCostAwareSnapshotConfig(
@@ -143,6 +164,18 @@ def _build_default_cycle_config(
         ),
         max_markets_per_cycle=max_markets_per_cycle,
         prefilter_by_score=prefilter_by_score,
+    )
+    if not paper_execute:
+        return base
+    journal_path = paper_journal if paper_journal is not None else Path(
+        "artifacts/paper-trades.jsonl",
+    )
+    return replace(
+        base,
+        paper_execution_config=PaperExecutionConfig(
+            config_version="paper-execution-v1",
+        ),
+        paper_trade_journal_path=journal_path,
     )
 
 
