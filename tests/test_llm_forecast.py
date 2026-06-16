@@ -46,12 +46,14 @@ class FakeResult:
         raw_content="",
         model_name="glm-4-flash",
         finish_reason="stop",
+        reasoning="",
     ):
         self.raw_p_yes = raw_p_yes
         self.raw_confidence = raw_confidence
         self.raw_content = raw_content
         self.model_name = model_name
         self.finish_reason = finish_reason
+        self.reasoning = reasoning
 
 
 def forecast_config(**overrides):
@@ -157,6 +159,58 @@ def test_llm_basis_values_pin_llm_glm_v0():
 
 
 # ---------------------------------------------------------------------------
+# Reasoning forwarding (chain-of-thought audit trail)
+# ---------------------------------------------------------------------------
+
+
+def test_llm_result_with_reasoning_produces_forecast_with_that_reasoning():
+    # A result carrying chain-of-thought reasoning forwards it verbatim onto
+    # the forecast (audit trail + calibration evidence).
+    result = FakeResult(
+        raw_p_yes=Decimal("0.65"),
+        raw_confidence=Decimal("0.6"),
+        raw_content='{"reasoning": "Base rate favors NO; volume is high.", '
+        '"p_yes": 0.65, "confidence": 0.6}',
+        reasoning="Base rate favors NO; volume is high.",
+    )
+
+    forecast = build(result=result)
+
+    assert forecast.reasoning == "Base rate favors NO; volume is high."
+    assert isinstance(forecast.reasoning, str)
+
+
+def test_llm_result_without_reasoning_defaults_to_empty_string():
+    # Backward compat: a result that omits reasoning (pre-existing callers)
+    # yields an empty-string forecast reasoning, never None.
+    result = FakeResult(
+        raw_p_yes=Decimal("0.65"),
+        raw_confidence=Decimal("0.6"),
+        raw_content='{"p_yes": 0.65, "confidence": 0.6}',
+    )
+
+    forecast = build(result=result)
+
+    assert forecast.reasoning == ""
+    assert isinstance(forecast.reasoning, str)
+
+
+def test_llm_parse_fail_result_carries_empty_reasoning():
+    # A parse-failed result has no reasoning; the forecast keeps "" so the
+    # audit trail is well-formed even when the LLM produced nothing usable.
+    result = FakeResult(
+        raw_p_yes=None,
+        raw_confidence=None,
+        raw_content="not json",
+    )
+
+    forecast = build(result=result)
+
+    assert forecast.reasoning == ""
+    assert forecast.reason_codes == ("llm_parse_failed",)
+
+
+# ---------------------------------------------------------------------------
 # I2: parse-fail fallback + is-not-None guards
 # ---------------------------------------------------------------------------
 
@@ -249,17 +303,20 @@ def test_llm_transport_concrete_result_satisfies_leaf_protocol():
     transport_result = ProbabilityModelResult(
         raw_p_yes=Decimal("0.35"),
         raw_confidence=Decimal("0.6"),
-        raw_content='{"p_yes": 0.35, "confidence": 0.6}',
+        raw_content='{"reasoning": "Historical base rate ~0.35.", '
+        '"p_yes": 0.35, "confidence": 0.6}',
         model_name="glm-4-flash",
         finish_reason="stop",
         token_usage=125,
         elapsed_seconds=Decimal("1.0"),
+        reasoning="Historical base rate ~0.35.",
     )
     assert isinstance(transport_result, _ProbabilityModelResult)
 
     forecast = build(result=transport_result)
     assert forecast.fair_probability_yes == Decimal("0.350000")
     assert forecast.confidence == Decimal("0.600000")
+    assert forecast.reasoning == "Historical base rate ~0.35."
     assert forecast.reason_codes == ("llm_probability_estimated",)
 
 
@@ -499,7 +556,72 @@ def test_transport_estimate_parse_fail_yields_none_decimals():
     assert result.raw_p_yes is None
     assert result.raw_confidence is None
     assert result.raw_content == "this is not json at all"
+    assert result.reasoning == ""
     assert result.token_usage == 125
+
+
+def test_transport_estimate_parses_reasoning_from_content():
+    # Chain-of-thought reasoning appears in the LLM JSON content alongside
+    # p_yes/confidence and is parsed verbatim onto ProbabilityModelResult.
+    transport = GLMChatTransport(api_token="secret-token")
+    envelope = _zhipu_envelope(
+        '{"reasoning": "Base rate 0.3; high volume supports current price.", '
+        '"p_yes": 0.4, "confidence": 0.7}'
+    )
+
+    with patch(
+        "polymarket_alpha_lab.llm_research_transport.urlopen",
+        return_value=_FakeResponse(json.dumps(envelope).encode("utf-8")),
+    ):
+        result = transport.estimate(
+            market_question="Will X happen?",
+            outcome_names=("Yes", "No"),
+        )
+
+    assert result.reasoning == "Base rate 0.3; high volume supports current price."
+    assert result.raw_p_yes == Decimal("0.4")
+    assert result.raw_confidence == Decimal("0.7")
+
+
+def test_transport_estimate_content_without_reasoning_yields_empty_string():
+    # Backward compat: older LLM content that omits the reasoning key yields
+    # reasoning="" (never None) so downstream code can rely on a str type.
+    transport = GLMChatTransport(api_token="secret-token")
+    envelope = _zhipu_envelope('{"p_yes": 0.5, "confidence": 0.5}')
+
+    with patch(
+        "polymarket_alpha_lab.llm_research_transport.urlopen",
+        return_value=_FakeResponse(json.dumps(envelope).encode("utf-8")),
+    ):
+        result = transport.estimate(
+            market_question="Will X happen?",
+            outcome_names=("Yes", "No"),
+        )
+
+    assert result.reasoning == ""
+    assert isinstance(result.reasoning, str)
+    assert result.raw_p_yes == Decimal("0.5")
+
+
+def test_transport_estimate_non_string_reasoning_yields_empty_string():
+    # Defensive: a malformed reasoning value (number/list) is coerced to ""
+    # rather than propagated as a non-string type.
+    transport = GLMChatTransport(api_token="secret-token")
+    envelope = _zhipu_envelope(
+        '{"reasoning": 12345, "p_yes": 0.5, "confidence": 0.5}'
+    )
+
+    with patch(
+        "polymarket_alpha_lab.llm_research_transport.urlopen",
+        return_value=_FakeResponse(json.dumps(envelope).encode("utf-8")),
+    ):
+        result = transport.estimate(
+            market_question="Will X happen?",
+            outcome_names=("Yes", "No"),
+        )
+
+    assert result.reasoning == ""
+    assert isinstance(result.reasoning, str)
 
 
 def test_transport_network_failure_yields_empty_result_not_exception():
@@ -591,7 +713,11 @@ def test_transport_estimate_none_market_context_omits_context_lines_and_includes
         "Question: Will X happen?\n"
         "Outcomes: Yes, No\n"
         "\n"
-        'Estimate P(YES). Return JSON: {"p_yes": <number 0-1>, "confidence": <number 0-1>}'
+        "Think step by step: first write a brief explanation of your reasoning "
+        "(base rate, evidence, time horizon, market efficiency, rules clarity), "
+        "then commit to your probability. Return JSON: "
+        '{"reasoning": "<brief explanation>", '
+        '"p_yes": <number 0-1>, "confidence": <number 0-1>}'
     )
     assert "volume_24h" not in user_prompt
 
@@ -632,8 +758,8 @@ def test_transport_estimate_appends_market_context_to_prompt_before_instruction(
     # Every context pair is present.
     for key, value in market_context.items():
         assert f"{key}: {value}" in user_prompt, key
-    # All context lines precede the "Estimate P(YES)" instruction.
-    estimate_idx = user_prompt.index("Estimate P(YES)")
+    # All context lines precede the "Think step by step" instruction block.
+    estimate_idx = user_prompt.index("Think step by step")
     for key, value in market_context.items():
         assert user_prompt.index(f"{key}: {value}") < estimate_idx, key
 
@@ -661,5 +787,7 @@ def test_transport_estimate_empty_market_context_omits_context_lines():
     user_prompt = captured["messages"][-1]["content"]
     assert "volume_24h" not in user_prompt
     assert user_prompt.endswith(
-        'Estimate P(YES). Return JSON: {"p_yes": <number 0-1>, "confidence": <number 0-1>}'
+        "then commit to your probability. Return JSON: "
+        '{"reasoning": "<brief explanation>", '
+        '"p_yes": <number 0-1>, "confidence": <number 0-1>}'
     )

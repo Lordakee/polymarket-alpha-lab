@@ -101,7 +101,8 @@ class GLMChatTransport:
     Uses stdlib ``urllib.request`` (POST, Bearer header, JSON body) exactly
     like ``api.py``'s ``UrlopenTransport``. The request forces structured JSON
     output (``response_format: {"type": "json_object"}``) and asks the model
-    for ``{"p_yes": <0-1>, "confidence": <0-1>}``.
+    for ``{"reasoning": <str>, "p_yes": <0-1>, "confidence": <0-1>}`` so the
+    chain-of-thought reasoning is captured for calibration + audit trail.
 
     ``api_token`` is caller-supplied (never read from env/disk here) and is
     kept ONLY on this dataclass -- it never reaches ``ProbabilityModelResult``
@@ -246,7 +247,7 @@ class GLMChatTransport:
             else self.model
         )
 
-        raw_p_yes, raw_confidence = _parse_probability_content(raw_content)
+        raw_p_yes, raw_confidence, reasoning = _parse_probability_content(raw_content)
         return ProbabilityModelResult(
             raw_p_yes=raw_p_yes,
             raw_confidence=raw_confidence,
@@ -255,6 +256,7 @@ class GLMChatTransport:
             finish_reason=finish_reason,
             token_usage=token_usage,
             elapsed_seconds=elapsed_seconds,
+            reasoning=reasoning,
         )
 
 
@@ -277,6 +279,10 @@ class ProbabilityModelResult:
     finish_reason: str
     token_usage: int
     elapsed_seconds: Decimal
+    # Chain-of-thought reasoning extracted from the LLM's JSON content. Empty
+    # string default preserves backward compatibility (any result constructed
+    # without reasoning, or a parse failure, yields ""). Never None.
+    reasoning: str = ""
 
     def __post_init__(self) -> None:
         if self.raw_p_yes is not None:
@@ -302,6 +308,8 @@ class ProbabilityModelResult:
             raise ValueError("elapsed_seconds must be a Decimal")
         if not self.elapsed_seconds.is_finite() or self.elapsed_seconds < _ZERO:
             raise ValueError("elapsed_seconds must be a nonnegative finite Decimal")
+        if not isinstance(self.reasoning, str):
+            raise ValueError("reasoning must be a string")
 
 
 def _build_prompt(
@@ -322,31 +330,40 @@ def _build_prompt(
             lines.append(f"{key}: {value}")
     lines.append("")
     lines.append(
-        'Estimate P(YES). Return JSON: '
-        '{"p_yes": <number 0-1>, "confidence": <number 0-1>}'
+        "Think step by step: first write a brief explanation of your reasoning "
+        '(base rate, evidence, time horizon, market efficiency, rules clarity), '
+        "then commit to your probability. Return JSON: "
+        '{"reasoning": "<brief explanation>", '
+        '"p_yes": <number 0-1>, "confidence": <number 0-1>}'
     )
     return "\n".join(lines)
 
 
 def _parse_probability_content(
     content: str,
-) -> tuple[Decimal | None, Decimal | None]:
-    """Parse the LLM JSON content into (p_yes, confidence) Decimals or Nones.
+) -> tuple[Decimal | None, Decimal | None, str]:
+    """Parse the LLM JSON content into (p_yes, confidence, reasoning).
 
     I3: uses ``json.loads(content, parse_float=Decimal)`` so float literals
     become ``Decimal`` (never ``float``). Any parse/type failure yields
-    ``(None, None)`` so the leaf records an ``llm_parse_failed`` reason.
+    ``(None, None, "")`` so the leaf records an ``llm_parse_failed`` reason and
+    the reasoning defaults to empty. ``reasoning`` is coerced to ``str`` (any
+    non-string value, e.g. a number/list, yields "").
     """
     if not content:
-        return None, None
+        return None, None, ""
     try:
         data = json.loads(content, parse_float=Decimal)
     except (json.JSONDecodeError, ValueError):
-        return None, None
+        return None, None, ""
     if not isinstance(data, dict):
-        return None, None
-    return _as_decimal_or_none(data.get("p_yes")), _as_decimal_or_none(
-        data.get("confidence")
+        return None, None, ""
+    reasoning = data.get("reasoning")
+    reasoning_str = reasoning if isinstance(reasoning, str) else ""
+    return (
+        _as_decimal_or_none(data.get("p_yes")),
+        _as_decimal_or_none(data.get("confidence")),
+        reasoning_str,
     )
 
 

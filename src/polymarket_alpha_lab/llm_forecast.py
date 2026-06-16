@@ -82,6 +82,9 @@ class _ProbabilityModelResult(Protocol):
     @property
     def finish_reason(self) -> str: ...
 
+    @property
+    def reasoning(self) -> str: ...
+
 
 @dataclass(frozen=True)
 class PaperLLMForecastConfig:
@@ -119,6 +122,7 @@ class PaperLLMForecast:
     model_name: str
     raw_p_yes: Decimal | None
     reason_codes: tuple[str, ...]
+    reasoning: str = ""
     paper_only: bool = True
     report_only: bool = True
 
@@ -151,6 +155,8 @@ class PaperLLMForecast:
             "reason_codes",
             _normalize_string_tuple("reason_codes", self.reason_codes),
         )
+        if not isinstance(self.reasoning, str):
+            raise ValueError("reasoning must be a string")
         if self.paper_only is not True:
             raise ValueError("paper_only must be True")
         if self.report_only is not True:
@@ -231,6 +237,8 @@ def build_paper_llm_forecast(
         else config.model_name
     )
 
+    reasoning = result.reasoning if isinstance(result.reasoning, str) else ""
+
     return PaperLLMForecast(
         generated_at=generated_at,
         config_version=config.config_version,
@@ -242,6 +250,7 @@ def build_paper_llm_forecast(
         model_name=model_name,
         raw_p_yes=raw_p_yes,
         reason_codes=(primary_reason,),
+        reasoning=reasoning,
         paper_only=True,
         report_only=True,
     )
@@ -328,6 +337,7 @@ def _validate_report_tree(forecast: PaperLLMForecast) -> None:
         model_name=forecast.model_name,
         raw_p_yes=forecast.raw_p_yes,
         reason_codes=forecast.reason_codes,
+        reasoning=forecast.reasoning,
         paper_only=forecast.paper_only,
         report_only=forecast.report_only,
     )
