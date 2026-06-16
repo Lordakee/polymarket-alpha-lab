@@ -51,6 +51,13 @@ ALLOWED_IMPORT_MODULES = {
     # Stage 6: PaperStrategyCycleLog.read reuses the shared recursive
     # json_recovery.from_jsonable helper to reconstruct the nested report tree.
     "polymarket_alpha_lab.json_recovery",
+    # Stage 8: the LLM forecast provider routes each binary market through a
+    # caller-supplied read-only probability-model transport (Zhipu GLM via stdlib
+    # urllib, same research-fetch class as api.py) and the pure transform leaf.
+    # ``llm_research_transport`` is permitted because the read-only GLM estimate
+    # IS the cycle's Stage 8 job; ``llm_forecast`` is the network-free leaf.
+    "polymarket_alpha_lab.llm_forecast",
+    "polymarket_alpha_lab.llm_research_transport",
     "polymarket_alpha_lab.normalize",
     "polymarket_alpha_lab.paper_execution",
     "polymarket_alpha_lab.pipeline",
@@ -260,6 +267,13 @@ def public_export_fragment_matches(name):
 ALLOWED_REQUIRED_DOMAIN_NAMES = {
     "PaperExecutionConfig",
     "paper_execution_config",
+    # Stage 8: the LLM forecast provider injects a GLMChatTransport and the LLM
+    # forecast config. ``llm_transport`` and ``GLMChatTransport`` carry the
+    # otherwise-forbidden "transport" fragment; this carve-out authorizes them
+    # because the read-only GLM estimate is the cycle's Stage 8 job (analogous
+    # to how Stage 4 carved out PaperExecutionConfig / paper_execution_config).
+    "GLMChatTransport",
+    "llm_transport",
 }
 
 

@@ -42,6 +42,17 @@ from polymarket_alpha_lab.book_imbalance_forecast import (
     PaperBookImbalanceForecastConfig,
     build_paper_book_imbalance_forecast,
 )
+# Stage 8 (additive/default-off): the LLM forecast provider routes through a
+# caller-supplied read-only probability-model transport (Zhipu GLM via stdlib
+# urllib, same research-fetch class as api.py) and the pure transform leaf.
+# ``llm_research_transport`` is permitted in this scope contract because the
+# read-only GLM estimate IS the cycle's Stage 8 job (analogous to how Stage 4
+# permitted ``journal``/``paper_execution``).
+from polymarket_alpha_lab.llm_forecast import (
+    PaperLLMForecastConfig,
+    build_paper_llm_forecast,
+)
+from polymarket_alpha_lab.llm_research_transport import GLMChatTransport
 from polymarket_alpha_lab.cost_aware_event_strategy import (
     PaperCostAwareEventCostAssumptions,
     PaperCostAwareEventStrategyConfig,
@@ -121,6 +132,13 @@ class PaperStrategyCycleConfig:
     prefilter_by_score: bool = True
     forecast_provider: str = "naive"
     book_imbalance_config: PaperBookImbalanceForecastConfig | None = None
+    # Stage 8 (additive/default-off): when forecast_provider == "llm" the cycle
+    # routes each binary market through a caller-supplied read-only
+    # probability-model transport and the pure LLM forecast leaf. Both must be
+    # supplied together when the dispatch selects "llm"; default None keeps
+    # Stage 1b/2/3/4 behavior unchanged.
+    llm_transport: GLMChatTransport | None = None
+    llm_forecast_config: PaperLLMForecastConfig | None = None
     # Stage 4 (additive/default-off): when both are set, run_strategy_cycle
     # runs an inline paper-execution pass after screening. Invariant: both
     # None or both non-None. Default None = Stage 1b/2/3 behavior unchanged.
@@ -158,10 +176,10 @@ class PaperStrategyCycleConfig:
         if not isinstance(self.prefilter_by_score, bool):
             raise ValueError("prefilter_by_score must be a bool")
         _require_canonical_string("forecast_provider", self.forecast_provider)
-        if self.forecast_provider not in ("naive", "book_imbalance"):
+        if self.forecast_provider not in ("naive", "book_imbalance", "llm"):
             raise ValueError(
                 "forecast_provider must be one of "
-                "('naive', 'book_imbalance')",
+                "('naive', 'book_imbalance', 'llm')",
             )
         if self.book_imbalance_config is not None and not isinstance(
             self.book_imbalance_config,
@@ -180,6 +198,29 @@ class PaperStrategyCycleConfig:
             raise ValueError(
                 "book_imbalance_config is required when "
                 "forecast_provider == 'book_imbalance'",
+            )
+        if self.llm_transport is not None and not isinstance(
+            self.llm_transport,
+            GLMChatTransport,
+        ):
+            raise ValueError("llm_transport must be a GLMChatTransport")
+        if self.llm_forecast_config is not None and not isinstance(
+            self.llm_forecast_config,
+            PaperLLMForecastConfig,
+        ):
+            raise ValueError(
+                "llm_forecast_config must be a PaperLLMForecastConfig",
+            )
+        # C1 fix (Stage 8): run_strategy_cycle dereferences llm_transport and
+        # llm_forecast_config in the dispatch branch, so both must be supplied
+        # when forecast_provider selects "llm".
+        if (
+            self.forecast_provider == "llm"
+            and (self.llm_transport is None or self.llm_forecast_config is None)
+        ):
+            raise ValueError(
+                "llm_transport and llm_forecast_config are required when "
+                "forecast_provider == 'llm'",
             )
         # Stage 4 invariant: paper_execution_config and paper_trade_journal_path
         # must both be set or both be None (the inline pass needs both).
@@ -438,7 +479,7 @@ def run_strategy_cycle(
                     config=cycle_config.forecast_config,
                     generated_at=timestamp,
                 )
-            else:  # "book_imbalance"
+            elif cycle_config.forecast_provider == "book_imbalance":
                 bi_config = cycle_config.book_imbalance_config
                 if bi_config is None:
                     raise ValueError("book_imbalance_config is required")
@@ -447,6 +488,26 @@ def run_strategy_cycle(
                     yes_book,
                     no_book,
                     config=bi_config,
+                    generated_at=timestamp,
+                )
+            else:  # "llm"
+                llm_config = cycle_config.llm_forecast_config
+                if cycle_config.llm_transport is None or llm_config is None:
+                    raise ValueError(
+                        "llm_transport and llm_forecast_config are required",
+                    )
+                outcome_names = tuple(token.outcome_name for token in nm.tokens)
+                question_for_estimate = nm.market.question[
+                    : llm_config.max_question_chars
+                ]
+                llm_result = cycle_config.llm_transport.estimate(
+                    market_question=question_for_estimate,
+                    outcome_names=outcome_names,
+                )
+                forecast = build_paper_llm_forecast(
+                    nm,
+                    result=llm_result,
+                    config=llm_config,
                     generated_at=timestamp,
                 )
             attempt = build_paper_cost_aware_event_market_snapshot(

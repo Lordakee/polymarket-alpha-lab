@@ -1,5 +1,5 @@
 import json
-from dataclasses import FrozenInstanceError, replace
+from dataclasses import FrozenInstanceError, dataclass, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -15,6 +15,11 @@ from polymarket_alpha_lab.cost_aware_event_strategy import (
 )
 from polymarket_alpha_lab.cost_aware_snapshot_builder import PaperCostAwareSnapshotConfig
 from polymarket_alpha_lab.forecast_provider import PaperForecastConfig
+from polymarket_alpha_lab.llm_forecast import PaperLLMForecastConfig
+from polymarket_alpha_lab.llm_research_transport import (
+    GLMChatTransport,
+    ProbabilityModelResult,
+)
 from polymarket_alpha_lab.paper_execution import PaperExecutionConfig
 from polymarket_alpha_lab.pipeline import MarketScanConfig
 from polymarket_alpha_lab.project_screening import PaperProjectScreeningConfig
