@@ -66,6 +66,9 @@ from polymarket_alpha_lab.strategy_risk_audit_log import PaperStrategyRiskAuditL
 
 if TYPE_CHECKING:
     from polymarket_alpha_lab.nav_risk_metrics import PaperNavRiskMetricsReport
+    from polymarket_alpha_lab.strategy_evidence import (
+        PaperStrategyEvidenceSnapshotReport,
+    )
 
 
 Runner = Callable[..., object]
@@ -79,6 +82,7 @@ NavRiskRunner = Callable[..., "PaperNavRiskMetricsReport"]
 StrategyAuditRunner = Callable[..., PaperStrategyRiskAuditReport]
 StrategyAuditHistoryRunner = Callable[..., PaperStrategyRiskAuditHistoryReport]
 CostAuditRunner = Callable[..., PaperTradeCostAuditReport]
+StrategyEvidenceRunner = Callable[..., "PaperStrategyEvidenceSnapshotReport"]
 
 
 def _apply_json_config(args: argparse.Namespace) -> None:
@@ -147,6 +151,7 @@ def main(
     strategy_audit_runner: StrategyAuditRunner | None = None,
     strategy_audit_history_runner: StrategyAuditHistoryRunner | None = None,
     cost_audit_runner: CostAuditRunner | None = None,
+    strategy_evidence_runner: StrategyEvidenceRunner | None = None,
 ) -> int:
     parser = argparse.ArgumentParser(prog="polymarket-alpha-lab")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -294,6 +299,38 @@ def main(
         "--strategy-audit-log",
         type=Path,
         required=True,
+        dest="strategy_audit_log",
+    )
+
+    strategy_evidence = subparsers.add_parser("strategy-evidence")
+    strategy_evidence.add_argument(
+        "--cycle-log",
+        type=Path,
+        required=True,
+        dest="cycle_log",
+    )
+    strategy_evidence.add_argument(
+        "--trade-log",
+        type=Path,
+        required=True,
+        dest="trade_log",
+    )
+    strategy_evidence.add_argument(
+        "--nav-log",
+        type=Path,
+        required=True,
+        dest="nav_log",
+    )
+    strategy_evidence.add_argument(
+        "--outcome-log",
+        type=Path,
+        default=None,
+        dest="outcome_log",
+    )
+    strategy_evidence.add_argument(
+        "--strategy-audit-log",
+        type=Path,
+        default=None,
         dest="strategy_audit_log",
     )
 
@@ -548,6 +585,22 @@ def main(
             return 0
         except Exception as exc:
             print(f"strategy-audit-history failed: {exc}", file=sys.stderr)
+            return 1
+
+    if args.command == "strategy-evidence":
+        try:
+            report = _run_strategy_evidence(
+                cycle_log=args.cycle_log,
+                trade_log=args.trade_log,
+                nav_log=args.nav_log,
+                outcome_log=args.outcome_log,
+                strategy_audit_log=args.strategy_audit_log,
+                runner=strategy_evidence_runner,
+            )
+            _print_strategy_evidence_summary(report)
+            return 0
+        except Exception as exc:
+            print(f"strategy-evidence failed: {exc}", file=sys.stderr)
             return 1
 
     if args.command == "run":
@@ -932,6 +985,62 @@ def _run_strategy_audit_history(
     )
 
 
+def _run_strategy_evidence(
+    *,
+    cycle_log: Path,
+    trade_log: Path,
+    nav_log: Path,
+    outcome_log: Path | None,
+    strategy_audit_log: Path | None,
+    runner: StrategyEvidenceRunner | None,
+) -> "PaperStrategyEvidenceSnapshotReport":
+    from polymarket_alpha_lab.strategy_evidence import (
+        PaperStrategyEvidenceSnapshotConfig,
+        build_paper_strategy_evidence_snapshot_report,
+    )
+
+    generated_at = datetime.now(UTC)
+    performance_summary = _run_history(
+        cycle_log=cycle_log,
+        trade_log=trade_log,
+        nav_log=nav_log,
+        runner=None,
+    )
+    nav_risk_report = _run_nav_risk(nav_log=nav_log, runner=None)
+    cost_audit_report = _run_cost_audit(trade_log=trade_log, runner=None)
+    strategy_audit_history_report = (
+        None
+        if strategy_audit_log is None
+        else _run_strategy_audit_history(
+            strategy_audit_log=strategy_audit_log,
+            runner=None,
+        )
+    )
+    outcome_report = _latest_outcome_report(outcome_log)
+    config = PaperStrategyEvidenceSnapshotConfig(
+        config_version="strategy-evidence-snapshot-v0",
+    )
+    if runner is not None:
+        return runner(
+            performance_summary=performance_summary,
+            nav_risk_report=nav_risk_report,
+            cost_audit_report=cost_audit_report,
+            outcome_report=outcome_report,
+            audit_history_report=strategy_audit_history_report,
+            config=config,
+            generated_at=generated_at,
+        )
+    return build_paper_strategy_evidence_snapshot_report(
+        performance_summary=performance_summary,
+        nav_risk_report=nav_risk_report,
+        cost_audit_report=cost_audit_report,
+        outcome_report=outcome_report,
+        audit_history_report=strategy_audit_history_report,
+        config=config,
+        generated_at=generated_at,
+    )
+
+
 def _print_nav_risk_summary(report: "PaperNavRiskMetricsReport") -> None:
     """Print a compact NAV risk report summary to stdout."""
 
@@ -1064,12 +1173,40 @@ def _print_strategy_audit_history_summary(
         )
 
 
+def _print_strategy_evidence_summary(
+    report: "PaperStrategyEvidenceSnapshotReport",
+) -> None:
+    print(
+        "strategy-evidence: "
+        f"status={report.status} "
+        f"gaps={_csv_or_none(report.evidence_gap_names)} "
+        f"cycles={report.cycle_count} "
+        f"paper_trades={report.paper_trade_count} "
+        f"nav_snapshots={report.nav_snapshot_count} "
+        f"outcome_checked={_none_or_value(report.outcome_checked_count)} "
+        f"outcome_resolved={_none_or_value(report.outcome_resolved_count)} "
+        f"outcome_pending={_none_or_value(report.outcome_pending_count)} "
+        f"strategy_audits={_none_or_value(report.audit_report_count)} "
+        f"latest_audit_status={_none_or_value(report.latest_audit_status)} "
+        "negative_cost_adjusted_edge="
+        f"{report.negative_cost_adjusted_edge_count} "
+        "unexecutable_open_positions="
+        f"{report.unexecutable_open_position_count} "
+        f"paper_only={report.paper_only} "
+        f"report_only={report.report_only}",
+    )
+
+
 def _iso_or_none(value: datetime | None) -> str:
     return "none" if value is None else value.isoformat()
 
 
 def _csv_or_none(values: tuple[str, ...]) -> str:
     return "none" if not values else ",".join(values)
+
+
+def _none_or_value(value: object | None) -> str:
+    return "none" if value is None else str(value)
 
 
 def _print_run_loop_summary(summary: RunLoopSummary) -> None:

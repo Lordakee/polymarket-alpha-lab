@@ -14,6 +14,8 @@ An optional continuous paper-run preflight may pause new paper execution until t
 
 When a local Strategy Risk Audit JSONL artifact exists, `strategy-audit-history --strategy-audit-log <path>` can summarize append-order audit status counts, latest evidence state, latest failed/incomplete audit-check names, and per-check status counts. This history summary is paper-only/report-only/read-only observability over optional local evidence; it does not replace the Gate 0 through Gate 8 framework, approve strategy changes, rank markets, recommend trades, provide trade instruction, trigger live execution, or provide financial advice.
 
+`strategy-evidence --cycle-log <path> --trade-log <path> --nav-log <path> [--outcome-log <path>] [--strategy-audit-log <path>]` is a separate read-only evidence snapshot over caller-selected local paper logs and existing local report builders. It summarizes performance, NAV risk, cost audit, optional outcomes, and optional Strategy Risk Audit history with local evidence statuses: `no_local_evidence`, `local_evidence_gaps`, `local_risk_flags`, and `local_evidence_observed`. These statuses are descriptive local evidence states only; the command writes no artifacts and does not construct clients, fetch data, authenticate, read accounts, touch wallets or private keys, create or manage orders, interact with live trading surfaces, or change strategy-cycle behavior.
+
 ## Gate 0: Data Integrity
 
 A strategy cannot be evaluated until the data layer can prove:

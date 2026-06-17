@@ -1,6 +1,7 @@
 import json
 from datetime import UTC, datetime
 from decimal import Decimal
+from types import SimpleNamespace
 
 import pytest
 
@@ -1080,6 +1081,400 @@ def test_strategy_audit_history_cli_missing_log_returns_one_without_client(
     captured = capsys.readouterr()
     assert "strategy-audit-history failed:" in captured.err
     assert "missing-strategy-audits.jsonl" in captured.err
+
+
+def _strategy_evidence_stub_report(
+    *,
+    status: str = "local_evidence_observed",
+    evidence_gap_names: tuple[str, ...] = (),
+    outcome_checked_count: int | None = 10,
+    outcome_resolved_count: int | None = 8,
+    outcome_pending_count: int | None = 2,
+    audit_report_count: int | None = 1,
+    latest_audit_status: str | None = "audit_ready",
+    negative_cost_adjusted_edge_count: int = 3,
+    unexecutable_open_position_count: int = 4,
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        status=status,
+        evidence_gap_names=evidence_gap_names,
+        cycle_count=1,
+        paper_trade_count=0,
+        nav_snapshot_count=1,
+        outcome_checked_count=outcome_checked_count,
+        outcome_resolved_count=outcome_resolved_count,
+        outcome_pending_count=outcome_pending_count,
+        audit_report_count=audit_report_count,
+        latest_audit_status=latest_audit_status,
+        negative_cost_adjusted_edge_count=negative_cost_adjusted_edge_count,
+        unexecutable_open_position_count=unexecutable_open_position_count,
+        paper_only=True,
+        report_only=True,
+    )
+
+
+def test_strategy_evidence_cli_reads_local_logs_and_prints_summary_without_client(
+    tmp_path,
+    capsys,
+):
+    cycle_log = tmp_path / "cycles.jsonl"
+    trade_log = tmp_path / "paper-trades.jsonl"
+    nav_log = tmp_path / "nav.jsonl"
+    cycle_log.write_text("", encoding="utf-8")
+    trade_log.write_text("", encoding="utf-8")
+    nav_log.write_text("", encoding="utf-8")
+    before = {
+        cycle_log: cycle_log.read_bytes(),
+        trade_log: trade_log.read_bytes(),
+        nav_log: nav_log.read_bytes(),
+    }
+    client_factory_calls = 0
+
+    def forbidden_client_factory():
+        nonlocal client_factory_calls
+        client_factory_calls += 1
+        raise AssertionError("client should not be constructed")
+
+    exit_code = main(
+        [
+            "strategy-evidence",
+            "--cycle-log",
+            str(cycle_log),
+            "--trade-log",
+            str(trade_log),
+            "--nav-log",
+            str(nav_log),
+        ],
+        client_factory=forbidden_client_factory,
+    )
+
+    assert exit_code == 0
+    assert client_factory_calls == 0
+    assert {path: path.read_bytes() for path in before} == before
+    captured = capsys.readouterr()
+    assert "strategy-evidence:" in captured.out
+    assert "status=no_local_evidence" in captured.out
+    assert "missing_cycles" in captured.out
+    assert "missing_paper_trades" in captured.out
+    assert "missing_nav_snapshots" in captured.out
+
+
+def test_strategy_evidence_cli_passes_typed_local_reports_to_runner_without_client(
+    tmp_path,
+    capsys,
+):
+    cycle_log, trade_log, nav_log, outcome_log = _write_strategy_audit_inputs(
+        tmp_path,
+        _resolved_outcome_report(),
+    )
+    audit_log = tmp_path / "strategy-audits.jsonl"
+    PaperStrategyRiskAuditLog(audit_log).append(_strategy_audit_report("audit_ready"))
+    before = {
+        cycle_log: cycle_log.read_bytes(),
+        trade_log: trade_log.read_bytes(),
+        nav_log: nav_log.read_bytes(),
+        outcome_log: outcome_log.read_bytes(),
+        audit_log: audit_log.read_bytes(),
+    }
+    calls = []
+    client_factory_calls = 0
+
+    def fake_strategy_evidence_runner(
+        *,
+        performance_summary,
+        nav_risk_report,
+        cost_audit_report,
+        outcome_report,
+        audit_history_report,
+        config,
+        generated_at,
+    ):
+        calls.append(
+            {
+                "performance_summary": performance_summary,
+                "nav_risk_report": nav_risk_report,
+                "cost_audit_report": cost_audit_report,
+                "outcome_report": outcome_report,
+                "audit_history_report": audit_history_report,
+                "config": config,
+                "generated_at": generated_at,
+            },
+        )
+        return _strategy_evidence_stub_report(
+            status="local_evidence_observed",
+            evidence_gap_names=(),
+        )
+
+    def forbidden_client_factory():
+        nonlocal client_factory_calls
+        client_factory_calls += 1
+        raise AssertionError("client should not be constructed")
+
+    exit_code = main(
+        [
+            "strategy-evidence",
+            "--cycle-log",
+            str(cycle_log),
+            "--trade-log",
+            str(trade_log),
+            "--nav-log",
+            str(nav_log),
+            "--outcome-log",
+            str(outcome_log),
+            "--strategy-audit-log",
+            str(audit_log),
+        ],
+        strategy_evidence_runner=fake_strategy_evidence_runner,
+        client_factory=forbidden_client_factory,
+    )
+
+    assert exit_code == 0
+    assert client_factory_calls == 0
+    assert len(calls) == 1
+    call = calls[0]
+    assert isinstance(call["performance_summary"], PerformanceSummary)
+    assert call["performance_summary"].cycle_count == 1
+    assert call["performance_summary"].nav_snapshot_count == 1
+    assert isinstance(call["nav_risk_report"], PaperNavRiskMetricsReport)
+    assert call["nav_risk_report"].nav_snapshot_count == 1
+    assert isinstance(call["cost_audit_report"], PaperTradeCostAuditReport)
+    assert call["cost_audit_report"].trade_count == 0
+    assert isinstance(call["outcome_report"], OutcomeTrackingReport)
+    assert call["outcome_report"].resolved_count == 10
+    assert call["audit_history_report"].audit_report_count == 1
+    assert call["audit_history_report"].latest_audit_status == "audit_ready"
+    assert call["config"].__class__.__name__ == "PaperStrategyEvidenceSnapshotConfig"
+    assert call["config"].config_version == "strategy-evidence-snapshot-v0"
+    assert isinstance(call["generated_at"], datetime)
+    assert {path: path.read_bytes() for path in before} == before
+    captured = capsys.readouterr()
+    assert "strategy-evidence:" in captured.out
+    assert "status=local_evidence_observed" in captured.out
+    assert "gaps=none" in captured.out
+    assert "cycles=1" in captured.out
+    assert "nav_snapshots=1" in captured.out
+    assert "outcome_checked=10" in captured.out
+    assert "outcome_resolved=8" in captured.out
+    assert "outcome_pending=2" in captured.out
+    assert "strategy_audits=1" in captured.out
+    assert "latest_audit_status=audit_ready" in captured.out
+    assert "negative_cost_adjusted_edge=3" in captured.out
+    assert "unexecutable_open_positions=4" in captured.out
+
+
+def test_strategy_evidence_cli_without_optional_logs_passes_none_to_runner(
+    tmp_path,
+):
+    cycle_log = tmp_path / "cycles.jsonl"
+    trade_log = tmp_path / "paper-trades.jsonl"
+    nav_log = tmp_path / "nav.jsonl"
+    cycle_log.write_text("", encoding="utf-8")
+    trade_log.write_text("", encoding="utf-8")
+    nav_log.write_text("", encoding="utf-8")
+    calls = []
+    client_factory_calls = 0
+
+    def forbidden_client_factory():
+        nonlocal client_factory_calls
+        client_factory_calls += 1
+        raise AssertionError("client should not be constructed")
+
+    def fake_strategy_evidence_runner(
+        *,
+        performance_summary,
+        nav_risk_report,
+        cost_audit_report,
+        outcome_report,
+        audit_history_report,
+        config,
+        generated_at,
+    ):
+        calls.append(
+            {
+                "outcome_report": outcome_report,
+                "audit_history_report": audit_history_report,
+            },
+        )
+        return _strategy_evidence_stub_report(
+            status="local_evidence_gaps",
+            evidence_gap_names=(
+                "missing_outcome_evidence",
+                "missing_strategy_audit_history",
+            ),
+        )
+
+    exit_code = main(
+        [
+            "strategy-evidence",
+            "--cycle-log",
+            str(cycle_log),
+            "--trade-log",
+            str(trade_log),
+            "--nav-log",
+            str(nav_log),
+        ],
+        strategy_evidence_runner=fake_strategy_evidence_runner,
+        client_factory=forbidden_client_factory,
+    )
+
+    assert exit_code == 0
+    assert client_factory_calls == 0
+    assert calls == [
+        {
+            "outcome_report": None,
+            "audit_history_report": None,
+        },
+    ]
+
+
+def test_strategy_evidence_cli_returns_one_when_runner_fails_without_mutating_logs(
+    tmp_path,
+    capsys,
+):
+    cycle_log = tmp_path / "cycles.jsonl"
+    trade_log = tmp_path / "paper-trades.jsonl"
+    nav_log = tmp_path / "nav.jsonl"
+    cycle_log.write_text("", encoding="utf-8")
+    trade_log.write_text("", encoding="utf-8")
+    nav_log.write_text("", encoding="utf-8")
+    before = {
+        cycle_log: cycle_log.read_bytes(),
+        trade_log: trade_log.read_bytes(),
+        nav_log: nav_log.read_bytes(),
+    }
+    client_factory_calls = 0
+
+    def forbidden_client_factory():
+        nonlocal client_factory_calls
+        client_factory_calls += 1
+        raise AssertionError("client should not be constructed")
+
+    def broken_strategy_evidence_runner(**kwargs):
+        raise RuntimeError("strategy evidence failed")
+
+    exit_code = main(
+        [
+            "strategy-evidence",
+            "--cycle-log",
+            str(cycle_log),
+            "--trade-log",
+            str(trade_log),
+            "--nav-log",
+            str(nav_log),
+        ],
+        strategy_evidence_runner=broken_strategy_evidence_runner,
+        client_factory=forbidden_client_factory,
+    )
+
+    assert exit_code == 1
+    assert client_factory_calls == 0
+    assert {path: path.read_bytes() for path in before} == before
+    captured = capsys.readouterr()
+    assert "strategy-evidence failed: strategy evidence failed" in captured.err
+
+
+def test_strategy_evidence_cli_missing_required_log_returns_one_without_client(
+    tmp_path,
+    capsys,
+):
+    cycle_log = tmp_path / "missing-cycles.jsonl"
+    trade_log = tmp_path / "paper-trades.jsonl"
+    nav_log = tmp_path / "nav.jsonl"
+    trade_log.write_text("", encoding="utf-8")
+    nav_log.write_text("", encoding="utf-8")
+    assert not cycle_log.exists()
+    client_factory_calls = 0
+
+    def forbidden_client_factory():
+        nonlocal client_factory_calls
+        client_factory_calls += 1
+        raise AssertionError("client should not be constructed")
+
+    exit_code = main(
+        [
+            "strategy-evidence",
+            "--cycle-log",
+            str(cycle_log),
+            "--trade-log",
+            str(trade_log),
+            "--nav-log",
+            str(nav_log),
+        ],
+        client_factory=forbidden_client_factory,
+    )
+
+    assert exit_code == 1
+    assert client_factory_calls == 0
+    assert not cycle_log.exists()
+    captured = capsys.readouterr()
+    assert "strategy-evidence failed:" in captured.err
+    assert "missing-cycles.jsonl" in captured.err
+
+
+def test_run_and_strategy_cycle_do_not_call_strategy_evidence_runner(tmp_path):
+    strategy_evidence_calls = []
+    loop_calls = []
+    cycle_calls = []
+
+    def forbidden_strategy_evidence_runner(**kwargs):
+        strategy_evidence_calls.append(kwargs)
+        raise AssertionError("strategy evidence should not run")
+
+    def fake_loop_runner(**kwargs):
+        loop_calls.append(kwargs)
+        return _empty_run_summary()
+
+    def fake_cycle_runner(*, client, scan_config, cycle_config):
+        cycle_calls.append(
+            {
+                "client": client,
+                "scan_config": scan_config,
+                "cycle_config": cycle_config,
+            },
+        )
+        return PaperStrategyCycleReport(
+            generated_at=datetime.now(UTC),
+            config_version="strategy-cycle-v1",
+            scan_market_count=0,
+            considered_count=0,
+            snapshot_ready_count=0,
+            cost_aware_report_count=0,
+            blocked_counts=(),
+            screening_report=None,
+        )
+
+    run_exit_code = main(
+        [
+            "run",
+            "--archive-root",
+            str(tmp_path / "raw"),
+            "--starting-cash",
+            "10000",
+            "--cycle-log",
+            str(tmp_path / "cycles.jsonl"),
+        ],
+        loop_runner=fake_loop_runner,
+        strategy_evidence_runner=forbidden_strategy_evidence_runner,
+        client_factory=lambda: "fake-client",
+    )
+    strategy_cycle_exit_code = main(
+        [
+            "strategy-cycle",
+            "--archive-root",
+            str(tmp_path / "raw"),
+            "--output",
+            str(tmp_path / "strategy-cycle.jsonl"),
+        ],
+        cycle_runner=fake_cycle_runner,
+        strategy_evidence_runner=forbidden_strategy_evidence_runner,
+        client_factory=lambda: "fake-client",
+    )
+
+    assert run_exit_code == 0
+    assert strategy_cycle_exit_code == 0
+    assert strategy_evidence_calls == []
+    assert len(loop_calls) == 1
+    assert len(cycle_calls) == 1
 
 
 def test_nav_risk_cli_reads_nav_log_and_prints_summary(tmp_path, capsys):
