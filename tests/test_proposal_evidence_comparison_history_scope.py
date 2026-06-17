@@ -204,6 +204,7 @@ EXPECTED_NON_LEVEL_2_PACKAGE_ROOT_EXPORTS_WITH_NODE_10_TERMS = {
     "PaperTradeRecord",
     "simulate_order_book_fill",
     "OutcomeTrackingConfig",
+    "OutcomeTrackingLog",
     "OutcomeTrackingReport",
     "check_outcomes",
     "polymarket_default_cost_assumptions",

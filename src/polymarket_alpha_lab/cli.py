@@ -26,6 +26,7 @@ from polymarket_alpha_lab.llm_research_transport import GLMChatTransport
 from polymarket_alpha_lab.journal import PaperTradeJournal
 from polymarket_alpha_lab.outcome_tracker import (
     OutcomeTrackingConfig,
+    OutcomeTrackingLog,
     OutcomeTrackingReport,
     check_outcomes,
 )
@@ -46,6 +47,11 @@ from polymarket_alpha_lab.strategy_cycle import (
     PaperStrategyCycleReport,
     run_strategy_cycle,
 )
+from polymarket_alpha_lab.strategy_risk_audit import (
+    PaperStrategyRiskAuditConfig,
+    PaperStrategyRiskAuditReport,
+    build_paper_strategy_risk_audit_report,
+)
 
 if TYPE_CHECKING:
     from polymarket_alpha_lab.nav_risk_metrics import PaperNavRiskMetricsReport
@@ -59,6 +65,7 @@ HistoryRunner = Callable[..., PerformanceSummary]
 LoopRunner = Callable[..., RunLoopSummary]
 OutcomeRunner = Callable[..., OutcomeTrackingReport]
 NavRiskRunner = Callable[..., "PaperNavRiskMetricsReport"]
+StrategyAuditRunner = Callable[..., PaperStrategyRiskAuditReport]
 
 
 def _apply_json_config(args: argparse.Namespace) -> None:
@@ -114,6 +121,7 @@ def main(
     nav_risk_runner: NavRiskRunner | None = None,
     loop_runner: LoopRunner = run_strategy_loop,
     outcome_runner: OutcomeRunner = check_outcomes,
+    strategy_audit_runner: StrategyAuditRunner | None = None,
 ) -> int:
     parser = argparse.ArgumentParser(prog="polymarket-alpha-lab")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -216,6 +224,32 @@ def main(
         dest="nav_log",
     )
 
+    strategy_audit = subparsers.add_parser("strategy-audit")
+    strategy_audit.add_argument(
+        "--cycle-log",
+        type=Path,
+        required=True,
+        dest="cycle_log",
+    )
+    strategy_audit.add_argument(
+        "--trade-log",
+        type=Path,
+        required=True,
+        dest="trade_log",
+    )
+    strategy_audit.add_argument(
+        "--nav-log",
+        type=Path,
+        required=True,
+        dest="nav_log",
+    )
+    strategy_audit.add_argument(
+        "--outcome-log",
+        type=Path,
+        default=None,
+        dest="outcome_log",
+    )
+
     # Stage 17 market search: search Polymarket markets by keyword.
     search_parser = subparsers.add_parser("search")
     search_parser.add_argument(
@@ -238,6 +272,12 @@ def main(
         type=Path,
         default=None,
         dest="evidence_log",
+    )
+    check_outcomes_parser.add_argument(
+        "--outcome-log",
+        type=Path,
+        default=None,
+        dest="outcome_log",
     )
 
     # Stage 7 continuous run: chains strategy-cycle + paper-execute + portfolio-nav.
@@ -402,6 +442,21 @@ def main(
             print(f"history failed: {exc}", file=sys.stderr)
             return 1
 
+    if args.command == "strategy-audit":
+        try:
+            report = _run_strategy_audit(
+                cycle_log=args.cycle_log,
+                trade_log=args.trade_log,
+                nav_log=args.nav_log,
+                outcome_log=args.outcome_log,
+                runner=strategy_audit_runner,
+            )
+            _print_strategy_audit_summary(report)
+            return 0
+        except Exception as exc:
+            print(f"strategy-audit failed: {exc}", file=sys.stderr)
+            return 1
+
     if args.command == "run":
         try:
             scan_config = MarketScanConfig(
@@ -476,6 +531,8 @@ def main(
                 PaperForecastEvidenceLog(args.evidence_log).append(
                     report.forecast_evidence_report,
                 )
+            if args.outcome_log is not None:
+                OutcomeTrackingLog(args.outcome_log).append(report)
             _print_outcome_tracking_summary(report)
             return 0
         except Exception as exc:
@@ -660,6 +717,52 @@ def _run_nav_risk(
     )
 
 
+def _run_strategy_audit(
+    *,
+    cycle_log: Path,
+    trade_log: Path,
+    nav_log: Path,
+    outcome_log: Path | None,
+    runner: StrategyAuditRunner | None,
+) -> PaperStrategyRiskAuditReport:
+    """Read local paper logs and build a strategy risk audit report."""
+
+    generated_at = datetime.now(UTC)
+    config = PaperStrategyRiskAuditConfig(config_version="strategy-risk-audit-v0")
+    if runner is not None:
+        return runner(
+            cycle_log=cycle_log,
+            trade_log=trade_log,
+            nav_log=nav_log,
+            outcome_log=outcome_log,
+            config=config,
+            generated_at=generated_at,
+        )
+    performance_summary = _run_history(
+        cycle_log=cycle_log,
+        trade_log=trade_log,
+        nav_log=nav_log,
+        runner=None,
+    )
+    nav_risk_report = _run_nav_risk(nav_log=nav_log, runner=None)
+    return build_paper_strategy_risk_audit_report(
+        performance_summary=performance_summary,
+        nav_risk_report=nav_risk_report,
+        outcome_report=_latest_outcome_report(outcome_log),
+        config=config,
+        generated_at=generated_at,
+    )
+
+
+def _latest_outcome_report(path: Path | None) -> OutcomeTrackingReport | None:
+    if path is None:
+        return None
+    reports = OutcomeTrackingLog.read(path)
+    if not reports:
+        return None
+    return reports[-1]
+
+
 def _print_nav_risk_summary(report: "PaperNavRiskMetricsReport") -> None:
     """Print a compact NAV risk report summary to stdout."""
 
@@ -694,6 +797,26 @@ def _print_performance_summary(summary: PerformanceSummary) -> None:
         print(
             f"  cycle_span={summary.first_cycle_at.isoformat()} "
             f"to {summary.last_cycle_at.isoformat()}",
+        )
+
+
+def _print_strategy_audit_summary(report: PaperStrategyRiskAuditReport) -> None:
+    """Print a compact local strategy audit summary."""
+
+    print(
+        "strategy-audit: "
+        f"status={report.status} "
+        f"gates={report.gate_count} "
+        f"pass={report.pass_count} "
+        f"fail={report.fail_count} "
+        f"incomplete={report.incomplete_count}",
+    )
+    for gate in report.gate_results:
+        print(
+            f"  {gate.gate_name}: "
+            f"status={gate.status} "
+            f"observed={gate.observed_value} "
+            f"threshold={gate.threshold}",
         )
 
 

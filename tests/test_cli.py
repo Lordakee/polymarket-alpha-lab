@@ -4,11 +4,13 @@ from decimal import Decimal
 from polymarket_alpha_lab.cli import main
 from polymarket_alpha_lab.forecast_evidence import (
     PaperForecastEvidenceConfig,
+    PaperForecastEvidenceObservation,
     PaperForecastEvidenceReport,
     build_paper_forecast_evidence_report,
 )
 from polymarket_alpha_lab.outcome_tracker import (
     OutcomeTrackingConfig,
+    OutcomeTrackingLog,
     OutcomeTrackingReport,
 )
 from polymarket_alpha_lab.nav_risk_metrics import (
@@ -22,6 +24,7 @@ from polymarket_alpha_lab.performance_summary import (
 from polymarket_alpha_lab.positions import PaperNavLog, PaperNavSnapshot
 from polymarket_alpha_lab.runner import RunLoopSummary
 from polymarket_alpha_lab.strategy_cycle import PaperStrategyCycleReport
+from polymarket_alpha_lab.strategy_cycle import PaperStrategyCycleLog
 
 
 def test_scan_cli_builds_read_only_scan_config(tmp_path):
@@ -545,6 +548,171 @@ def _empty_nav_risk_report() -> PaperNavRiskMetricsReport:
     )
 
 
+def _forecast_observation(index: int) -> PaperForecastEvidenceObservation:
+    return PaperForecastEvidenceObservation(
+        observed_at=datetime(2026, 6, 16, 12, index, tzinfo=UTC),
+        source_packet_id=f"pkt-{index}",
+        condition_id=f"0x{index:04x}",
+        token_id=f"{index}",
+        market_slug=f"m-{index}",
+        strategy_type="market_quality",
+        risk_tags=("liquidity",),
+        predicted_probability=Decimal("0.60"),
+        actual_outcome_value=Decimal("1"),
+    )
+
+
+def _resolved_outcome_report(observation_count: int = 10) -> OutcomeTrackingReport:
+    observations = tuple(
+        _forecast_observation(index) for index in range(observation_count)
+    )
+    evidence = build_paper_forecast_evidence_report(
+        observations,
+        config=PaperForecastEvidenceConfig(
+            config_version="outcome-tracker-v1",
+            min_probability_observations=observation_count,
+            min_edge_observations=0,
+            max_mean_probability_loss=Decimal("0.3000"),
+            max_bucket_error=Decimal("0.5000"),
+        ),
+        generated_at=datetime(2026, 6, 16, 12, 0, tzinfo=UTC),
+    )
+    return OutcomeTrackingReport(
+        generated_at=datetime(2026, 6, 16, 12, 0, tzinfo=UTC),
+        config_version="outcome-tracker-v1",
+        total_markets_checked=observation_count,
+        resolved_count=observation_count,
+        pending_count=0,
+        observations=observations,
+        forecast_evidence_report=evidence,
+    )
+
+
+def _write_strategy_audit_inputs(tmp_path, outcome_report: OutcomeTrackingReport):
+    cycle_log = tmp_path / "cycle.jsonl"
+    trade_log = tmp_path / "trades.jsonl"
+    nav_log = tmp_path / "nav.jsonl"
+    outcome_log = tmp_path / "outcomes.jsonl"
+    PaperStrategyCycleLog(cycle_log).append(
+        PaperStrategyCycleReport(
+            generated_at=datetime(2026, 6, 16, 12, 0, tzinfo=UTC),
+            config_version="strategy-cycle-v1",
+            scan_market_count=1,
+            considered_count=0,
+            snapshot_ready_count=0,
+            cost_aware_report_count=0,
+            blocked_counts=(),
+            screening_report=None,
+        )
+    )
+    trade_log.touch()
+    PaperNavLog(nav_log).append(_empty_nav_snapshot())
+    OutcomeTrackingLog(outcome_log).append(outcome_report)
+    return cycle_log, trade_log, nav_log, outcome_log
+
+
+def test_strategy_audit_cli_reads_local_logs_outcome_log_and_does_not_construct_client(
+    tmp_path,
+    capsys,
+):
+    cycle_log, trade_log, nav_log, outcome_log = _write_strategy_audit_inputs(
+        tmp_path,
+        _resolved_outcome_report(),
+    )
+
+    def forbidden_client_factory():
+        raise AssertionError("client should not be constructed")
+
+    exit_code = main(
+        [
+            "strategy-audit",
+            "--cycle-log",
+            str(cycle_log),
+            "--trade-log",
+            str(trade_log),
+            "--nav-log",
+            str(nav_log),
+            "--outcome-log",
+            str(outcome_log),
+        ],
+        client_factory=forbidden_client_factory,
+    )
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    assert "strategy-audit:" in captured.out
+    assert "status=insufficient_evidence" in captured.out
+    assert "pass=4" in captured.out
+    assert "fail=0" in captured.out
+    assert "incomplete=1" in captured.out
+    assert "paper_history: status=incomplete" in captured.out
+    assert "settlement_evidence: status=pass" in captured.out
+    assert "forecast_quality: status=pass" in captured.out
+    assert "nav_drawdown: status=pass" in captured.out
+    assert "open_exposure: status=pass" in captured.out
+
+
+def test_strategy_audit_cli_without_outcome_log_marks_outcome_gates_incomplete(
+    tmp_path,
+    capsys,
+):
+    cycle_log, trade_log, nav_log, _outcome_log = _write_strategy_audit_inputs(
+        tmp_path,
+        _resolved_outcome_report(),
+    )
+
+    exit_code = main(
+        [
+            "strategy-audit",
+            "--cycle-log",
+            str(cycle_log),
+            "--trade-log",
+            str(trade_log),
+            "--nav-log",
+            str(nav_log),
+        ],
+        client_factory=lambda: (_ for _ in ()).throw(
+            AssertionError("client should not be constructed"),
+        ),
+    )
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    assert "strategy-audit:" in captured.out
+    assert "settlement_evidence: status=incomplete" in captured.out
+    assert "forecast_quality: status=incomplete" in captured.out
+
+
+def test_strategy_audit_cli_returns_one_when_runner_fails(tmp_path, capsys):
+    def broken_strategy_audit_runner(
+        *,
+        cycle_log,
+        trade_log,
+        nav_log,
+        outcome_log,
+        config,
+        generated_at,
+    ):
+        raise RuntimeError("audit failed")
+
+    exit_code = main(
+        [
+            "strategy-audit",
+            "--cycle-log",
+            str(tmp_path / "cycle.jsonl"),
+            "--trade-log",
+            str(tmp_path / "trades.jsonl"),
+            "--nav-log",
+            str(tmp_path / "nav.jsonl"),
+        ],
+        strategy_audit_runner=broken_strategy_audit_runner,
+    )
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert "strategy-audit failed: audit failed" in captured.err
+
+
 def test_nav_risk_cli_reads_nav_log_and_prints_summary(tmp_path, capsys):
     calls = []
 
@@ -1033,6 +1201,33 @@ def test_check_outcomes_cli_writes_evidence_log_when_resolved(tmp_path):
     line = evidence_log.read_text(encoding="utf-8").strip()
     assert '"observation_count": 1' in line
     assert '"config_version": "outcome-tracker-v1"' in line
+
+
+def test_check_outcomes_cli_writes_outcome_log_even_without_resolved_observations(
+    tmp_path,
+    capsys,
+):
+    report = _empty_outcome_report()
+    outcome_log = tmp_path / "outcomes.jsonl"
+
+    exit_code = main(
+        [
+            "check-outcomes",
+            "--journal",
+            str(tmp_path / "paper-trades.jsonl"),
+            "--outcome-log",
+            str(outcome_log),
+        ],
+        outcome_runner=lambda **_: report,
+        client_factory=lambda: "fake-client",
+    )
+
+    assert exit_code == 0
+    assert OutcomeTrackingLog.read(outcome_log) == (report,)
+    captured = capsys.readouterr()
+    assert "check-outcomes:" in captured.out
+    assert "checked=0" in captured.out
+    assert "no resolved observations yet" in captured.out
 
 
 def test_check_outcomes_cli_skips_evidence_log_when_no_observations(tmp_path):

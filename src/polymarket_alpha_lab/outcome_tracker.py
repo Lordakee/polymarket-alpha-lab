@@ -42,23 +42,27 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterable
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
 from polymarket_alpha_lab.forecast_evidence import (
+    PaperForecastEvidenceBucket,
     PaperForecastEvidenceConfig,
+    PaperForecastEvidenceGateResult,
     PaperForecastEvidenceObservation,
     PaperForecastEvidenceReport,
     build_paper_forecast_evidence_report,
 )
 from polymarket_alpha_lab.journal import PaperTradeJournal, PaperTradeRecord
+from polymarket_alpha_lab.json_recovery import from_jsonable
 
 
 __all__ = (
     "OutcomeTrackingConfig",
+    "OutcomeTrackingLog",
     "OutcomeTrackingReport",
     "check_outcomes",
 )
@@ -181,6 +185,54 @@ class OutcomeTrackingReport:
             raise ValueError("paper_only must be True")
         if self.report_only is not True:
             raise ValueError("report_only must be True")
+
+
+@dataclass(frozen=True)
+class OutcomeTrackingLog:
+    """Append/read full outcome-tracking JSONL reports for local audit replay."""
+
+    path: Path | str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "path", _normalize_log_path(self.path))
+
+    def append(self, report: OutcomeTrackingReport) -> None:
+        if not isinstance(report, OutcomeTrackingReport):
+            raise ValueError("report must be an OutcomeTrackingReport")
+        validated = _validate_report_tree(report)
+        line = (
+            json.dumps(
+                _json_ready(asdict(validated)),
+                allow_nan=False,
+                sort_keys=True,
+            )
+            + "\n"
+        )
+        _validate_log_parent(self.path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with self.path.open("a", encoding="utf-8") as handle:
+            handle.write(line)
+
+    @staticmethod
+    def read(path: Path | str) -> tuple[OutcomeTrackingReport, ...]:
+        """Read full outcome-tracking JSONL reports back into typed reports."""
+
+        target = Path(path)
+        records: list[OutcomeTrackingReport] = []
+        with target.open("r", encoding="utf-8") as handle:
+            for line_number, raw_line in enumerate(handle, start=1):
+                stripped = raw_line.strip()
+                if not stripped:
+                    continue
+                try:
+                    row = json.loads(stripped)
+                except json.JSONDecodeError as exc:
+                    raise ValueError(
+                        f"outcome tracking log line {line_number} "
+                        f"is not valid JSON: {exc}",
+                    ) from exc
+                records.append(from_jsonable(OutcomeTrackingReport, row))
+        return tuple(records)
 
 
 def check_outcomes(
@@ -500,6 +552,96 @@ def _normalize_observation_tuple(
     return items
 
 
+def _validate_report_tree(report: OutcomeTrackingReport) -> OutcomeTrackingReport:
+    observations = tuple(
+        PaperForecastEvidenceObservation(
+            observed_at=observation.observed_at,
+            source_packet_id=observation.source_packet_id,
+            condition_id=observation.condition_id,
+            token_id=observation.token_id,
+            market_slug=observation.market_slug,
+            strategy_type=observation.strategy_type,
+            risk_tags=observation.risk_tags,
+            predicted_probability=observation.predicted_probability,
+            actual_outcome_value=observation.actual_outcome_value,
+            theoretical_edge_ratio=observation.theoretical_edge_ratio,
+            executable_edge_ratio=observation.executable_edge_ratio,
+            fill_probability=observation.fill_probability,
+            residual_exposure_ratio=observation.residual_exposure_ratio,
+            paper_return_ratio=observation.paper_return_ratio,
+            paper_only=observation.paper_only,
+        )
+        for observation in _normalize_observation_tuple(report.observations)
+    )
+    forecast_evidence_report = (
+        None
+        if report.forecast_evidence_report is None
+        else _clone_forecast_evidence_report(report.forecast_evidence_report)
+    )
+    return OutcomeTrackingReport(
+        generated_at=report.generated_at,
+        config_version=report.config_version,
+        total_markets_checked=report.total_markets_checked,
+        resolved_count=report.resolved_count,
+        pending_count=report.pending_count,
+        observations=observations,
+        forecast_evidence_report=forecast_evidence_report,
+        paper_only=report.paper_only,
+        report_only=report.report_only,
+    )
+
+
+def _clone_forecast_evidence_report(
+    report: PaperForecastEvidenceReport,
+) -> PaperForecastEvidenceReport:
+    if not isinstance(report, PaperForecastEvidenceReport):
+        raise ValueError("forecast_evidence_report must be a PaperForecastEvidenceReport")
+    gate_results = tuple(
+        PaperForecastEvidenceGateResult(
+            gate_name=gate.gate_name,
+            status=gate.status,
+            message=gate.message,
+            observed_value=gate.observed_value,
+            threshold=gate.threshold,
+        )
+        for gate in report.gate_results
+    )
+    buckets = tuple(
+        PaperForecastEvidenceBucket(
+            bucket_label=bucket.bucket_label,
+            lower_probability=bucket.lower_probability,
+            upper_probability=bucket.upper_probability,
+            observation_count=bucket.observation_count,
+            mean_predicted_probability=bucket.mean_predicted_probability,
+            observed_frequency=bucket.observed_frequency,
+            bucket_error=bucket.bucket_error,
+            mean_probability_loss=bucket.mean_probability_loss,
+        )
+        for bucket in report.buckets
+    )
+    return PaperForecastEvidenceReport(
+        generated_at=report.generated_at,
+        config_version=report.config_version,
+        first_observed_at=report.first_observed_at,
+        last_observed_at=report.last_observed_at,
+        observation_count=report.observation_count,
+        probability_observation_count=report.probability_observation_count,
+        edge_observation_count=report.edge_observation_count,
+        unique_market_count=report.unique_market_count,
+        unique_strategy_count=report.unique_strategy_count,
+        unique_risk_tag_count=report.unique_risk_tag_count,
+        mean_probability_loss=report.mean_probability_loss,
+        worst_bucket_error=report.worst_bucket_error,
+        mean_edge_gap_ratio=report.mean_edge_gap_ratio,
+        positive_edge_hit_rate=report.positive_edge_hit_rate,
+        worst_residual_exposure_ratio=report.worst_residual_exposure_ratio,
+        status=report.status,
+        gate_results=gate_results,
+        buckets=buckets,
+        paper_only=report.paper_only,
+    )
+
+
 def _as_utc(value: datetime) -> datetime:
     if not isinstance(value, datetime):
         raise ValueError("datetime value is required")
@@ -520,6 +662,56 @@ def _require_nonnegative_int(field_name: str, value: Any) -> None:
         raise ValueError(f"{field_name} must be a nonnegative integer")
 
 
+def _require_finite_decimal(field_name: str, value: Decimal) -> None:
+    if not isinstance(value, Decimal):
+        raise ValueError(f"{field_name} must be a Decimal")
+    if not value.is_finite():
+        raise ValueError(f"{field_name} must be finite")
+
+
 def _require_positive_int(field_name: str, value: Any) -> None:
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         raise ValueError(f"{field_name} must be a positive integer")
+
+
+def _json_ready(value: Any) -> Any:
+    if value is None:
+        return None
+    if isinstance(value, Decimal):
+        _require_finite_decimal("JSON Decimal value", value)
+        return str(value)
+    if isinstance(value, datetime):
+        return _as_utc(value).isoformat()
+    if isinstance(value, float):
+        raise ValueError("JSON value must not be a float")
+    if isinstance(value, (str, int, bool)):
+        return value
+    if isinstance(value, dict):
+        for key in value:
+            if not isinstance(key, str):
+                raise ValueError("JSON object keys must be strings")
+        return {key: _json_ready(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_ready(item) for item in value]
+    raise ValueError("outcome tracking log values must be JSON serializable")
+
+
+def _normalize_log_path(value: Path | str) -> Path:
+    if isinstance(value, str) and not value.strip():
+        raise ValueError("path is required")
+    try:
+        path = Path(value)
+    except TypeError as exc:
+        raise ValueError("path must be path-like") from exc
+    if path.exists() and path.is_dir():
+        raise ValueError("path must be a file path")
+    _validate_log_parent(path)
+    return path
+
+
+def _validate_log_parent(path: Path) -> None:
+    for parent in (path.parent, *path.parent.parents):
+        if parent.exists():
+            if not parent.is_dir():
+                raise ValueError("path parent must be a directory")
+            return

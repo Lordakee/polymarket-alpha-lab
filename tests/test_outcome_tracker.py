@@ -24,6 +24,7 @@ from polymarket_alpha_lab.forecast_evidence import PaperForecastEvidenceReport
 from polymarket_alpha_lab.journal import PaperTradeJournal, PaperTradeRecord
 from polymarket_alpha_lab.outcome_tracker import (
     OutcomeTrackingConfig,
+    OutcomeTrackingLog,
     OutcomeTrackingReport,
     check_outcomes,
 )
@@ -573,6 +574,99 @@ def test_empty_journal_produces_empty_report_with_no_evidence(tmp_path):
     assert report.forecast_evidence_report is None
     assert report.paper_only is True
     assert report.report_only is True
+
+
+def test_outcome_tracking_log_round_trips_full_report_with_forecast_evidence(
+    tmp_path,
+):
+    record = _build_record(
+        condition_id="0xLOG",
+        token_id="501",
+        market_slug="m-log",
+        outcome_name="YES",
+        packet_id="pkt-log",
+        fair_value_estimate=Decimal("0.60"),
+    )
+    journal_path = _write_journal(tmp_path, [record])
+    report = check_outcomes(
+        client=FakeGammaClient([_yes_won_payload("0xLOG")]),
+        journal_path=journal_path,
+        config=OutcomeTrackingConfig(),
+        generated_at=GENERATED_AT,
+    )
+    path = tmp_path / "nested" / "outcomes.jsonl"
+
+    OutcomeTrackingLog(path).append(report)
+    restored = OutcomeTrackingLog.read(path)
+
+    assert len(restored) == 1
+    assert restored[0].generated_at == report.generated_at
+    assert restored[0].config_version == report.config_version
+    assert restored[0].total_markets_checked == report.total_markets_checked
+    assert restored[0].resolved_count == report.resolved_count
+    assert restored[0].pending_count == report.pending_count
+    assert restored[0].observations == report.observations
+    assert isinstance(restored[0].forecast_evidence_report, PaperForecastEvidenceReport)
+    assert isinstance(report.forecast_evidence_report, PaperForecastEvidenceReport)
+    assert (
+        restored[0].forecast_evidence_report.observation_count
+        == report.forecast_evidence_report.observation_count
+    )
+    assert (
+        restored[0].forecast_evidence_report.status
+        == report.forecast_evidence_report.status
+    )
+    assert (
+        restored[0].forecast_evidence_report.buckets
+        == report.forecast_evidence_report.buckets
+    )
+    assert restored[0].paper_only is True
+    assert restored[0].report_only is True
+
+
+def test_outcome_tracking_log_round_trips_empty_report_and_skips_blank_lines(
+    tmp_path,
+):
+    report = OutcomeTrackingReport(
+        generated_at=GENERATED_AT,
+        config_version="outcome-tracker-v1",
+        total_markets_checked=0,
+        resolved_count=0,
+        pending_count=0,
+        observations=(),
+        forecast_evidence_report=None,
+    )
+    path = tmp_path / "outcomes.jsonl"
+
+    OutcomeTrackingLog(path).append(report)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write("\n")
+
+    assert OutcomeTrackingLog.read(path) == (report,)
+
+
+def test_outcome_tracking_log_empty_file_returns_empty_tuple(tmp_path):
+    path = tmp_path / "outcomes.jsonl"
+    path.touch()
+
+    assert OutcomeTrackingLog.read(path) == ()
+
+
+def test_outcome_tracking_log_invalid_json_reports_line_number(tmp_path):
+    path = tmp_path / "outcomes.jsonl"
+    path.write_text("\nnot json\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="outcome tracking log line 2"):
+        OutcomeTrackingLog.read(path)
+
+
+def test_outcome_tracking_log_rejects_invalid_append_without_creating_file(tmp_path):
+    path = tmp_path / "outcomes.jsonl"
+
+    with pytest.raises(ValueError, match="report must be an OutcomeTrackingReport"):
+        OutcomeTrackingLog(path).append(object())  # type: ignore[arg-type]
+
+    assert not path.exists()
 
 
 def test_mixed_resolved_and_pending_legs_in_one_run(tmp_path):

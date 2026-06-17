@@ -273,6 +273,7 @@ from polymarket_alpha_lab.nav_risk_metrics import (
 from polymarket_alpha_lab.paper_portfolio_nav import mark_paper_portfolio_nav
 from polymarket_alpha_lab.outcome_tracker import (
     OutcomeTrackingConfig,
+    OutcomeTrackingLog,
     OutcomeTrackingReport,
     check_outcomes,
 )
@@ -649,12 +650,14 @@ def test_nav_risk_metrics_public_api_exports():
 def test_outcome_tracker_public_api_exports():
     expected_exports = {
         "OutcomeTrackingConfig",
+        "OutcomeTrackingLog",
         "OutcomeTrackingReport",
         "check_outcomes",
     }
 
     assert expected_exports <= set(lab.__all__)
     assert lab.OutcomeTrackingConfig is OutcomeTrackingConfig
+    assert lab.OutcomeTrackingLog is OutcomeTrackingLog
     assert lab.OutcomeTrackingReport is OutcomeTrackingReport
     assert lab.check_outcomes is check_outcomes
 

@@ -23,6 +23,7 @@ README_PATH = REPO_ROOT / "README.md"
 
 EXPECTED_EXPORTS = (
     "OutcomeTrackingConfig",
+    "OutcomeTrackingLog",
     "OutcomeTrackingReport",
     "check_outcomes",
 )
@@ -44,6 +45,7 @@ ALLOWED_IMPORT_MODULES = {
     "polymarket_alpha_lab.domain",
     "polymarket_alpha_lab.normalize",
     "polymarket_alpha_lab.journal",
+    "polymarket_alpha_lab.json_recovery",
     "polymarket_alpha_lab.forecast_evidence",
 }
 
@@ -75,7 +77,6 @@ FORBIDDEN_IMPORT_PREFIXES = {
     "polymarket_alpha_lab.cost_aware_event_strategy",
     "polymarket_alpha_lab.cost_aware_snapshot_builder",
     "polymarket_alpha_lab.forecast_provider",
-    "polymarket_alpha_lab.json_recovery",
     "polymarket_alpha_lab.llm_forecast",
     "polymarket_alpha_lab.llm_research_transport",
     "polymarket_alpha_lab.manual_review_queue",

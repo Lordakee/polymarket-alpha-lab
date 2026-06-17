@@ -95,6 +95,7 @@ from polymarket_alpha_lab.forecast_evidence import (
 )
 from polymarket_alpha_lab.outcome_tracker import (
     OutcomeTrackingConfig,
+    OutcomeTrackingLog,
     OutcomeTrackingReport,
     check_outcomes,
 )
@@ -308,6 +309,7 @@ __all__ = [
     "OrderBookSnapshot",
     "OutcomeToken",
     "OutcomeTrackingConfig",
+    "OutcomeTrackingLog",
     "OutcomeTrackingReport",
     "PaperAnalyticsBreach",
     "PaperAnalyticsBucket",
