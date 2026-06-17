@@ -1411,14 +1411,464 @@ def test_strategy_evidence_cli_missing_required_log_returns_one_without_client(
     assert "missing-cycles.jsonl" in captured.err
 
 
+def _observability_trends_stub_report(
+    *,
+    strategy_status: str = "local_evidence_observed",
+    outcome_status: str = "latest_outcomes_fresh",
+    nav_status: str = "latest_nav_risk_observed",
+    cost_status: str = "latest_cost_observed",
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        generated_at=datetime(2026, 6, 17, 12, 0, tzinfo=UTC),
+        config_version="local-observability-trends-v0",
+        strategy_evidence_trend=SimpleNamespace(
+            snapshot_report_count=2,
+            latest_status=strategy_status,
+            latest_evidence_gap_names=(),
+            paper_only=True,
+            report_only=True,
+            readonly=True,
+        ),
+        outcome_freshness=SimpleNamespace(
+            outcome_report_count=1,
+            status=outcome_status,
+            latest_report_age_seconds=0,
+            paper_only=True,
+            report_only=True,
+            readonly=True,
+        ),
+        nav_risk_trend=SimpleNamespace(
+            nav_risk_report_count=1,
+            status=nav_status,
+            latest_exit_nav=Decimal("10000"),
+            paper_only=True,
+            report_only=True,
+            readonly=True,
+        ),
+        paper_trade_cost_trend=SimpleNamespace(
+            cost_audit_report_count=1,
+            status=cost_status,
+            latest_mean_edge_cost_drag=Decimal("0.020000"),
+            paper_only=True,
+            report_only=True,
+            readonly=True,
+        ),
+        paper_only=True,
+        report_only=True,
+        readonly=True,
+    )
+
+
+def test_observability_trends_cli_passes_paths_config_and_prints_without_client(
+    tmp_path,
+    capsys,
+):
+    cycle_log, trade_log, nav_log, outcome_log = _write_strategy_audit_inputs(
+        tmp_path,
+        _resolved_outcome_report(),
+    )
+    audit_log = tmp_path / "strategy-audits.jsonl"
+    PaperStrategyRiskAuditLog(audit_log).append(_strategy_audit_report("audit_ready"))
+    before = {
+        cycle_log: cycle_log.read_bytes(),
+        trade_log: trade_log.read_bytes(),
+        nav_log: nav_log.read_bytes(),
+        outcome_log: outcome_log.read_bytes(),
+        audit_log: audit_log.read_bytes(),
+    }
+    calls = []
+    client_factory_calls = 0
+
+    def fake_observability_trends_runner(
+        *,
+        cycle_log,
+        trade_log,
+        nav_log,
+        outcome_log,
+        strategy_audit_log,
+        config,
+        generated_at,
+    ):
+        calls.append(
+            {
+                "cycle_log": cycle_log,
+                "trade_log": trade_log,
+                "nav_log": nav_log,
+                "outcome_log": outcome_log,
+                "strategy_audit_log": strategy_audit_log,
+                "config": config,
+                "generated_at": generated_at,
+            },
+        )
+        return _observability_trends_stub_report()
+
+    def forbidden_client_factory():
+        nonlocal client_factory_calls
+        client_factory_calls += 1
+        raise AssertionError("client should not be constructed")
+
+    exit_code = main(
+        [
+            "observability-trends",
+            "--cycle-log",
+            str(cycle_log),
+            "--trade-log",
+            str(trade_log),
+            "--nav-log",
+            str(nav_log),
+            "--outcome-log",
+            str(outcome_log),
+            "--strategy-audit-log",
+            str(audit_log),
+            "--outcome-stale-after-seconds",
+            "7200",
+        ],
+        observability_trends_runner=fake_observability_trends_runner,
+        client_factory=forbidden_client_factory,
+    )
+
+    assert exit_code == 0
+    assert client_factory_calls == 0
+    assert len(calls) == 1
+    call = calls[0]
+    assert call["cycle_log"] == cycle_log
+    assert call["trade_log"] == trade_log
+    assert call["nav_log"] == nav_log
+    assert call["outcome_log"] == outcome_log
+    assert call["strategy_audit_log"] == audit_log
+    assert call["config"].__class__.__name__ == "LocalObservabilityTrendsConfig"
+    assert call["config"].config_version == "local-observability-trends-v0"
+    assert call["config"].outcome_stale_after_seconds == 7200
+    assert isinstance(call["generated_at"], datetime)
+    assert {path: path.read_bytes() for path in before} == before
+    captured = capsys.readouterr()
+    assert "observability-trends:" in captured.out
+    assert "strategy_evidence_status=local_evidence_observed" in captured.out
+    assert "outcome_status=latest_outcomes_fresh" in captured.out
+    assert "nav_risk_status=latest_nav_risk_observed" in captured.out
+    assert "cost_status=latest_cost_observed" in captured.out
+    assert "paper_only=True" in captured.out
+    assert "report_only=True" in captured.out
+    assert "readonly=True" in captured.out
+
+
+@pytest.mark.parametrize(
+    ("omitted_flag", "provided_args"),
+    (
+        (
+            "--cycle-log",
+            ("--trade-log", "paper-trades.jsonl", "--nav-log", "nav.jsonl"),
+        ),
+        (
+            "--trade-log",
+            ("--cycle-log", "cycles.jsonl", "--nav-log", "nav.jsonl"),
+        ),
+        (
+            "--nav-log",
+            ("--cycle-log", "cycles.jsonl", "--trade-log", "paper-trades.jsonl"),
+        ),
+    ),
+)
+def test_observability_trends_cli_requires_local_log_flags_before_runner(
+    tmp_path,
+    capsys,
+    omitted_flag,
+    provided_args,
+):
+    runner_calls = 0
+    client_factory_calls = 0
+
+    def forbidden_observability_trends_runner(**kwargs):
+        nonlocal runner_calls
+        runner_calls += 1
+        raise AssertionError("observability trends should not run")
+
+    def forbidden_client_factory():
+        nonlocal client_factory_calls
+        client_factory_calls += 1
+        raise AssertionError("client should not be constructed")
+
+    argv = ["observability-trends"]
+    argv.extend(
+        str(tmp_path / value) if value.endswith(".jsonl") else value
+        for value in provided_args
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        main(
+            argv,
+            observability_trends_runner=forbidden_observability_trends_runner,
+            client_factory=forbidden_client_factory,
+        )
+
+    assert exc_info.value.code == 2
+    assert runner_calls == 0
+    assert client_factory_calls == 0
+    captured = capsys.readouterr()
+    assert "the following arguments are required" in captured.err
+    assert omitted_flag in captured.err
+
+
+def test_observability_trends_cli_defaults_outcome_stale_threshold(tmp_path):
+    cycle_log = tmp_path / "cycles.jsonl"
+    trade_log = tmp_path / "paper-trades.jsonl"
+    nav_log = tmp_path / "nav.jsonl"
+    cycle_log.write_text("", encoding="utf-8")
+    trade_log.write_text("", encoding="utf-8")
+    nav_log.write_text("", encoding="utf-8")
+    calls = []
+    client_factory_calls = 0
+
+    def fake_observability_trends_runner(
+        *,
+        cycle_log,
+        trade_log,
+        nav_log,
+        outcome_log,
+        strategy_audit_log,
+        config,
+        generated_at,
+    ):
+        calls.append(config)
+        return _observability_trends_stub_report()
+
+    def forbidden_client_factory():
+        nonlocal client_factory_calls
+        client_factory_calls += 1
+        raise AssertionError("client should not be constructed")
+
+    exit_code = main(
+        [
+            "observability-trends",
+            "--cycle-log",
+            str(cycle_log),
+            "--trade-log",
+            str(trade_log),
+            "--nav-log",
+            str(nav_log),
+        ],
+        observability_trends_runner=fake_observability_trends_runner,
+        client_factory=forbidden_client_factory,
+    )
+
+    assert exit_code == 0
+    assert client_factory_calls == 0
+    assert len(calls) == 1
+    assert calls[0].config_version == "local-observability-trends-v0"
+    assert calls[0].outcome_stale_after_seconds == 86_400
+
+
+def test_observability_trends_cli_without_optional_logs_passes_none(tmp_path):
+    cycle_log = tmp_path / "cycles.jsonl"
+    trade_log = tmp_path / "paper-trades.jsonl"
+    nav_log = tmp_path / "nav.jsonl"
+    cycle_log.write_text("", encoding="utf-8")
+    trade_log.write_text("", encoding="utf-8")
+    nav_log.write_text("", encoding="utf-8")
+    calls = []
+    client_factory_calls = 0
+
+    def fake_observability_trends_runner(
+        *,
+        cycle_log,
+        trade_log,
+        nav_log,
+        outcome_log,
+        strategy_audit_log,
+        config,
+        generated_at,
+    ):
+        calls.append(
+            {
+                "outcome_log": outcome_log,
+                "strategy_audit_log": strategy_audit_log,
+            },
+        )
+        return _observability_trends_stub_report(
+            strategy_status="local_evidence_gaps",
+            outcome_status="empty_outcome_history",
+            nav_status="empty_nav_risk_history",
+            cost_status="empty_cost_audit_history",
+        )
+
+    def forbidden_client_factory():
+        nonlocal client_factory_calls
+        client_factory_calls += 1
+        raise AssertionError("client should not be constructed")
+
+    exit_code = main(
+        [
+            "observability-trends",
+            "--cycle-log",
+            str(cycle_log),
+            "--trade-log",
+            str(trade_log),
+            "--nav-log",
+            str(nav_log),
+        ],
+        observability_trends_runner=fake_observability_trends_runner,
+        client_factory=forbidden_client_factory,
+    )
+
+    assert exit_code == 0
+    assert client_factory_calls == 0
+    assert calls == [
+        {
+            "outcome_log": None,
+            "strategy_audit_log": None,
+        },
+    ]
+
+
+def test_observability_trends_cli_returns_one_when_runner_fails_without_mutating_logs(
+    tmp_path,
+    capsys,
+):
+    cycle_log = tmp_path / "cycles.jsonl"
+    trade_log = tmp_path / "paper-trades.jsonl"
+    nav_log = tmp_path / "nav.jsonl"
+    cycle_log.write_text("", encoding="utf-8")
+    trade_log.write_text("", encoding="utf-8")
+    nav_log.write_text("", encoding="utf-8")
+    before = {
+        cycle_log: cycle_log.read_bytes(),
+        trade_log: trade_log.read_bytes(),
+        nav_log: nav_log.read_bytes(),
+    }
+    client_factory_calls = 0
+
+    def broken_observability_trends_runner(**kwargs):
+        raise RuntimeError("observability trends failed")
+
+    def forbidden_client_factory():
+        nonlocal client_factory_calls
+        client_factory_calls += 1
+        raise AssertionError("client should not be constructed")
+
+    exit_code = main(
+        [
+            "observability-trends",
+            "--cycle-log",
+            str(cycle_log),
+            "--trade-log",
+            str(trade_log),
+            "--nav-log",
+            str(nav_log),
+        ],
+        observability_trends_runner=broken_observability_trends_runner,
+        client_factory=forbidden_client_factory,
+    )
+
+    assert exit_code == 1
+    assert client_factory_calls == 0
+    assert {path: path.read_bytes() for path in before} == before
+    captured = capsys.readouterr()
+    assert "observability-trends failed: observability trends failed" in captured.err
+
+
+def test_observability_trends_cli_missing_required_log_returns_one_without_client(
+    tmp_path,
+    capsys,
+):
+    cycle_log = tmp_path / "missing-cycles.jsonl"
+    trade_log = tmp_path / "paper-trades.jsonl"
+    nav_log = tmp_path / "nav.jsonl"
+    trade_log.write_text("", encoding="utf-8")
+    nav_log.write_text("", encoding="utf-8")
+    before = {
+        trade_log: trade_log.read_bytes(),
+        nav_log: nav_log.read_bytes(),
+    }
+    client_factory_calls = 0
+
+    def forbidden_client_factory():
+        nonlocal client_factory_calls
+        client_factory_calls += 1
+        raise AssertionError("client should not be constructed")
+
+    exit_code = main(
+        [
+            "observability-trends",
+            "--cycle-log",
+            str(cycle_log),
+            "--trade-log",
+            str(trade_log),
+            "--nav-log",
+            str(nav_log),
+        ],
+        client_factory=forbidden_client_factory,
+    )
+
+    assert exit_code == 1
+    assert client_factory_calls == 0
+    assert {path: path.read_bytes() for path in before} == before
+    with pytest.raises(FileNotFoundError):
+        cycle_log.read_bytes()
+    captured = capsys.readouterr()
+    assert "observability-trends failed:" in captured.err
+    assert "missing-cycles.jsonl" in captured.err
+
+
+def test_observability_trends_cli_rejects_negative_outcome_stale_threshold(
+    tmp_path,
+    capsys,
+):
+    cycle_log = tmp_path / "cycles.jsonl"
+    trade_log = tmp_path / "paper-trades.jsonl"
+    nav_log = tmp_path / "nav.jsonl"
+    cycle_log.write_text("", encoding="utf-8")
+    trade_log.write_text("", encoding="utf-8")
+    nav_log.write_text("", encoding="utf-8")
+    runner_calls = 0
+    client_factory_calls = 0
+
+    def forbidden_observability_trends_runner(**kwargs):
+        nonlocal runner_calls
+        runner_calls += 1
+        raise AssertionError("observability trends should not run")
+
+    def forbidden_client_factory():
+        nonlocal client_factory_calls
+        client_factory_calls += 1
+        raise AssertionError("client should not be constructed")
+
+    exit_code = main(
+        [
+            "observability-trends",
+            "--cycle-log",
+            str(cycle_log),
+            "--trade-log",
+            str(trade_log),
+            "--nav-log",
+            str(nav_log),
+            "--outcome-stale-after-seconds",
+            "-1",
+        ],
+        observability_trends_runner=forbidden_observability_trends_runner,
+        client_factory=forbidden_client_factory,
+    )
+
+    assert exit_code == 1
+    assert runner_calls == 0
+    assert client_factory_calls == 0
+    captured = capsys.readouterr()
+    assert "observability-trends failed:" in captured.err
+    assert "outcome_stale_after_seconds must be a nonnegative integer" in captured.err
+
+
 def test_run_and_strategy_cycle_do_not_call_strategy_evidence_runner(tmp_path):
     strategy_evidence_calls = []
+    observability_trends_calls = []
     loop_calls = []
     cycle_calls = []
 
     def forbidden_strategy_evidence_runner(**kwargs):
         strategy_evidence_calls.append(kwargs)
         raise AssertionError("strategy evidence should not run")
+
+    def forbidden_observability_trends_runner(**kwargs):
+        observability_trends_calls.append(kwargs)
+        raise AssertionError("observability trends should not run")
 
     def fake_loop_runner(**kwargs):
         loop_calls.append(kwargs)
@@ -1455,6 +1905,7 @@ def test_run_and_strategy_cycle_do_not_call_strategy_evidence_runner(tmp_path):
         ],
         loop_runner=fake_loop_runner,
         strategy_evidence_runner=forbidden_strategy_evidence_runner,
+        observability_trends_runner=forbidden_observability_trends_runner,
         client_factory=lambda: "fake-client",
     )
     strategy_cycle_exit_code = main(
@@ -1467,12 +1918,14 @@ def test_run_and_strategy_cycle_do_not_call_strategy_evidence_runner(tmp_path):
         ],
         cycle_runner=fake_cycle_runner,
         strategy_evidence_runner=forbidden_strategy_evidence_runner,
+        observability_trends_runner=forbidden_observability_trends_runner,
         client_factory=lambda: "fake-client",
     )
 
     assert run_exit_code == 0
     assert strategy_cycle_exit_code == 0
     assert strategy_evidence_calls == []
+    assert observability_trends_calls == []
     assert len(loop_calls) == 1
     assert len(cycle_calls) == 1
 

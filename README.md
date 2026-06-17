@@ -18,6 +18,8 @@ It also includes an optional local-only Strategy Risk Audit preflight for contin
 
 A separate `strategy-evidence` summary is local evidence observability only: it reads caller-selected local paper logs and existing local reports to describe evidence presence, gaps, and risk flags without changing run behavior.
 
+The `observability-trends` command is a local-only trend summary over the same paper artifacts. It reads caller-selected cycle, paper-trade, NAV, optional outcome, and optional Strategy Risk Audit logs, builds the existing strategy-evidence, outcome-freshness, NAV-risk, and paper-trade-cost trend reports, and prints a compact read-only summary without writing artifacts or changing strategy behavior.
+
 The current phase does not contain:
 
 - account authentication
@@ -89,6 +91,14 @@ Phase 1 boundary: this module is pure local report math. It does not score marke
 - `no_local_evidence` means the supplied local logs contain no observed cycle, paper-trade, NAV, outcome, or audit-history evidence. `local_evidence_gaps` means at least one local evidence family is absent or thin. `local_risk_flags` means local evidence exists and at least one descriptive risk flag is present. `local_evidence_observed` means the configured local evidence families are present and no configured descriptive risk flag is present.
 - Optional outcomes and Strategy Risk Audit history are treated as local inputs only; absent optional inputs are surfaced as local gaps rather than filled from external data.
 - Boundary: read-only local evidence observability. The command does not write, append, repair, or mutate logs; construct clients; fetch data; authenticate; read accounts; touch wallets or private keys; place, sign, submit, or cancel orders; interact with live trading surfaces; tune strategy behavior; or alter strategy-cycle decisions.
+
+## Local Observability Trends v0
+
+- Print local trend summaries with `polymarket-alpha-lab observability-trends --cycle-log <path> --trade-log <path> --nav-log <path> [--outcome-log <path>] [--strategy-audit-log <path>] [--outcome-stale-after-seconds <seconds>]`.
+- The command reads caller-supplied local JSONL logs only. It builds four existing read-only trend reports: strategy evidence trend, outcome freshness, NAV risk trend, and paper trade cost trend.
+- Required cycle, trade, and NAV histories use source/append-order prefixes from their typed readers as the only local trend ordering authority; the command does not timestamp-sort prefix inputs, including the NAV inputs used for the NAV risk trend. Optional outcome and Strategy Risk Audit logs are local evidence inputs only and are never refreshed from external services.
+- Empty required logs produce deterministic empty trend states where supported by the child reducers. Invalid or missing local logs fail the command without constructing a client.
+- Boundary: paper-only/report-only/read-only local observability. The command does not write, append, repair, or mutate logs; construct clients; fetch data; authenticate; read accounts; touch wallets or private keys; place, sign, submit, or cancel orders; interact with live trading surfaces; rank investments; recommend trades; provide trade instruction; provide financial advice; tune strategy behavior; or alter strategy-cycle decisions.
 
 ## Paper Trade Cost Audit v0
 
@@ -736,6 +746,7 @@ See:
 │       ├── domain.py
 │       ├── forecast_evidence.py
 │       ├── journal.py
+│       ├── local_observability_trends.py
 │       ├── manual_review_queue.py
 │       ├── normalize.py
 │       ├── paper.py
@@ -776,6 +787,10 @@ See:
     ├── test_forecast_evidence_scope.py
     ├── test_init.py
     ├── test_journal.py
+    ├── test_local_observability_trends.py
+    ├── test_local_observability_trends_report_validation.py
+    ├── test_local_observability_trends_runner.py
+    ├── test_local_observability_trends_scope.py
     ├── test_manual_review_queue.py
     ├── test_manual_review_queue_scope.py
     ├── test_normalize.py

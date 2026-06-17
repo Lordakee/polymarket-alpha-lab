@@ -16,9 +16,11 @@ ZERO_NAV = Decimal("0.0000")
 @dataclass(frozen=True)
 class PaperNavRiskMetricsConfig:
     config_version: str
+    preserve_input_order: bool = False
 
     def __post_init__(self) -> None:
         _require_canonical_string("config_version", self.config_version)
+        _require_bool("preserve_input_order", self.preserve_input_order)
 
 
 @dataclass(frozen=True)
@@ -133,7 +135,10 @@ def build_paper_nav_risk_metrics_report(
     if not isinstance(generated_at, datetime):
         raise ValueError("generated_at must be a datetime")
 
-    snapshots = _sorted_nav_snapshots(nav_snapshots)
+    snapshots = _normalize_nav_snapshots(
+        nav_snapshots,
+        preserve_input_order=config.preserve_input_order,
+    )
     if not snapshots:
         return PaperNavRiskMetricsReport(
             generated_at=generated_at,
@@ -198,8 +203,10 @@ def build_paper_nav_risk_metrics_report(
     )
 
 
-def _sorted_nav_snapshots(
+def _normalize_nav_snapshots(
     nav_snapshots: Iterable[PaperNavSnapshot],
+    *,
+    preserve_input_order: bool,
 ) -> tuple[PaperNavSnapshot, ...]:
     if isinstance(nav_snapshots, (str, bytes)):
         raise ValueError("nav_snapshots must be an iterable of PaperNavSnapshot values")
@@ -214,6 +221,8 @@ def _sorted_nav_snapshots(
         if type(snapshot) is not PaperNavSnapshot:
             raise ValueError("nav_snapshots must contain only PaperNavSnapshot values")
 
+    if preserve_input_order:
+        return raw_snapshots
     return tuple(sorted(raw_snapshots, key=lambda snapshot: snapshot.marked_at))
 
 
@@ -370,6 +379,11 @@ def _require_nonnegative_int(field_name: str, value: int) -> None:
         raise ValueError(f"{field_name} must be an int")
     if value < 0:
         raise ValueError(f"{field_name} must be nonnegative")
+
+
+def _require_bool(field_name: str, value: bool) -> None:
+    if type(value) is not bool:
+        raise ValueError(f"{field_name} must be a bool")
 
 
 def _require_positive_int(field_name: str, value: int) -> None:

@@ -111,10 +111,10 @@ def _nav(
     )
 
 
-def _build_report(snapshots):
+def _build_report(snapshots, **config_overrides):
     return build_paper_nav_risk_metrics_report(
         snapshots,
-        config=_config(),
+        config=_config(**config_overrides),
         generated_at=GENERATED_AT,
     )
 
@@ -204,6 +204,77 @@ def test_nav_risk_metrics_computes_drawdown_volatility_and_latest_exposures():
     assert report.exposure_rows[1].share_of_exit_nav == Decimal("0.000000")
 
 
+def test_nav_risk_metrics_can_preserve_append_order_for_trend_metrics():
+    timestamp_latest_marks = (
+        _mark(
+            condition_id="condition-timestamp-latest",
+            token_id="token-timestamp-latest",
+            market_slug="market-timestamp-latest",
+            open_size=Decimal("40.0000"),
+            cost_basis=Decimal("30.0000"),
+            exit_value=Decimal("20.0000"),
+            mark_status="partially_executable",
+        ),
+    )
+    input_latest_marks = (
+        _mark(
+            condition_id="condition-input-latest-a",
+            token_id="token-input-latest-a",
+            market_slug="market-input-latest-a",
+            open_size=Decimal("200.0000"),
+            cost_basis=Decimal("90.0000"),
+            exit_value=Decimal("150.0000"),
+            mark_status="fully_executable",
+        ),
+        _mark(
+            condition_id="condition-input-latest-b",
+            token_id="token-input-latest-b",
+            market_slug="market-input-latest-b",
+            open_size=Decimal("80.0000"),
+            cost_basis=Decimal("70.0000"),
+            mark_status="no_exit_depth",
+        ),
+    )
+    snapshots = (
+        _nav(
+            datetime(2026, 6, 16, 14, 0, tzinfo=UTC),
+            exit_nav=Decimal("10000.0000"),
+            marks=timestamp_latest_marks,
+        ),
+        _nav(datetime(2026, 6, 16, 12, 0, tzinfo=UTC), exit_nav=Decimal("9000.0000")),
+        _nav(
+            datetime(2026, 6, 16, 13, 0, tzinfo=UTC),
+            exit_nav=Decimal("9500.0000"),
+            marks=input_latest_marks,
+        ),
+    )
+
+    report = _build_report(snapshots, preserve_input_order=True)
+
+    assert report.nav_snapshot_count == 3
+    assert report.first_marked_at == datetime(2026, 6, 16, 14, 0, tzinfo=UTC)
+    assert report.last_marked_at == datetime(2026, 6, 16, 13, 0, tzinfo=UTC)
+    assert report.latest_exit_nav == Decimal("9500.0000")
+    assert report.cumulative_return == Decimal("-0.050000")
+    assert report.max_drawdown == Decimal("1000.0000")
+    assert report.max_drawdown_pct == Decimal("0.100000")
+    assert report.worst_nav_delta == Decimal("-1000.0000")
+    assert report.nav_return_volatility == Decimal("0.077778")
+    assert report.latest_total_cost_basis == Decimal("160.0000")
+    assert report.pending_notional == Decimal("160.0000")
+    assert report.open_position_count == 2
+    assert report.fully_executable_count == 1
+    assert report.no_exit_depth_count == 1
+    assert report.largest_market_exposure_value == Decimal("150.0000")
+    assert report.largest_market_exposure_share == Decimal("0.015789")
+    assert tuple(row.market_slug for row in report.exposure_rows) == (
+        "market-input-latest-a",
+        "market-input-latest-b",
+    )
+    assert report.exposure_rows[0].share_of_exit_nav == Decimal("0.015789")
+    assert report.exposure_rows[1].share_of_exit_nav == Decimal("0.000000")
+
+
 def test_nav_risk_metrics_marks_single_snapshot_delta_metrics_as_none():
     report = _build_report((_nav(GENERATED_AT, exit_nav=Decimal("10000.0000")),))
 
@@ -217,6 +288,8 @@ def test_nav_risk_metrics_marks_single_snapshot_delta_metrics_as_none():
 def test_nav_risk_metrics_rejects_invalid_inputs():
     with pytest.raises(ValueError, match="config_version"):
         _config(config_version="")
+    with pytest.raises(ValueError, match="preserve_input_order"):
+        _config(preserve_input_order=1)
     with pytest.raises(ValueError, match="config"):
         build_paper_nav_risk_metrics_report((), config=object(), generated_at=GENERATED_AT)
     with pytest.raises(ValueError, match="generated_at"):

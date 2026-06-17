@@ -24,6 +24,11 @@ from polymarket_alpha_lab.forecast_evidence import PaperForecastEvidenceLog
 from polymarket_alpha_lab.llm_forecast import PaperLLMForecastConfig
 from polymarket_alpha_lab.llm_research_transport import GLMChatTransport
 from polymarket_alpha_lab.journal import PaperTradeJournal
+from polymarket_alpha_lab.local_observability_trends import (
+    LocalObservabilityTrendsConfig,
+    LocalObservabilityTrendsReport,
+    run_local_observability_trends,
+)
 from polymarket_alpha_lab.outcome_tracker import (
     OutcomeTrackingConfig,
     OutcomeTrackingLog,
@@ -83,6 +88,7 @@ StrategyAuditRunner = Callable[..., PaperStrategyRiskAuditReport]
 StrategyAuditHistoryRunner = Callable[..., PaperStrategyRiskAuditHistoryReport]
 CostAuditRunner = Callable[..., PaperTradeCostAuditReport]
 StrategyEvidenceRunner = Callable[..., "PaperStrategyEvidenceSnapshotReport"]
+ObservabilityTrendsRunner = Callable[..., LocalObservabilityTrendsReport]
 
 
 def _apply_json_config(args: argparse.Namespace) -> None:
@@ -152,6 +158,9 @@ def main(
     strategy_audit_history_runner: StrategyAuditHistoryRunner | None = None,
     cost_audit_runner: CostAuditRunner | None = None,
     strategy_evidence_runner: StrategyEvidenceRunner | None = None,
+    observability_trends_runner: ObservabilityTrendsRunner = (
+        run_local_observability_trends
+    ),
 ) -> int:
     parser = argparse.ArgumentParser(prog="polymarket-alpha-lab")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -332,6 +341,44 @@ def main(
         type=Path,
         default=None,
         dest="strategy_audit_log",
+    )
+
+    observability_trends = subparsers.add_parser("observability-trends")
+    observability_trends.add_argument(
+        "--cycle-log",
+        type=Path,
+        required=True,
+        dest="cycle_log",
+    )
+    observability_trends.add_argument(
+        "--trade-log",
+        type=Path,
+        required=True,
+        dest="trade_log",
+    )
+    observability_trends.add_argument(
+        "--nav-log",
+        type=Path,
+        required=True,
+        dest="nav_log",
+    )
+    observability_trends.add_argument(
+        "--outcome-log",
+        type=Path,
+        default=None,
+        dest="outcome_log",
+    )
+    observability_trends.add_argument(
+        "--strategy-audit-log",
+        type=Path,
+        default=None,
+        dest="strategy_audit_log",
+    )
+    observability_trends.add_argument(
+        "--outcome-stale-after-seconds",
+        type=int,
+        default=86_400,
+        dest="outcome_stale_after_seconds",
     )
 
     # Stage 17 market search: search Polymarket markets by keyword.
@@ -601,6 +648,26 @@ def main(
             return 0
         except Exception as exc:
             print(f"strategy-evidence failed: {exc}", file=sys.stderr)
+            return 1
+
+    if args.command == "observability-trends":
+        try:
+            report = observability_trends_runner(
+                cycle_log=args.cycle_log,
+                trade_log=args.trade_log,
+                nav_log=args.nav_log,
+                outcome_log=args.outcome_log,
+                strategy_audit_log=args.strategy_audit_log,
+                config=LocalObservabilityTrendsConfig(
+                    config_version="local-observability-trends-v0",
+                    outcome_stale_after_seconds=args.outcome_stale_after_seconds,
+                ),
+                generated_at=datetime.now(UTC),
+            )
+            _print_observability_trends_summary(report)
+            return 0
+        except Exception as exc:
+            print(f"observability-trends failed: {exc}", file=sys.stderr)
             return 1
 
     if args.command == "run":
@@ -1194,6 +1261,45 @@ def _print_strategy_evidence_summary(
         f"{report.unexecutable_open_position_count} "
         f"paper_only={report.paper_only} "
         f"report_only={report.report_only}",
+    )
+
+
+def _print_observability_trends_summary(
+    report: LocalObservabilityTrendsReport,
+) -> None:
+    strategy = report.strategy_evidence_trend
+    outcome = report.outcome_freshness
+    nav = report.nav_risk_trend
+    cost = report.paper_trade_cost_trend
+    print(
+        "observability-trends: "
+        f"strategy_evidence_status={strategy.latest_status} "
+        f"strategy_evidence_snapshots={strategy.snapshot_report_count} "
+        f"outcome_status={outcome.status} "
+        f"outcome_reports={outcome.outcome_report_count} "
+        f"nav_risk_status={nav.status} "
+        f"nav_risk_reports={nav.nav_risk_report_count} "
+        f"cost_status={cost.status} "
+        f"cost_audit_reports={cost.cost_audit_report_count} "
+        f"paper_only={report.paper_only} "
+        f"report_only={report.report_only} "
+        f"readonly={report.readonly}",
+    )
+    print(
+        "  strategy_evidence_latest_gaps="
+        f"{_csv_or_none(strategy.latest_evidence_gap_names)}",
+    )
+    print(
+        "  outcome_latest_age_seconds="
+        f"{_none_or_value(outcome.latest_report_age_seconds)}",
+    )
+    print(
+        "  nav_latest_exit_nav="
+        f"{_none_or_value(nav.latest_exit_nav)}",
+    )
+    print(
+        "  cost_latest_mean_edge_cost_drag="
+        f"{_none_or_value(cost.latest_mean_edge_cost_drag)}",
     )
 
 
