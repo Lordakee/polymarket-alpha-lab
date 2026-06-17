@@ -55,23 +55,27 @@ Capabilities:
 - simulate fills with bid/ask and order book walk
 - maintain paper positions and mark them at executable exit prices
 - report performance by strategy, market class, price bucket, and holding period
+- optionally gate continuous paper runs on the latest local Strategy Risk Audit status before public client construction
 
 Allowed actions:
 
 - automated paper trades
 - automated rejection logs
 - automated risk reports
+- optional local audit preflight for paper-only/report-only continuous runs
 
 Not allowed:
 
 - live orders
 - authenticated trading
+- treating `audit_ready` as approval for proposals, live orders, authenticated trading, or automatic credential use
 
 Promotion gate:
 
 - strategy passes validation gates in `docs/research/validation-gates.md`
 - paper fills are cost-adjusted and not midpoint-only
 - rejected candidates are logged with reasons
+- local Strategy Risk Audit readiness can support the evidence packet, but the optional run preflight itself is only an operational paper-run pause and is not a strategy-promotion signal
 
 ### Level 2: Human-Approved Trade Proposals
 

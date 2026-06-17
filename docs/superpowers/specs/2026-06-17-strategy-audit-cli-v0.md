@@ -10,6 +10,7 @@ Expose the existing Strategy Risk Audit as a local CLI report over paper artifac
 - Extend `check-outcomes` with optional `--outcome-log <path>` that appends the full outcome-tracking report.
 - Add `strategy-audit --cycle-log <path> --trade-log <path> --nav-log <path> [--outcome-log <path>]`.
 - `strategy-audit` reads local typed logs only, builds `PerformanceSummary`, builds `PaperNavRiskMetricsReport`, optionally loads the latest `OutcomeTrackingReport`, then calls `build_paper_strategy_risk_audit_report(...)`.
+- Allow `run --strategy-audit-preflight` to reuse the same local-log Strategy Risk Audit adapter as an optional preflight for continuous paper runs; this does not change default run behavior.
 - Print a compact report summary plus every gate row.
 
 ## Out of Scope
@@ -22,6 +23,8 @@ Expose the existing Strategy Risk Audit as a local CLI report over paper artifac
 ## Boundary Rules
 
 `strategy-audit` is local-only orchestration. It must not construct `PolymarketPublicClient`, call `client_factory()`, call `check_outcomes`, fetch Gamma/CLOB data, read credentials, or write audit logs. It may read the local JSONL inputs explicitly passed by the caller.
+
+When reused by `run --strategy-audit-preflight`, the audit remains local-only: it reads only explicitly passed JSONL artifacts, must run before public client construction, and must not construct `PolymarketPublicClient`, call `client_factory()`, fetch Gamma/CLOB data, read credentials, or write audit logs.
 
 `check-outcomes --outcome-log` remains the existing read-only public Gamma outcome checker. The new flag only persists the already-built `OutcomeTrackingReport`; it does not add any new network or execution surface.
 
@@ -41,12 +44,14 @@ polymarket-alpha-lab strategy-audit \
 
 When `--outcome-log` is omitted or empty, settlement and forecast-quality gates remain incomplete.
 
+For `run --strategy-audit-preflight`, an omitted or empty `--outcome-log` keeps settlement and forecast-quality evidence incomplete, so the preflight blocks unless the resulting local audit status is still `audit_ready`.
+
 ## Acceptance Criteria
 
 - `OutcomeTrackingLog.append(report)` validates a real `OutcomeTrackingReport`, writes JSONL, creates parent directories, and rejects invalid inputs before creating files.
 - `OutcomeTrackingLog.read(path)` returns fully typed reports, skips blank lines, returns `()` for empty files, and raises `ValueError` with the line number for invalid JSON.
 - `check-outcomes --outcome-log` appends the full report even when zero observations resolved.
-- `strategy-audit` can run with local cycle/trade/nav logs and no outcome log, prints five gates, and does not construct a client.
+- `strategy-audit` can run with local cycle/trade/nav logs and no outcome log, prints six gates, and does not construct a client.
 - `strategy-audit --outcome-log` uses the latest full outcome report.
 - Public package exports include `OutcomeTrackingLog`.
 - README documents the command and boundary clearly.

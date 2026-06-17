@@ -401,6 +401,10 @@ def test_readme_runner_sections_keep_paper_boundaries():
         "norank",
         "norecommend",
         "nofinancialadvice",
+        "strategyauditpreflight",
+        "locallogs",
+        "auditready",
+        "beforepublicclientconstruction",
     )
     for fragment in required_fragments:
         assert fragment in normalized, fragment

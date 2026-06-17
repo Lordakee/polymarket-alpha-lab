@@ -6,6 +6,12 @@ Define the evidence required before a Polymarket strategy can move from research
 
 These gates are deliberately conservative. They are starting thresholds for engineering discipline, not proof of guaranteed return.
 
+## Phase 1 Operational Audit Note
+
+The Strategy Risk Audit CLI currently summarizes six Phase 1 paper-readiness checks: `paper_history`, `settlement_evidence`, `forecast_quality`, `cost_discipline`, `nav_drawdown`, and `open_exposure`. These six checks are an operational evidence subset for paper-only/report-only workflows, not a replacement for the full Gate 0 through Gate 8 promotion framework.
+
+An optional continuous paper-run preflight may pause new paper execution until the local Strategy Risk Audit status is `audit_ready`. That pause is not human approval readiness, not a proposal-mode promotion, not a live pilot signal, and not financial advice.
+
 ## Gate 0: Data Integrity
 
 A strategy cannot be evaluated until the data layer can prove:

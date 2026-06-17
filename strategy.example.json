@@ -9,8 +9,10 @@
   "paper_journal": "artifacts/paper-trades.jsonl",
   "nav_log": "artifacts/nav.jsonl",
   "cycle_log": "artifacts/cycles.jsonl",
+  "outcome_log": "artifacts/outcomes.jsonl",
   "archive_root": "data/raw",
   "repeat_interval_seconds": 600,
   "max_iterations": 20,
-  "starting_cash": "10000"
+  "starting_cash": "10000",
+  "strategy_audit_preflight": false
 }

@@ -96,11 +96,13 @@ def _apply_json_config(args: argparse.Namespace) -> None:
         "paper_journal": "paper_journal",
         "nav_log": "nav_log",
         "cycle_log": "cycle_log",
+        "outcome_log": "outcome_log",
         "archive_root": "archive_root",
         "repeat_interval_seconds": "repeat_interval",
         "max_iterations": "max_iterations",
         "starting_cash": "starting_cash",
         "market_search": "market_search",
+        "strategy_audit_preflight": "strategy_audit_preflight",
     }
     for json_key, arg_key in key_map.items():
         if json_key not in cfg:
@@ -111,7 +113,13 @@ def _apply_json_config(args: argparse.Namespace) -> None:
             continue
         if arg_key == "starting_cash" and val is not None:
             val = Decimal(str(val))
-        if arg_key in ("paper_journal", "nav_log", "cycle_log", "archive_root") and val is not None:
+        if arg_key in (
+            "paper_journal",
+            "nav_log",
+            "cycle_log",
+            "outcome_log",
+            "archive_root",
+        ) and val is not None:
             val = Path(val)
         setattr(args, arg_key, val)
 
@@ -347,6 +355,18 @@ def main(
         dest="nav_log",
     )
     run_loop.add_argument(
+        "--outcome-log",
+        type=Path,
+        default=None,
+        dest="outcome_log",
+    )
+    run_loop.add_argument(
+        "--strategy-audit-preflight",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        dest="strategy_audit_preflight",
+    )
+    run_loop.add_argument(
         "--repeat-interval",
         type=int,
         default=0,
@@ -367,6 +387,8 @@ def main(
 
     args = parser.parse_args(argv)
     _apply_json_config(args)
+    if args.command == "run" and args.strategy_audit_preflight is None:
+        args.strategy_audit_preflight = False
 
     if args.command == "scan":
         try:
@@ -501,6 +523,24 @@ def main(
                 llm_api_token=args.llm_api_token,
             )
             repeat_mode = "interval" if args.repeat_interval > 0 else "once"
+            if args.strategy_audit_preflight:
+                if args.nav_log is None:
+                    raise ValueError("strategy audit preflight requires --nav-log")
+                audit_report = _run_strategy_audit(
+                    cycle_log=args.cycle_log,
+                    trade_log=args.paper_journal,
+                    nav_log=args.nav_log,
+                    outcome_log=args.outcome_log,
+                    runner=strategy_audit_runner,
+                )
+                _print_strategy_audit_summary(audit_report)
+                if audit_report.status != "audit_ready":
+                    print(
+                        "run blocked by strategy audit preflight: "
+                        f"status={audit_report.status}",
+                        file=sys.stderr,
+                    )
+                    return 1
             summary = loop_runner(
                 client=client_factory(),
                 scan_config=scan_config,
