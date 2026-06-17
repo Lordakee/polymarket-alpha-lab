@@ -16,10 +16,11 @@ The module itself does not read files, fetch market data, authenticate, use brow
 
 ## Gates
 
-The v0 report has four gates:
+The v0 report has five gates:
 
 - `paper_history`: requires enough strategy cycles, paper trades, and NAV snapshots to make the audit meaningful.
 - `settlement_evidence`: requires enough resolved paper outcomes from `OutcomeTrackingReport`; absent outcome tracking is incomplete.
+- `forecast_quality`: reads the nested `forecast_evidence_report` / `ForecastEvidenceReport` probability-quality gate from `OutcomeTrackingReport`, requires enough probability observations, and blocks on probability calibration quality failure.
 - `nav_drawdown`: blocks when NAV drawdown exceeds the configured limit.
 - `open_exposure`: includes open paper position count for context and blocks when no-exit-depth marks or exposure concentration exceed configured limits.
 
@@ -49,7 +50,8 @@ Exports:
 - No market/project selection.
 - No strategy, forecast, screening, sizing, or execution changes.
 - No cross-report coherence or freshness inference; callers must supply reports from a compatible paper-trading state and time window.
-- No calibration-quality gate; `settlement_evidence` only checks resolved outcome count in v0.
+- No direct import of `polymarket_alpha_lab.forecast_evidence` in `strategy_risk_audit.py`; the audit consumes only the nested forecast evidence report already present on `OutcomeTrackingReport`.
+- No full executable-edge forecast evidence readiness requirement; `forecast_quality` is a probability calibration gate because outcome tracking currently emits probability-only observations.
 - No fetch, live trading, auth, wallets, private keys, account reads, or orders.
 
 The standalone boundary bullets below are intentionally explicit so static documentation checks can detect accidental scope drift.

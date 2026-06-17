@@ -5,6 +5,7 @@ from decimal import Decimal
 import pytest
 
 from polymarket_alpha_lab.forecast_evidence import (
+    PaperForecastEvidenceReport,
     PaperForecastEvidenceConfig,
     PaperForecastEvidenceObservation,
     build_paper_forecast_evidence_report,
@@ -93,7 +94,7 @@ def _outcomes(**overrides) -> OutcomeTrackingReport:
                 min_probability_observations=resolved_count,
                 min_edge_observations=0,
                 max_mean_probability_loss=Decimal("0.3000"),
-                max_bucket_error=Decimal("0.3000"),
+                max_bucket_error=Decimal("0.5000"),
             ),
             generated_at=GENERATED_AT,
         )
@@ -111,6 +112,31 @@ def _outcomes(**overrides) -> OutcomeTrackingReport:
     }
     values.update(overrides)
     return OutcomeTrackingReport(**values)
+
+
+def _evidence(
+    *,
+    max_mean_probability_loss=Decimal("0.3000"),
+    max_bucket_error=Decimal("0.5000"),
+    min_probability_observations=12,
+    observations=None,
+) -> PaperForecastEvidenceReport:
+    observation_values = (
+        tuple(_observation(index) for index in range(12))
+        if observations is None
+        else observations
+    )
+    return build_paper_forecast_evidence_report(
+        observation_values,
+        config=PaperForecastEvidenceConfig(
+            config_version="strategy-risk-audit-test",
+            min_probability_observations=min_probability_observations,
+            min_edge_observations=0,
+            max_mean_probability_loss=max_mean_probability_loss,
+            max_bucket_error=max_bucket_error,
+        ),
+        generated_at=GENERATED_AT,
+    )
 
 
 def _observation(index: int) -> PaperForecastEvidenceObservation:
@@ -146,13 +172,14 @@ def test_strategy_risk_audit_ready_when_all_gates_pass():
     assert report.generated_at == GENERATED_AT
     assert report.config_version == "strategy-risk-audit-v0"
     assert report.status == "audit_ready"
-    assert report.gate_count == 4
-    assert report.pass_count == 4
+    assert report.gate_count == 5
+    assert report.pass_count == 5
     assert report.fail_count == 0
     assert report.incomplete_count == 0
     assert tuple(gate.gate_name for gate in report.gate_results) == (
         "paper_history",
         "settlement_evidence",
+        "forecast_quality",
         "nav_drawdown",
         "open_exposure",
     )
@@ -168,10 +195,11 @@ def test_strategy_risk_audit_marks_immature_history_as_insufficient_evidence():
     assert report.status == "insufficient_evidence"
     assert report.pass_count == 2
     assert report.fail_count == 0
-    assert report.incomplete_count == 2
+    assert report.incomplete_count == 3
     gates = {gate.gate_name: gate for gate in report.gate_results}
     assert gates["paper_history"].status == "incomplete"
     assert gates["settlement_evidence"].status == "incomplete"
+    assert gates["forecast_quality"].status == "incomplete"
     assert gates["paper_history"].observed_value == (
         "cycle_count=3; paper_trade_count=2; nav_snapshot_count=1"
     )
@@ -197,6 +225,48 @@ def test_strategy_risk_audit_blocks_on_nav_drawdown_and_open_exposure():
         "open_position_count=1; no_exit_depth_count=2; "
         "largest_market_exposure_share=0.350000"
     )
+
+
+def test_strategy_risk_audit_blocks_on_forecast_quality_failure():
+    poor_evidence = _evidence(
+        max_mean_probability_loss=Decimal("0.0100"),
+        max_bucket_error=Decimal("0.0100"),
+    )
+    report = _report(outcomes=_outcomes(forecast_evidence_report=poor_evidence))
+
+    assert report.status == "blocked_by_risk"
+    gates = {gate.gate_name: gate for gate in report.gate_results}
+    assert gates["forecast_quality"].status == "fail"
+    assert gates["forecast_quality"].observed_value == (
+        "forecast_probability_quality_status=fail; "
+        "mean_probability_loss=0.1600; worst_bucket_error=0.4000; "
+        "probability_observation_count=12"
+    )
+
+
+def test_strategy_risk_audit_marks_incomplete_forecast_quality_as_insufficient_evidence():
+    thin_evidence = _evidence()
+    report = _report(
+        outcomes=_outcomes(forecast_evidence_report=thin_evidence),
+        config=_config(min_forecast_probability_observation_count=20),
+    )
+
+    assert report.status == "insufficient_evidence"
+    gates = {gate.gate_name: gate for gate in report.gate_results}
+    assert gates["forecast_quality"].status == "incomplete"
+    assert gates["forecast_quality"].observed_value == (
+        "forecast_probability_quality_status=pass; "
+        "mean_probability_loss=0.1600; worst_bucket_error=0.4000; "
+        "probability_observation_count=12"
+    )
+
+
+def test_strategy_risk_audit_rejects_non_paper_forecast_evidence_report():
+    evidence = _evidence()
+    object.__setattr__(evidence, "paper_only", False)
+
+    with pytest.raises(ValueError, match="forecast_evidence_report paper_only"):
+        _report(outcomes=_outcomes(forecast_evidence_report=evidence))
 
 
 def test_strategy_risk_audit_rejects_invalid_inputs():

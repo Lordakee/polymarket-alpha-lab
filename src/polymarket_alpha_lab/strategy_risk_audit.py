@@ -20,6 +20,7 @@ __all__ = (
 GATE_NAMES = (
     "paper_history",
     "settlement_evidence",
+    "forecast_quality",
     "nav_drawdown",
     "open_exposure",
 )
@@ -39,6 +40,7 @@ class PaperStrategyRiskAuditConfig:
     min_paper_trade_count: int = 20
     min_nav_snapshot_count: int = 5
     min_resolved_count: int = 10
+    min_forecast_probability_observation_count: int = 10
     max_nav_drawdown_pct: Decimal = Decimal("0.050000")
     max_largest_market_exposure_share: Decimal = Decimal("0.200000")
     max_no_exit_depth_count: int = 0
@@ -50,6 +52,7 @@ class PaperStrategyRiskAuditConfig:
             "min_paper_trade_count",
             "min_nav_snapshot_count",
             "min_resolved_count",
+            "min_forecast_probability_observation_count",
             "max_no_exit_depth_count",
         ):
             _require_nonnegative_int(field_name, getattr(self, field_name))
@@ -157,6 +160,7 @@ def build_paper_strategy_risk_audit_report(
     gate_results = (
         _build_paper_history_gate(performance_summary, config),
         _build_settlement_evidence_gate(outcome_report, config),
+        _build_forecast_quality_gate(outcome_report, config),
         _build_nav_drawdown_gate(nav_risk_report, config),
         _build_open_exposure_gate(nav_risk_report, config),
     )
@@ -242,6 +246,60 @@ def _build_settlement_evidence_gate(
     )
 
 
+def _build_forecast_quality_gate(
+    value: OutcomeTrackingReport | None,
+    config: PaperStrategyRiskAuditConfig,
+) -> PaperStrategyRiskAuditGateResult:
+    threshold = (
+        "forecast_probability_quality_status=pass; "
+        "min_forecast_probability_observation_count="
+        f"{config.min_forecast_probability_observation_count}"
+    )
+    if value is None or value.forecast_evidence_report is None:
+        return PaperStrategyRiskAuditGateResult(
+            gate_name="forecast_quality",
+            status="incomplete",
+            message="Forecast probability evidence has not been supplied.",
+            observed_value=None,
+            threshold=threshold,
+        )
+
+    report = value.forecast_evidence_report
+    if report.paper_only is not True:
+        raise ValueError("forecast_evidence_report paper_only must be True")
+
+    probability_quality_status = _forecast_probability_quality_status(report)
+    observed_value = (
+        f"forecast_probability_quality_status={probability_quality_status}; "
+        f"mean_probability_loss={report.mean_probability_loss}; "
+        f"worst_bucket_error={report.worst_bucket_error}; "
+        "probability_observation_count="
+        f"{report.probability_observation_count}"
+    )
+    if (
+        report.probability_observation_count
+        < config.min_forecast_probability_observation_count
+    ):
+        status = "incomplete"
+        message = "Forecast probability evidence has not reached the configured floor."
+    elif probability_quality_status == "pass":
+        status = "pass"
+        message = "Forecast probability quality is within the nested thresholds."
+    elif probability_quality_status == "fail":
+        status = "fail"
+        message = "Forecast probability quality breaches nested thresholds."
+    else:
+        status = "incomplete"
+        message = "Forecast probability quality is incomplete."
+    return PaperStrategyRiskAuditGateResult(
+        gate_name="forecast_quality",
+        status=status,
+        message=message,
+        observed_value=observed_value,
+        threshold=threshold,
+    )
+
+
 def _build_nav_drawdown_gate(
     value: PaperNavRiskMetricsReport,
     config: PaperStrategyRiskAuditConfig,
@@ -303,6 +361,13 @@ def _build_open_exposure_gate(
         observed_value=observed_value,
         threshold=threshold,
     )
+
+
+def _forecast_probability_quality_status(value: object) -> str:
+    for gate in value.gate_results:
+        if gate.gate_name == "probability_quality":
+            return gate.status
+    raise ValueError("forecast_evidence_report must include probability_quality")
 
 
 def _report_status(fail_count: int, incomplete_count: int) -> str:
