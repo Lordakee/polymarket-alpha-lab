@@ -70,6 +70,12 @@ from polymarket_alpha_lab.strategy_cycle import (
     PaperStrategyCycleLog,
     run_strategy_cycle,
 )
+from polymarket_alpha_lab.strategy_risk_audit import (
+    PaperStrategyRiskAuditConfig,
+    PaperStrategyRiskAuditGateResult,
+    PaperStrategyRiskAuditReport,
+    build_paper_strategy_risk_audit_report,
+)
 from polymarket_alpha_lab.domain import (
     MarketScore,
     MarketSnapshot,
@@ -330,6 +336,9 @@ __all__ = [
     "PaperStrategyCycleConfig",
     "PaperStrategyCycleReport",
     "PaperStrategyCycleLog",
+    "PaperStrategyRiskAuditConfig",
+    "PaperStrategyRiskAuditGateResult",
+    "PaperStrategyRiskAuditReport",
     "PaperAnalyticsLog",
     "PaperAnalyticsReport",
     "PaperBookImbalanceForecastConfig",
@@ -498,6 +507,7 @@ __all__ = [
     "build_paper_manual_review_queue",
     "build_paper_nav_risk_metrics_report",
     "check_outcomes",
+    "build_paper_strategy_risk_audit_report",
     "build_trade_proposal_evidence_comparison_history_batch_health_report",
     "build_trade_proposal_evidence_comparison_history_batch_health_trend_report",
     "build_trade_proposal_evidence_comparison_history_batch_health_trend_batch_report",

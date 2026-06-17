@@ -69,6 +69,12 @@ from polymarket_alpha_lab.strategy_cycle import (
     PaperStrategyCycleLog,
     run_strategy_cycle,
 )
+from polymarket_alpha_lab.strategy_risk_audit import (
+    PaperStrategyRiskAuditConfig,
+    PaperStrategyRiskAuditGateResult,
+    PaperStrategyRiskAuditReport,
+    build_paper_strategy_risk_audit_report,
+)
 from polymarket_alpha_lab.project_screening import (
     PaperProjectScreeningCandidate,
     PaperProjectScreeningConfig,
@@ -577,6 +583,27 @@ def test_strategy_cycle_public_api_exports():
     assert lab.PaperStrategyCycleReport is PaperStrategyCycleReport
     assert lab.PaperStrategyCycleLog is PaperStrategyCycleLog
     assert lab.run_strategy_cycle is run_strategy_cycle
+
+
+def test_strategy_risk_audit_public_api_exports():
+    expected_exports = {
+        "PaperStrategyRiskAuditConfig",
+        "PaperStrategyRiskAuditGateResult",
+        "PaperStrategyRiskAuditReport",
+        "build_paper_strategy_risk_audit_report",
+    }
+
+    assert expected_exports <= set(lab.__all__)
+    assert lab.PaperStrategyRiskAuditConfig is PaperStrategyRiskAuditConfig
+    assert (
+        lab.PaperStrategyRiskAuditGateResult
+        is PaperStrategyRiskAuditGateResult
+    )
+    assert lab.PaperStrategyRiskAuditReport is PaperStrategyRiskAuditReport
+    assert (
+        lab.build_paper_strategy_risk_audit_report
+        is build_paper_strategy_risk_audit_report
+    )
 
 
 def test_paper_execution_public_api_exports():

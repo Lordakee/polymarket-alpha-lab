@@ -43,6 +43,21 @@ The `nav-risk` command is separate from strategy-cycle, NAV marking, outcome tra
 - Inspect latest exposure concentration with `PaperNavRiskExposureRow` values on `report.exposure_rows`.
 - Print local metrics from the CLI with `polymarket-alpha-lab nav-risk --nav-log <path>`; the command reads local NAV JSONL logs only and preserves the same `paper_only`, `report_only`, `readonly` boundary: no fetch, no auth, no wallet, no order, no rank, no recommend, no trade instruction, no financial advice.
 
+## Strategy Risk Audit v0 Status
+
+Strategy Risk Audit v0 is a pure, paper-only/report-only audit over caller-supplied typed reports: `PerformanceSummary`, `PaperNavRiskMetricsReport`, and optional `OutcomeTrackingReport`. It reduces existing paper history, settlement evidence, NAV drawdown, and open-exposure observations into four gates: `paper_history`, `settlement_evidence`, `nav_drawdown`, and `open_exposure`.
+
+The report emits one status: `audit_ready` when every gate passes, `blocked_by_risk` when any risk gate fails, and `insufficient_evidence` when evidence is incomplete and no gate fails. `paper_only is True` and `report_only is True` are hard-enforced on every report.
+
+Phase 1 boundary: this module is pure local report math. It does not score markets, select projects, tune strategy weights, size positions, read files, write logs, fetch, authenticate, handle wallets, construct or use API clients, perform live trading, place/sign/submit/cancel orders, make recommendations, rank investments, provide trade instruction, or provide financial advice.
+
+## Strategy Risk Audit v0 Python API
+
+- Configure the audit with `PaperStrategyRiskAuditConfig(...)`, including the minimum paper-history and settlement-evidence thresholds plus NAV drawdown and open-exposure limits.
+- Build the audit with `build_paper_strategy_risk_audit_report(performance_summary=..., nav_risk_report=..., outcome_report=..., config=..., generated_at=...)`, which returns `PaperStrategyRiskAuditReport` from caller-supplied typed reports only.
+- Inspect deterministic gate rows with `PaperStrategyRiskAuditGateResult` values on `report.gate_results`; gate names are `paper_history`, `settlement_evidence`, `nav_drawdown`, and `open_exposure`, and the final `report.status` is one of `audit_ready`, `blocked_by_risk`, or `insufficient_evidence`.
+- There is no file reader, log writer, fetch path, auth path, wallet path, API-client path, live-trading path, order path, recommendation path, ranking path, strategy-weight tuning, project selection, market scoring, position sizing, or financial-advice surface.
+
 ## Recommended Direction
 
 The strongest first product is a market-quality and edge-scanning system:
