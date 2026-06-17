@@ -17,6 +17,10 @@ from polymarket_alpha_lab.nav_risk_metrics import (
     PaperNavRiskMetricsConfig,
     PaperNavRiskMetricsReport,
 )
+from polymarket_alpha_lab.paper_trade_cost_audit import (
+    PaperTradeCostAuditConfig,
+    PaperTradeCostAuditReport,
+)
 from polymarket_alpha_lab.performance_summary import (
     PerformanceSummary,
     PerformanceSummaryConfig,
@@ -825,6 +829,97 @@ def test_nav_risk_cli_does_not_construct_client(tmp_path):
     )
 
     assert exit_code == 0
+
+
+def _empty_cost_audit_report() -> PaperTradeCostAuditReport:
+    return PaperTradeCostAuditReport(
+        generated_at=datetime(2026, 6, 17, 10, 0, tzinfo=UTC),
+        config_version="paper-trade-cost-audit-v0",
+        trade_count=1,
+        total_filled_size=Decimal("100"),
+        total_requested_size=Decimal("100"),
+        fill_rate=Decimal("1.000000"),
+        mean_theoretical_edge=Decimal("0.060000"),
+        mean_cost_adjusted_edge=Decimal("0.040000"),
+        mean_edge_cost_drag=Decimal("0.020000"),
+        total_edge_cost_drag=Decimal("2.000000"),
+        mean_research_slippage=Decimal("0.004000"),
+        mean_fill_slippage=Decimal("0.006000"),
+        partial_fill_count=0,
+        negative_cost_adjusted_edge_count=0,
+        largest_single_trade_cost_drag=Decimal("2.000000"),
+    )
+
+
+def test_cost_audit_cli_reads_trade_log_and_prints_summary_without_client(
+    tmp_path,
+    capsys,
+):
+    calls = []
+
+    def fake_cost_audit_runner(*, trade_records, config, generated_at):
+        calls.append(
+            {
+                "trade_records": trade_records,
+                "config": config,
+                "generated_at": generated_at,
+            }
+        )
+        return _empty_cost_audit_report()
+
+    def forbidden_client_factory():
+        raise AssertionError("client should not be constructed")
+
+    trade_log = tmp_path / "paper-trades.jsonl"
+    trade_log.write_text("", encoding="utf-8")
+
+    exit_code = main(
+        [
+            "cost-audit",
+            "--trade-log",
+            str(trade_log),
+        ],
+        cost_audit_runner=fake_cost_audit_runner,
+        client_factory=forbidden_client_factory,
+    )
+
+    assert exit_code == 0
+    assert len(calls) == 1
+    call = calls[0]
+    assert call["trade_records"] == ()
+    assert isinstance(call["config"], PaperTradeCostAuditConfig)
+    assert call["config"].config_version == "paper-trade-cost-audit-v0"
+    assert isinstance(call["generated_at"], datetime)
+
+    captured = capsys.readouterr()
+    assert "cost-audit:" in captured.out
+    assert "trades=1" in captured.out
+    assert "fill_rate=1.000000" in captured.out
+    assert "mean_edge_cost_drag=0.020000" in captured.out
+    assert "total_edge_cost_drag=2.000000" in captured.out
+    assert "partial_fills=0" in captured.out
+    assert "negative_cost_adjusted_edge=0" in captured.out
+
+
+def test_cost_audit_cli_returns_one_when_runner_fails(tmp_path, capsys):
+    def broken_cost_audit_runner(*, trade_records, config, generated_at):
+        raise RuntimeError("cost audit failed")
+
+    trade_log = tmp_path / "paper-trades.jsonl"
+    trade_log.write_text("", encoding="utf-8")
+
+    exit_code = main(
+        [
+            "cost-audit",
+            "--trade-log",
+            str(trade_log),
+        ],
+        cost_audit_runner=broken_cost_audit_runner,
+    )
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert "cost-audit failed: cost audit failed" in captured.err
 
 
 def _empty_run_summary() -> RunLoopSummary:

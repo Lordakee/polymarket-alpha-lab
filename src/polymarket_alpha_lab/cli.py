@@ -32,6 +32,11 @@ from polymarket_alpha_lab.outcome_tracker import (
 )
 from polymarket_alpha_lab.paper_execution import PaperExecutionConfig
 from polymarket_alpha_lab.paper_portfolio_nav import mark_paper_portfolio_nav
+from polymarket_alpha_lab.paper_trade_cost_audit import (
+    PaperTradeCostAuditConfig,
+    PaperTradeCostAuditReport,
+    build_paper_trade_cost_audit_report,
+)
 from polymarket_alpha_lab.pipeline import MarketScanConfig, run_market_scan
 from polymarket_alpha_lab.positions import PaperNavLog, PaperNavSnapshot
 from polymarket_alpha_lab.performance_summary import (
@@ -66,6 +71,7 @@ LoopRunner = Callable[..., RunLoopSummary]
 OutcomeRunner = Callable[..., OutcomeTrackingReport]
 NavRiskRunner = Callable[..., "PaperNavRiskMetricsReport"]
 StrategyAuditRunner = Callable[..., PaperStrategyRiskAuditReport]
+CostAuditRunner = Callable[..., PaperTradeCostAuditReport]
 
 
 def _apply_json_config(args: argparse.Namespace) -> None:
@@ -122,6 +128,7 @@ def main(
     loop_runner: LoopRunner = run_strategy_loop,
     outcome_runner: OutcomeRunner = check_outcomes,
     strategy_audit_runner: StrategyAuditRunner | None = None,
+    cost_audit_runner: CostAuditRunner | None = None,
 ) -> int:
     parser = argparse.ArgumentParser(prog="polymarket-alpha-lab")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -202,6 +209,14 @@ def main(
         type=Path,
         required=True,
         dest="nav_log",
+    )
+
+    cost_audit = subparsers.add_parser("cost-audit")
+    cost_audit.add_argument(
+        "--trade-log",
+        type=Path,
+        required=True,
+        dest="trade_log",
     )
 
     history = subparsers.add_parser("history")
@@ -426,6 +441,18 @@ def main(
             return 0
         except Exception as exc:
             print(f"nav-risk failed: {exc}", file=sys.stderr)
+            return 1
+
+    if args.command == "cost-audit":
+        try:
+            report = _run_cost_audit(
+                trade_log=args.trade_log,
+                runner=cost_audit_runner,
+            )
+            _print_cost_audit_summary(report)
+            return 0
+        except Exception as exc:
+            print(f"cost-audit failed: {exc}", file=sys.stderr)
             return 1
 
     if args.command == "history":
@@ -717,6 +744,29 @@ def _run_nav_risk(
     )
 
 
+def _run_cost_audit(
+    *,
+    trade_log: Path,
+    runner: CostAuditRunner | None,
+) -> PaperTradeCostAuditReport:
+    """Read typed paper trades and build the paper-only cost audit report."""
+
+    trade_records = PaperTradeJournal.read(trade_log)
+    config = PaperTradeCostAuditConfig(config_version="paper-trade-cost-audit-v0")
+    generated_at = datetime.now(UTC)
+    if runner is not None:
+        return runner(
+            trade_records=trade_records,
+            config=config,
+            generated_at=generated_at,
+        )
+    return build_paper_trade_cost_audit_report(
+        trade_records,
+        config=config,
+        generated_at=generated_at,
+    )
+
+
 def _run_strategy_audit(
     *,
     cycle_log: Path,
@@ -773,6 +823,32 @@ def _print_nav_risk_summary(report: "PaperNavRiskMetricsReport") -> None:
         f"max_drawdown={report.max_drawdown} "
         f"max_drawdown_pct={report.max_drawdown_pct}",
     )
+
+
+def _print_cost_audit_summary(report: PaperTradeCostAuditReport) -> None:
+    """Print a compact paper trade cost audit summary."""
+
+    print(
+        "cost-audit: "
+        f"trades={report.trade_count} "
+        f"filled={report.total_filled_size} "
+        f"requested={report.total_requested_size} "
+        f"fill_rate={report.fill_rate} "
+        f"mean_edge_cost_drag={report.mean_edge_cost_drag} "
+        f"total_edge_cost_drag={report.total_edge_cost_drag} "
+        f"partial_fills={report.partial_fill_count} "
+        "negative_cost_adjusted_edge="
+        f"{report.negative_cost_adjusted_edge_count}",
+    )
+    if report.mean_research_slippage is not None:
+        print(f"  mean_research_slippage={report.mean_research_slippage}")
+    if report.mean_fill_slippage is not None:
+        print(f"  mean_fill_slippage={report.mean_fill_slippage}")
+    if report.largest_single_trade_cost_drag is not None:
+        print(
+            "  largest_single_trade_cost_drag="
+            f"{report.largest_single_trade_cost_drag}",
+        )
 
 
 def _print_performance_summary(summary: PerformanceSummary) -> None:

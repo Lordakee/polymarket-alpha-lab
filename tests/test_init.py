@@ -270,6 +270,11 @@ from polymarket_alpha_lab.nav_risk_metrics import (
     PaperNavRiskMetricsReport,
     build_paper_nav_risk_metrics_report,
 )
+from polymarket_alpha_lab.paper_trade_cost_audit import (
+    PaperTradeCostAuditConfig,
+    PaperTradeCostAuditReport,
+    build_paper_trade_cost_audit_report,
+)
 from polymarket_alpha_lab.paper_portfolio_nav import mark_paper_portfolio_nav
 from polymarket_alpha_lab.outcome_tracker import (
     OutcomeTrackingConfig,
@@ -644,6 +649,22 @@ def test_nav_risk_metrics_public_api_exports():
     assert (
         lab.build_paper_nav_risk_metrics_report
         is build_paper_nav_risk_metrics_report
+    )
+
+
+def test_paper_trade_cost_audit_public_api_exports():
+    expected_exports = {
+        "PaperTradeCostAuditConfig",
+        "PaperTradeCostAuditReport",
+        "build_paper_trade_cost_audit_report",
+    }
+
+    assert expected_exports <= set(lab.__all__)
+    assert lab.PaperTradeCostAuditConfig is PaperTradeCostAuditConfig
+    assert lab.PaperTradeCostAuditReport is PaperTradeCostAuditReport
+    assert (
+        lab.build_paper_trade_cost_audit_report
+        is build_paper_trade_cost_audit_report
     )
 
 

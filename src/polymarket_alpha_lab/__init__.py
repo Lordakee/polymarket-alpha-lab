@@ -276,6 +276,11 @@ from polymarket_alpha_lab.nav_risk_metrics import (
     PaperNavRiskMetricsReport,
     build_paper_nav_risk_metrics_report,
 )
+from polymarket_alpha_lab.paper_trade_cost_audit import (
+    PaperTradeCostAuditConfig,
+    PaperTradeCostAuditReport,
+    build_paper_trade_cost_audit_report,
+)
 from polymarket_alpha_lab.positions import (
     PaperNavLog,
     PaperNavSnapshot,
@@ -379,6 +384,8 @@ __all__ = [
     "PaperPosition",
     "PaperPositionExposure",
     "PaperPositionMark",
+    "PaperTradeCostAuditConfig",
+    "PaperTradeCostAuditReport",
     "PerformanceSummary",
     "PerformanceSummaryConfig",
     "PaperTradeJournal",
@@ -508,6 +515,7 @@ __all__ = [
     "build_paper_naive_forecast",
     "build_paper_manual_review_queue",
     "build_paper_nav_risk_metrics_report",
+    "build_paper_trade_cost_audit_report",
     "check_outcomes",
     "build_paper_strategy_risk_audit_report",
     "build_trade_proposal_evidence_comparison_history_batch_health_report",
