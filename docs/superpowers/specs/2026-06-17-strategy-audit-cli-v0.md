@@ -11,6 +11,7 @@ Expose the existing Strategy Risk Audit as a local CLI report over paper artifac
 - Add `strategy-audit --cycle-log <path> --trade-log <path> --nav-log <path> [--outcome-log <path>] [--strategy-audit-log <path>]`.
 - `strategy-audit` reads local typed logs only, builds `PerformanceSummary`, builds `PaperNavRiskMetricsReport`, optionally loads the latest `OutcomeTrackingReport`, then calls `build_paper_strategy_risk_audit_report(...)`.
 - `strategy-audit --strategy-audit-log <path>` appends the already-built report to a caller-selected local append-only JSONL evidence artifact; omitted means no audit log is written.
+- `strategy-audit-history --strategy-audit-log <path>` can summarize that local audit log later without appending or changing run behavior.
 - Allow `run --strategy-audit-preflight` to reuse the same local-log Strategy Risk Audit adapter as an optional preflight for continuous paper runs; this does not change default run behavior.
 - Print a compact report summary plus every gate row.
 
@@ -29,6 +30,8 @@ When reused by `run --strategy-audit-preflight`, the audit remains local-only: i
 
 The optional Strategy Risk Audit log is an append-only local evidence artifact, not an approval workflow, recommendation, ranking, trade instruction, financial advice, or live execution.
 
+`strategy-audit-history` is local-only read-only orchestration over that optional log. It must not construct `PolymarketPublicClient`, call `client_factory()`, fetch Gamma/CLOB data, read credentials, append to the log, or alter run behavior.
+
 `check-outcomes --outcome-log` remains the existing read-only public Gamma outcome checker. The new flag only persists the already-built `OutcomeTrackingReport`; it does not add any new network or execution surface.
 
 ## Expected CLI
@@ -43,6 +46,9 @@ polymarket-alpha-lab strategy-audit \
   --trade-log artifacts/paper-trades.jsonl \
   --nav-log artifacts/nav.jsonl \
   --outcome-log artifacts/outcomes.jsonl \
+  --strategy-audit-log artifacts/strategy-audits.jsonl
+
+polymarket-alpha-lab strategy-audit-history \
   --strategy-audit-log artifacts/strategy-audits.jsonl
 ```
 
@@ -59,5 +65,6 @@ For `run --strategy-audit-preflight`, an omitted or empty `--outcome-log` keeps 
 - `strategy-audit --outcome-log` uses the latest full outcome report.
 - `strategy-audit` writes no audit log by default.
 - `strategy-audit --strategy-audit-log <path>` appends the same report it prints to a local append-only JSONL evidence artifact and does not construct a client.
+- `strategy-audit-history --strategy-audit-log <path>` reads that local evidence artifact, prints a compact paper-only/report-only/read-only history summary, does not append, and does not construct a client.
 - Public package exports include `OutcomeTrackingLog`.
 - README documents the command and boundary clearly.

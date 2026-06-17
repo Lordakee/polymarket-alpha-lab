@@ -4,7 +4,8 @@
 
 Persist local Strategy Risk Audit reports as an append-only JSONL artifact so
 continuous paper-run preflight decisions and manual `strategy-audit` checks have
-a durable evidence trail.
+a durable evidence trail that can also be summarized by the local
+`strategy-audit-history` command.
 
 This is Phase 1 paper-only/report-only observability over read-only local inputs
 plus an explicit append-only local result artifact. It is not an approval
@@ -29,6 +30,8 @@ Expose optional CLI persistence:
   command already builds and prints.
 - `run --strategy-audit-preflight --strategy-audit-log <path>` appends the
   preflight report before deciding whether the paper run may proceed.
+- `strategy-audit-history --strategy-audit-log <path>` may later read the same
+  local JSONL artifact and print append-order status history without appending.
 - `run --config` may set `strategy_audit_log` to the same local JSONL path.
 
 Default behavior remains unchanged. No audit log is written unless the caller
@@ -88,6 +91,15 @@ When `run` is used without `--strategy-audit-preflight`, `--strategy-audit-log`
 is inert because no Strategy Risk Audit report is built. If no audit log path is
 supplied, behavior is unchanged and no audit artifact is written.
 
+`strategy-audit-history`:
+
+1. Reads a caller-selected local Strategy Risk Audit JSONL artifact.
+2. Builds a paper-only/report-only/read-only history summary from already-built
+   reports.
+3. Prints append-order status counts, latest evidence state, latest
+   failed/incomplete audit-check names, and per-check status counts.
+4. Does not append to the log or change run behavior.
+
 ## Acceptance Criteria
 
 - `PaperStrategyRiskAuditLog.append(report)` validates a real
@@ -105,6 +117,8 @@ supplied, behavior is unchanged and no audit artifact is written.
 - `run --config` can provide `strategy_audit_log` as a local path.
 - Default `run` behavior and default `strategy-audit` behavior do not write audit
   logs.
+- `strategy-audit-history --strategy-audit-log <path>` reads the local log and
+  prints a read-only evidence summary without constructing a public client.
 - README and specs document the optional log as a local evidence artifact, not as
   approval, recommendation, ranking, trade instruction, financial advice, or live
   execution.

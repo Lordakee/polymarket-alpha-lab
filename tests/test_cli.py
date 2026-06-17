@@ -32,6 +32,10 @@ from polymarket_alpha_lab.positions import PaperNavLog, PaperNavSnapshot
 from polymarket_alpha_lab.runner import RunLoopSummary
 from polymarket_alpha_lab.strategy_cycle import PaperStrategyCycleReport
 from polymarket_alpha_lab.strategy_cycle import PaperStrategyCycleLog
+from polymarket_alpha_lab.strategy_audit_history import (
+    PaperStrategyRiskAuditHistoryConfig,
+    build_paper_strategy_risk_audit_history_report,
+)
 from polymarket_alpha_lab.strategy_risk_audit import (
     PaperStrategyRiskAuditGateResult,
     PaperStrategyRiskAuditReport,
@@ -873,6 +877,211 @@ def test_strategy_audit_cli_returns_one_when_runner_fails(tmp_path, capsys):
     assert "strategy-audit failed: audit failed" in captured.err
 
 
+def test_strategy_audit_history_cli_reads_audit_log_and_prints_summary_without_client(
+    tmp_path,
+    capsys,
+):
+    audit_log = tmp_path / "strategy-audits.jsonl"
+    PaperStrategyRiskAuditLog(audit_log).append(_strategy_audit_report("audit_ready"))
+    PaperStrategyRiskAuditLog(audit_log).append(
+        _strategy_audit_report("blocked_by_risk"),
+    )
+    before = audit_log.read_text(encoding="utf-8")
+
+    def forbidden_client_factory():
+        raise AssertionError("client should not be constructed")
+
+    exit_code = main(
+        [
+            "strategy-audit-history",
+            "--strategy-audit-log",
+            str(audit_log),
+        ],
+        client_factory=forbidden_client_factory,
+    )
+
+    assert exit_code == 0
+    assert audit_log.read_text(encoding="utf-8") == before
+    captured = capsys.readouterr()
+    assert "strategy-audit-history:" in captured.out
+    assert "reports=2" in captured.out
+    assert "status=latest_blocked_by_risk" in captured.out
+    assert "latest_status=blocked_by_risk" in captured.out
+    assert "audit_ready=1" in captured.out
+    assert "insufficient_evidence=0" in captured.out
+    assert "blocked_by_risk=1" in captured.out
+    assert "first=2026-06-17T12:00:00+00:00" in captured.out
+    assert "latest=2026-06-17T12:00:00+00:00" in captured.out
+    assert "latest_failed_gates=paper_history,settlement_evidence" in captured.out
+    assert "paper_history: pass=1 fail=1 incomplete=0" in captured.out
+
+
+def test_strategy_audit_history_cli_passes_typed_reports_to_runner(tmp_path):
+    audit_log = tmp_path / "strategy-audits.jsonl"
+    first = _strategy_audit_report("audit_ready")
+    second = _strategy_audit_report("insufficient_evidence")
+    PaperStrategyRiskAuditLog(audit_log).append(first)
+    PaperStrategyRiskAuditLog(audit_log).append(second)
+    calls = []
+
+    def fake_strategy_audit_history_runner(*, reports, config, generated_at):
+        calls.append(
+            {
+                "reports": reports,
+                "config": config,
+                "generated_at": generated_at,
+            }
+        )
+        return build_paper_strategy_risk_audit_history_report(
+            reports,
+            config=config,
+            generated_at=generated_at,
+        )
+
+    exit_code = main(
+        [
+            "strategy-audit-history",
+            "--strategy-audit-log",
+            str(audit_log),
+        ],
+        strategy_audit_history_runner=fake_strategy_audit_history_runner,
+        client_factory=lambda: (_ for _ in ()).throw(
+            AssertionError("client should not be constructed"),
+        ),
+    )
+
+    assert exit_code == 0
+    assert len(calls) == 1
+    assert calls[0]["reports"] == (first, second)
+    assert isinstance(calls[0]["config"], PaperStrategyRiskAuditHistoryConfig)
+    assert calls[0]["config"].config_version == "strategy-audit-history-v0"
+    assert isinstance(calls[0]["generated_at"], datetime)
+
+
+def test_strategy_audit_history_cli_empty_log_prints_zero_summary_without_client(
+    tmp_path,
+    capsys,
+):
+    audit_log = tmp_path / "strategy-audits.jsonl"
+    audit_log.write_text("", encoding="utf-8")
+    before = audit_log.read_bytes()
+
+    exit_code = main(
+        [
+            "strategy-audit-history",
+            "--strategy-audit-log",
+            str(audit_log),
+        ],
+        client_factory=lambda: (_ for _ in ()).throw(
+            AssertionError("client should not be constructed"),
+        ),
+    )
+
+    assert exit_code == 0
+    assert audit_log.read_bytes() == before
+    captured = capsys.readouterr()
+    assert "strategy-audit-history:" in captured.out
+    assert "reports=0" in captured.out
+    assert "status=empty_audit_history" in captured.out
+    assert "latest_status=none" in captured.out
+    assert "first=none" in captured.out
+    assert "latest=none" in captured.out
+
+
+def test_strategy_audit_history_cli_empty_log_passes_empty_reports_to_runner_without_mutation(
+    tmp_path,
+):
+    audit_log = tmp_path / "strategy-audits.jsonl"
+    audit_log.write_text("", encoding="utf-8")
+    before = audit_log.read_bytes()
+    calls = []
+
+    def fake_strategy_audit_history_runner(*, reports, config, generated_at):
+        calls.append(
+            {
+                "reports": reports,
+                "config": config,
+                "generated_at": generated_at,
+            },
+        )
+        return build_paper_strategy_risk_audit_history_report(
+            reports,
+            config=config,
+            generated_at=generated_at,
+        )
+
+    exit_code = main(
+        [
+            "strategy-audit-history",
+            "--strategy-audit-log",
+            str(audit_log),
+        ],
+        strategy_audit_history_runner=fake_strategy_audit_history_runner,
+        client_factory=lambda: (_ for _ in ()).throw(
+            AssertionError("client should not be constructed"),
+        ),
+    )
+
+    assert exit_code == 0
+    assert len(calls) == 1
+    assert calls[0]["reports"] == ()
+    assert isinstance(calls[0]["config"], PaperStrategyRiskAuditHistoryConfig)
+    assert calls[0]["config"].config_version == "strategy-audit-history-v0"
+    assert isinstance(calls[0]["generated_at"], datetime)
+    assert audit_log.read_bytes() == before
+
+
+def test_strategy_audit_history_cli_returns_one_when_runner_fails(tmp_path, capsys):
+    audit_log = tmp_path / "strategy-audits.jsonl"
+    PaperStrategyRiskAuditLog(audit_log).append(_strategy_audit_report("audit_ready"))
+    before = audit_log.read_bytes()
+
+    def broken_strategy_audit_history_runner(**kwargs):
+        raise RuntimeError("history summary failed")
+
+    exit_code = main(
+        [
+            "strategy-audit-history",
+            "--strategy-audit-log",
+            str(audit_log),
+        ],
+        strategy_audit_history_runner=broken_strategy_audit_history_runner,
+        client_factory=lambda: (_ for _ in ()).throw(
+            AssertionError("client should not be constructed"),
+        ),
+    )
+
+    assert exit_code == 1
+    assert audit_log.read_bytes() == before
+    captured = capsys.readouterr()
+    assert "strategy-audit-history failed: history summary failed" in captured.err
+
+
+def test_strategy_audit_history_cli_missing_log_returns_one_without_client(
+    tmp_path,
+    capsys,
+):
+    audit_log = tmp_path / "missing-strategy-audits.jsonl"
+    assert not audit_log.exists()
+
+    exit_code = main(
+        [
+            "strategy-audit-history",
+            "--strategy-audit-log",
+            str(audit_log),
+        ],
+        client_factory=lambda: (_ for _ in ()).throw(
+            AssertionError("client should not be constructed"),
+        ),
+    )
+
+    assert exit_code == 1
+    assert not audit_log.exists()
+    captured = capsys.readouterr()
+    assert "strategy-audit-history failed:" in captured.err
+    assert "missing-strategy-audits.jsonl" in captured.err
+
+
 def test_nav_risk_cli_reads_nav_log_and_prints_summary(tmp_path, capsys):
     calls = []
 
@@ -1326,6 +1535,7 @@ def test_run_cli_prints_last_error_when_iterations_failed(tmp_path, capsys):
 
 def test_run_cli_strategy_audit_preflight_allows_loop_when_audit_ready(tmp_path):
     audit_calls = []
+    history_calls = []
     loop_calls = []
 
     def fake_strategy_audit_runner(
@@ -1355,6 +1565,10 @@ def test_run_cli_strategy_audit_preflight_allows_loop_when_audit_ready(tmp_path)
         loop_calls.append(kwargs)
         return _empty_run_summary()
 
+    def forbidden_strategy_audit_history_runner(**kwargs):
+        history_calls.append(kwargs)
+        raise AssertionError("strategy audit history should not run")
+
     paper_journal = tmp_path / "paper-trades.jsonl"
     paper_journal.write_text("", encoding="utf-8")
     cycle_log = tmp_path / "cycles.jsonl"
@@ -1377,12 +1591,14 @@ def test_run_cli_strategy_audit_preflight_allows_loop_when_audit_ready(tmp_path)
             "10000",
         ],
         strategy_audit_runner=fake_strategy_audit_runner,
+        strategy_audit_history_runner=forbidden_strategy_audit_history_runner,
         loop_runner=fake_loop_runner,
         client_factory=lambda: "fake-client",
     )
 
     assert exit_code == 0
     assert len(audit_calls) == 1
+    assert history_calls == []
     assert len(loop_calls) == 1
     assert audit_calls[0]["cycle_log"] == cycle_log
     assert audit_calls[0]["trade_log"] == paper_journal
@@ -1595,11 +1811,16 @@ def test_run_cli_strategy_audit_preflight_failure_does_not_construct_client(
 
 def test_run_cli_omits_strategy_audit_preflight_by_default(tmp_path):
     audit_calls = []
+    history_calls = []
     loop_calls = []
 
     def fake_strategy_audit_runner(**kwargs):
         audit_calls.append(kwargs)
         return _strategy_audit_report("blocked_by_risk")
+
+    def forbidden_strategy_audit_history_runner(**kwargs):
+        history_calls.append(kwargs)
+        raise AssertionError("strategy audit history should not run")
 
     def fake_loop_runner(**kwargs):
         loop_calls.append(kwargs)
@@ -1616,12 +1837,14 @@ def test_run_cli_omits_strategy_audit_preflight_by_default(tmp_path):
             str(tmp_path / "cycle.jsonl"),
         ],
         strategy_audit_runner=fake_strategy_audit_runner,
+        strategy_audit_history_runner=forbidden_strategy_audit_history_runner,
         loop_runner=fake_loop_runner,
         client_factory=lambda: "fake-client",
     )
 
     assert exit_code == 0
     assert audit_calls == []
+    assert history_calls == []
     assert len(loop_calls) == 1
 
 

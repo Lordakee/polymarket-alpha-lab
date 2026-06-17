@@ -12,6 +12,8 @@ The Strategy Risk Audit CLI currently summarizes six Phase 1 paper-readiness che
 
 An optional continuous paper-run preflight may pause new paper execution until the local Strategy Risk Audit status is `audit_ready`. If the caller explicitly supplies `--strategy-audit-log` or `strategy_audit_log`, the audit report may also be appended to a local append-only JSONL evidence artifact; otherwise no audit log is written. That pause and optional evidence artifact are not human approval readiness, not a proposal-mode promotion, not ranking, not a recommendation, not a trade instruction, not live execution, and not financial advice.
 
+When a local Strategy Risk Audit JSONL artifact exists, `strategy-audit-history --strategy-audit-log <path>` can summarize append-order audit status counts, latest evidence state, latest failed/incomplete audit-check names, and per-check status counts. This history summary is paper-only/report-only/read-only observability over optional local evidence; it does not replace the Gate 0 through Gate 8 framework, approve strategy changes, rank markets, recommend trades, provide trade instruction, trigger live execution, or provide financial advice.
+
 ## Gate 0: Data Integrity
 
 A strategy cannot be evaluated until the data layer can prove:

@@ -52,6 +52,11 @@ from polymarket_alpha_lab.strategy_cycle import (
     PaperStrategyCycleReport,
     run_strategy_cycle,
 )
+from polymarket_alpha_lab.strategy_audit_history import (
+    PaperStrategyRiskAuditHistoryConfig,
+    PaperStrategyRiskAuditHistoryReport,
+    build_paper_strategy_risk_audit_history_report,
+)
 from polymarket_alpha_lab.strategy_risk_audit import (
     PaperStrategyRiskAuditConfig,
     PaperStrategyRiskAuditReport,
@@ -72,6 +77,7 @@ LoopRunner = Callable[..., RunLoopSummary]
 OutcomeRunner = Callable[..., OutcomeTrackingReport]
 NavRiskRunner = Callable[..., "PaperNavRiskMetricsReport"]
 StrategyAuditRunner = Callable[..., PaperStrategyRiskAuditReport]
+StrategyAuditHistoryRunner = Callable[..., PaperStrategyRiskAuditHistoryReport]
 CostAuditRunner = Callable[..., PaperTradeCostAuditReport]
 
 
@@ -139,6 +145,7 @@ def main(
     loop_runner: LoopRunner = run_strategy_loop,
     outcome_runner: OutcomeRunner = check_outcomes,
     strategy_audit_runner: StrategyAuditRunner | None = None,
+    strategy_audit_history_runner: StrategyAuditHistoryRunner | None = None,
     cost_audit_runner: CostAuditRunner | None = None,
 ) -> int:
     parser = argparse.ArgumentParser(prog="polymarket-alpha-lab")
@@ -279,6 +286,14 @@ def main(
         "--strategy-audit-log",
         type=Path,
         default=None,
+        dest="strategy_audit_log",
+    )
+
+    strategy_audit_history = subparsers.add_parser("strategy-audit-history")
+    strategy_audit_history.add_argument(
+        "--strategy-audit-log",
+        type=Path,
+        required=True,
         dest="strategy_audit_log",
     )
 
@@ -521,6 +536,18 @@ def main(
             return 0
         except Exception as exc:
             print(f"strategy-audit failed: {exc}", file=sys.stderr)
+            return 1
+
+    if args.command == "strategy-audit-history":
+        try:
+            report = _run_strategy_audit_history(
+                strategy_audit_log=args.strategy_audit_log,
+                runner=strategy_audit_history_runner,
+            )
+            _print_strategy_audit_history_summary(report)
+            return 0
+        except Exception as exc:
+            print(f"strategy-audit-history failed: {exc}", file=sys.stderr)
             return 1
 
     if args.command == "run":
@@ -882,6 +909,29 @@ def _latest_outcome_report(path: Path | None) -> OutcomeTrackingReport | None:
     return reports[-1]
 
 
+def _run_strategy_audit_history(
+    *,
+    strategy_audit_log: Path,
+    runner: StrategyAuditHistoryRunner | None,
+) -> PaperStrategyRiskAuditHistoryReport:
+    reports = PaperStrategyRiskAuditLog.read(strategy_audit_log)
+    config = PaperStrategyRiskAuditHistoryConfig(
+        config_version="strategy-audit-history-v0",
+    )
+    generated_at = datetime.now(UTC)
+    if runner is not None:
+        return runner(
+            reports=reports,
+            config=config,
+            generated_at=generated_at,
+        )
+    return build_paper_strategy_risk_audit_history_report(
+        reports,
+        config=config,
+        generated_at=generated_at,
+    )
+
+
 def _print_nav_risk_summary(report: "PaperNavRiskMetricsReport") -> None:
     """Print a compact NAV risk report summary to stdout."""
 
@@ -963,6 +1013,63 @@ def _print_strategy_audit_summary(report: PaperStrategyRiskAuditReport) -> None:
             f"observed={gate.observed_value} "
             f"threshold={gate.threshold}",
         )
+
+
+def _print_strategy_audit_history_summary(
+    report: PaperStrategyRiskAuditHistoryReport,
+) -> None:
+    status_counts = {
+        row.audit_status: row.audit_count for row in report.status_rows
+    }
+    first = _iso_or_none(report.first_audit_generated_at)
+    latest = _iso_or_none(report.latest_audit_generated_at)
+    latest_status = report.latest_audit_status or "none"
+    print(
+        "strategy-audit-history: "
+        f"reports={report.audit_report_count} "
+        f"status={report.status} "
+        f"latest_status={latest_status} "
+        f"audit_ready={status_counts['audit_ready']} "
+        f"insufficient_evidence={status_counts['insufficient_evidence']} "
+        f"blocked_by_risk={status_counts['blocked_by_risk']} "
+        f"first={first} "
+        f"latest={latest} "
+        f"consecutive_non_ready={report.consecutive_non_ready_count}",
+    )
+    print(
+        "  latest_failed_gates="
+        f"{_csv_or_none(report.latest_failed_gate_names)}",
+    )
+    print(
+        "  latest_incomplete_gates="
+        f"{_csv_or_none(report.latest_incomplete_gate_names)}",
+    )
+    gate_counts = {
+        (row.gate_name, row.gate_status): row.audit_count
+        for row in report.gate_status_summaries
+    }
+    for gate_name in (
+        "paper_history",
+        "settlement_evidence",
+        "forecast_quality",
+        "cost_discipline",
+        "nav_drawdown",
+        "open_exposure",
+    ):
+        print(
+            f"  {gate_name}: "
+            f"pass={gate_counts[(gate_name, 'pass')]} "
+            f"fail={gate_counts[(gate_name, 'fail')]} "
+            f"incomplete={gate_counts[(gate_name, 'incomplete')]}",
+        )
+
+
+def _iso_or_none(value: datetime | None) -> str:
+    return "none" if value is None else value.isoformat()
+
+
+def _csv_or_none(values: tuple[str, ...]) -> str:
+    return "none" if not values else ",".join(values)
 
 
 def _print_run_loop_summary(summary: RunLoopSummary) -> None:

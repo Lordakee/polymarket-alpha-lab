@@ -59,6 +59,11 @@ Strategy Risk Audit log file is created or updated. When `run` is used without
 `--strategy-audit-preflight`, `--strategy-audit-log` is inert because no Strategy
 Risk Audit report is built.
 
+When the caller does opt in to `--strategy-audit-log`, the separate
+`strategy-audit-history --strategy-audit-log <path>` command can later summarize
+the same local JSONL evidence. That history command is read-only and does not
+change preflight, run-loop, or strategy-cycle behavior.
+
 For `run --config`, `strategy_audit_preflight`, `outcome_log`, and
 `strategy_audit_log` may be set in the JSON config. The example config keeps
 `strategy_audit_preflight` false so copying it does not unexpectedly block thin
@@ -121,4 +126,8 @@ Forbidden:
 - README and specs document the optional preflight as local-only paper
   observability, with optional append-only local JSONL evidence logging, not as
   approval, recommendation, ranking, trade instruction, financial advice, or live
+  execution.
+- README and specs document `strategy-audit-history` as a read-only local
+  evidence summary over the optional audit log, not as approval,
+  recommendation, ranking, trade instruction, financial advice, or live
   execution.
