@@ -57,6 +57,7 @@ from polymarket_alpha_lab.strategy_risk_audit import (
     PaperStrategyRiskAuditReport,
     build_paper_strategy_risk_audit_report,
 )
+from polymarket_alpha_lab.strategy_risk_audit_log import PaperStrategyRiskAuditLog
 
 if TYPE_CHECKING:
     from polymarket_alpha_lab.nav_risk_metrics import PaperNavRiskMetricsReport
@@ -103,6 +104,7 @@ def _apply_json_config(args: argparse.Namespace) -> None:
         "starting_cash": "starting_cash",
         "market_search": "market_search",
         "strategy_audit_preflight": "strategy_audit_preflight",
+        "strategy_audit_log": "strategy_audit_log",
     }
     for json_key, arg_key in key_map.items():
         if json_key not in cfg:
@@ -118,6 +120,7 @@ def _apply_json_config(args: argparse.Namespace) -> None:
             "nav_log",
             "cycle_log",
             "outcome_log",
+            "strategy_audit_log",
             "archive_root",
         ) and val is not None:
             val = Path(val)
@@ -272,6 +275,12 @@ def main(
         default=None,
         dest="outcome_log",
     )
+    strategy_audit.add_argument(
+        "--strategy-audit-log",
+        type=Path,
+        default=None,
+        dest="strategy_audit_log",
+    )
 
     # Stage 17 market search: search Polymarket markets by keyword.
     search_parser = subparsers.add_parser("search")
@@ -365,6 +374,12 @@ def main(
         action=argparse.BooleanOptionalAction,
         default=None,
         dest="strategy_audit_preflight",
+    )
+    run_loop.add_argument(
+        "--strategy-audit-log",
+        type=Path,
+        default=None,
+        dest="strategy_audit_log",
     )
     run_loop.add_argument(
         "--repeat-interval",
@@ -500,6 +515,8 @@ def main(
                 outcome_log=args.outcome_log,
                 runner=strategy_audit_runner,
             )
+            if args.strategy_audit_log is not None:
+                PaperStrategyRiskAuditLog(args.strategy_audit_log).append(report)
             _print_strategy_audit_summary(report)
             return 0
         except Exception as exc:
@@ -533,6 +550,10 @@ def main(
                     outcome_log=args.outcome_log,
                     runner=strategy_audit_runner,
                 )
+                if args.strategy_audit_log is not None:
+                    PaperStrategyRiskAuditLog(args.strategy_audit_log).append(
+                        audit_report,
+                    )
                 _print_strategy_audit_summary(audit_report)
                 if audit_report.status != "audit_ready":
                     print(

@@ -57,9 +57,11 @@ before NAV marking.
 default 0 = single shot), `--max-iterations` (default 1).
 
 Optional preflight: add `--strategy-audit-preflight --nav-log <path>
-[--outcome-log <path>]` when a continuous paper run should be gated by the
-latest local Strategy Risk Audit. Default run behavior remains unchanged when
-`--strategy-audit-preflight` is omitted.
+[--outcome-log <path>] [--strategy-audit-log <path>]` when a continuous paper
+run should be gated by the latest local Strategy Risk Audit. `--strategy-audit-log`
+is explicit opt-in local append-only JSONL evidence logging for the preflight
+report only. Default run behavior remains unchanged when
+`--strategy-audit-preflight` is omitted, and no audit log is written.
 
 Single-shot mode (repeat_interval=0, max_iterations=1) == one cycle + one NAV
 mark, identical to running strategy-cycle then portfolio-nav manually.
@@ -94,9 +96,10 @@ No live orders/auth/wallets/credentials/exchange writes. No scheduler daemon
 (uses time.sleep loop; external cron is the user's choice for production). No
 async (thread pool is a later stage). No forecast log persistence (bonus
 feature — defer if complex). The optional preflight is a
-paper-only/report-only/read-only safety pause, not a strategy-promotion signal,
-approval workflow, trade instruction, investment ranking, recommendation,
-live-execution signal, or financial advice.
+paper-only/report-only/read-only safety pause, with optional explicit local
+append-only JSONL evidence logging, not a strategy-promotion signal, approval
+workflow, trade instruction, investment ranking, recommendation, live execution,
+or financial advice.
 
 ## Risks
 

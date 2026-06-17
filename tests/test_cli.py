@@ -36,6 +36,7 @@ from polymarket_alpha_lab.strategy_risk_audit import (
     PaperStrategyRiskAuditGateResult,
     PaperStrategyRiskAuditReport,
 )
+from polymarket_alpha_lab.strategy_risk_audit_log import PaperStrategyRiskAuditLog
 
 
 def test_scan_cli_builds_read_only_scan_config(tmp_path):
@@ -663,6 +664,45 @@ def test_strategy_audit_cli_reads_local_logs_outcome_log_and_does_not_construct_
     assert "cost_discipline: status=incomplete" in captured.out
     assert "nav_drawdown: status=pass" in captured.out
     assert "open_exposure: status=pass" in captured.out
+
+
+def test_strategy_audit_cli_appends_strategy_audit_log_without_client(
+    tmp_path,
+    capsys,
+):
+    cycle_log, trade_log, nav_log, outcome_log = _write_strategy_audit_inputs(
+        tmp_path,
+        _resolved_outcome_report(),
+    )
+    audit_log = tmp_path / "strategy-audits.jsonl"
+
+    def forbidden_client_factory():
+        raise AssertionError("client should not be constructed")
+
+    exit_code = main(
+        [
+            "strategy-audit",
+            "--cycle-log",
+            str(cycle_log),
+            "--trade-log",
+            str(trade_log),
+            "--nav-log",
+            str(nav_log),
+            "--outcome-log",
+            str(outcome_log),
+            "--strategy-audit-log",
+            str(audit_log),
+        ],
+        client_factory=forbidden_client_factory,
+    )
+
+    assert exit_code == 0
+    reports = PaperStrategyRiskAuditLog.read(audit_log)
+    assert len(reports) == 1
+    assert reports[0].gate_count == 6
+    assert reports[0].status == "insufficient_evidence"
+    captured = capsys.readouterr()
+    assert "strategy-audit:" in captured.out
 
 
 def test_strategy_audit_cli_without_outcome_log_marks_outcome_gates_incomplete(
@@ -1352,6 +1392,50 @@ def test_run_cli_strategy_audit_preflight_allows_loop_when_audit_ready(tmp_path)
     assert loop_calls[0]["client"] == "fake-client"
 
 
+def test_run_cli_strategy_audit_preflight_appends_audit_ready_log(tmp_path):
+    audit_calls = []
+    loop_calls = []
+
+    def fake_strategy_audit_runner(**kwargs):
+        audit_calls.append(kwargs)
+        return _strategy_audit_report("audit_ready")
+
+    def fake_loop_runner(**kwargs):
+        loop_calls.append(kwargs)
+        return _empty_run_summary()
+
+    paper_journal = tmp_path / "paper-trades.jsonl"
+    paper_journal.write_text("", encoding="utf-8")
+    audit_log = tmp_path / "strategy-audits.jsonl"
+
+    exit_code = main(
+        [
+            "run",
+            "--strategy-audit-preflight",
+            "--strategy-audit-log",
+            str(audit_log),
+            "--paper-journal",
+            str(paper_journal),
+            "--cycle-log",
+            str(tmp_path / "cycles.jsonl"),
+            "--nav-log",
+            str(tmp_path / "nav.jsonl"),
+            "--starting-cash",
+            "10000",
+        ],
+        strategy_audit_runner=fake_strategy_audit_runner,
+        loop_runner=fake_loop_runner,
+        client_factory=lambda: "fake-client",
+    )
+
+    assert exit_code == 0
+    assert len(audit_calls) == 1
+    assert len(loop_calls) == 1
+    reports = PaperStrategyRiskAuditLog.read(audit_log)
+    assert len(reports) == 1
+    assert reports[0].status == "audit_ready"
+
+
 @pytest.mark.parametrize("status", ("insufficient_evidence", "blocked_by_risk"))
 def test_run_cli_strategy_audit_preflight_blocks_non_ready_audit(
     tmp_path,
@@ -1393,6 +1477,56 @@ def test_run_cli_strategy_audit_preflight_blocks_non_ready_audit(
     assert "strategy-audit:" in captured.out
     assert f"status={status}" in captured.out
     assert f"run blocked by strategy audit preflight: status={status}" in captured.err
+
+
+def test_run_cli_strategy_audit_preflight_appends_blocked_audit_log_before_client(
+    tmp_path,
+    capsys,
+):
+    paper_journal = tmp_path / "paper-trades.jsonl"
+    paper_journal.write_text("", encoding="utf-8")
+    audit_log = tmp_path / "strategy-audits.jsonl"
+
+    def fake_strategy_audit_runner(**kwargs):
+        return _strategy_audit_report("blocked_by_risk")
+
+    def forbidden_client_factory():
+        raise AssertionError("client should not be constructed")
+
+    def forbidden_loop_runner(**kwargs):
+        raise AssertionError("loop should not run")
+
+    exit_code = main(
+        [
+            "run",
+            "--strategy-audit-preflight",
+            "--strategy-audit-log",
+            str(audit_log),
+            "--paper-journal",
+            str(paper_journal),
+            "--cycle-log",
+            str(tmp_path / "cycles.jsonl"),
+            "--nav-log",
+            str(tmp_path / "nav.jsonl"),
+            "--starting-cash",
+            "10000",
+        ],
+        strategy_audit_runner=fake_strategy_audit_runner,
+        loop_runner=forbidden_loop_runner,
+        client_factory=forbidden_client_factory,
+    )
+
+    assert exit_code == 1
+    reports = PaperStrategyRiskAuditLog.read(audit_log)
+    assert len(reports) == 1
+    assert reports[0].status == "blocked_by_risk"
+    captured = capsys.readouterr()
+    assert "strategy-audit:" in captured.out
+    assert "status=blocked_by_risk" in captured.out
+    assert (
+        "run blocked by strategy audit preflight: status=blocked_by_risk"
+        in captured.err
+    )
 
 
 def test_run_cli_strategy_audit_preflight_requires_nav_log(tmp_path, capsys):
@@ -1567,6 +1701,57 @@ def test_run_cli_json_config_enables_strategy_audit_preflight(tmp_path):
     assert audit_calls[0]["outcome_log"] == outcome_log
 
 
+def test_run_cli_json_config_sets_strategy_audit_log_path(tmp_path):
+    events = []
+
+    def fake_strategy_audit_runner(**kwargs):
+        events.append("audit")
+        return _strategy_audit_report("audit_ready")
+
+    def fake_loop_runner(**kwargs):
+        events.append("loop")
+        return _empty_run_summary()
+
+    paper_journal = tmp_path / "paper-trades.jsonl"
+    paper_journal.write_text("", encoding="utf-8")
+    audit_log = tmp_path / "strategy-audits.jsonl"
+    config_path = tmp_path / "strategy.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "strategy_audit_preflight": True,
+                "strategy_audit_log": str(audit_log),
+            },
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "run",
+            "--config",
+            str(config_path),
+            "--paper-journal",
+            str(paper_journal),
+            "--cycle-log",
+            str(tmp_path / "cycles.jsonl"),
+            "--nav-log",
+            str(tmp_path / "nav.jsonl"),
+            "--starting-cash",
+            "10000",
+        ],
+        strategy_audit_runner=fake_strategy_audit_runner,
+        loop_runner=fake_loop_runner,
+        client_factory=lambda: "fake-client",
+    )
+
+    assert exit_code == 0
+    assert events == ["audit", "loop"]
+    reports = PaperStrategyRiskAuditLog.read(audit_log)
+    assert len(reports) == 1
+    assert reports[0].status == "audit_ready"
+
+
 def test_run_cli_json_config_strategy_audit_preflight_requires_nav_log(
     tmp_path,
     capsys,
@@ -1607,9 +1792,15 @@ def test_run_cli_json_config_strategy_audit_preflight_requires_nav_log(
 def test_run_cli_no_strategy_audit_preflight_overrides_json_true(tmp_path):
     audit_calls = []
     loop_calls = []
+    audit_log = tmp_path / "strategy-audits.jsonl"
     config_path = tmp_path / "strategy.json"
     config_path.write_text(
-        json.dumps({"strategy_audit_preflight": True}),
+        json.dumps(
+            {
+                "strategy_audit_preflight": True,
+                "strategy_audit_log": str(audit_log),
+            },
+        ),
         encoding="utf-8",
     )
 
@@ -1638,6 +1829,39 @@ def test_run_cli_no_strategy_audit_preflight_overrides_json_true(tmp_path):
     assert exit_code == 0
     assert audit_calls == []
     assert len(loop_calls) == 1
+    assert not audit_log.exists()
+
+
+def test_run_cli_strategy_audit_log_is_inert_without_preflight(tmp_path):
+    audit_calls = []
+    loop_calls = []
+    audit_log = tmp_path / "strategy-audits.jsonl"
+
+    def fake_strategy_audit_runner(**kwargs):
+        audit_calls.append(kwargs)
+        return _strategy_audit_report("audit_ready")
+
+    def fake_loop_runner(**kwargs):
+        loop_calls.append(kwargs)
+        return _empty_run_summary()
+
+    exit_code = main(
+        [
+            "run",
+            "--strategy-audit-log",
+            str(audit_log),
+            "--starting-cash",
+            "10000",
+        ],
+        strategy_audit_runner=fake_strategy_audit_runner,
+        loop_runner=fake_loop_runner,
+        client_factory=lambda: "fake-client",
+    )
+
+    assert exit_code == 0
+    assert audit_calls == []
+    assert len(loop_calls) == 1
+    assert not audit_log.exists()
 
 
 def _empty_outcome_report() -> OutcomeTrackingReport:

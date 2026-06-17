@@ -14,5 +14,6 @@
   "repeat_interval_seconds": 600,
   "max_iterations": 20,
   "starting_cash": "10000",
-  "strategy_audit_preflight": false
+  "strategy_audit_preflight": false,
+  "strategy_audit_log": "artifacts/strategy-audits.jsonl"
 }

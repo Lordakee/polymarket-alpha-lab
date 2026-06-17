@@ -10,7 +10,7 @@ These gates are deliberately conservative. They are starting thresholds for engi
 
 The Strategy Risk Audit CLI currently summarizes six Phase 1 paper-readiness checks: `paper_history`, `settlement_evidence`, `forecast_quality`, `cost_discipline`, `nav_drawdown`, and `open_exposure`. These six checks are an operational evidence subset for paper-only/report-only workflows, not a replacement for the full Gate 0 through Gate 8 promotion framework.
 
-An optional continuous paper-run preflight may pause new paper execution until the local Strategy Risk Audit status is `audit_ready`. That pause is not human approval readiness, not a proposal-mode promotion, not a live pilot signal, and not financial advice.
+An optional continuous paper-run preflight may pause new paper execution until the local Strategy Risk Audit status is `audit_ready`. If the caller explicitly supplies `--strategy-audit-log` or `strategy_audit_log`, the audit report may also be appended to a local append-only JSONL evidence artifact; otherwise no audit log is written. That pause and optional evidence artifact are not human approval readiness, not a proposal-mode promotion, not ranking, not a recommendation, not a trade instruction, not live execution, and not financial advice.
 
 ## Gate 0: Data Integrity
 
