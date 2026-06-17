@@ -11,16 +11,18 @@ Strategy Risk Audit v0 consumes caller-supplied typed reports:
 - `PerformanceSummary`
 - `PaperNavRiskMetricsReport`
 - optional `OutcomeTrackingReport`
+- optional `PaperTradeCostAuditReport`
 
-The module itself does not read files, fetch market data, authenticate, use browser automation, handle wallets or keys, submit orders, rank markets, recommend trades, or change strategy-cycle behavior.
+The module may import `PaperTradeCostAuditReport` as a typed report input. The module itself does not read files, fetch market data, authenticate, use browser automation, handle wallets or keys, submit orders, rank markets, recommend trades, or change strategy-cycle behavior.
 
 ## Gates
 
-The v0 report has five gates:
+The v0 report has six gates:
 
 - `paper_history`: requires enough strategy cycles, paper trades, and NAV snapshots to make the audit meaningful.
 - `settlement_evidence`: requires enough resolved paper outcomes from `OutcomeTrackingReport`; absent outcome tracking is incomplete.
 - `forecast_quality`: reads the nested `forecast_evidence_report` / `ForecastEvidenceReport` probability-quality gate from `OutcomeTrackingReport`, requires enough probability observations, and blocks on probability calibration quality failure.
+- `cost_discipline`: reads optional `PaperTradeCostAuditReport` cost evidence, requires enough paper trades with measurable edge-cost drag, and blocks when average edge-cost drag or negative cost-adjusted edge counts exceed configured limits.
 - `nav_drawdown`: blocks when NAV drawdown exceeds the configured limit.
 - `open_exposure`: includes open paper position count for context and blocks when no-exit-depth marks or exposure concentration exceed configured limits.
 

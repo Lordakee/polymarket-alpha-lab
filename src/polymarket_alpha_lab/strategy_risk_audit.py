@@ -6,6 +6,7 @@ from decimal import Decimal
 
 from polymarket_alpha_lab.nav_risk_metrics import PaperNavRiskMetricsReport
 from polymarket_alpha_lab.outcome_tracker import OutcomeTrackingReport
+from polymarket_alpha_lab.paper_trade_cost_audit import PaperTradeCostAuditReport
 from polymarket_alpha_lab.performance_summary import PerformanceSummary
 
 
@@ -21,6 +22,7 @@ GATE_NAMES = (
     "paper_history",
     "settlement_evidence",
     "forecast_quality",
+    "cost_discipline",
     "nav_drawdown",
     "open_exposure",
 )
@@ -41,9 +43,12 @@ class PaperStrategyRiskAuditConfig:
     min_nav_snapshot_count: int = 5
     min_resolved_count: int = 10
     min_forecast_probability_observation_count: int = 10
+    min_cost_audit_trade_count: int = 20
     max_nav_drawdown_pct: Decimal = Decimal("0.050000")
     max_largest_market_exposure_share: Decimal = Decimal("0.200000")
     max_no_exit_depth_count: int = 0
+    max_mean_edge_cost_drag: Decimal = Decimal("0.050000")
+    max_negative_cost_adjusted_edge_count: int = 0
 
     def __post_init__(self) -> None:
         _require_canonical_string("config_version", self.config_version)
@@ -53,12 +58,15 @@ class PaperStrategyRiskAuditConfig:
             "min_nav_snapshot_count",
             "min_resolved_count",
             "min_forecast_probability_observation_count",
+            "min_cost_audit_trade_count",
             "max_no_exit_depth_count",
+            "max_negative_cost_adjusted_edge_count",
         ):
             _require_nonnegative_int(field_name, getattr(self, field_name))
         for field_name in (
             "max_nav_drawdown_pct",
             "max_largest_market_exposure_share",
+            "max_mean_edge_cost_drag",
         ):
             _require_nonnegative_decimal(field_name, getattr(self, field_name))
 
@@ -138,6 +146,7 @@ def build_paper_strategy_risk_audit_report(
     performance_summary: PerformanceSummary,
     nav_risk_report: PaperNavRiskMetricsReport,
     outcome_report: OutcomeTrackingReport | None,
+    cost_audit_report: PaperTradeCostAuditReport | None,
     config: PaperStrategyRiskAuditConfig,
     generated_at: datetime,
 ) -> PaperStrategyRiskAuditReport:
@@ -147,6 +156,13 @@ def build_paper_strategy_risk_audit_report(
         raise ValueError("nav_risk_report must be a PaperNavRiskMetricsReport")
     if outcome_report is not None and type(outcome_report) is not OutcomeTrackingReport:
         raise ValueError("outcome_report must be an OutcomeTrackingReport or None")
+    if (
+        cost_audit_report is not None
+        and type(cost_audit_report) is not PaperTradeCostAuditReport
+    ):
+        raise ValueError(
+            "cost_audit_report must be a PaperTradeCostAuditReport or None",
+        )
     if type(config) is not PaperStrategyRiskAuditConfig:
         raise ValueError("config must be a PaperStrategyRiskAuditConfig")
     if not isinstance(generated_at, datetime):
@@ -156,11 +172,14 @@ def build_paper_strategy_risk_audit_report(
     _require_report_flags("nav_risk_report", nav_risk_report)
     if outcome_report is not None:
         _require_report_flags("outcome_report", outcome_report)
+    if cost_audit_report is not None:
+        _require_report_flags("cost_audit_report", cost_audit_report)
 
     gate_results = (
         _build_paper_history_gate(performance_summary, config),
         _build_settlement_evidence_gate(outcome_report, config),
         _build_forecast_quality_gate(outcome_report, config),
+        _build_cost_discipline_gate(cost_audit_report, config),
         _build_nav_drawdown_gate(nav_risk_report, config),
         _build_open_exposure_gate(nav_risk_report, config),
     )
@@ -293,6 +312,56 @@ def _build_forecast_quality_gate(
         message = "Forecast probability quality is incomplete."
     return PaperStrategyRiskAuditGateResult(
         gate_name="forecast_quality",
+        status=status,
+        message=message,
+        observed_value=observed_value,
+        threshold=threshold,
+    )
+
+
+def _build_cost_discipline_gate(
+    value: PaperTradeCostAuditReport | None,
+    config: PaperStrategyRiskAuditConfig,
+) -> PaperStrategyRiskAuditGateResult:
+    threshold = (
+        f"min_cost_audit_trade_count={config.min_cost_audit_trade_count}; "
+        f"max_mean_edge_cost_drag={config.max_mean_edge_cost_drag}; "
+        "max_negative_cost_adjusted_edge_count="
+        f"{config.max_negative_cost_adjusted_edge_count}"
+    )
+    if value is None:
+        return PaperStrategyRiskAuditGateResult(
+            gate_name="cost_discipline",
+            status="incomplete",
+            message="Paper trade cost audit evidence has not been supplied.",
+            observed_value=None,
+            threshold=threshold,
+        )
+
+    observed_value = (
+        f"trade_count={value.trade_count}; "
+        f"mean_edge_cost_drag={value.mean_edge_cost_drag}; "
+        "negative_cost_adjusted_edge_count="
+        f"{value.negative_cost_adjusted_edge_count}"
+    )
+    if value.trade_count < config.min_cost_audit_trade_count:
+        status = "incomplete"
+        message = "Paper trade cost audit has not reached the configured floor."
+    elif value.mean_edge_cost_drag is None:
+        status = "incomplete"
+        message = "Paper trade cost drag is unavailable."
+    elif (
+        value.mean_edge_cost_drag > config.max_mean_edge_cost_drag
+        or value.negative_cost_adjusted_edge_count
+        > config.max_negative_cost_adjusted_edge_count
+    ):
+        status = "fail"
+        message = "Paper trade cost discipline exceeds the configured limit."
+    else:
+        status = "pass"
+        message = "Paper trade cost drag is within the configured discipline limit."
+    return PaperStrategyRiskAuditGateResult(
+        gate_name="cost_discipline",
         status=status,
         message=message,
         observed_value=observed_value,

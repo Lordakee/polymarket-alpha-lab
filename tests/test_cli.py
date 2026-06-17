@@ -29,6 +29,10 @@ from polymarket_alpha_lab.positions import PaperNavLog, PaperNavSnapshot
 from polymarket_alpha_lab.runner import RunLoopSummary
 from polymarket_alpha_lab.strategy_cycle import PaperStrategyCycleReport
 from polymarket_alpha_lab.strategy_cycle import PaperStrategyCycleLog
+from polymarket_alpha_lab.strategy_risk_audit import (
+    PaperStrategyRiskAuditGateResult,
+    PaperStrategyRiskAuditReport,
+)
 
 
 def test_scan_cli_builds_read_only_scan_config(tmp_path):
@@ -646,12 +650,14 @@ def test_strategy_audit_cli_reads_local_logs_outcome_log_and_does_not_construct_
     captured = capsys.readouterr()
     assert "strategy-audit:" in captured.out
     assert "status=insufficient_evidence" in captured.out
+    assert "gates=6" in captured.out
     assert "pass=4" in captured.out
     assert "fail=0" in captured.out
-    assert "incomplete=1" in captured.out
+    assert "incomplete=2" in captured.out
     assert "paper_history: status=incomplete" in captured.out
     assert "settlement_evidence: status=pass" in captured.out
     assert "forecast_quality: status=pass" in captured.out
+    assert "cost_discipline: status=incomplete" in captured.out
     assert "nav_drawdown: status=pass" in captured.out
     assert "open_exposure: status=pass" in captured.out
 
@@ -687,13 +693,120 @@ def test_strategy_audit_cli_without_outcome_log_marks_outcome_gates_incomplete(
     assert "forecast_quality: status=incomplete" in captured.out
 
 
+def test_strategy_audit_cli_passes_local_cost_audit_report_to_runner(tmp_path):
+    calls = []
+
+    def fake_strategy_audit_runner(
+        *,
+        cycle_log,
+        trade_log,
+        nav_log,
+        outcome_log,
+        cost_audit_report,
+        config,
+        generated_at,
+    ):
+        calls.append(
+            {
+                "cycle_log": cycle_log,
+                "trade_log": trade_log,
+                "nav_log": nav_log,
+                "outcome_log": outcome_log,
+                "cost_audit_report": cost_audit_report,
+                "config": config,
+                "generated_at": generated_at,
+            }
+        )
+        return PaperStrategyRiskAuditReport(
+            generated_at=generated_at,
+            config_version=config.config_version,
+            status="insufficient_evidence",
+            gate_count=6,
+            pass_count=0,
+            fail_count=0,
+            incomplete_count=6,
+            gate_results=(
+                PaperStrategyRiskAuditGateResult(
+                    gate_name="paper_history",
+                    status="incomplete",
+                    message="incomplete",
+                ),
+                PaperStrategyRiskAuditGateResult(
+                    gate_name="settlement_evidence",
+                    status="incomplete",
+                    message="incomplete",
+                ),
+                PaperStrategyRiskAuditGateResult(
+                    gate_name="forecast_quality",
+                    status="incomplete",
+                    message="incomplete",
+                ),
+                PaperStrategyRiskAuditGateResult(
+                    gate_name="cost_discipline",
+                    status="incomplete",
+                    message="incomplete",
+                ),
+                PaperStrategyRiskAuditGateResult(
+                    gate_name="nav_drawdown",
+                    status="incomplete",
+                    message="incomplete",
+                ),
+                PaperStrategyRiskAuditGateResult(
+                    gate_name="open_exposure",
+                    status="incomplete",
+                    message="incomplete",
+                ),
+            ),
+        )
+
+    cycle_log = tmp_path / "cycle.jsonl"
+    trade_log = tmp_path / "trades.jsonl"
+    nav_log = tmp_path / "nav.jsonl"
+    trade_log.write_text("", encoding="utf-8")
+
+    exit_code = main(
+        [
+            "strategy-audit",
+            "--cycle-log",
+            str(cycle_log),
+            "--trade-log",
+            str(trade_log),
+            "--nav-log",
+            str(nav_log),
+        ],
+        strategy_audit_runner=fake_strategy_audit_runner,
+        client_factory=lambda: (_ for _ in ()).throw(
+            AssertionError("client should not be constructed"),
+        ),
+    )
+
+    assert exit_code == 0
+    assert len(calls) == 1
+    call = calls[0]
+    assert call["cycle_log"] == cycle_log
+    assert call["trade_log"] == trade_log
+    assert call["nav_log"] == nav_log
+    assert call["outcome_log"] is None
+    assert isinstance(call["cost_audit_report"], PaperTradeCostAuditReport)
+    assert call["cost_audit_report"].config_version == "paper-trade-cost-audit-v0"
+    assert call["cost_audit_report"].trade_count == 0
+    assert call["cost_audit_report"].paper_only is True
+    assert call["cost_audit_report"].report_only is True
+    assert call["config"].config_version == "strategy-risk-audit-v0"
+    assert isinstance(call["generated_at"], datetime)
+
+
 def test_strategy_audit_cli_returns_one_when_runner_fails(tmp_path, capsys):
+    trade_log = tmp_path / "trades.jsonl"
+    trade_log.write_text("", encoding="utf-8")
+
     def broken_strategy_audit_runner(
         *,
         cycle_log,
         trade_log,
         nav_log,
         outcome_log,
+        cost_audit_report,
         config,
         generated_at,
     ):
@@ -705,7 +818,7 @@ def test_strategy_audit_cli_returns_one_when_runner_fails(tmp_path, capsys):
             "--cycle-log",
             str(tmp_path / "cycle.jsonl"),
             "--trade-log",
-            str(tmp_path / "trades.jsonl"),
+            str(trade_log),
             "--nav-log",
             str(tmp_path / "nav.jsonl"),
         ],

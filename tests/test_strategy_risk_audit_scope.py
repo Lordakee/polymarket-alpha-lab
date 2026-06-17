@@ -12,6 +12,13 @@ SPEC_PATH = (
     / "specs"
     / "2026-06-16-strategy-risk-audit-v0.md"
 )
+COST_GATE_SPEC_PATH = (
+    REPO_ROOT
+    / "docs"
+    / "superpowers"
+    / "specs"
+    / "2026-06-17-strategy-risk-audit-cost-gate-v0.md"
+)
 
 EXPECTED_EXPORTS = (
     "PaperStrategyRiskAuditConfig",
@@ -27,12 +34,14 @@ ALLOWED_IMPORT_MODULES = {
     "decimal",
     "polymarket_alpha_lab.nav_risk_metrics",
     "polymarket_alpha_lab.outcome_tracker",
+    "polymarket_alpha_lab.paper_trade_cost_audit",
     "polymarket_alpha_lab.performance_summary",
 }
 
 EXPECTED_FIRST_PARTY_IMPORTS = {
     "polymarket_alpha_lab.nav_risk_metrics": {"PaperNavRiskMetricsReport"},
     "polymarket_alpha_lab.outcome_tracker": {"OutcomeTrackingReport"},
+    "polymarket_alpha_lab.paper_trade_cost_audit": {"PaperTradeCostAuditReport"},
     "polymarket_alpha_lab.performance_summary": {"PerformanceSummary"},
 }
 
@@ -318,8 +327,11 @@ def test_strategy_risk_audit_spec_documents_report_only_boundary():
         "performancesummary",
         "papernavriskmetricsreport",
         "outcometrackingreport",
+        "papertradecostauditreport",
         "forecastevidencereport",
         "forecastquality",
+        "costdiscipline",
+        "sixgates",
         "doesnotreadfiles",
         "nofilereaders",
         "nofetch",
@@ -329,6 +341,34 @@ def test_strategy_risk_audit_spec_documents_report_only_boundary():
         "nodirectimportofpolymarketalphalabforecastevidence",
         "norecommendation",
         "noranking",
+        "nofinancialadvice",
+    )
+    for fragment in required_fragments:
+        assert fragment in normalized, fragment
+
+
+def test_strategy_risk_audit_cost_gate_spec_documents_report_only_boundary():
+    normalized = normalize_identifier(COST_GATE_SPEC_PATH.read_text(encoding="utf-8"))
+
+    required_fragments = (
+        "strategyriskauditcostgatev0",
+        "paperonly",
+        "reportonly",
+        "costdiscipline",
+        "papertradecostauditreport",
+        "mincostaudittradecount",
+        "maxmeanedgecostdrag",
+        "maxnegativecostadjustededgecount",
+        "purereportmath",
+        "mustnotimportpapertradejournal",
+        "mustnotconstructapolymarketclient",
+        "nofile",
+        "nofetch",
+        "noauth",
+        "nowallet",
+        "noorder",
+        "norank",
+        "norecommend",
         "nofinancialadvice",
     )
     for fragment in required_fragments:

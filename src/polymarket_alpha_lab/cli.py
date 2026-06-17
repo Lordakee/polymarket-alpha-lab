@@ -779,12 +779,19 @@ def _run_strategy_audit(
 
     generated_at = datetime.now(UTC)
     config = PaperStrategyRiskAuditConfig(config_version="strategy-risk-audit-v0")
+    trade_records = PaperTradeJournal.read(trade_log)
+    cost_audit_report = build_paper_trade_cost_audit_report(
+        trade_records,
+        config=PaperTradeCostAuditConfig(config_version="paper-trade-cost-audit-v0"),
+        generated_at=generated_at,
+    )
     if runner is not None:
         return runner(
             cycle_log=cycle_log,
             trade_log=trade_log,
             nav_log=nav_log,
             outcome_log=outcome_log,
+            cost_audit_report=cost_audit_report,
             config=config,
             generated_at=generated_at,
         )
@@ -799,6 +806,7 @@ def _run_strategy_audit(
         performance_summary=performance_summary,
         nav_risk_report=nav_risk_report,
         outcome_report=_latest_outcome_report(outcome_log),
+        cost_audit_report=cost_audit_report,
         config=config,
         generated_at=generated_at,
     )

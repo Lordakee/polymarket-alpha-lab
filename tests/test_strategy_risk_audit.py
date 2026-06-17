@@ -12,6 +12,7 @@ from polymarket_alpha_lab.forecast_evidence import (
 )
 from polymarket_alpha_lab.nav_risk_metrics import PaperNavRiskMetricsReport
 from polymarket_alpha_lab.outcome_tracker import OutcomeTrackingReport
+from polymarket_alpha_lab.paper_trade_cost_audit import PaperTradeCostAuditReport
 from polymarket_alpha_lab.performance_summary import PerformanceSummary
 from polymarket_alpha_lab.strategy_risk_audit import (
     PaperStrategyRiskAuditConfig,
@@ -114,6 +115,28 @@ def _outcomes(**overrides) -> OutcomeTrackingReport:
     return OutcomeTrackingReport(**values)
 
 
+def _cost_audit(**overrides) -> PaperTradeCostAuditReport:
+    values = {
+        "generated_at": GENERATED_AT,
+        "config_version": "paper-trade-cost-audit-v0",
+        "trade_count": 30,
+        "total_filled_size": Decimal("3000.0000"),
+        "total_requested_size": Decimal("3000.0000"),
+        "fill_rate": Decimal("1.000000"),
+        "mean_theoretical_edge": Decimal("0.060000"),
+        "mean_cost_adjusted_edge": Decimal("0.040000"),
+        "mean_edge_cost_drag": Decimal("0.020000"),
+        "total_edge_cost_drag": Decimal("60.000000"),
+        "mean_research_slippage": Decimal("0.004000"),
+        "mean_fill_slippage": Decimal("0.006000"),
+        "partial_fill_count": 0,
+        "negative_cost_adjusted_edge_count": 0,
+        "largest_single_trade_cost_drag": Decimal("2.000000"),
+    }
+    values.update(overrides)
+    return PaperTradeCostAuditReport(**values)
+
+
 def _evidence(
     *,
     max_mean_probability_loss=Decimal("0.3000"),
@@ -153,18 +176,19 @@ def _observation(index: int) -> PaperForecastEvidenceObservation:
     )
 
 
-def _report(history=None, nav_risk=None, outcomes=None, config=None):
+def _report(history=None, nav_risk=None, outcomes=None, cost_audit=None, config=None):
     return build_paper_strategy_risk_audit_report(
         performance_summary=history if history is not None else _history(),
         nav_risk_report=nav_risk if nav_risk is not None else _nav_risk(),
         outcome_report=outcomes,
+        cost_audit_report=cost_audit,
         config=config if config is not None else _config(),
         generated_at=GENERATED_AT,
     )
 
 
 def test_strategy_risk_audit_ready_when_all_gates_pass():
-    report = _report(outcomes=_outcomes())
+    report = _report(outcomes=_outcomes(), cost_audit=_cost_audit())
 
     assert isinstance(report, PaperStrategyRiskAuditReport)
     assert report.paper_only is True
@@ -172,14 +196,15 @@ def test_strategy_risk_audit_ready_when_all_gates_pass():
     assert report.generated_at == GENERATED_AT
     assert report.config_version == "strategy-risk-audit-v0"
     assert report.status == "audit_ready"
-    assert report.gate_count == 5
-    assert report.pass_count == 5
+    assert report.gate_count == 6
+    assert report.pass_count == 6
     assert report.fail_count == 0
     assert report.incomplete_count == 0
     assert tuple(gate.gate_name for gate in report.gate_results) == (
         "paper_history",
         "settlement_evidence",
         "forecast_quality",
+        "cost_discipline",
         "nav_drawdown",
         "open_exposure",
     )
@@ -189,11 +214,12 @@ def test_strategy_risk_audit_ready_when_all_gates_pass():
 def test_strategy_risk_audit_marks_immature_history_as_insufficient_evidence():
     report = _report(
         history=_history(cycle_count=3, paper_trade_count=2, nav_snapshot_count=1),
+        cost_audit=_cost_audit(),
         outcomes=None,
     )
 
     assert report.status == "insufficient_evidence"
-    assert report.pass_count == 2
+    assert report.pass_count == 3
     assert report.fail_count == 0
     assert report.incomplete_count == 3
     gates = {gate.gate_name: gate for gate in report.gate_results}
@@ -205,6 +231,100 @@ def test_strategy_risk_audit_marks_immature_history_as_insufficient_evidence():
     )
 
 
+def test_strategy_risk_audit_marks_missing_cost_audit_as_incomplete():
+    report = _report(outcomes=_outcomes(), cost_audit=None)
+
+    assert report.status == "insufficient_evidence"
+    gates = {gate.gate_name: gate for gate in report.gate_results}
+    assert gates["cost_discipline"].status == "incomplete"
+    assert gates["cost_discipline"].observed_value is None
+
+
+def test_strategy_risk_audit_marks_thin_cost_audit_as_incomplete():
+    report = _report(
+        outcomes=_outcomes(),
+        cost_audit=_cost_audit(trade_count=3),
+        config=_config(min_cost_audit_trade_count=20),
+    )
+
+    assert report.status == "insufficient_evidence"
+    gates = {gate.gate_name: gate for gate in report.gate_results}
+    assert gates["cost_discipline"].status == "incomplete"
+    assert gates["cost_discipline"].observed_value == (
+        "trade_count=3; mean_edge_cost_drag=0.020000; "
+        "negative_cost_adjusted_edge_count=0"
+    )
+
+
+def test_strategy_risk_audit_marks_unavailable_cost_drag_as_incomplete():
+    report = _report(
+        outcomes=_outcomes(),
+        cost_audit=_cost_audit(mean_edge_cost_drag=None),
+    )
+
+    assert report.status == "insufficient_evidence"
+    gates = {gate.gate_name: gate for gate in report.gate_results}
+    assert gates["cost_discipline"].status == "incomplete"
+    assert gates["cost_discipline"].observed_value == (
+        "trade_count=30; mean_edge_cost_drag=None; "
+        "negative_cost_adjusted_edge_count=0"
+    )
+
+
+def test_strategy_risk_audit_blocks_on_cost_discipline_failure():
+    report = _report(
+        outcomes=_outcomes(),
+        cost_audit=_cost_audit(
+            mean_edge_cost_drag=Decimal("0.080000"),
+            negative_cost_adjusted_edge_count=2,
+        ),
+    )
+
+    assert report.status == "blocked_by_risk"
+    gates = {gate.gate_name: gate for gate in report.gate_results}
+    assert gates["cost_discipline"].status == "fail"
+    assert gates["cost_discipline"].observed_value == (
+        "trade_count=30; mean_edge_cost_drag=0.080000; "
+        "negative_cost_adjusted_edge_count=2"
+    )
+
+
+def test_strategy_risk_audit_blocks_on_cost_drag_failure_only():
+    report = _report(
+        outcomes=_outcomes(),
+        cost_audit=_cost_audit(
+            mean_edge_cost_drag=Decimal("0.080000"),
+            negative_cost_adjusted_edge_count=0,
+        ),
+    )
+
+    assert report.status == "blocked_by_risk"
+    gates = {gate.gate_name: gate for gate in report.gate_results}
+    assert gates["cost_discipline"].status == "fail"
+    assert gates["cost_discipline"].observed_value == (
+        "trade_count=30; mean_edge_cost_drag=0.080000; "
+        "negative_cost_adjusted_edge_count=0"
+    )
+
+
+def test_strategy_risk_audit_blocks_on_negative_cost_adjusted_edges_only():
+    report = _report(
+        outcomes=_outcomes(),
+        cost_audit=_cost_audit(
+            mean_edge_cost_drag=Decimal("0.020000"),
+            negative_cost_adjusted_edge_count=1,
+        ),
+    )
+
+    assert report.status == "blocked_by_risk"
+    gates = {gate.gate_name: gate for gate in report.gate_results}
+    assert gates["cost_discipline"].status == "fail"
+    assert gates["cost_discipline"].observed_value == (
+        "trade_count=30; mean_edge_cost_drag=0.020000; "
+        "negative_cost_adjusted_edge_count=1"
+    )
+
+
 def test_strategy_risk_audit_blocks_on_nav_drawdown_and_open_exposure():
     report = _report(
         nav_risk=_nav_risk(
@@ -213,6 +333,7 @@ def test_strategy_risk_audit_blocks_on_nav_drawdown_and_open_exposure():
             largest_market_exposure_share=Decimal("0.350000"),
         ),
         outcomes=_outcomes(),
+        cost_audit=_cost_audit(),
     )
 
     assert report.status == "blocked_by_risk"
@@ -232,7 +353,10 @@ def test_strategy_risk_audit_blocks_on_forecast_quality_failure():
         max_mean_probability_loss=Decimal("0.0100"),
         max_bucket_error=Decimal("0.0100"),
     )
-    report = _report(outcomes=_outcomes(forecast_evidence_report=poor_evidence))
+    report = _report(
+        outcomes=_outcomes(forecast_evidence_report=poor_evidence),
+        cost_audit=_cost_audit(),
+    )
 
     assert report.status == "blocked_by_risk"
     gates = {gate.gate_name: gate for gate in report.gate_results}
@@ -248,6 +372,7 @@ def test_strategy_risk_audit_marks_incomplete_forecast_quality_as_insufficient_e
     thin_evidence = _evidence()
     report = _report(
         outcomes=_outcomes(forecast_evidence_report=thin_evidence),
+        cost_audit=_cost_audit(),
         config=_config(min_forecast_probability_observation_count=20),
     )
 
@@ -269,6 +394,52 @@ def test_strategy_risk_audit_rejects_non_paper_forecast_evidence_report():
         _report(outcomes=_outcomes(forecast_evidence_report=evidence))
 
 
+@pytest.mark.parametrize(
+    ("field_name", "bad_value", "expected"),
+    (
+        ("min_cost_audit_trade_count", -1, "min_cost_audit_trade_count"),
+        ("min_cost_audit_trade_count", True, "min_cost_audit_trade_count"),
+        (
+            "max_negative_cost_adjusted_edge_count",
+            -1,
+            "max_negative_cost_adjusted_edge_count",
+        ),
+        (
+            "max_negative_cost_adjusted_edge_count",
+            True,
+            "max_negative_cost_adjusted_edge_count",
+        ),
+        (
+            "max_mean_edge_cost_drag",
+            Decimal("-0.000001"),
+            "max_mean_edge_cost_drag",
+        ),
+        ("max_mean_edge_cost_drag", "0.050000", "max_mean_edge_cost_drag"),
+        (
+            "max_mean_edge_cost_drag",
+            Decimal("NaN"),
+            "max_mean_edge_cost_drag",
+        ),
+    ),
+)
+def test_strategy_risk_audit_rejects_invalid_cost_gate_config(
+    field_name,
+    bad_value,
+    expected,
+):
+    with pytest.raises(ValueError, match=expected):
+        _config(**{field_name: bad_value})
+
+
+@pytest.mark.parametrize("flag_name", ("paper_only", "report_only"))
+def test_strategy_risk_audit_rejects_non_report_only_cost_audit(flag_name):
+    cost_audit = _cost_audit()
+    object.__setattr__(cost_audit, flag_name, False)
+
+    with pytest.raises(ValueError, match=f"cost_audit_report {flag_name}"):
+        _report(outcomes=_outcomes(), cost_audit=cost_audit)
+
+
 def test_strategy_risk_audit_rejects_invalid_inputs():
     with pytest.raises(ValueError, match="config_version"):
         _config(config_version="")
@@ -277,6 +448,7 @@ def test_strategy_risk_audit_rejects_invalid_inputs():
             performance_summary=object(),
             nav_risk_report=_nav_risk(),
             outcome_report=None,
+            cost_audit_report=_cost_audit(),
             config=_config(),
             generated_at=GENERATED_AT,
         )
@@ -285,6 +457,7 @@ def test_strategy_risk_audit_rejects_invalid_inputs():
             performance_summary=_history(),
             nav_risk_report=object(),
             outcome_report=None,
+            cost_audit_report=_cost_audit(),
             config=_config(),
             generated_at=GENERATED_AT,
         )
@@ -293,6 +466,16 @@ def test_strategy_risk_audit_rejects_invalid_inputs():
             performance_summary=_history(),
             nav_risk_report=_nav_risk(),
             outcome_report=object(),
+            cost_audit_report=_cost_audit(),
+            config=_config(),
+            generated_at=GENERATED_AT,
+        )
+    with pytest.raises(ValueError, match="cost_audit_report"):
+        build_paper_strategy_risk_audit_report(
+            performance_summary=_history(),
+            nav_risk_report=_nav_risk(),
+            outcome_report=None,
+            cost_audit_report=object(),
             config=_config(),
             generated_at=GENERATED_AT,
         )
@@ -301,13 +484,14 @@ def test_strategy_risk_audit_rejects_invalid_inputs():
             performance_summary=_history(),
             nav_risk_report=_nav_risk(),
             outcome_report=None,
+            cost_audit_report=_cost_audit(),
             config=_config(),
             generated_at="now",
         )
 
 
 def test_strategy_risk_audit_dataclasses_are_frozen_and_revalidate_flags():
-    report = _report(outcomes=_outcomes())
+    report = _report(outcomes=_outcomes(), cost_audit=_cost_audit())
 
     with pytest.raises(FrozenInstanceError):
         report.status = "blocked_by_risk"
@@ -318,7 +502,7 @@ def test_strategy_risk_audit_dataclasses_are_frozen_and_revalidate_flags():
 
 
 def test_strategy_risk_audit_report_revalidates_status_counts():
-    report = _report(outcomes=_outcomes())
+    report = _report(outcomes=_outcomes(), cost_audit=_cost_audit())
 
     with pytest.raises(ValueError, match="status"):
         replace(report, status="blocked_by_risk")
