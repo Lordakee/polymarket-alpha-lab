@@ -68,7 +68,7 @@ Push a completed Codex node to GitHub after all of the following are true:
 - Python compile verification passes.
 - CodeGraph is synced when `.codegraph/` exists.
 - A secret scan finds no leaked credentials or tokens in tracked content.
-- The configured post-node external review gate passes, using Claude Code (`claude-opus-4-8`, effort `max`) when available and the documented fallback only if Claude fails twice consecutively.
+- The configured post-node external review gate passes, using Claude Code (`claude-opus-4-8`, effort `max`) when available and the documented opencode fallback only if Claude fails twice consecutively.
 
 Do not push half-finished work, failing tests, unreviewed code, or work that still has unresolved review findings.
 
@@ -95,7 +95,7 @@ This section binds every opencode/Sisyphus session working on this repository. I
 
 ### Dual review gate with reviewer fallback (MANDATORY — never skip)
 
-External review uses TWO reviewers with a fallback policy. **Primary reviewer: Claude Code.** If Claude Code fails twice consecutively (API error / connection / gateway), **fall back to Codex** for that gate.
+External review uses a primary reviewer with a fallback policy. **Primary reviewer: Claude Code.** If Claude Code fails twice consecutively (API error / connection / gateway), **fall back to local opencode** for that gate.
 
 **Primary reviewer — Claude Code** (`claude-opus-4-8`, effort `max`):
 
@@ -103,34 +103,34 @@ External review uses TWO reviewers with a fallback policy. **Primary reviewer: C
 claude -p --model claude-opus-4-8 --effort max "<review prompt>"
 ```
 
-**Fallback reviewer — Codex** (`gpt-5.5`, reasoning `xhigh`, bypass sandbox + read-only prompt):
+**Fallback reviewer — local opencode** (`zhipuai-coding-plan/glm-5.2`, variant/thinking `max`, read-only prompt):
 
 ```bash
-codex exec -m gpt-5.5 --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check -c model_reasoning_effort=xhigh "<review prompt>"
+opencode run -m zhipuai-coding-plan/glm-5.2 --variant max "<review prompt>"
 ```
 
-(Codex reads the prompt as an argument or via stdin. NOTE: `-s read-only` sandbox's bwrap loopback fails in this environment (`bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted`), so use `--dangerously-bypass-approvals-and-sandbox` instead and append a HARD read-only constraint to the prompt: "DO NOT modify/create/delete ANY file; output ONLY verdict + findings." Run from the project root.)
+(Append a HARD read-only constraint to the prompt: "DO NOT modify/create/delete ANY file; output ONLY verdict + findings." Run from the project root.)
 
-**Fallback rule:** Count consecutive Claude Code failures (API/connection/gateway errors, NOT substantive findings). After the 2nd consecutive failure, switch to Codex for that gate. A substantive Claude verdict (Proceed/Block with findings) always resets the failure counter to 0. Record which reviewer produced each verdict and the failure count.
+**Fallback rule:** Count consecutive Claude Code failures (API/connection/gateway errors, NOT substantive findings). After the 2nd consecutive failure, switch to opencode for that gate. A substantive Claude verdict (Proceed/Block with findings) always resets the failure counter to 0. Record which reviewer produced each verdict and the failure count.
 
 Two gates are mandatory for every stage:
 
 1. **Pre-stage plan gate** — Before any implementation work begins in a stage:
    - Sisyphus drafts the stage plan (goal, scope, files, approach, risks, tests).
-   - Submit the plan to the primary reviewer (Claude Code); fall back to Codex after 2 failures.
+   - Submit the plan to the primary reviewer (Claude Code); fall back to opencode after 2 failures.
    - Implementation may start ONLY after the reviewer approves. If the reviewer requests changes, revise the plan and re-review until approved.
 
 2. **Post-stage code gate** — After a stage's implementation is complete and tests pass:
-   - Submit the stage plan plus the resulting code/diffs to the primary reviewer (Claude Code); fall back to Codex after 2 failures.
+   - Submit the stage plan plus the resulting code/diffs to the primary reviewer (Claude Code); fall back to opencode after 2 failures.
    - The next stage may begin ONLY after the reviewer approves. If the reviewer requests changes, fix them and re-review until approved.
 
 Stage boundary definition: a stage is any meaningful unit of work that has its own plan and deliverable (typically one Node in the existing plan/spec cadence, or a Sisyphus todowrite milestone). Do not collapse multiple stages into one review.
 
 ### Workflow summary per stage
 
-1. Draft stage plan → pre-stage review (Claude Code primary, Codex fallback after 2 failures) → approval.
+1. Draft stage plan → pre-stage review (Claude Code primary, opencode fallback after 2 failures) → approval.
 2. Execute with maximum parallel subagents (5-8 background).
 3. Run tests, verify diagnostics clean on changed files.
 4. Commit locally on main (granular commits).
-5. Submit plan + code to post-stage review (Claude Code primary, Codex fallback after 2 failures) → approval.
+5. Submit plan + code to post-stage review (Claude Code primary, opencode fallback after 2 failures) → approval.
 6. Only then proceed to the next stage.

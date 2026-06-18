@@ -20,6 +20,8 @@ RECOMMENDATION_MODULE_NAMES = (
     "paper_strategy_selection_policy",
     "strategy_recommendation_explain",
     "strategy_recommendation_history",
+    "strategy_recommendation_bundle",
+    "strategy_recommendation_log",
 )
 
 SAFETY_DATACLASS_FIELDS = ("paper_only", "report_only", "readonly")
@@ -36,6 +38,12 @@ FORBIDDEN_LIVE_EXECUTION_TERMS = (
     "create_order",
     "post_order",
 )
+
+
+def test_recommendation_layer_documented_modules_exist() -> None:
+    for module_name in RECOMMENDATION_MODULE_NAMES:
+        module_path = REPO_ROOT / "src" / "polymarket_alpha_lab" / f"{module_name}.py"
+        assert module_path.exists(), module_name
 
 
 def import_recommendation_module(module_name: str) -> ModuleType:
