@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from polymarket_alpha_lab.edge_cost_summary import PaperEdgeCostSummaryReport
@@ -57,8 +57,7 @@ class PaperPhase2ObservabilityTrendsReport:
     readonly: bool = True
 
     def __post_init__(self) -> None:
-        if not isinstance(self.generated_at, datetime):
-            raise ValueError("generated_at must be a datetime")
+        object.__setattr__(self, "generated_at", _as_utc(self.generated_at))
         _require_canonical_string("config_version", self.config_version)
         _require_exact_report(
             "forecast_calibration_trend",
@@ -105,8 +104,9 @@ def build_paper_phase_2_observability_trends_report(
 
     if type(config) is not PaperPhase2ObservabilityTrendsConfig:
         raise ValueError("config must be a PaperPhase2ObservabilityTrendsConfig")
-    if not isinstance(generated_at, datetime):
+    if type(generated_at) is not datetime:
         raise ValueError("generated_at must be a datetime")
+    generated_at = _as_utc(generated_at)
 
     return PaperPhase2ObservabilityTrendsReport(
         generated_at=generated_at,
@@ -153,8 +153,16 @@ def _require_exact_report(field_name: str, value: Any, expected_type: type) -> N
         raise ValueError(f"{field_name} readonly must be True")
 
 
+def _as_utc(value: datetime) -> datetime:
+    if type(value) is not datetime:
+        raise ValueError("generated_at must be a datetime")
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
 def _require_canonical_string(field_name: str, value: Any) -> None:
-    if not isinstance(value, str):
+    if type(value) is not str:
         raise ValueError(f"{field_name} must be a string")
     if not value or value.strip() != value:
         raise ValueError(f"{field_name} must be a canonical nonblank string")

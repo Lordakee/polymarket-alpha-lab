@@ -376,6 +376,23 @@ def test_phase_2_snapshot_age_report_is_frozen_and_validates_counts():
         )
 
 
+def test_phase_2_snapshot_age_report_rejects_negative_latest_age_seconds():
+    module = _module()
+
+    with pytest.raises(ValueError, match="latest_age_seconds"):
+        module.PaperPhase2SnapshotAgeReport(
+            generated_at=GENERATED_AT,
+            config_version=CONFIG_VERSION,
+            snapshot_report_count=1,
+            first_snapshot_generated_at=GENERATED_AT + timedelta(seconds=1),
+            latest_snapshot_generated_at=GENERATED_AT + timedelta(seconds=1),
+            history_span_seconds=0,
+            latest_age_seconds=-1,
+            stale_snapshot_count=0,
+            fresh_snapshot_count=1,
+        )
+
+
 def test_phase_2_snapshot_age_builder_rejects_datetime_subclass():
     module = _module()
 

@@ -11,6 +11,7 @@ from polymarket_alpha_lab.phase_2_evidence_snapshot import (
 )
 from polymarket_alpha_lab.phase_2_evidence_snapshot_transition import (
     PaperPhase2EvidenceSnapshotTransitionConfig,
+    PaperPhase2EvidenceSnapshotTransitionReport,
     build_paper_phase_2_evidence_snapshot_transition_report,
 )
 from polymarket_alpha_lab.phase_2_evidence_snapshot_transition_trend import (
@@ -142,21 +143,27 @@ def _observed_snapshot(generated_at: datetime) -> PaperPhase2EvidenceSnapshotRep
     return _snapshot(generated_at=generated_at)
 
 
-def _transition(*snapshots: PaperPhase2EvidenceSnapshotReport):
+def _transition(
+    *snapshots: PaperPhase2EvidenceSnapshotReport,
+    generated_at: datetime = GENERATED_AT,
+) -> PaperPhase2EvidenceSnapshotTransitionReport:
     return build_paper_phase_2_evidence_snapshot_transition_report(
         snapshots,
         config=PaperPhase2EvidenceSnapshotTransitionConfig(
             config_version="phase-2-evidence-snapshot-transition-v0",
         ),
-        generated_at=GENERATED_AT,
+        generated_at=generated_at,
     )
 
 
-def _trend(*reports) -> PaperPhase2EvidenceSnapshotTransitionTrendReport:
+def _trend(
+    *reports: PaperPhase2EvidenceSnapshotTransitionReport,
+    generated_at: datetime = GENERATED_AT,
+) -> PaperPhase2EvidenceSnapshotTransitionTrendReport:
     return build_paper_phase_2_evidence_snapshot_transition_trend_report(
         reports,
         config=_config(),
-        generated_at=GENERATED_AT,
+        generated_at=generated_at,
     )
 
 
@@ -266,6 +273,78 @@ def test_phase_2_evidence_snapshot_transition_trend_counts_gap_changes():
     )
 
 
+def test_phase_2_evidence_snapshot_transition_trend_aggregates_gap_totals_and_ratios():
+    report = _trend(
+        _transition(
+            _gap_snapshot(
+                datetime(2026, 6, 18, 10, 0, tzinfo=UTC),
+                "thin_calibration_sample",
+            ),
+            _gap_snapshot(
+                datetime(2026, 6, 18, 11, 0, tzinfo=UTC),
+                "thin_calibration_sample",
+                "thin_segment_probability_samples",
+            ),
+            _observed_snapshot(datetime(2026, 6, 18, 12, 0, tzinfo=UTC)),
+        ),
+        _transition(
+            _observed_snapshot(datetime(2026, 6, 18, 13, 0, tzinfo=UTC)),
+            _gap_snapshot(
+                datetime(2026, 6, 18, 14, 0, tzinfo=UTC),
+                "thin_calibration_sample",
+                "return_only_segments_present",
+            ),
+            _gap_snapshot(
+                datetime(2026, 6, 18, 15, 0, tzinfo=UTC),
+                "thin_calibration_sample",
+                "return_only_segments_present",
+            ),
+        ),
+    )
+
+    assert tuple(row.evidence_gap_name for row in report.gap_rows) == EVIDENCE_GAP_NAMES
+    assert report.total_snapshot_report_count == 6
+    assert report.total_transition_count == 4
+    assert report.total_introduced_gap_count == 3
+    assert report.total_cleared_gap_count == 2
+    assert report.total_persistent_gap_count == 3
+    assert _gap_row(report, "thin_calibration_sample") == (
+        PaperPhase2EvidenceSnapshotTransitionTrendGapRow(
+            "thin_calibration_sample",
+            introduced_count=1,
+            cleared_count=1,
+            persistent_count=2,
+            transition_presence_ratio=Decimal("1.000000"),
+        )
+    )
+    assert _gap_row(report, "thin_segment_probability_samples") == (
+        PaperPhase2EvidenceSnapshotTransitionTrendGapRow(
+            "thin_segment_probability_samples",
+            introduced_count=1,
+            cleared_count=1,
+            persistent_count=0,
+            transition_presence_ratio=Decimal("0.500000"),
+        )
+    )
+    assert _gap_row(report, "return_only_segments_present") == (
+        PaperPhase2EvidenceSnapshotTransitionTrendGapRow(
+            "return_only_segments_present",
+            introduced_count=1,
+            cleared_count=0,
+            persistent_count=1,
+            transition_presence_ratio=Decimal("0.500000"),
+        )
+    )
+    assert type(_gap_row(report, "return_only_segments_present").transition_presence_ratio) is Decimal
+    assert (
+        _gap_row(
+            report,
+            "return_only_segments_present",
+        ).transition_presence_ratio.as_tuple().exponent
+        == -6
+    )
+
+
 def test_phase_2_evidence_snapshot_transition_trend_allows_latest_empty_report():
     report = _trend(
         _transition(
@@ -295,6 +374,63 @@ def test_phase_2_evidence_snapshot_transition_trend_normalizes_generated_at_to_u
     )
 
     assert report.generated_at == GENERATED_AT
+
+
+def test_phase_2_evidence_snapshot_transition_trend_normalizes_report_timestamps_to_utc():
+    first_generated_at = datetime(
+        2026,
+        6,
+        18,
+        21,
+        30,
+        tzinfo=timezone(timedelta(hours=1)),
+    )
+    latest_generated_at = datetime(
+        2026,
+        6,
+        18,
+        12,
+        45,
+        tzinfo=timezone(timedelta(hours=-7)),
+    )
+
+    report = _trend(
+        _transition(
+            _observed_snapshot(datetime(2026, 6, 18, 10, 0, tzinfo=UTC)),
+            _gap_snapshot(
+                datetime(2026, 6, 18, 11, 0, tzinfo=UTC),
+                "thin_calibration_sample",
+            ),
+            generated_at=first_generated_at,
+        ),
+        _transition(
+            _gap_snapshot(
+                datetime(2026, 6, 18, 12, 0, tzinfo=UTC),
+                "thin_calibration_sample",
+            ),
+            _observed_snapshot(datetime(2026, 6, 18, 13, 0, tzinfo=UTC)),
+            generated_at=latest_generated_at,
+        ),
+        generated_at=datetime(2026, 6, 18, 13, 0, tzinfo=timezone(timedelta(hours=-7))),
+    )
+
+    assert report.generated_at == GENERATED_AT
+    assert report.first_transition_report_generated_at == datetime(
+        2026,
+        6,
+        18,
+        20,
+        30,
+        tzinfo=UTC,
+    )
+    assert report.latest_transition_report_generated_at == datetime(
+        2026,
+        6,
+        18,
+        19,
+        45,
+        tzinfo=UTC,
+    )
 
 
 def test_phase_2_evidence_snapshot_transition_trend_rejects_invalid_inputs_and_flags():
@@ -335,10 +471,49 @@ def test_phase_2_evidence_snapshot_transition_trend_rejects_invalid_inputs_and_f
             generated_at="now",
         )
 
-    object.__setattr__(valid_report, "readonly", False)
-    with pytest.raises(ValueError, match="readonly"):
+    for flag_name in ("paper_only", "report_only", "readonly"):
+        source_report = _transition(
+            _gap_snapshot(
+                datetime(2026, 6, 18, 10, 0, tzinfo=UTC),
+                "thin_calibration_sample",
+            ),
+            _observed_snapshot(datetime(2026, 6, 18, 11, 0, tzinfo=UTC)),
+        )
+        object.__setattr__(source_report, flag_name, False)
+        with pytest.raises(ValueError, match=flag_name):
+            build_paper_phase_2_evidence_snapshot_transition_trend_report(
+                (source_report,),
+                config=_config(),
+                generated_at=GENERATED_AT,
+            )
+
+
+def test_phase_2_evidence_snapshot_transition_trend_rejects_subclassed_public_inputs():
+    class DerivedConfig(PaperPhase2EvidenceSnapshotTransitionTrendConfig):
+        pass
+
+    class DerivedTransitionReport(PaperPhase2EvidenceSnapshotTransitionReport):
+        pass
+
+    transition_report = _transition(
+        _observed_snapshot(datetime(2026, 6, 18, 10, 0, tzinfo=UTC)),
+        _gap_snapshot(
+            datetime(2026, 6, 18, 11, 0, tzinfo=UTC),
+            "thin_calibration_sample",
+        ),
+    )
+
+    with pytest.raises(ValueError, match="config"):
         build_paper_phase_2_evidence_snapshot_transition_trend_report(
-            (valid_report,),
+            (),
+            config=DerivedConfig(
+                config_version="phase-2-evidence-snapshot-transition-trend-v0",
+            ),
+            generated_at=GENERATED_AT,
+        )
+    with pytest.raises(ValueError, match="PaperPhase2EvidenceSnapshotTransitionReport"):
+        build_paper_phase_2_evidence_snapshot_transition_trend_report(
+            (DerivedTransitionReport(**transition_report.__dict__),),
             config=_config(),
             generated_at=GENERATED_AT,
         )
@@ -381,6 +556,192 @@ def test_phase_2_evidence_snapshot_transition_trend_dataclasses_revalidate_consi
                 report.gap_rows[0],
                 drifted_row,
                 *report.gap_rows[2:],
+            ),
+        )
+
+
+def test_phase_2_evidence_snapshot_transition_trend_dataclasses_are_frozen():
+    config = _config()
+    row = PaperPhase2EvidenceSnapshotTransitionTrendGapRow(
+        "thin_calibration_sample",
+        introduced_count=1,
+        cleared_count=0,
+        persistent_count=0,
+        transition_presence_ratio=Decimal("1.000000"),
+    )
+    transition_report = _transition(
+        _observed_snapshot(datetime(2026, 6, 18, 10, 0, tzinfo=UTC)),
+        _gap_snapshot(
+            datetime(2026, 6, 18, 11, 0, tzinfo=UTC),
+            "thin_calibration_sample",
+        ),
+    )
+    report = _trend(
+        transition_report,
+    )
+
+    with pytest.raises(FrozenInstanceError):
+        config.config_version = "changed"
+    with pytest.raises(FrozenInstanceError):
+        row.introduced_count = 2
+    with pytest.raises(FrozenInstanceError):
+        report.readonly = False
+
+
+def test_phase_2_evidence_snapshot_transition_trend_rejects_scalar_subclasses():
+    class DerivedDecimal(Decimal):
+        pass
+
+    class DerivedInt(int):
+        pass
+
+    class DerivedString(str):
+        pass
+
+    transition_report = _transition(
+        _observed_snapshot(datetime(2026, 6, 18, 10, 0, tzinfo=UTC)),
+        _gap_snapshot(
+            datetime(2026, 6, 18, 11, 0, tzinfo=UTC),
+            "thin_calibration_sample",
+        ),
+    )
+    report = _trend(transition_report)
+
+    with pytest.raises(ValueError, match="config_version"):
+        PaperPhase2EvidenceSnapshotTransitionTrendConfig(
+            config_version=DerivedString(
+                "phase-2-evidence-snapshot-transition-trend-v0",
+            ),
+        )
+    with pytest.raises(ValueError, match="introduced_count"):
+        PaperPhase2EvidenceSnapshotTransitionTrendGapRow(
+            "thin_calibration_sample",
+            introduced_count=DerivedInt(1),
+            cleared_count=0,
+            persistent_count=0,
+            transition_presence_ratio=Decimal("1.000000"),
+        )
+    with pytest.raises(ValueError, match="cleared_count"):
+        PaperPhase2EvidenceSnapshotTransitionTrendGapRow(
+            "thin_calibration_sample",
+            introduced_count=0,
+            cleared_count=True,
+            persistent_count=0,
+            transition_presence_ratio=Decimal("1.000000"),
+        )
+    with pytest.raises(ValueError, match="transition_presence_ratio"):
+        PaperPhase2EvidenceSnapshotTransitionTrendGapRow(
+            "thin_calibration_sample",
+            introduced_count=1,
+            cleared_count=0,
+            persistent_count=0,
+            transition_presence_ratio=DerivedDecimal("1.000000"),
+        )
+    with pytest.raises(ValueError, match="transition_report_count"):
+        replace(report, transition_report_count=DerivedInt(1))
+
+
+def test_phase_2_evidence_snapshot_transition_trend_rejects_gap_name_string_subclass():
+    class DerivedString(str):
+        pass
+
+    with pytest.raises(ValueError, match="evidence_gap_name"):
+        PaperPhase2EvidenceSnapshotTransitionTrendGapRow(
+            DerivedString("thin_calibration_sample"),
+            introduced_count=1,
+            cleared_count=0,
+            persistent_count=0,
+            transition_presence_ratio=Decimal("1.000000"),
+        )
+
+
+@pytest.mark.parametrize(
+    ("field_name", "gap_name"),
+    (
+        ("latest_introduced_gap_names", "thin_calibration_sample"),
+        ("latest_cleared_gap_names", "thin_calibration_sample"),
+    ),
+)
+def test_phase_2_evidence_snapshot_transition_trend_rejects_latest_gap_string_subclasses(
+    field_name,
+    gap_name,
+):
+    class DerivedString(str):
+        pass
+
+    if field_name == "latest_introduced_gap_names":
+        report = _trend(
+            _transition(
+                _observed_snapshot(datetime(2026, 6, 18, 10, 0, tzinfo=UTC)),
+                _gap_snapshot(datetime(2026, 6, 18, 11, 0, tzinfo=UTC), gap_name),
+            ),
+        )
+    else:
+        report = _trend(
+            _transition(
+                _gap_snapshot(datetime(2026, 6, 18, 10, 0, tzinfo=UTC), gap_name),
+                _observed_snapshot(datetime(2026, 6, 18, 11, 0, tzinfo=UTC)),
+            ),
+        )
+
+    with pytest.raises(ValueError, match=field_name):
+        replace(report, **{field_name: (DerivedString(gap_name),)})
+
+
+@pytest.mark.parametrize(
+    ("field_name", "status"),
+    (
+        ("latest_from_status", "phase_2_evidence_observed"),
+        ("latest_to_status", "phase_2_evidence_gaps"),
+    ),
+)
+def test_phase_2_evidence_snapshot_transition_trend_rejects_latest_status_string_subclasses(
+    field_name,
+    status,
+):
+    class DerivedString(str):
+        pass
+
+    report = _trend(
+        _transition(
+            _observed_snapshot(datetime(2026, 6, 18, 10, 0, tzinfo=UTC)),
+            _gap_snapshot(datetime(2026, 6, 18, 11, 0, tzinfo=UTC), "thin_calibration_sample"),
+        ),
+    )
+
+    with pytest.raises(ValueError, match=field_name):
+        replace(report, **{field_name: DerivedString(status)})
+
+
+def test_phase_2_evidence_snapshot_transition_trend_requires_deterministic_gap_sequences():
+    transition_report = _transition(
+        _observed_snapshot(datetime(2026, 6, 18, 10, 0, tzinfo=UTC)),
+        _gap_snapshot(
+            datetime(2026, 6, 18, 11, 0, tzinfo=UTC),
+            "thin_calibration_sample",
+            "thin_segment_probability_samples",
+        ),
+    )
+    report = _trend(transition_report)
+
+    assert report.latest_introduced_gap_names == (
+        "thin_calibration_sample",
+        "thin_segment_probability_samples",
+    )
+    with pytest.raises(ValueError, match="latest_introduced_gap_names"):
+        replace(
+            report,
+            latest_introduced_gap_names=(
+                "thin_segment_probability_samples",
+                "thin_calibration_sample",
+            ),
+        )
+    with pytest.raises(ValueError, match="latest_introduced_gap_names"):
+        replace(
+            report,
+            latest_introduced_gap_names=(
+                "thin_calibration_sample",
+                "thin_calibration_sample",
             ),
         )
 

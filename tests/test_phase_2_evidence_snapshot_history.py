@@ -1,5 +1,5 @@
 from dataclasses import FrozenInstanceError
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest
@@ -25,6 +25,14 @@ from polymarket_alpha_lab.strategy_segment_summary import (
 
 
 GENERATED_AT = datetime(2026, 6, 18, 12, 0, tzinfo=UTC)
+
+
+class _StringSubclass(str):
+    pass
+
+
+class _DateTimeSubclass(datetime):
+    pass
 
 
 def _history_config(**overrides) -> PaperPhase2EvidenceSnapshotHistoryConfig:
@@ -267,6 +275,94 @@ def test_phase_2_evidence_snapshot_history_uses_max_prefix_append_order():
         "phase_2_evidence_gaps",
     )
     assert snapshots[2].evidence_gap_names == ("return_only_segments_present",)
+
+
+def test_phase_2_evidence_snapshot_history_returns_frozen_tuple_reports():
+    calibration_report = _calibration_report(30)
+    segment_summary_report = _segment_summary_report(30)
+
+    snapshots = _history([calibration_report], [segment_summary_report])
+
+    assert type(snapshots) is tuple
+    assert len(snapshots) == 1
+    with pytest.raises(FrozenInstanceError):
+        snapshots[0].status = "phase_2_evidence_gaps"
+
+
+def test_phase_2_evidence_snapshot_history_normalizes_generated_at_to_utc():
+    calibration_report = _calibration_report(30)
+    segment_summary_report = _segment_summary_report(30)
+    eastern_generated_at = datetime(
+        2026,
+        6,
+        18,
+        8,
+        0,
+        tzinfo=timezone(timedelta(hours=-4)),
+    )
+
+    snapshots = build_paper_phase_2_evidence_snapshot_history(
+        [calibration_report],
+        [segment_summary_report],
+        config=_history_config(),
+        snapshot_config=_snapshot_config(),
+        generated_at=eastern_generated_at,
+    )
+
+    assert tuple(snapshot.generated_at for snapshot in snapshots) == (GENERATED_AT,)
+    assert tuple(snapshot.generated_at.tzinfo for snapshot in snapshots) == (UTC,)
+
+
+def test_phase_2_evidence_snapshot_history_rejects_scalar_subclasses():
+    calibration_report = _calibration_report(30)
+    segment_summary_report = _segment_summary_report(30)
+
+    with pytest.raises(ValueError, match="config_version"):
+        _history_config(
+            config_version=_StringSubclass("phase-2-evidence-snapshot-history-v0"),
+        )
+    with pytest.raises(ValueError, match="alignment_strategy"):
+        _history_config(alignment_strategy=_StringSubclass("max_prefix"))
+    with pytest.raises(ValueError, match="generated_at"):
+        build_paper_phase_2_evidence_snapshot_history(
+            [calibration_report],
+            [segment_summary_report],
+            config=_history_config(),
+            snapshot_config=_snapshot_config(),
+            generated_at=_DateTimeSubclass(2026, 6, 18, 12, 0, tzinfo=UTC),
+        )
+
+
+@pytest.mark.parametrize(
+    ("report_kind", "flag_name"),
+    (
+        ("calibration", "paper_only"),
+        ("calibration", "report_only"),
+        ("calibration", "readonly"),
+        ("segment_summary", "paper_only"),
+        ("segment_summary", "report_only"),
+        ("segment_summary", "readonly"),
+    ),
+)
+def test_phase_2_evidence_snapshot_history_rejects_source_report_false_flags(
+    report_kind,
+    flag_name,
+):
+    calibration_report = _calibration_report(30)
+    segment_summary_report = _segment_summary_report(30)
+
+    if report_kind == "calibration":
+        with pytest.raises(ValueError, match=f"calibration_reports {flag_name}"):
+            _history(
+                [_unsafe_clone_report_with_flag(calibration_report, flag_name, False)],
+                [segment_summary_report],
+            )
+    else:
+        with pytest.raises(ValueError, match=f"segment_summary_reports {flag_name}"):
+            _history(
+                [calibration_report],
+                [_unsafe_clone_report_with_flag(segment_summary_report, flag_name, False)],
+            )
 
 
 def test_phase_2_evidence_snapshot_history_rejects_invalid_inputs_and_flags():

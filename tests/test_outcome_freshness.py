@@ -28,6 +28,22 @@ OUTCOME_FRESHNESS_STATUSES = (
 )
 
 
+class _StringSubclass(str):
+    pass
+
+
+class _IntSubclass(int):
+    pass
+
+
+class _DatetimeSubclass(datetime):
+    pass
+
+
+class _DecimalSubclass(Decimal):
+    pass
+
+
 def _config(**overrides) -> OutcomeFreshnessConfig:
     values = {
         "config_version": "outcome-freshness-v0",
@@ -107,6 +123,21 @@ def _status_rows(
             ),
         )
         for status in OUTCOME_FRESHNESS_STATUSES
+    )
+
+
+def _valid_freshness_report() -> OutcomeFreshnessReport:
+    return build_outcome_freshness_report(
+        (
+            _tracking_report(
+                total_markets_checked=1,
+                resolved_count=1,
+                pending_count=0,
+                suffix="valid-exact-type",
+            ),
+        ),
+        config=_config(),
+        generated_at=GENERATED_AT,
     )
 
 
@@ -385,3 +416,46 @@ def test_outcome_freshness_dataclasses_are_frozen_and_validate_invariants():
         replace(report, status_rows=report.status_rows[:-1])
     with pytest.raises(ValueError, match="status must match"):
         replace(report, status="latest_outcomes_pending")
+
+
+@pytest.mark.parametrize(
+    ("factory", "match"),
+    (
+        (
+            lambda: _config(config_version=_StringSubclass("outcome-freshness-v0")),
+            "config_version",
+        ),
+        (
+            lambda: _config(stale_after_seconds=_IntSubclass(3600)),
+            "stale_after_seconds",
+        ),
+        (
+            lambda: build_outcome_freshness_report(
+                (),
+                config=_config(),
+                generated_at=_DatetimeSubclass(2026, 6, 17, 18, 0, tzinfo=UTC),
+            ),
+            "datetime",
+        ),
+        (
+            lambda: replace(
+                _valid_freshness_report(),
+                latest_total_markets_checked=_IntSubclass(1),
+            ),
+            "latest_total_markets_checked",
+        ),
+        (
+            lambda: replace(
+                _valid_freshness_report(),
+                latest_resolved_ratio=_DecimalSubclass("1.000000"),
+            ),
+            "latest_resolved_ratio",
+        ),
+    ),
+)
+def test_outcome_freshness_rejects_scalar_subclasses_at_public_boundaries(
+    factory,
+    match,
+):
+    with pytest.raises(ValueError, match=match):
+        factory()

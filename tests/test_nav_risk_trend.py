@@ -332,6 +332,43 @@ def test_nav_risk_trend_rejects_non_decimal_public_metrics():
         PaperNavRiskTrendStatusRow("empty_nav_risk_history", 0, 0.0)
 
 
+def test_nav_risk_trend_rejects_scalar_subclasses_and_bool_counts():
+    class StrSubclass(str):
+        pass
+
+    class DateTimeSubclass(datetime):
+        pass
+
+    class IntSubclass(int):
+        pass
+
+    class DecimalSubclass(Decimal):
+        pass
+
+    with pytest.raises(ValueError, match="config_version"):
+        PaperNavRiskTrendConfig(config_version=StrSubclass("nav-risk-trend-v0"))
+    with pytest.raises(ValueError, match="generated_at"):
+        build_paper_nav_risk_trend_report(
+            [],
+            config=_config(),
+            generated_at=DateTimeSubclass(2026, 6, 17, 12, 0, tzinfo=UTC),
+        )
+    with pytest.raises(ValueError, match="report_count"):
+        PaperNavRiskTrendStatusRow(
+            "empty_nav_risk_history",
+            IntSubclass(0),
+            Decimal("0.000000"),
+        )
+    with pytest.raises(ValueError, match="report_count"):
+        PaperNavRiskTrendStatusRow("empty_nav_risk_history", True, Decimal("0.000000"))
+    with pytest.raises(ValueError, match="report_ratio"):
+        PaperNavRiskTrendStatusRow(
+            "empty_nav_risk_history",
+            0,
+            DecimalSubclass("0.000000"),
+        )
+
+
 def test_nav_risk_trend_rejects_status_inconsistent_with_latest_counts():
     source = _risk_metrics_report(
         GENERATED_AT,

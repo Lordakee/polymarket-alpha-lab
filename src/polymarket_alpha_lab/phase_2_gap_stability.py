@@ -36,6 +36,8 @@ class PaperPhase2GapStabilityRow:
     ever_cleared: bool
 
     def __post_init__(self) -> None:
+        if type(self.evidence_gap_name) is not str:
+            raise ValueError("evidence_gap_name must be a string")
         if self.evidence_gap_name not in EVIDENCE_GAP_NAMES:
             raise ValueError("evidence_gap_name must be a known phase 2 gap")
         _require_optional_nonnegative_int("first_seen_index", self.first_seen_index)
@@ -112,7 +114,7 @@ def build_paper_phase_2_gap_stability_report(
 ) -> PaperPhase2GapStabilityReport:
     if type(config) is not PaperPhase2GapStabilityConfig:
         raise ValueError("config must be a PaperPhase2GapStabilityConfig")
-    if not isinstance(generated_at, datetime):
+    if type(generated_at) is not datetime:
         raise ValueError("generated_at must be a datetime")
 
     reports = _normalize_snapshots(snapshots)
@@ -327,6 +329,8 @@ def _normalize_gap_names(
     if len(set(gap_names)) != len(gap_names):
         raise ValueError(f"{field_name} must not contain duplicates")
     for gap_name in gap_names:
+        if type(gap_name) is not str:
+            raise ValueError(f"{field_name} must contain strings")
         if gap_name not in EVIDENCE_GAP_NAMES:
             raise ValueError(f"{field_name} must contain known gap names")
     expected_names = tuple(
@@ -360,7 +364,7 @@ def _ratio_value_matches(value: Decimal | None, expected: Decimal | None) -> boo
 
 
 def _as_utc(value: datetime) -> datetime:
-    if not isinstance(value, datetime):
+    if type(value) is not datetime:
         raise ValueError("datetime value is required")
     if value.tzinfo is None:
         return value.replace(tzinfo=UTC)
@@ -368,7 +372,7 @@ def _as_utc(value: datetime) -> datetime:
 
 
 def _require_canonical_string(field_name: str, value: object) -> None:
-    if not isinstance(value, str):
+    if type(value) is not str:
         raise ValueError(f"{field_name} must be a string")
     if not value or value.strip() != value:
         raise ValueError(f"{field_name} must be a canonical nonblank string")
@@ -380,7 +384,7 @@ def _require_bool(field_name: str, value: object) -> None:
 
 
 def _require_nonnegative_int(field_name: str, value: object) -> None:
-    if isinstance(value, bool) or not isinstance(value, int):
+    if type(value) is not int:
         raise ValueError(f"{field_name} must be an int")
     if value < 0:
         raise ValueError(f"{field_name} must be nonnegative")
@@ -401,7 +405,7 @@ def _require_optional_probability_decimal(
 ) -> None:
     if value is None:
         return
-    if not isinstance(value, Decimal):
+    if type(value) is not Decimal:
         raise ValueError(f"{field_name} must be a Decimal or None")
     if not value.is_finite():
         raise ValueError(f"{field_name} must be finite")

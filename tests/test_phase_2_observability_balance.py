@@ -314,6 +314,19 @@ def test_phase_2_observability_balance_dataclasses_revalidate_consistency():
         )
 
 
+def test_phase_2_observability_balance_rejects_reason_name_string_subclasses():
+    class StrSubclass(str):
+        pass
+
+    with pytest.raises(ValueError, match="blocking_reason_name"):
+        PaperPhase2ObservabilityBalanceReasonRow(
+            StrSubclass("edge_cost_not_observed"),
+            1,
+            Decimal("1.000000"),
+            True,
+        )
+
+
 def test_phase_2_observability_balance_rows_and_all_are_exact():
     from polymarket_alpha_lab import phase_2_observability_balance
 

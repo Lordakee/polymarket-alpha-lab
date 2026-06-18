@@ -22,6 +22,22 @@ from polymarket_alpha_lab.phase_2_evidence_snapshot_transition import (
 GENERATED_AT = datetime(2026, 6, 18, 19, 0, tzinfo=UTC)
 
 
+class IntSubclass(int):
+    pass
+
+
+class StrSubclass(str):
+    pass
+
+
+class DecimalSubclass(Decimal):
+    pass
+
+
+class DateTimeSubclass(datetime):
+    pass
+
+
 def _config(**overrides) -> PaperPhase2EvidenceSnapshotTransitionConfig:
     values = {"config_version": "phase-2-evidence-snapshot-transition-v0"}
     values.update(overrides)
@@ -211,6 +227,53 @@ def test_phase_2_evidence_snapshot_transition_counts_adjacent_status_pairs():
     )
 
 
+def test_phase_2_evidence_snapshot_transition_status_rows_are_deterministic_and_quantized():
+    report = _transition_report(
+        _snapshot(generated_at=datetime(2026, 6, 18, 10, 0, tzinfo=UTC)),
+        _gap_snapshot(
+            datetime(2026, 6, 18, 11, 0, tzinfo=UTC),
+            "thin_calibration_sample",
+        ),
+        _snapshot(generated_at=datetime(2026, 6, 18, 12, 0, tzinfo=UTC)),
+        _quality_snapshot(datetime(2026, 6, 18, 13, 0, tzinfo=UTC)),
+    )
+
+    assert tuple(
+        (row.from_snapshot_status, row.to_snapshot_status)
+        for row in report.status_transition_rows
+    ) == tuple(
+        (from_status, to_status)
+        for from_status in SNAPSHOT_STATUSES
+        for to_status in SNAPSHOT_STATUSES
+    )
+    assert sum(row.transition_count for row in report.status_transition_rows) == 3
+    assert _status_row(
+        report,
+        "phase_2_evidence_observed",
+        "phase_2_evidence_gaps",
+    ).transition_ratio == Decimal("0.333333")
+    assert _status_row(
+        report,
+        "phase_2_evidence_gaps",
+        "phase_2_evidence_observed",
+    ).transition_ratio == Decimal("0.333333")
+    assert _status_row(
+        report,
+        "phase_2_evidence_observed",
+        "phase_2_evidence_quality_flags",
+    ).transition_ratio == Decimal("0.333333")
+    assert all(
+        row.transition_ratio is None
+        or (
+            type(row.transition_ratio) is Decimal
+            and row.transition_ratio.as_tuple().exponent == Decimal(
+                "0.000001",
+            ).as_tuple().exponent
+        )
+        for row in report.status_transition_rows
+    )
+
+
 def test_phase_2_evidence_snapshot_transition_counts_gap_changes():
     first = _gap_snapshot(
         datetime(2026, 6, 18, 10, 0, tzinfo=UTC),
@@ -259,6 +322,55 @@ def test_phase_2_evidence_snapshot_transition_counts_gap_changes():
     )
 
 
+def test_phase_2_evidence_snapshot_transition_gap_rows_are_deterministic_and_complete():
+    first = _gap_snapshot(
+        datetime(2026, 6, 18, 10, 0, tzinfo=UTC),
+        "thin_calibration_sample",
+        "return_only_segments_present",
+    )
+    second = _gap_snapshot(
+        datetime(2026, 6, 18, 11, 0, tzinfo=UTC),
+        "thin_calibration_sample",
+        "thin_segment_probability_samples",
+    )
+    third = _gap_snapshot(
+        datetime(2026, 6, 18, 12, 0, tzinfo=UTC),
+        "thin_calibration_sample",
+        "thin_segment_probability_samples",
+        "return_only_segments_present",
+    )
+
+    report = _transition_report(first, second, third)
+
+    assert tuple(row.evidence_gap_name for row in report.gap_transition_rows) == (
+        EVIDENCE_GAP_NAMES
+    )
+    assert _gap_row(report, "thin_calibration_sample") == (
+        PaperPhase2EvidenceSnapshotGapTransitionRow(
+            "thin_calibration_sample",
+            introduced_count=0,
+            cleared_count=0,
+            persistent_count=2,
+        )
+    )
+    assert _gap_row(report, "return_only_segments_present") == (
+        PaperPhase2EvidenceSnapshotGapTransitionRow(
+            "return_only_segments_present",
+            introduced_count=1,
+            cleared_count=1,
+            persistent_count=0,
+        )
+    )
+    assert _gap_row(report, "thin_segment_probability_samples") == (
+        PaperPhase2EvidenceSnapshotGapTransitionRow(
+            "thin_segment_probability_samples",
+            introduced_count=1,
+            cleared_count=0,
+            persistent_count=1,
+        )
+    )
+
+
 def test_phase_2_evidence_snapshot_transition_handles_single_snapshot_without_pairs():
     snapshot = _snapshot(generated_at=datetime(2026, 6, 18, 10, 0, tzinfo=UTC))
 
@@ -272,12 +384,19 @@ def test_phase_2_evidence_snapshot_transition_handles_single_snapshot_without_pa
     assert report.latest_to_status is None
 
 
-def test_phase_2_evidence_snapshot_transition_normalizes_generated_at_to_utc():
+def test_phase_2_evidence_snapshot_transition_normalizes_report_datetimes_to_utc():
+    source_snapshot = _snapshot(
+        generated_at=datetime(2026, 6, 18, 10, 0, tzinfo=timezone(timedelta(hours=2))),
+    )
+
     report = _transition_report(
+        source_snapshot,
         generated_at=datetime(2026, 6, 18, 12, 0, tzinfo=timezone(timedelta(hours=-7))),
     )
 
     assert report.generated_at == GENERATED_AT
+    assert report.first_report_generated_at == datetime(2026, 6, 18, 8, 0, tzinfo=UTC)
+    assert report.latest_report_generated_at == datetime(2026, 6, 18, 8, 0, tzinfo=UTC)
 
 
 def test_phase_2_evidence_snapshot_transition_rejects_invalid_builder_inputs():
@@ -363,6 +482,228 @@ def test_phase_2_evidence_snapshot_transition_dataclasses_are_frozen_and_validat
     )
     with pytest.raises(ValueError, match="latest_introduced_gap_names"):
         replace(counted_report, latest_introduced_gap_names=("thin_calibration_sample",))
+
+
+def test_phase_2_evidence_snapshot_transition_rejects_status_row_mismatches():
+    report = _transition_report(
+        _snapshot(generated_at=datetime(2026, 6, 18, 10, 0, tzinfo=UTC)),
+        _snapshot(generated_at=datetime(2026, 6, 18, 11, 0, tzinfo=UTC)),
+    )
+
+    with pytest.raises(ValueError, match="status_transition_rows"):
+        replace(
+            report,
+            status_transition_rows=report.status_transition_rows[1:]
+            + report.status_transition_rows[:1],
+        )
+
+    list_normalized_report = replace(
+        report,
+        status_transition_rows=list(report.status_transition_rows),
+    )
+    assert type(list_normalized_report.status_transition_rows) is tuple
+    assert list_normalized_report.status_transition_rows == report.status_transition_rows
+
+    observed_row = _status_row(
+        report,
+        "phase_2_evidence_observed",
+        "phase_2_evidence_observed",
+    )
+    replacement_rows = tuple(
+        replace(row, transition_count=0) if row == observed_row else row
+        for row in report.status_transition_rows
+    )
+    with pytest.raises(ValueError, match="counts must sum"):
+        replace(report, status_transition_rows=replacement_rows)
+
+    replacement_rows = tuple(
+        replace(row, transition_ratio=Decimal("0.000000"))
+        if row == observed_row
+        else row
+        for row in report.status_transition_rows
+    )
+    with pytest.raises(ValueError, match="ratios must match"):
+        replace(report, status_transition_rows=replacement_rows)
+
+    replacement_rows = tuple(
+        replace(row, transition_ratio=Decimal("0.999999"))
+        if row == observed_row
+        else row
+        for row in report.status_transition_rows
+    )
+    with pytest.raises(ValueError, match="ratios must match"):
+        replace(report, status_transition_rows=replacement_rows)
+
+
+def test_phase_2_evidence_snapshot_transition_rejects_gap_row_mismatches():
+    report = _transition_report(
+        _gap_snapshot(datetime(2026, 6, 18, 10, 0, tzinfo=UTC), "thin_calibration_sample"),
+        _snapshot(generated_at=datetime(2026, 6, 18, 11, 0, tzinfo=UTC)),
+    )
+
+    with pytest.raises(ValueError, match="gap_transition_rows"):
+        replace(
+            report,
+            gap_transition_rows=report.gap_transition_rows[1:]
+            + report.gap_transition_rows[:1],
+        )
+
+    with pytest.raises(ValueError, match="gap_transition_rows"):
+        replace(report, gap_transition_rows=report.gap_transition_rows[:-1])
+
+    list_normalized_report = replace(
+        report,
+        gap_transition_rows=list(report.gap_transition_rows),
+    )
+    assert type(list_normalized_report.gap_transition_rows) is tuple
+    assert list_normalized_report.gap_transition_rows == report.gap_transition_rows
+
+    excessive_row = replace(
+        _gap_row(report, "thin_calibration_sample"),
+        introduced_count=1,
+    )
+    replacement_rows = tuple(
+        excessive_row
+        if row.evidence_gap_name == excessive_row.evidence_gap_name
+        else row
+        for row in report.gap_transition_rows
+    )
+    with pytest.raises(ValueError, match="counts cannot exceed transition_count"):
+        replace(report, gap_transition_rows=replacement_rows)
+
+    replacement_rows = tuple(
+        replace(_gap_row(report, "thin_calibration_sample"), cleared_count=0)
+        if row.evidence_gap_name == "thin_calibration_sample"
+        else row
+        for row in report.gap_transition_rows
+    )
+    with pytest.raises(ValueError, match="latest_cleared_gap_names"):
+        replace(report, gap_transition_rows=replacement_rows)
+
+
+def test_phase_2_evidence_snapshot_transition_rejects_scalar_subclasses():
+    report = _transition_report()
+
+    with pytest.raises(ValueError, match="config_version"):
+        PaperPhase2EvidenceSnapshotTransitionConfig(
+            config_version=StrSubclass("phase-2-evidence-snapshot-transition-v0"),
+        )
+    with pytest.raises(ValueError, match="transition_count"):
+        PaperPhase2EvidenceSnapshotStatusTransitionRow(
+            "phase_2_evidence_observed",
+            "phase_2_evidence_observed",
+            IntSubclass(0),
+            None,
+        )
+    with pytest.raises(ValueError, match="transition_ratio"):
+        PaperPhase2EvidenceSnapshotStatusTransitionRow(
+            "phase_2_evidence_observed",
+            "phase_2_evidence_observed",
+            0,
+            DecimalSubclass("0.000000"),
+        )
+    with pytest.raises(ValueError, match="introduced_count"):
+        PaperPhase2EvidenceSnapshotGapTransitionRow(
+            "thin_calibration_sample",
+            IntSubclass(0),
+            0,
+            0,
+        )
+    with pytest.raises(ValueError, match="snapshot_report_count"):
+        replace(report, snapshot_report_count=IntSubclass(0))
+    with pytest.raises(ValueError, match="datetime value"):
+        replace(report, generated_at=DateTimeSubclass(2026, 6, 18, 19, 0))
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    (
+        "from_snapshot_status",
+        "to_snapshot_status",
+    ),
+)
+def test_phase_2_evidence_snapshot_transition_status_rows_reject_str_subclasses(
+    field_name,
+):
+    values = {
+        "from_snapshot_status": "phase_2_evidence_observed",
+        "to_snapshot_status": "phase_2_evidence_observed",
+        "transition_count": 0,
+        "transition_ratio": None,
+    }
+    values[field_name] = StrSubclass(values[field_name])
+
+    with pytest.raises(ValueError, match=field_name):
+        PaperPhase2EvidenceSnapshotStatusTransitionRow(**values)
+
+
+def test_phase_2_evidence_snapshot_transition_gap_rows_reject_str_subclasses():
+    with pytest.raises(ValueError, match="evidence_gap_name"):
+        PaperPhase2EvidenceSnapshotGapTransitionRow(
+            StrSubclass("thin_calibration_sample"),
+            0,
+            0,
+            0,
+        )
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    (
+        "latest_from_status",
+        "latest_to_status",
+    ),
+)
+def test_phase_2_evidence_snapshot_transition_report_statuses_reject_str_subclasses(
+    field_name,
+):
+    report = _transition_report(
+        _snapshot(generated_at=datetime(2026, 6, 18, 10, 0, tzinfo=UTC)),
+        _snapshot(generated_at=datetime(2026, 6, 18, 11, 0, tzinfo=UTC)),
+    )
+
+    with pytest.raises(ValueError, match=field_name):
+        replace(report, **{field_name: StrSubclass(getattr(report, field_name))})
+
+
+@pytest.mark.parametrize(
+    ("field_name", "report"),
+    (
+        (
+            "latest_introduced_gap_names",
+            _transition_report(
+                _snapshot(generated_at=datetime(2026, 6, 18, 10, 0, tzinfo=UTC)),
+                _gap_snapshot(
+                    datetime(2026, 6, 18, 11, 0, tzinfo=UTC),
+                    "thin_calibration_sample",
+                ),
+            ),
+        ),
+        (
+            "latest_cleared_gap_names",
+            _transition_report(
+                _gap_snapshot(
+                    datetime(2026, 6, 18, 10, 0, tzinfo=UTC),
+                    "thin_calibration_sample",
+                ),
+                _snapshot(generated_at=datetime(2026, 6, 18, 11, 0, tzinfo=UTC)),
+            ),
+        ),
+    ),
+)
+def test_phase_2_evidence_snapshot_transition_latest_gap_names_reject_str_subclasses(
+    field_name,
+    report,
+):
+    with pytest.raises(ValueError, match=field_name):
+        replace(
+            report,
+            **{
+                field_name: tuple(
+                    StrSubclass(gap_name) for gap_name in getattr(report, field_name)
+                ),
+            },
+        )
 
 
 def test_phase_2_evidence_snapshot_transition_rows_and_all_are_exact():

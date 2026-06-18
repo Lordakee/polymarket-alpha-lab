@@ -67,7 +67,7 @@ class PaperPhase2SnapshotAgeReport:
             "fresh_snapshot_count",
             self.fresh_snapshot_count,
         )
-        _require_optional_int("latest_age_seconds", self.latest_age_seconds)
+        _require_optional_nonnegative_int("latest_age_seconds", self.latest_age_seconds)
         _validate_report_consistency(self)
         if self.paper_only is not True:
             raise ValueError("paper_only must be True")
@@ -215,11 +215,10 @@ def _require_nonnegative_int(field_name: str, value: object) -> None:
         raise ValueError(f"{field_name} must be nonnegative")
 
 
-def _require_optional_int(field_name: str, value: object) -> None:
+def _require_optional_nonnegative_int(field_name: str, value: object) -> None:
     if value is None:
         return
-    if type(value) is not int:
-        raise ValueError(f"{field_name} must be an int or None")
+    _require_nonnegative_int(field_name, value)
 
 
 __all__ = (

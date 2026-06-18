@@ -377,7 +377,7 @@ def _require_latest_status_matches_count(
 
 
 def _require_canonical_string(field_name: str, value: Any) -> None:
-    if not isinstance(value, str):
+    if type(value) is not str:
         raise ValueError(f"{field_name} must be a string")
     if not value or value.strip() != value:
         raise ValueError(f"{field_name} must be a canonical nonblank string")

@@ -33,6 +33,22 @@ EVIDENCE_GAP_NAMES = (
 )
 
 
+class _StringSubclass(str):
+    pass
+
+
+class _IntSubclass(int):
+    pass
+
+
+class _DateTimeSubclass(datetime):
+    pass
+
+
+class _DecimalSubclass(Decimal):
+    pass
+
+
 def _config(**overrides) -> PaperStrategyEvidenceTrendConfig:
     values = {"config_version": "strategy-evidence-trend-v0"}
     values.update(overrides)
@@ -318,6 +334,135 @@ def test_strategy_evidence_trend_rejects_invalid_builder_inputs():
             config=_config(),
             generated_at="now",
         )
+
+
+@pytest.mark.parametrize(
+    ("act", "match"),
+    (
+        pytest.param(
+            lambda: _config(
+                config_version=_StringSubclass("strategy-evidence-trend-v0"),
+            ),
+            "config_version",
+            id="config-version-string-subclass",
+        ),
+        pytest.param(
+            lambda: build_paper_strategy_evidence_trend_report(
+                (),
+                config=_config(),
+                generated_at=_DateTimeSubclass(2026, 6, 17, 18, 0, tzinfo=UTC),
+            ),
+            "generated_at",
+            id="builder-generated-at-datetime-subclass",
+        ),
+        pytest.param(
+            lambda: replace(
+                build_paper_strategy_evidence_trend_report(
+                    (_snapshot("local_evidence_observed"),),
+                    config=_config(),
+                    generated_at=GENERATED_AT,
+                ),
+                generated_at=_DateTimeSubclass(2026, 6, 17, 18, 0, tzinfo=UTC),
+            ),
+            "datetime",
+            id="report-generated-at-datetime-subclass",
+        ),
+        pytest.param(
+            lambda: PaperStrategyEvidenceTrendStatusRow(
+                _StringSubclass("local_evidence_observed"),
+                1,
+                Decimal("1.000000"),
+            ),
+            "snapshot_status",
+            id="status-row-status-string-subclass",
+        ),
+        pytest.param(
+            lambda: PaperStrategyEvidenceTrendGapRow(
+                _StringSubclass("missing_outcome_evidence"),
+                1,
+                Decimal("1.000000"),
+            ),
+            "evidence_gap_name",
+            id="gap-row-name-string-subclass",
+        ),
+        pytest.param(
+            lambda: PaperStrategyEvidenceTrendStatusRow(
+                "local_evidence_observed",
+                _IntSubclass(1),
+                Decimal("1.000000"),
+            ),
+            "snapshot_count",
+            id="status-row-count-int-subclass",
+        ),
+        pytest.param(
+            lambda: PaperStrategyEvidenceTrendStatusRow(
+                "local_evidence_observed",
+                True,
+                Decimal("1.000000"),
+            ),
+            "snapshot_count",
+            id="status-row-count-bool",
+        ),
+        pytest.param(
+            lambda: PaperStrategyEvidenceTrendStatusRow(
+                "local_evidence_observed",
+                1,
+                _DecimalSubclass("1.000000"),
+            ),
+            "snapshot_ratio",
+            id="status-row-ratio-decimal-subclass",
+        ),
+        pytest.param(
+            lambda: replace(
+                build_paper_strategy_evidence_trend_report(
+                    (_snapshot("local_evidence_observed"),),
+                    config=_config(),
+                    generated_at=GENERATED_AT,
+                ),
+                snapshot_report_count=_IntSubclass(1),
+            ),
+            "snapshot_report_count",
+            id="report-count-int-subclass",
+        ),
+        pytest.param(
+            lambda: replace(
+                build_paper_strategy_evidence_trend_report(
+                    (_snapshot("local_evidence_observed"),),
+                    config=_config(),
+                    generated_at=GENERATED_AT,
+                ),
+                latest_status=_StringSubclass("local_evidence_observed"),
+            ),
+            "latest_status",
+            id="latest-status-string-subclass",
+        ),
+        pytest.param(
+            lambda: replace(
+                build_paper_strategy_evidence_trend_report(
+                    (
+                        _snapshot(
+                            "local_evidence_gaps",
+                            evidence_gap_names=("missing_outcome_evidence",),
+                        ),
+                    ),
+                    config=_config(),
+                    generated_at=GENERATED_AT,
+                ),
+                latest_evidence_gap_names=(
+                    _StringSubclass("missing_outcome_evidence"),
+                ),
+            ),
+            "latest_evidence_gap_names",
+            id="latest-gap-name-string-subclass",
+        ),
+    ),
+)
+def test_strategy_evidence_trend_rejects_scalar_subclasses_at_boundaries(
+    act,
+    match,
+):
+    with pytest.raises(ValueError, match=match):
+        act()
 
 
 @pytest.mark.parametrize(

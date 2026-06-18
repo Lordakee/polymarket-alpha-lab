@@ -308,6 +308,25 @@ def test_phase_2_status_matrix_rejects_source_reports_with_nonfinal_flags(flag_n
         )
 
 
+def test_phase_2_status_matrix_rejects_source_reports_with_drifted_status_type():
+    class DerivedStr(str):
+        pass
+
+    source_report = _observed_snapshot(GENERATED_AT)
+    object.__setattr__(
+        source_report,
+        "status",
+        DerivedStr("phase_2_evidence_observed"),
+    )
+
+    with pytest.raises(ValueError, match="status"):
+        build_paper_phase_2_status_matrix_report(
+            (source_report,),
+            config=_config(),
+            generated_at=GENERATED_AT,
+        )
+
+
 def test_phase_2_status_matrix_dataclasses_are_frozen_and_revalidate():
     report = _matrix(
         _gap_snapshot(datetime(2026, 6, 18, 10, 0, tzinfo=UTC)),

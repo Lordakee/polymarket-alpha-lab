@@ -21,6 +21,22 @@ COST_TREND_STATUSES = (
 )
 
 
+class _DatetimeSubclass(datetime):
+    pass
+
+
+class _DecimalSubclass(Decimal):
+    pass
+
+
+class _IntSubclass(int):
+    pass
+
+
+class _StringSubclass(str):
+    pass
+
+
 def _cost_audit(**overrides) -> PaperTradeCostAuditReport:
     values = {
         "generated_at": datetime(2026, 6, 17, 12, 0, tzinfo=UTC),
@@ -348,4 +364,31 @@ def test_cost_trend_config_and_rows_reject_invalid_values():
             "latest_cost_observed",
             1,
             Decimal("0.1"),
+        )
+
+
+def test_cost_trend_rejects_scalar_subclasses_at_boundaries():
+    with pytest.raises(ValueError, match="config_version"):
+        PaperTradeCostTrendConfig(
+            config_version=_StringSubclass("paper-trade-cost-trend-v0"),
+        )
+    with pytest.raises(ValueError, match="generated_at"):
+        build_paper_trade_cost_trend_report(
+            (),
+            config=_config(),
+            generated_at=_DatetimeSubclass(2026, 6, 17, 16, 0, tzinfo=UTC),
+        )
+    with pytest.raises(ValueError, match="status_count"):
+        PaperTradeCostTrendStatusRow(
+            "latest_cost_observed",
+            _IntSubclass(1),
+            Decimal("1.000000"),
+        )
+    with pytest.raises(ValueError, match="status_count"):
+        PaperTradeCostTrendStatusRow("latest_cost_observed", True, Decimal("1.000000"))
+    with pytest.raises(ValueError, match="status_ratio"):
+        PaperTradeCostTrendStatusRow(
+            "latest_cost_observed",
+            1,
+            _DecimalSubclass("1.000000"),
         )

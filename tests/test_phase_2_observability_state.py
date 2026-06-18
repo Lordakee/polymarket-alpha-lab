@@ -502,6 +502,28 @@ def test_report_is_frozen_and_revalidates_exact_types_and_flags():
             ),
         )
 
+    class StringSubclass(str):
+        pass
+
+    with pytest.raises(ValueError, match="config_version"):
+        Report(
+            generated_at=GENERATED_AT,
+            config_version=StringSubclass("phase-2-observability-state-v0"),
+            source_config_version="phase-2-observability-trends-v0",
+            calibration_report_count=1,
+            segment_summary_report_count=1,
+            evidence_snapshot_report_count=1,
+            edge_cost_report_count=1,
+            latest_calibration_status="calibration_evidence_observed",
+            latest_segment_status="segment_evidence_observed",
+            latest_evidence_status="phase_2_evidence_observed",
+            latest_edge_cost_status="edge_cost_evidence_observed",
+            evidence_gap_count=0,
+            latest_evidence_gap_names=(),
+            phase_2_ready=True,
+            blocking_reason_names=(),
+        )
+
     with pytest.raises(ValueError, match="config_version"):
         Report(
             generated_at=GENERATED_AT,

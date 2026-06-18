@@ -38,7 +38,7 @@ class PaperPhase2HistoryBundleReport:
     readonly: bool = True
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "generated_at", _as_utc(self.generated_at))
+        object.__setattr__(self, "generated_at", _as_utc("generated_at", self.generated_at))
         _require_canonical_string("config_version", self.config_version)
         object.__setattr__(
             self,
@@ -85,7 +85,7 @@ def build_paper_phase_2_history_bundle_report(
         raise ValueError(
             "transition_config must be a PaperPhase2EvidenceSnapshotTransitionConfig",
         )
-    if not isinstance(generated_at, datetime):
+    if type(generated_at) is not datetime:
         raise ValueError("generated_at must be a datetime")
 
     reports = _normalize_snapshots(snapshots)
@@ -176,16 +176,16 @@ def _validate_report_consistency(report: PaperPhase2HistoryBundleReport) -> None
         raise ValueError("snapshot_transition must match snapshot_history")
 
 
-def _as_utc(value: datetime) -> datetime:
-    if not isinstance(value, datetime):
-        raise ValueError("datetime value is required")
+def _as_utc(field_name: str, value: datetime) -> datetime:
+    if type(value) is not datetime:
+        raise ValueError(f"{field_name} must be a datetime")
     if value.tzinfo is None:
         return value.replace(tzinfo=UTC)
     return value.astimezone(UTC)
 
 
 def _require_canonical_string(field_name: str, value: object) -> None:
-    if not isinstance(value, str):
+    if type(value) is not str:
         raise ValueError(f"{field_name} must be a string")
     if not value or value.strip() != value:
         raise ValueError(f"{field_name} must be a canonical nonblank string")

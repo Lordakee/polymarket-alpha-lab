@@ -363,6 +363,55 @@ def test_phase_2_gap_delta_dataclasses_are_frozen_and_validate_consistency():
         replace(report, rows=report.rows[1:] + report.rows[:1])
 
 
+@pytest.mark.parametrize(
+    ("boundary", "match"),
+    (
+        ("row", "evidence_gap_name"),
+        ("latest_introduced_gap_names", "latest_introduced_gap_names"),
+        ("latest_cleared_gap_names", "latest_cleared_gap_names"),
+    ),
+)
+def test_phase_2_gap_delta_rejects_gap_name_string_subclasses(boundary, match):
+    class GapNameSubclass(str):
+        pass
+
+    gap_name = GapNameSubclass("thin_calibration_sample")
+    if boundary == "row":
+        with pytest.raises(ValueError, match=match):
+            PaperPhase2GapDeltaRow(gap_name, 0, 0, 0)
+        return
+
+    introduced_count = 1 if boundary == "latest_introduced_gap_names" else 0
+    cleared_count = 1 if boundary == "latest_cleared_gap_names" else 0
+    rows = tuple(
+        PaperPhase2GapDeltaRow(
+            row_gap_name,
+            introduced_count if row_gap_name == gap_name else 0,
+            cleared_count if row_gap_name == gap_name else 0,
+            0,
+        )
+        for row_gap_name in EVIDENCE_GAP_NAMES
+    )
+
+    with pytest.raises(ValueError, match=match):
+        PaperPhase2GapDeltaReport(
+            generated_at=GENERATED_AT,
+            config_version="phase-2-gap-delta-v0",
+            snapshot_pair_count=1,
+            latest_from_generated_at=GENERATED_AT,
+            latest_to_generated_at=GENERATED_AT,
+            latest_introduced_gap_names=(
+                (gap_name,) if boundary == "latest_introduced_gap_names" else ()
+            ),
+            latest_cleared_gap_names=(
+                (gap_name,) if boundary == "latest_cleared_gap_names" else ()
+            ),
+            total_introduced_gap_count=introduced_count,
+            total_cleared_gap_count=cleared_count,
+            rows=rows,
+        )
+
+
 def test_phase_2_gap_delta_rows_and_all_are_exact():
     from polymarket_alpha_lab import phase_2_gap_delta
 

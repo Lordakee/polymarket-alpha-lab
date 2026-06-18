@@ -33,6 +33,7 @@ class PaperPhase2EvidenceSnapshotTrendStatusRow:
     snapshot_ratio: Decimal | None
 
     def __post_init__(self) -> None:
+        _require_canonical_string("snapshot_status", self.snapshot_status)
         if self.snapshot_status not in SNAPSHOT_STATUSES:
             raise ValueError("snapshot_status must be a known phase 2 status")
         _require_nonnegative_int("snapshot_count", self.snapshot_count)
@@ -46,6 +47,7 @@ class PaperPhase2EvidenceSnapshotTrendGapRow:
     gap_ratio: Decimal | None
 
     def __post_init__(self) -> None:
+        _require_canonical_string("evidence_gap_name", self.evidence_gap_name)
         if self.evidence_gap_name not in EVIDENCE_GAP_NAMES:
             raise ValueError("evidence_gap_name must be a known phase 2 gap")
         _require_nonnegative_int("gap_count", self.gap_count)
@@ -84,10 +86,10 @@ class PaperPhase2EvidenceSnapshotTrendReport:
         )
         _require_canonical_string("config_version", self.config_version)
         _require_nonnegative_int("snapshot_report_count", self.snapshot_report_count)
-        if self.latest_status is not None and (
-            self.latest_status not in SNAPSHOT_STATUSES
-        ):
-            raise ValueError("latest_status must be a known phase 2 status")
+        if self.latest_status is not None:
+            _require_canonical_string("latest_status", self.latest_status)
+            if self.latest_status not in SNAPSHOT_STATUSES:
+                raise ValueError("latest_status must be a known phase 2 status")
         object.__setattr__(
             self,
             "latest_evidence_gap_names",
@@ -121,7 +123,7 @@ def build_paper_phase_2_evidence_snapshot_trend_report(
 
     if type(config) is not PaperPhase2EvidenceSnapshotTrendConfig:
         raise ValueError("config must be a PaperPhase2EvidenceSnapshotTrendConfig")
-    if not isinstance(generated_at, datetime):
+    if type(generated_at) is not datetime:
         raise ValueError("generated_at must be a datetime")
 
     reports = _normalize_snapshots(snapshots)
@@ -170,6 +172,17 @@ def _normalize_snapshots(
             raise ValueError("snapshots must contain report_only reports")
         if snapshot.readonly is not True:
             raise ValueError("snapshots must contain readonly reports")
+        if type(snapshot.status) is not str:
+            raise ValueError("snapshot status must be a string")
+        if snapshot.status not in SNAPSHOT_STATUSES:
+            raise ValueError("snapshot status must be a known phase 2 status")
+        for gap_name in snapshot.evidence_gap_names:
+            if type(gap_name) is not str:
+                raise ValueError("snapshot evidence_gap_names must contain strings")
+            if gap_name not in EVIDENCE_GAP_NAMES:
+                raise ValueError(
+                    "snapshot evidence_gap_names must contain known gap names",
+                )
     return normalized
 
 
@@ -444,6 +457,8 @@ def _normalize_gap_names(values: tuple[str, ...]) -> tuple[str, ...]:
     if len(set(gap_names)) != len(gap_names):
         raise ValueError("latest_evidence_gap_names must not contain duplicates")
     for gap_name in gap_names:
+        if type(gap_name) is not str:
+            raise ValueError("latest_evidence_gap_names must contain strings")
         if gap_name not in EVIDENCE_GAP_NAMES:
             raise ValueError("latest_evidence_gap_names must contain known gap names")
     expected_names = tuple(
@@ -480,14 +495,14 @@ def _as_optional_utc(value: datetime | None) -> datetime | None:
 
 
 def _require_canonical_string(field_name: str, value: object) -> None:
-    if not isinstance(value, str):
+    if type(value) is not str:
         raise ValueError(f"{field_name} must be a string")
     if not value or value.strip() != value:
         raise ValueError(f"{field_name} must be a canonical nonblank string")
 
 
 def _require_nonnegative_int(field_name: str, value: object) -> None:
-    if isinstance(value, bool) or not isinstance(value, int):
+    if type(value) is not int:
         raise ValueError(f"{field_name} must be an int")
     if value < 0:
         raise ValueError(f"{field_name} must be nonnegative")
@@ -499,7 +514,7 @@ def _require_optional_probability_decimal(
 ) -> None:
     if value is None:
         return
-    if not isinstance(value, Decimal):
+    if type(value) is not Decimal:
         raise ValueError(f"{field_name} must be a Decimal or None")
     if not value.is_finite():
         raise ValueError(f"{field_name} must be finite")

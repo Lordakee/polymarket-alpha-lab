@@ -360,6 +360,35 @@ def test_phase_2_history_bundle_rejects_invalid_builder_inputs():
         )
 
 
+def test_phase_2_history_bundle_rejects_scalar_subclasses():
+    subclassed_string = type("SubclassedString", (str,), {})
+    subclassed_datetime = type("SubclassedDateTime", (datetime,), {})
+    report = _bundle_report(_snapshot())
+
+    with pytest.raises(ValueError, match="config_version"):
+        PaperPhase2HistoryBundleConfig(
+            config_version=subclassed_string("phase-2-history-bundle-v0"),
+        )
+    with pytest.raises(ValueError, match="config_version"):
+        replace(
+            report,
+            config_version=subclassed_string("phase-2-history-bundle-v0"),
+        )
+    with pytest.raises(ValueError, match="generated_at"):
+        build_paper_phase_2_history_bundle_report(
+            (),
+            config=_config(),
+            trend_config=_trend_config(),
+            transition_config=_transition_config(),
+            generated_at=subclassed_datetime(2026, 6, 18, 20, 0, tzinfo=UTC),
+        )
+    with pytest.raises(ValueError, match="generated_at"):
+        replace(
+            report,
+            generated_at=subclassed_datetime(2026, 6, 18, 20, 0, tzinfo=UTC),
+        )
+
+
 @pytest.mark.parametrize("flag_name", ("paper_only", "report_only", "readonly"))
 def test_phase_2_history_bundle_rejects_source_reports_with_nonfinal_flags(flag_name):
     source_report = _snapshot()

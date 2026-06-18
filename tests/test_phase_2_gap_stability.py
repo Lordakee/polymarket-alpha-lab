@@ -325,6 +325,81 @@ def test_phase_2_gap_stability_rejects_invalid_inputs_and_source_flags():
             )
 
 
+def test_phase_2_gap_stability_rejects_subclassed_public_inputs():
+    class DerivedConfig(PaperPhase2GapStabilityConfig):
+        pass
+
+    class DerivedDateTime(datetime):
+        pass
+
+    with pytest.raises(ValueError, match="config"):
+        build_paper_phase_2_gap_stability_report(
+            (),
+            config=DerivedConfig(config_version=CONFIG_VERSION),
+            generated_at=GENERATED_AT,
+        )
+
+    with pytest.raises(ValueError, match="generated_at"):
+        build_paper_phase_2_gap_stability_report(
+            (),
+            config=_config(),
+            generated_at=DerivedDateTime(2026, 6, 18, 20, 0, tzinfo=UTC),
+        )
+
+    with pytest.raises(ValueError, match="config_version"):
+        PaperPhase2GapStabilityConfig(config_version=type("DerivedString", (str,), {})("v0"))
+
+
+def test_phase_2_gap_stability_rejects_str_subclass_gap_row_name():
+    class DerivedString(str):
+        pass
+
+    with pytest.raises(ValueError, match="evidence_gap_name"):
+        PaperPhase2GapStabilityRow(
+            DerivedString("thin_calibration_sample"),
+            first_seen_index=None,
+            latest_seen_index=None,
+            occurrence_count=0,
+            occurrence_ratio=None,
+            consecutive_present_count=0,
+            ever_cleared=False,
+        )
+
+
+def test_phase_2_gap_stability_rejects_str_subclass_report_gap_name_sequences():
+    class DerivedString(str):
+        pass
+
+    stable_report = _gap_stability_report(
+        _snapshot(
+            generated_at=datetime(2026, 6, 18, 10, 0, tzinfo=UTC),
+            gap_names=("thin_calibration_sample",),
+        ),
+        _snapshot(
+            generated_at=datetime(2026, 6, 18, 11, 0, tzinfo=UTC),
+            gap_names=("thin_calibration_sample",),
+        ),
+    )
+    cleared_report = _gap_stability_report(
+        _snapshot(
+            generated_at=datetime(2026, 6, 18, 10, 0, tzinfo=UTC),
+            gap_names=("thin_calibration_sample",),
+        ),
+        _snapshot(generated_at=datetime(2026, 6, 18, 11, 0, tzinfo=UTC)),
+    )
+
+    with pytest.raises(ValueError, match="stable_gap_names"):
+        replace(
+            stable_report,
+            stable_gap_names=(DerivedString("thin_calibration_sample"),),
+        )
+    with pytest.raises(ValueError, match="cleared_gap_names"):
+        replace(
+            cleared_report,
+            cleared_gap_names=(DerivedString("thin_calibration_sample"),),
+        )
+
+
 def test_phase_2_gap_stability_dataclass_replace_consistency():
     report = _gap_stability_report(
         _snapshot(
@@ -467,6 +542,125 @@ def test_phase_2_gap_stability_validates_exact_ratio_exponent():
             consecutive_present_count=0,
             ever_cleared=True,
         )
+
+
+def test_phase_2_gap_stability_quantizes_ratios_to_six_decimal_places():
+    report = _gap_stability_report(
+        _snapshot(
+            generated_at=datetime(2026, 6, 18, 10, 0, tzinfo=UTC),
+            gap_names=("thin_calibration_sample",),
+        ),
+        _snapshot(generated_at=datetime(2026, 6, 18, 11, 0, tzinfo=UTC)),
+        _snapshot(generated_at=datetime(2026, 6, 18, 12, 0, tzinfo=UTC)),
+        _snapshot(
+            generated_at=datetime(2026, 6, 18, 13, 0, tzinfo=UTC),
+            gap_names=("thin_calibration_sample",),
+        ),
+    )
+
+    assert _row(report, "thin_calibration_sample").occurrence_ratio == Decimal(
+        "0.500000",
+    )
+    assert _row(report, "missing_calibration_report").occurrence_ratio == Decimal(
+        "0.000000",
+    )
+    assert _row(report, "thin_calibration_sample").occurrence_ratio.as_tuple().exponent == -6
+    assert _row(report, "missing_calibration_report").occurrence_ratio.as_tuple().exponent == -6
+
+
+def test_phase_2_gap_stability_rejects_ratio_bool_and_decimal_subclasses():
+    class DerivedDecimal(Decimal):
+        pass
+
+    with pytest.raises(ValueError, match="occurrence_ratio"):
+        PaperPhase2GapStabilityRow(
+            "thin_calibration_sample",
+            first_seen_index=0,
+            latest_seen_index=0,
+            occurrence_count=1,
+            occurrence_ratio=True,
+            consecutive_present_count=0,
+            ever_cleared=True,
+        )
+
+    with pytest.raises(ValueError, match="occurrence_ratio"):
+        PaperPhase2GapStabilityRow(
+            "thin_calibration_sample",
+            first_seen_index=0,
+            latest_seen_index=0,
+            occurrence_count=1,
+            occurrence_ratio=DerivedDecimal("0.500000"),
+            consecutive_present_count=0,
+            ever_cleared=True,
+        )
+
+
+def test_phase_2_gap_stability_rejects_bool_and_subclassed_int_indexes_and_counts():
+    class DerivedInt(int):
+        pass
+
+    with pytest.raises(ValueError, match="first_seen_index"):
+        PaperPhase2GapStabilityRow(
+            "thin_calibration_sample",
+            first_seen_index=DerivedInt(0),
+            latest_seen_index=0,
+            occurrence_count=1,
+            occurrence_ratio=Decimal("0.500000"),
+            consecutive_present_count=0,
+            ever_cleared=True,
+        )
+
+    with pytest.raises(ValueError, match="latest_seen_index"):
+        PaperPhase2GapStabilityRow(
+            "thin_calibration_sample",
+            first_seen_index=0,
+            latest_seen_index=True,
+            occurrence_count=1,
+            occurrence_ratio=Decimal("0.500000"),
+            consecutive_present_count=0,
+            ever_cleared=True,
+        )
+
+    with pytest.raises(ValueError, match="occurrence_count"):
+        PaperPhase2GapStabilityRow(
+            "thin_calibration_sample",
+            first_seen_index=0,
+            latest_seen_index=0,
+            occurrence_count=DerivedInt(1),
+            occurrence_ratio=Decimal("0.500000"),
+            consecutive_present_count=0,
+            ever_cleared=True,
+        )
+
+    with pytest.raises(ValueError, match="consecutive_present_count"):
+        PaperPhase2GapStabilityRow(
+            "thin_calibration_sample",
+            first_seen_index=0,
+            latest_seen_index=0,
+            occurrence_count=1,
+            occurrence_ratio=Decimal("0.500000"),
+            consecutive_present_count=True,
+            ever_cleared=True,
+        )
+
+
+def test_phase_2_gap_stability_rejects_report_order_and_type_boundaries():
+    report = _gap_stability_report(
+        _snapshot(
+            generated_at=datetime(2026, 6, 18, 10, 0, tzinfo=UTC),
+            gap_names=("thin_calibration_sample",),
+        ),
+        _snapshot(generated_at=datetime(2026, 6, 18, 11, 0, tzinfo=UTC)),
+    )
+
+    with pytest.raises(ValueError, match="stable_gap_names"):
+        replace(report, stable_gap_names=("thin_calibration_sample", "missing_calibration_report"))
+    with pytest.raises(ValueError, match="cleared_gap_names"):
+        replace(report, cleared_gap_names=("thin_calibration_sample", "thin_calibration_sample"))
+    with pytest.raises(ValueError, match="rows"):
+        replace(report, rows=report.rows[1:] + report.rows[:1])
+    with pytest.raises(ValueError, match="snapshot_report_count"):
+        replace(report, snapshot_report_count=True)
 
 
 def test_phase_2_gap_stability_rows_and_all_are_exact():

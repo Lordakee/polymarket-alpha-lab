@@ -119,6 +119,24 @@ BANNED_SOURCE_STRING_TOKENS = {
     "recommend",
     "validated",
 }
+FORBIDDEN_CALL_NAMES = {
+    "__import__",
+    "compile",
+    "eval",
+    "exec",
+    "open",
+}
+FORBIDDEN_CALL_ATTRIBUTE_NAMES = {
+    "connect",
+    "from_file",
+    "from_path",
+    "open",
+    "read",
+    "request",
+    "send",
+    "urlopen",
+    "write",
+}
 
 
 def parse_trend_module():
@@ -232,6 +250,17 @@ def test_phase_2_evidence_snapshot_trend_does_not_define_forbidden_names():
             lowered,
         )
     assert_no_forbidden_source_strings(tree)
+
+
+def test_phase_2_evidence_snapshot_trend_does_not_call_io_network_or_dynamic_execution():
+    tree = parse_trend_module()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if isinstance(node.func, ast.Name):
+            assert node.func.id not in FORBIDDEN_CALL_NAMES, node.func.id
+        elif isinstance(node.func, ast.Attribute):
+            assert node.func.attr not in FORBIDDEN_CALL_ATTRIBUTE_NAMES, node.func.attr
 
 
 def test_phase_2_evidence_snapshot_trend_public_exports_are_exact_and_report_only():

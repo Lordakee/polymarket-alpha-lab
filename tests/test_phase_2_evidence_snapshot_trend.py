@@ -278,6 +278,56 @@ def test_phase_2_evidence_snapshot_trend_counts_statuses_and_gaps():
     )
 
 
+def test_phase_2_evidence_snapshot_trend_ratios_are_quantized_to_six_places():
+    report = _trend_report(
+        _snapshot(generated_at=datetime(2026, 6, 18, 10, 0, tzinfo=UTC)),
+        _gap_snapshot(
+            datetime(2026, 6, 18, 11, 0, tzinfo=UTC),
+            "thin_calibration_sample",
+        ),
+        _gap_snapshot(
+            datetime(2026, 6, 18, 12, 0, tzinfo=UTC),
+            "thin_calibration_sample",
+        ),
+    )
+
+    assert report.status_rows == (
+        PaperPhase2EvidenceSnapshotTrendStatusRow(
+            "phase_2_evidence_not_observed",
+            0,
+            Decimal("0.000000"),
+        ),
+        PaperPhase2EvidenceSnapshotTrendStatusRow(
+            "phase_2_evidence_gaps",
+            2,
+            Decimal("0.666667"),
+        ),
+        PaperPhase2EvidenceSnapshotTrendStatusRow(
+            "phase_2_evidence_quality_flags",
+            0,
+            Decimal("0.000000"),
+        ),
+        PaperPhase2EvidenceSnapshotTrendStatusRow(
+            "phase_2_evidence_observed",
+            1,
+            Decimal("0.333333"),
+        ),
+    )
+    assert all(
+        row.snapshot_ratio.as_tuple().exponent == Decimal("0.000001").as_tuple().exponent
+        for row in report.status_rows
+        if row.snapshot_ratio is not None
+    )
+    assert report.gap_rows[1] == PaperPhase2EvidenceSnapshotTrendGapRow(
+        "thin_calibration_sample",
+        2,
+        Decimal("0.666667"),
+    )
+    assert report.gap_rows[1].gap_ratio.as_tuple().exponent == (
+        Decimal("0.000001").as_tuple().exponent
+    )
+
+
 def test_phase_2_evidence_snapshot_trend_counts_quality_and_non_observed_streaks():
     report = _trend_report(
         _snapshot(generated_at=datetime(2026, 6, 18, 10, 0, tzinfo=UTC)),
@@ -297,6 +347,61 @@ def test_phase_2_evidence_snapshot_trend_normalizes_generated_at_to_utc():
     )
 
     assert report.generated_at == GENERATED_AT
+
+
+def test_phase_2_evidence_snapshot_trend_normalizes_direct_report_datetimes_to_utc():
+    report = PaperPhase2EvidenceSnapshotTrendReport(
+        generated_at=datetime(2026, 6, 18, 18, 0),
+        config_version="phase-2-evidence-snapshot-trend-v0",
+        snapshot_report_count=1,
+        first_report_generated_at=datetime(
+            2026,
+            6,
+            18,
+            11,
+            0,
+            tzinfo=timezone(timedelta(hours=-7)),
+        ),
+        latest_report_generated_at=datetime(2026, 6, 18, 18, 0),
+        latest_status="phase_2_evidence_observed",
+        latest_evidence_gap_names=(),
+        consecutive_quality_flag_count=0,
+        consecutive_gap_count=0,
+        consecutive_non_observed_count=0,
+        status_rows=(
+            PaperPhase2EvidenceSnapshotTrendStatusRow(
+                "phase_2_evidence_not_observed",
+                0,
+                Decimal("0.000000"),
+            ),
+            PaperPhase2EvidenceSnapshotTrendStatusRow(
+                "phase_2_evidence_gaps",
+                0,
+                Decimal("0.000000"),
+            ),
+            PaperPhase2EvidenceSnapshotTrendStatusRow(
+                "phase_2_evidence_quality_flags",
+                0,
+                Decimal("0.000000"),
+            ),
+            PaperPhase2EvidenceSnapshotTrendStatusRow(
+                "phase_2_evidence_observed",
+                1,
+                Decimal("1.000000"),
+            ),
+        ),
+        gap_rows=tuple(
+            PaperPhase2EvidenceSnapshotTrendGapRow(gap_name, 0, Decimal("0.000000"))
+            for gap_name in EVIDENCE_GAP_NAMES
+        ),
+    )
+
+    assert report.generated_at == GENERATED_AT
+    assert report.generated_at.tzinfo is UTC
+    assert report.first_report_generated_at == GENERATED_AT
+    assert report.first_report_generated_at.tzinfo is UTC
+    assert report.latest_report_generated_at == GENERATED_AT
+    assert report.latest_report_generated_at.tzinfo is UTC
 
 
 def test_phase_2_evidence_snapshot_trend_rejects_invalid_builder_inputs():
@@ -335,6 +440,136 @@ def test_phase_2_evidence_snapshot_trend_rejects_invalid_builder_inputs():
         )
 
 
+def test_phase_2_evidence_snapshot_trend_rejects_scalar_subclasses_at_boundary():
+    class StrSubclass(str):
+        pass
+
+    class IntSubclass(int):
+        pass
+
+    class DatetimeSubclass(datetime):
+        pass
+
+    class DecimalSubclass(Decimal):
+        pass
+
+    with pytest.raises(ValueError, match="config_version"):
+        PaperPhase2EvidenceSnapshotTrendConfig(
+            config_version=StrSubclass("phase-2-evidence-snapshot-trend-v0"),
+        )
+    with pytest.raises(ValueError, match="generated_at"):
+        build_paper_phase_2_evidence_snapshot_trend_report(
+            (),
+            config=_config(),
+            generated_at=DatetimeSubclass(2026, 6, 18, 18, 0, tzinfo=UTC),
+        )
+    with pytest.raises(ValueError, match="snapshot_count"):
+        PaperPhase2EvidenceSnapshotTrendStatusRow(
+            "phase_2_evidence_observed",
+            IntSubclass(1),
+            Decimal("1.000000"),
+        )
+    with pytest.raises(ValueError, match="snapshot_ratio"):
+        PaperPhase2EvidenceSnapshotTrendStatusRow(
+            "phase_2_evidence_observed",
+            1,
+            DecimalSubclass("1.000000"),
+        )
+
+
+def test_phase_2_evidence_snapshot_trend_rejects_scalar_subclasses_in_row_string_fields():
+    class StrSubclass(str):
+        pass
+
+    with pytest.raises(ValueError, match="snapshot_status"):
+        PaperPhase2EvidenceSnapshotTrendStatusRow(
+            StrSubclass("phase_2_evidence_observed"),
+            1,
+            Decimal("1.000000"),
+        )
+    with pytest.raises(ValueError, match="evidence_gap_name"):
+        PaperPhase2EvidenceSnapshotTrendGapRow(
+            StrSubclass("thin_calibration_sample"),
+            1,
+            Decimal("1.000000"),
+        )
+
+
+def test_phase_2_evidence_snapshot_trend_rejects_scalar_subclasses_in_report_string_fields():
+    class StrSubclass(str):
+        pass
+
+    report = _trend_report(
+        _gap_snapshot(
+            datetime(2026, 6, 18, 10, 0, tzinfo=UTC),
+            "thin_calibration_sample",
+        )
+    )
+
+    with pytest.raises(ValueError, match="latest_status"):
+        replace(report, latest_status=StrSubclass("phase_2_evidence_gaps"))
+    with pytest.raises(ValueError, match="latest_evidence_gap_names"):
+        replace(
+            report,
+            latest_evidence_gap_names=(StrSubclass("thin_calibration_sample"),),
+        )
+
+
+def test_phase_2_evidence_snapshot_trend_rejects_scalar_subclasses_in_source_snapshot_fields():
+    class StrSubclass(str):
+        pass
+
+    source_report = _gap_snapshot(
+        datetime(2026, 6, 18, 10, 0, tzinfo=UTC),
+        "thin_calibration_sample",
+    )
+    object.__setattr__(source_report, "status", StrSubclass("phase_2_evidence_gaps"))
+    object.__setattr__(
+        source_report,
+        "evidence_gap_names",
+        (StrSubclass("thin_calibration_sample"),),
+    )
+
+    with pytest.raises(ValueError, match="status"):
+        build_paper_phase_2_evidence_snapshot_trend_report(
+            (source_report,),
+            config=_config(),
+            generated_at=GENERATED_AT,
+        )
+
+
+def test_phase_2_evidence_snapshot_trend_rejects_source_report_subclasses():
+    class SnapshotReportSubclass(PaperPhase2EvidenceSnapshotReport):
+        pass
+
+    source_report = SnapshotReportSubclass(
+        generated_at=GENERATED_AT,
+        config_version="phase-2-evidence-snapshot-v0",
+        status="phase_2_evidence_observed",
+        calibration_report_present=True,
+        segment_summary_report_present=True,
+        calibration_observation_count=30,
+        calibration_status="calibration_evidence_observed",
+        segment_observation_count=2,
+        segment_count=2,
+        probability_segment_count=2,
+        return_only_segment_count=0,
+        thin_probability_segment_count=0,
+        probability_segment_coverage_ratio=Decimal("1.000000"),
+        return_only_segment_ratio=Decimal("0.000000"),
+        evidence_gap_count=0,
+        evidence_gap_names=(),
+        evidence_gaps=_gap_rows(),
+    )
+
+    with pytest.raises(ValueError, match="PaperPhase2EvidenceSnapshotReport"):
+        build_paper_phase_2_evidence_snapshot_trend_report(
+            (source_report,),
+            config=_config(),
+            generated_at=GENERATED_AT,
+        )
+
+
 @pytest.mark.parametrize("flag_name", ("paper_only", "report_only", "readonly"))
 def test_phase_2_evidence_snapshot_trend_rejects_source_reports_with_nonfinal_flags(
     flag_name,
@@ -352,7 +587,16 @@ def test_phase_2_evidence_snapshot_trend_rejects_source_reports_with_nonfinal_fl
 
 def test_phase_2_evidence_snapshot_trend_dataclasses_are_frozen_and_revalidate_flags():
     report = _trend_report(_snapshot())
+    config = _config()
+    status_row = report.status_rows[-1]
+    gap_row = report.gap_rows[0]
 
+    with pytest.raises(FrozenInstanceError):
+        config.config_version = "other"
+    with pytest.raises(FrozenInstanceError):
+        status_row.snapshot_count = 2
+    with pytest.raises(FrozenInstanceError):
+        gap_row.gap_count = 1
     with pytest.raises(FrozenInstanceError):
         report.latest_status = "phase_2_evidence_gaps"
     with pytest.raises(ValueError, match="paper_only"):
@@ -432,6 +676,23 @@ def test_phase_2_evidence_snapshot_trend_revalidates_rows_and_streaks():
         replace(report, consecutive_quality_flag_count=2)
     with pytest.raises(ValueError, match="non-observed"):
         replace(report, consecutive_non_observed_count=0)
+
+
+def test_phase_2_evidence_snapshot_trend_revalidates_latest_gap_name_order():
+    report = _trend_report(
+        _gap_snapshot(
+            datetime(2026, 6, 18, 11, 0, tzinfo=UTC),
+            "thin_calibration_sample",
+            "thin_segment_probability_samples",
+            "return_only_segments_present",
+        ),
+    )
+
+    with pytest.raises(ValueError, match="deterministic order"):
+        replace(
+            report,
+            latest_evidence_gap_names=tuple(reversed(report.latest_evidence_gap_names)),
+        )
 
 
 def test_phase_2_evidence_snapshot_trend_rows_and_all_are_exact():

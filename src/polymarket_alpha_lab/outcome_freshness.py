@@ -146,7 +146,7 @@ def build_outcome_freshness_report(
 ) -> OutcomeFreshnessReport:
     if type(config) is not OutcomeFreshnessConfig:
         raise ValueError("config must be an OutcomeFreshnessConfig")
-    if not isinstance(generated_at, datetime):
+    if type(generated_at) is not datetime:
         raise ValueError("generated_at must be a datetime")
 
     report_items = _normalize_outcome_reports(reports)
@@ -407,7 +407,7 @@ def _normalize_status_rows(
 
 
 def _as_utc(value: datetime) -> datetime:
-    if not isinstance(value, datetime):
+    if type(value) is not datetime:
         raise ValueError("datetime value is required")
     if value.tzinfo is None:
         return value.replace(tzinfo=UTC)
@@ -419,14 +419,14 @@ def _as_optional_utc(value: datetime | None) -> datetime | None:
 
 
 def _require_canonical_string(field_name: str, value: Any) -> None:
-    if not isinstance(value, str):
+    if type(value) is not str:
         raise ValueError(f"{field_name} must be a string")
     if not value or value.strip() != value:
         raise ValueError(f"{field_name} must be a canonical nonblank string")
 
 
 def _require_nonnegative_int(field_name: str, value: Any) -> None:
-    if isinstance(value, bool) or not isinstance(value, int):
+    if type(value) is not int:
         raise ValueError(f"{field_name} must be a nonnegative integer")
     if value < 0:
         raise ValueError(f"{field_name} must be a nonnegative integer")
@@ -438,7 +438,7 @@ def _require_optional_probability_decimal(
 ) -> None:
     if value is None:
         return
-    if not isinstance(value, Decimal):
+    if type(value) is not Decimal:
         raise ValueError(f"{field_name} must be a Decimal or None")
     if not value.is_finite():
         raise ValueError(f"{field_name} must be finite")

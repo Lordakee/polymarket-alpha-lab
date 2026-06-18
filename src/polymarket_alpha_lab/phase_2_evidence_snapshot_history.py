@@ -21,6 +21,8 @@ class PaperPhase2EvidenceSnapshotHistoryConfig:
 
     def __post_init__(self) -> None:
         _require_canonical_string("config_version", self.config_version)
+        if type(self.alignment_strategy) is not str:
+            raise ValueError("alignment_strategy must be max_prefix")
         if self.alignment_strategy != "max_prefix":
             raise ValueError("alignment_strategy must be max_prefix")
 
@@ -39,7 +41,7 @@ def build_paper_phase_2_evidence_snapshot_history(
         raise ValueError("config must be a PaperPhase2EvidenceSnapshotHistoryConfig")
     if type(snapshot_config) is not PaperPhase2EvidenceSnapshotConfig:
         raise ValueError("snapshot_config must be a PaperPhase2EvidenceSnapshotConfig")
-    if not isinstance(generated_at, datetime):
+    if type(generated_at) is not datetime:
         raise ValueError("generated_at must be a datetime")
 
     calibration_items = _normalize_calibration_reports(calibration_reports)
@@ -110,7 +112,7 @@ def _require_report_flags(name: str, report: object) -> None:
 
 
 def _require_canonical_string(name: str, value: object) -> None:
-    if not isinstance(value, str):
+    if type(value) is not str:
         raise ValueError(f"{name} must be a string")
     if not value or value.strip() != value:
         raise ValueError(f"{name} must be a canonical nonblank string")

@@ -47,7 +47,10 @@ class PaperStrategyEvidenceTrendStatusRow:
     snapshot_ratio: Decimal | None
 
     def __post_init__(self) -> None:
-        if self.snapshot_status not in SNAPSHOT_STATUSES:
+        if (
+            type(self.snapshot_status) is not str
+            or self.snapshot_status not in SNAPSHOT_STATUSES
+        ):
             raise ValueError("snapshot_status must be a known evidence snapshot status")
         _require_nonnegative_int("snapshot_count", self.snapshot_count)
         _require_optional_probability_decimal("snapshot_ratio", self.snapshot_ratio)
@@ -60,7 +63,10 @@ class PaperStrategyEvidenceTrendGapRow:
     gap_ratio: Decimal | None
 
     def __post_init__(self) -> None:
-        if self.evidence_gap_name not in EVIDENCE_GAP_NAMES:
+        if (
+            type(self.evidence_gap_name) is not str
+            or self.evidence_gap_name not in EVIDENCE_GAP_NAMES
+        ):
             raise ValueError("evidence_gap_name must be a known evidence gap")
         _require_nonnegative_int("gap_count", self.gap_count)
         _require_optional_probability_decimal("gap_ratio", self.gap_ratio)
@@ -97,12 +103,14 @@ class PaperStrategyEvidenceTrendReport:
         )
         _require_canonical_string("config_version", self.config_version)
         _require_nonnegative_int("snapshot_report_count", self.snapshot_report_count)
-        if self.latest_status is not None and (
-            self.latest_status not in SNAPSHOT_STATUSES
-        ):
-            raise ValueError(
-                "latest_status must be a known evidence snapshot status",
-            )
+        if self.latest_status is not None:
+            if (
+                type(self.latest_status) is not str
+                or self.latest_status not in SNAPSHOT_STATUSES
+            ):
+                raise ValueError(
+                    "latest_status must be a known evidence snapshot status",
+                )
         object.__setattr__(
             self,
             "latest_evidence_gap_names",
@@ -164,7 +172,7 @@ def build_paper_strategy_evidence_trend_report(
 ) -> PaperStrategyEvidenceTrendReport:
     if type(config) is not PaperStrategyEvidenceTrendConfig:
         raise ValueError("config must be a PaperStrategyEvidenceTrendConfig")
-    if not isinstance(generated_at, datetime):
+    if type(generated_at) is not datetime:
         raise ValueError("generated_at must be a datetime")
     reports = _normalize_snapshots(snapshots)
     snapshot_report_count = len(reports)
@@ -469,7 +477,7 @@ def _normalize_latest_evidence_gap_names(values: tuple[str, ...]) -> tuple[str, 
     if len(set(gap_names)) != len(gap_names):
         raise ValueError("latest_evidence_gap_names must not contain duplicates")
     for gap_name in gap_names:
-        if gap_name not in EVIDENCE_GAP_NAMES:
+        if type(gap_name) is not str or gap_name not in EVIDENCE_GAP_NAMES:
             raise ValueError("latest_evidence_gap_names must contain known gap names")
     expected_order = tuple(
         gap_name for gap_name in EVIDENCE_GAP_NAMES if gap_name in gap_names
@@ -487,7 +495,7 @@ def _is_risk_gap_name(gap_name: str) -> bool:
 
 
 def _as_utc(value: datetime) -> datetime:
-    if not isinstance(value, datetime):
+    if type(value) is not datetime:
         raise ValueError("datetime value is required")
     if value.tzinfo is None:
         return value.replace(tzinfo=UTC)
@@ -499,14 +507,14 @@ def _as_optional_utc(value: datetime | None) -> datetime | None:
 
 
 def _require_canonical_string(field_name: str, value: Any) -> None:
-    if not isinstance(value, str):
+    if type(value) is not str:
         raise ValueError(f"{field_name} must be a string")
     if not value or value.strip() != value:
         raise ValueError(f"{field_name} must be a canonical nonblank string")
 
 
 def _require_nonnegative_int(field_name: str, value: Any) -> None:
-    if isinstance(value, bool) or not isinstance(value, int):
+    if type(value) is not int:
         raise ValueError(f"{field_name} must be an int")
     if value < 0:
         raise ValueError(f"{field_name} must be nonnegative")
@@ -518,7 +526,7 @@ def _require_optional_probability_decimal(
 ) -> None:
     if value is None:
         return
-    if not isinstance(value, Decimal):
+    if type(value) is not Decimal:
         raise ValueError(f"{field_name} must be a Decimal or None")
     if not value.is_finite():
         raise ValueError(f"{field_name} must be finite")

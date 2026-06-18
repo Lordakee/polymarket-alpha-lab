@@ -108,6 +108,7 @@ def _normalize_snapshots(
             raise ValueError(
                 "snapshots must contain PaperPhase2EvidenceSnapshotReport values",
             )
+        _require_snapshot_status("status", report.status)
         if report.paper_only is not True:
             raise ValueError("snapshots must contain paper_only reports")
         if report.report_only is not True:

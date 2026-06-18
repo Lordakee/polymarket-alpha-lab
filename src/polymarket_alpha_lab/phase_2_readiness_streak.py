@@ -195,6 +195,9 @@ def _normalize_reason_names(values: tuple[str, ...]) -> tuple[str, ...]:
         raise ValueError(
             "latest_blocking_reason_names must be an iterable",
         ) from exc
+    for name in names:
+        if type(name) is not str:
+            raise ValueError("latest_blocking_reason_names must contain strings")
     if len(set(names)) != len(names):
         raise ValueError(
             "latest_blocking_reason_names must not contain duplicates",

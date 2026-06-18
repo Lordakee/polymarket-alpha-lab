@@ -33,6 +33,8 @@ class PaperPhase2ObservabilityBalanceReasonRow:
     latest_present: bool
 
     def __post_init__(self) -> None:
+        if type(self.blocking_reason_name) is not str:
+            raise ValueError("blocking_reason_name must be a string")
         if self.blocking_reason_name not in BLOCKING_REASON_NAMES:
             raise ValueError("blocking_reason_name must be a known phase 2 reason")
         _require_nonnegative_int("occurrence_count", self.occurrence_count)

@@ -229,6 +229,26 @@ def test_report_is_frozen_and_revalidates_flags_and_deterministic_reason_order()
         replace(ready_report, latest_blocking_reason_names=("unknown_reason",))
 
 
+def test_report_requires_exact_string_reason_names():
+    _Config, Report, _builder = _api()
+    subclassed_string = type("SubclassedString", (str,), {})
+
+    with pytest.raises(ValueError, match="latest_blocking_reason_names"):
+        Report(
+            generated_at=GENERATED_AT,
+            config_version="phase-2-readiness-streak-v0",
+            state_report_count=1,
+            latest_phase_2_ready=False,
+            consecutive_ready_count=0,
+            consecutive_not_ready_count=1,
+            ready_report_count=0,
+            not_ready_report_count=1,
+            latest_blocking_reason_names=(
+                subclassed_string(BLOCKING_REASON_NAMES[0]),
+            ),
+        )
+
+
 def test_local_all_and_package_root_non_export():
     module = import_module("polymarket_alpha_lab.phase_2_readiness_streak")
     subclassed_string = type("SubclassedString", (str,), {})

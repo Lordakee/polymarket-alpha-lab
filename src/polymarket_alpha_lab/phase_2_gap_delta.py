@@ -23,6 +23,8 @@ class PaperPhase2GapDeltaRow:
     persistent_count: int
 
     def __post_init__(self) -> None:
+        if type(self.evidence_gap_name) is not str:
+            raise ValueError("evidence_gap_name must be a string")
         if self.evidence_gap_name not in EVIDENCE_GAP_NAMES:
             raise ValueError("evidence_gap_name must be a known phase 2 gap")
         _require_nonnegative_int("introduced_count", self.introduced_count)
@@ -296,6 +298,8 @@ def _normalize_gap_names(
     if len(set(gap_names)) != len(gap_names):
         raise ValueError(f"{field_name} must not contain duplicates")
     for gap_name in gap_names:
+        if type(gap_name) is not str:
+            raise ValueError(f"{field_name} must contain string values")
         if gap_name not in EVIDENCE_GAP_NAMES:
             raise ValueError(f"{field_name} must contain known gap names")
     expected_gap_names = tuple(

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import FrozenInstanceError, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 from decimal import Decimal
 from importlib import import_module
 from typing import Any
@@ -250,6 +250,38 @@ def test_phase_2_observability_trends_empty_histories_delegate_to_child_trends()
     assert report.edge_cost_summary_trend.readonly is True
 
 
+def test_phase_2_observability_trends_child_reports_are_exact_trend_types():
+    report = _build_report()
+
+    assert type(report.forecast_calibration_trend) is PaperForecastCalibrationTrendReport
+    assert (
+        type(report.strategy_segment_summary_trend)
+        is PaperStrategySegmentSummaryTrendReport
+    )
+    assert (
+        type(report.phase_2_evidence_snapshot_trend)
+        is PaperPhase2EvidenceSnapshotTrendReport
+    )
+    assert type(report.edge_cost_summary_trend) is PaperEdgeCostSummaryTrendReport
+
+
+def test_phase_2_observability_trends_normalizes_generated_at_to_utc():
+    generated_at = datetime(2026, 6, 18, 15, 0, tzinfo=timezone(-timedelta(hours=4)))
+
+    report = _build_report(generated_at=generated_at)
+
+    assert report.generated_at == GENERATED_AT
+    assert report.generated_at.tzinfo is UTC
+    assert report.forecast_calibration_trend.generated_at == GENERATED_AT
+    assert report.forecast_calibration_trend.generated_at.tzinfo is UTC
+    assert report.strategy_segment_summary_trend.generated_at == GENERATED_AT
+    assert report.strategy_segment_summary_trend.generated_at.tzinfo is UTC
+    assert report.phase_2_evidence_snapshot_trend.generated_at == GENERATED_AT
+    assert report.phase_2_evidence_snapshot_trend.generated_at.tzinfo is UTC
+    assert report.edge_cost_summary_trend.generated_at == GENERATED_AT
+    assert report.edge_cost_summary_trend.generated_at.tzinfo is UTC
+
+
 def test_phase_2_observability_trends_delegates_nonempty_histories():
     report = _build_report(
         calibration_reports=(_calibration_report(),),
@@ -307,6 +339,43 @@ def test_phase_2_observability_trends_rejects_invalid_builder_inputs():
 
     with pytest.raises(ValueError, match="PaperEdgeCostSummaryReport"):
         _build_report(edge_cost_reports=(object(),))
+
+
+def test_phase_2_observability_trends_rejects_scalar_subclasses_at_public_boundaries():
+    class ConfigVersion(str):
+        pass
+
+    class GeneratedAt(datetime):
+        pass
+
+    Config, Report, _builder = _api()
+    report = _build_report()
+
+    with pytest.raises(ValueError, match="config_version"):
+        Config(config_version=ConfigVersion("phase-2-observability-trends-v0"))
+
+    with pytest.raises(ValueError, match="generated_at"):
+        _build_report(generated_at=GeneratedAt(2026, 6, 18, 19, 0, tzinfo=UTC))
+
+    with pytest.raises(ValueError, match="generated_at"):
+        Report(
+            generated_at=GeneratedAt(2026, 6, 18, 19, 0, tzinfo=UTC),
+            config_version="phase-2-observability-trends-v0",
+            forecast_calibration_trend=report.forecast_calibration_trend,
+            strategy_segment_summary_trend=report.strategy_segment_summary_trend,
+            phase_2_evidence_snapshot_trend=report.phase_2_evidence_snapshot_trend,
+            edge_cost_summary_trend=report.edge_cost_summary_trend,
+        )
+
+    with pytest.raises(ValueError, match="config_version"):
+        Report(
+            generated_at=GENERATED_AT,
+            config_version=ConfigVersion("phase-2-observability-trends-v0"),
+            forecast_calibration_trend=report.forecast_calibration_trend,
+            strategy_segment_summary_trend=report.strategy_segment_summary_trend,
+            phase_2_evidence_snapshot_trend=report.phase_2_evidence_snapshot_trend,
+            edge_cost_summary_trend=report.edge_cost_summary_trend,
+        )
 
 
 def test_phase_2_observability_trends_rejects_source_reports_with_nonfinal_flags():

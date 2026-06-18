@@ -64,7 +64,7 @@ class PaperNavRiskTrendReport:
     readonly: bool = True
 
     def __post_init__(self) -> None:
-        if not isinstance(self.generated_at, datetime):
+        if type(self.generated_at) is not datetime:
             raise ValueError("generated_at must be a datetime")
         _require_canonical_string("config_version", self.config_version)
         _require_nonnegative_int(
@@ -121,7 +121,7 @@ def build_paper_nav_risk_trend_report(
 ) -> PaperNavRiskTrendReport:
     if type(config) is not PaperNavRiskTrendConfig:
         raise ValueError("config must be a PaperNavRiskTrendConfig")
-    if not isinstance(generated_at, datetime):
+    if type(generated_at) is not datetime:
         raise ValueError("generated_at must be a datetime")
 
     normalized_reports = _normalize_reports(reports)
@@ -363,14 +363,14 @@ def _counts_from_status_rows(
 
 
 def _require_canonical_string(field_name: str, value: str) -> None:
-    if not isinstance(value, str):
+    if type(value) is not str:
         raise ValueError(f"{field_name} must be a string")
     if not value or value.strip() != value:
         raise ValueError(f"{field_name} must be a canonical nonblank string")
 
 
 def _require_nonnegative_int(field_name: str, value: int) -> None:
-    if isinstance(value, bool) or not isinstance(value, int):
+    if type(value) is not int:
         raise ValueError(f"{field_name} must be an int")
     if value < 0:
         raise ValueError(f"{field_name} must be nonnegative")
@@ -379,12 +379,12 @@ def _require_nonnegative_int(field_name: str, value: int) -> None:
 def _require_optional_datetime(field_name: str, value: datetime | None) -> None:
     if value is None:
         return
-    if not isinstance(value, datetime):
+    if type(value) is not datetime:
         raise ValueError(f"{field_name} must be a datetime or None")
 
 
 def _require_decimal(field_name: str, value: Decimal) -> None:
-    if not isinstance(value, Decimal):
+    if type(value) is not Decimal:
         raise ValueError(f"{field_name} must be a Decimal")
     if not value.is_finite():
         raise ValueError(f"{field_name} must be finite")
