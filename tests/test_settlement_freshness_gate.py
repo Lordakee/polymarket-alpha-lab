@@ -473,6 +473,261 @@ def test_settlement_freshness_gate_rejects_direct_report_passing_stale_unresolve
         )
 
 
+@pytest.mark.parametrize(
+    ("pending_count", "stale_pending_count", "match"),
+    (
+        (1, 0, "pending_count must be zero without source"),
+        (0, 1, "stale_pending_count must be zero without source"),
+    ),
+)
+def test_settlement_freshness_gate_rejects_direct_report_pending_counts_without_source(
+    pending_count,
+    stale_pending_count,
+    match,
+):
+    gate_rows = (
+        PaperSettlementFreshnessGateRow(
+            gate_name="checking_coverage",
+            status="watch",
+            reason="No settlement freshness source checks are available.",
+            observed_value=0,
+            threshold=2,
+        ),
+        PaperSettlementFreshnessGateRow(
+            gate_name="pending_count",
+            status="pass",
+            reason="Pending settlement count is within the configured maximum.",
+            observed_value=pending_count,
+            threshold=1,
+        ),
+        PaperSettlementFreshnessGateRow(
+            gate_name="unresolved_age",
+            status="pass",
+            reason="Pending settlement outcomes are within the configured age.",
+            observed_value=None,
+            threshold=Decimal("4.000000"),
+        ),
+    )
+
+    with pytest.raises(ValueError, match=match):
+        _direct_report(
+            source_report_count=0,
+            latest_check_generated_at=None,
+            checked_market_count=0,
+            pending_count=pending_count,
+            stale_pending_count=stale_pending_count,
+            latest_check_age_hours=None,
+            gate_rows=gate_rows,
+        )
+
+
+@pytest.mark.parametrize(
+    ("gate_rows", "match"),
+    (
+        (
+            (
+                PaperSettlementFreshnessGateRow(
+                    gate_name="checking_coverage",
+                    status="watch",
+                    reason="Settlement checking coverage is below the configured floor.",
+                    observed_value=0,
+                    threshold=2,
+                ),
+                PaperSettlementFreshnessGateRow(
+                    gate_name="pending_count",
+                    status="pass",
+                    reason="Pending settlement count is within the configured maximum.",
+                    observed_value=0,
+                    threshold=1,
+                ),
+                PaperSettlementFreshnessGateRow(
+                    gate_name="unresolved_age",
+                    status="pass",
+                    reason="Pending settlement outcomes are within the configured age.",
+                    observed_value=None,
+                    threshold=Decimal("4.000000"),
+                ),
+            ),
+            "checking_coverage reason",
+        ),
+        (
+            (
+                PaperSettlementFreshnessGateRow(
+                    gate_name="checking_coverage",
+                    status="watch",
+                    reason="No settlement freshness source checks are available.",
+                    observed_value=1,
+                    threshold=2,
+                ),
+                PaperSettlementFreshnessGateRow(
+                    gate_name="pending_count",
+                    status="pass",
+                    reason="Pending settlement count is within the configured maximum.",
+                    observed_value=0,
+                    threshold=1,
+                ),
+                PaperSettlementFreshnessGateRow(
+                    gate_name="unresolved_age",
+                    status="pass",
+                    reason="Pending settlement outcomes are within the configured age.",
+                    observed_value=Decimal("1.000000"),
+                    threshold=Decimal("4.000000"),
+                ),
+            ),
+            "checking_coverage reason",
+        ),
+        (
+            (
+                PaperSettlementFreshnessGateRow(
+                    gate_name="checking_coverage",
+                    status="pass",
+                    reason="Settlement checking coverage is below the configured floor.",
+                    observed_value=2,
+                    threshold=2,
+                ),
+                PaperSettlementFreshnessGateRow(
+                    gate_name="pending_count",
+                    status="pass",
+                    reason="Pending settlement count is within the configured maximum.",
+                    observed_value=0,
+                    threshold=1,
+                ),
+                PaperSettlementFreshnessGateRow(
+                    gate_name="unresolved_age",
+                    status="pass",
+                    reason="Pending settlement outcomes are within the configured age.",
+                    observed_value=Decimal("1.000000"),
+                    threshold=Decimal("4.000000"),
+                ),
+            ),
+            "checking_coverage reason",
+        ),
+        (
+            (
+                PaperSettlementFreshnessGateRow(
+                    gate_name="checking_coverage",
+                    status="pass",
+                    reason="Settlement checking coverage meets the configured floor.",
+                    observed_value=3,
+                    threshold=2,
+                ),
+                PaperSettlementFreshnessGateRow(
+                    gate_name="pending_count",
+                    status="block",
+                    reason="Pending settlement count is within the configured maximum.",
+                    observed_value=2,
+                    threshold=1,
+                ),
+                PaperSettlementFreshnessGateRow(
+                    gate_name="unresolved_age",
+                    status="pass",
+                    reason="Pending settlement outcomes are within the configured age.",
+                    observed_value=Decimal("1.000000"),
+                    threshold=Decimal("4.000000"),
+                ),
+            ),
+            "pending_count reason",
+        ),
+        (
+            (
+                PaperSettlementFreshnessGateRow(
+                    gate_name="checking_coverage",
+                    status="pass",
+                    reason="Settlement checking coverage meets the configured floor.",
+                    observed_value=3,
+                    threshold=2,
+                ),
+                PaperSettlementFreshnessGateRow(
+                    gate_name="pending_count",
+                    status="pass",
+                    reason="Pending settlement count exceeds the configured maximum.",
+                    observed_value=1,
+                    threshold=1,
+                ),
+                PaperSettlementFreshnessGateRow(
+                    gate_name="unresolved_age",
+                    status="pass",
+                    reason="Pending settlement outcomes are within the configured age.",
+                    observed_value=Decimal("1.000000"),
+                    threshold=Decimal("4.000000"),
+                ),
+            ),
+            "pending_count reason",
+        ),
+        (
+            (
+                PaperSettlementFreshnessGateRow(
+                    gate_name="checking_coverage",
+                    status="pass",
+                    reason="Settlement checking coverage meets the configured floor.",
+                    observed_value=3,
+                    threshold=2,
+                ),
+                PaperSettlementFreshnessGateRow(
+                    gate_name="pending_count",
+                    status="pass",
+                    reason="Pending settlement count is within the configured maximum.",
+                    observed_value=1,
+                    threshold=1,
+                ),
+                PaperSettlementFreshnessGateRow(
+                    gate_name="unresolved_age",
+                    status="block",
+                    reason="Pending settlement outcomes are within the configured age.",
+                    observed_value=Decimal("5.000000"),
+                    threshold=Decimal("4.000000"),
+                ),
+            ),
+            "unresolved_age reason",
+        ),
+        (
+            (
+                PaperSettlementFreshnessGateRow(
+                    gate_name="checking_coverage",
+                    status="pass",
+                    reason="Settlement checking coverage meets the configured floor.",
+                    observed_value=3,
+                    threshold=2,
+                ),
+                PaperSettlementFreshnessGateRow(
+                    gate_name="pending_count",
+                    status="pass",
+                    reason="Pending settlement count is within the configured maximum.",
+                    observed_value=0,
+                    threshold=1,
+                ),
+                PaperSettlementFreshnessGateRow(
+                    gate_name="unresolved_age",
+                    status="pass",
+                    reason="Pending settlement outcomes are older than the configured maximum age.",
+                    observed_value=Decimal("1.000000"),
+                    threshold=Decimal("4.000000"),
+                ),
+            ),
+            "unresolved_age reason",
+        ),
+    ),
+)
+def test_settlement_freshness_gate_rejects_direct_report_inconsistent_reasons(
+    gate_rows,
+    match,
+):
+    with pytest.raises(ValueError, match=match):
+        _direct_report(
+            source_report_count=0 if gate_rows[0].observed_value == 0 else 1,
+            latest_check_generated_at=(
+                None
+                if gate_rows[0].observed_value == 0
+                else datetime(2026, 6, 17, 17, 0, tzinfo=UTC)
+            ),
+            checked_market_count=gate_rows[0].observed_value,
+            pending_count=gate_rows[1].observed_value,
+            stale_pending_count=1 if gate_rows[2].status == "block" else 0,
+            latest_check_age_hours=gate_rows[2].observed_value,
+            gate_rows=gate_rows,
+        )
+
+
 def test_settlement_freshness_gate_dataclasses_are_frozen_and_hard_flagged():
     config = _config()
     report = _build(

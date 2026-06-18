@@ -159,21 +159,21 @@ def _mixed_settlement_gate_report() -> PaperSettlementFreshnessGateReport:
         PaperSettlementFreshnessGateRow(
             "checking_coverage",
             "watch",
-            "sentinel_settlement_watch_reason",
+            "Settlement checking coverage is below the configured floor.",
             1,
             2,
         ),
         PaperSettlementFreshnessGateRow(
             "pending_count",
             "block",
-            "sentinel_settlement_block_reason",
+            "Pending settlement count exceeds the configured maximum.",
             3,
             1,
         ),
         PaperSettlementFreshnessGateRow(
             "unresolved_age",
             "pass",
-            "sentinel_settlement_pass_reason",
+            "Pending settlement outcomes are within the configured age.",
             Decimal("1.000000"),
             Decimal("4.000000"),
         ),
@@ -648,7 +648,9 @@ def test_settlement_freshness_signal_uses_block_contract_for_mixed_report():
     assert report.status == "block"
     assert report.block_count == 1
     assert report.watch_count == 1
-    assert report.watch_reasons == ("sentinel_settlement_watch_reason",)
+    assert report.watch_reasons == (
+        "Settlement checking coverage is below the configured floor.",
+    )
     assert signals == (
         PaperStrategyReadinessSignal(
             source_name="settlement_freshness_gate",

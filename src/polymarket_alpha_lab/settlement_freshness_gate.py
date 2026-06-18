@@ -28,6 +28,11 @@ PENDING_LIMIT_REASON = "Pending settlement count exceeds the configured maximum.
 STALE_PENDING_REASON = (
     "Pending settlement outcomes are older than the configured maximum age."
 )
+CHECKING_COVERAGE_PASS_REASON = "Settlement checking coverage meets the configured floor."
+PENDING_COUNT_PASS_REASON = "Pending settlement count is within the configured maximum."
+UNRESOLVED_AGE_PASS_REASON = (
+    "Pending settlement outcomes are within the configured age."
+)
 
 
 @dataclass(frozen=True)
@@ -299,7 +304,7 @@ def _checking_coverage_row(
     return PaperSettlementFreshnessGateRow(
         gate_name="checking_coverage",
         status="pass",
-        reason="Settlement checking coverage meets the configured floor.",
+        reason=CHECKING_COVERAGE_PASS_REASON,
         observed_value=source_view.checked_market_count,
         threshold=config.min_checked_market_count,
     )
@@ -321,7 +326,7 @@ def _pending_count_row(
     return PaperSettlementFreshnessGateRow(
         gate_name="pending_count",
         status="pass",
-        reason="Pending settlement count is within the configured maximum.",
+        reason=PENDING_COUNT_PASS_REASON,
         observed_value=source_view.pending_count,
         threshold=config.max_pending_count,
     )
@@ -345,7 +350,7 @@ def _unresolved_age_row(
     return PaperSettlementFreshnessGateRow(
         gate_name="unresolved_age",
         status="pass",
-        reason="Pending settlement outcomes are within the configured age.",
+        reason=UNRESOLVED_AGE_PASS_REASON,
         observed_value=latest_check_age_hours,
         threshold=max_age_hours,
     )
@@ -426,6 +431,10 @@ def _validate_report_consistency(report: PaperSettlementFreshnessGateReport) -> 
             raise ValueError("latest_check_age_hours must be absent without source")
         if report.checked_market_count != 0:
             raise ValueError("checked_market_count must be zero without source")
+        if report.pending_count != 0:
+            raise ValueError("pending_count must be zero without source")
+        if report.stale_pending_count != 0:
+            raise ValueError("stale_pending_count must be zero without source")
     else:
         if report.latest_check_generated_at is None:
             raise ValueError("latest_check_generated_at is required with source")
@@ -458,6 +467,14 @@ def _validate_checking_coverage_row(
         else "pass"
     )
     _require_gate_row_status("checking_coverage", row.status, expected_status)
+    expected_reason = (
+        EMPTY_SOURCE_REASON
+        if report.source_report_count == 0
+        else LOW_COVERAGE_REASON
+        if report.checked_market_count < row.threshold
+        else CHECKING_COVERAGE_PASS_REASON
+    )
+    _require_gate_row_reason("checking_coverage", row.reason, expected_reason)
 
 
 def _validate_pending_count_row(
@@ -470,6 +487,12 @@ def _validate_pending_count_row(
         raise ValueError("pending_count threshold is required")
     expected_status = "block" if report.pending_count > row.threshold else "pass"
     _require_gate_row_status("pending_count", row.status, expected_status)
+    expected_reason = (
+        PENDING_LIMIT_REASON
+        if expected_status == "block"
+        else PENDING_COUNT_PASS_REASON
+    )
+    _require_gate_row_reason("pending_count", row.reason, expected_reason)
 
 
 def _validate_unresolved_age_row(
@@ -493,6 +516,12 @@ def _validate_unresolved_age_row(
         raise ValueError("stale_pending_count must match unresolved_age")
     expected_status = "block" if report.stale_pending_count > 0 else "pass"
     _require_gate_row_status("unresolved_age", row.status, expected_status)
+    expected_reason = (
+        STALE_PENDING_REASON
+        if expected_status == "block"
+        else UNRESOLVED_AGE_PASS_REASON
+    )
+    _require_gate_row_reason("unresolved_age", row.reason, expected_reason)
 
 
 def _require_gate_row_status(
@@ -502,6 +531,15 @@ def _require_gate_row_status(
 ) -> None:
     if actual_status != expected_status:
         raise ValueError(f"{gate_name} status must match observed values")
+
+
+def _require_gate_row_reason(
+    gate_name: str,
+    actual_reason: str,
+    expected_reason: str,
+) -> None:
+    if actual_reason != expected_reason:
+        raise ValueError(f"{gate_name} reason must match observed values")
 
 
 def _normalize_gate_rows(
