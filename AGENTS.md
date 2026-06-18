@@ -55,6 +55,23 @@ Avoid using website scraping as a primary data path unless a needed field is una
 - Local opencode reviews for this project should use model `zhipuai-coding-plan/glm-5.2` with variant/thinking level `max`.
 - If the user informally writes `xhign` for the Codex subagent reasoning level, treat it as the executable setting `xhigh`.
 
+## Codex Node Push Policy
+
+The prior remote-pin workflow was an opencode/Sisyphus handoff constraint, not a standing Codex rule. When Codex is the active implementation agent, do not intentionally keep `origin/main` pinned behind completed local work.
+
+Push a completed Codex node to GitHub after all of the following are true:
+
+- The node has a focused local commit with a clean worktree.
+- Focused tests for the changed surface pass.
+- The full test suite passes.
+- `git diff --check` is clean.
+- Python compile verification passes.
+- CodeGraph is synced when `.codegraph/` exists.
+- A secret scan finds no leaked credentials or tokens in tracked content.
+- The configured post-node external review gate passes, using Claude Code (`claude-opus-4-8`, effort `max`) when available and the documented fallback only if Claude fails twice consecutively.
+
+Do not push half-finished work, failing tests, unreviewed code, or work that still has unresolved review findings.
+
 ## OMO / Sisyphus Session Workflow (opencode only — codex ignores this section)
 
 This section binds every opencode/Sisyphus session working on this repository. It is set by the user on 2026-06-16 and survives across sessions. Codex does not use this section; codex resume continues from the latest main commit.
