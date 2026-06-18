@@ -36,6 +36,16 @@ Phase 1 decision behavior is frozen while markets are pending settlement. Do not
 
 Allowed additions during the freeze are limited to `paper_only`, `report_only`, `readonly` observability over existing local artifacts. Boundary shorthand: no fetch, no auth, no wallet, no order, no rank, no recommend, no trade instruction, no financial advice.
 
+## Phase 2 Direction
+
+Phase 2 starts with two pure local report modules exposed only through module-local APIs: `forecast_calibration` summarizes resolved forecast evidence from caller-supplied `PaperForecastEvidenceObservation` rows that include both `predicted_probability` and `actual_outcome_value`, and `strategy_segment_summary` groups caller-supplied paper evidence by local strategy and risk-tag segments.
+
+This direction is still paper-only/report-only/read-only. The new modules remain module-level library APIs with exact module-local `__all__` values rather than package-root exports, CLI commands, readers, writers, or live-data wrappers. Calibration is descriptive resolved-evidence reporting only: edge-only or unresolved rows do not become calibration observations. Segment summaries keep probability observations and paper-return observations as separate roles, so return-only evidence remains descriptive and thin probability samples stay visibly incomplete.
+
+This is not live trading, not a later-phase transition signal, not a ranking or recommendation engine, not a trade instruction surface, and not financial advice. Before any later phase can move beyond reporting, cost, slippage, liquidity, settlement lag, and rule risk must be measured separately from calibration quality.
+
+Boundary shorthand: no live trading, no auth, no wallet/private key, no order placement/signing/submission/cancellation, no account reads, no recommendations/ranking/trade instruction/financial advice.
+
 ## NAV Risk Metrics v0 Status
 
 NAV Risk Metrics v0 is a paper-only/report-only risk summary over existing paper NAV logs. It consumes typed `PaperNavSnapshot` values normally read through the existing `PaperNavLog.read(...)`; it computes NAV time-series risk, latest mark-status counts, pending notional, and latest exposure concentration for audit visibility only.
@@ -726,11 +736,13 @@ See:
 │       │   ├── 2026-06-14-level-2-proposal-review-quality-gates.md
 │       │   ├── 2026-06-14-level-2-proposal-review-summary-reports.md
 │       │   ├── 2026-06-16-cost-aware-event-strategy-v0.md
+│       │   ├── 2026-06-17-phase-2-calibration-segmentation-v0.md
 │       │   ├── 2026-06-16-project-screening-v0.md
 │       │   └── 2026-06-13-project-bootstrap.md
 │       └── specs
 │           ├── 2026-06-13-automated-investment-roadmap.md
 │           ├── 2026-06-16-cost-aware-event-strategy-v0.md
+│           ├── 2026-06-17-phase-2-calibration-segmentation-v0.md
 │           ├── 2026-06-16-project-screening-v0.md
 │           └── 2026-06-13-polymarket-alpha-lab-design.md
 ├── pyproject.toml
