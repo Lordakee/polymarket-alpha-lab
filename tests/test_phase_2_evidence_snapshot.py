@@ -352,6 +352,22 @@ def test_phase_2_evidence_snapshot_revalidates_gap_reasons_and_ratios():
         replace(report, return_only_segment_ratio=Decimal("0.500000"))
 
 
+def test_phase_2_evidence_snapshot_ratios_preserve_canonical_quantum():
+    report = _snapshot(
+        _calibration_report(30),
+        _segment_summary_report(30, min_segment_observations=10),
+        config=_config(
+            min_calibration_observations=30,
+            min_probability_segment_observations=10,
+        ),
+    )
+
+    with pytest.raises(ValueError, match="probability_segment_coverage_ratio"):
+        replace(report, probability_segment_coverage_ratio=Decimal("1.0000000"))
+    with pytest.raises(ValueError, match="return_only_segment_ratio"):
+        replace(report, return_only_segment_ratio=Decimal("0.0000000"))
+
+
 def test_phase_2_evidence_snapshot_builder_requires_typed_reports_and_hard_flags():
     calibration_report = _calibration_report(30)
     segment_summary_report = _segment_summary_report(30)

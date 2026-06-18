@@ -241,31 +241,41 @@ def test_phase_2_evidence_snapshot_scope_guard_rejects_boundary_names():
         "def rank_segments():\n    return ()",
         "live_report = object()",
         "def build_order():\n    return None",
+        "import decimal as live_decimal",
+        "result = helper(order_id=condition_id)",
+        "snapshot.rank_value = 1",
     )
 
     for source in bad_sources:
         assert_scope_guard_fails(
             source,
-            lambda tree: [
-                (
-                    (_ for _ in ()).throw(AssertionError(name))
-                    if any(
-                        fragment in normalize_identifier(name)
-                        for fragment in FORBIDDEN_NAME_FRAGMENTS
-                    )
-                    else None
-                )
-                for node in ast.walk(tree)
-                for name in (
-                    [node.name]
-                    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
-                    else [node.id]
-                    if isinstance(node, ast.Name)
-                    else [node.arg]
-                    if isinstance(node, ast.arg)
-                    else []
-                )
-            ],
+            assert_no_forbidden_boundary_names,
+        )
+
+
+def assert_no_forbidden_boundary_names(tree):
+    names = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(node.name)
+        elif isinstance(node, ast.Name):
+            names.add(node.id)
+        elif isinstance(node, ast.Attribute):
+            names.add(node.attr)
+        elif isinstance(node, ast.arg):
+            names.add(node.arg)
+        elif isinstance(node, ast.keyword) and node.arg is not None:
+            names.add(node.arg)
+        elif isinstance(node, ast.alias):
+            names.add(node.name)
+            if node.asname is not None:
+                names.add(node.asname)
+
+    lowered = {normalize_identifier(name) for name in names}
+    for fragment in FORBIDDEN_NAME_FRAGMENTS:
+        assert not any(normalize_identifier(fragment) in name for name in lowered), (
+            fragment,
+            lowered,
         )
 
 
@@ -315,20 +325,9 @@ def test_phase_2_evidence_snapshot_public_exports_are_exact_report_api():
 
 def test_phase_2_evidence_snapshot_does_not_define_forbidden_surfaces():
     tree = parse_module()
-    names = set()
     assert_no_decimal_boundary_regressions(tree)
     assert_no_forbidden_operations(tree)
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            names.add(node.name)
-        elif isinstance(node, ast.arg):
-            names.add(node.arg)
-        elif isinstance(node, ast.Name):
-            names.add(node.id)
-    for name in names:
-        normalized = normalize_identifier(name)
-        for fragment in FORBIDDEN_NAME_FRAGMENTS:
-            assert fragment not in normalized, name
+    assert_no_forbidden_boundary_names(tree)
     assert_no_forbidden_status_label_advice_string_constants(tree)
 
 

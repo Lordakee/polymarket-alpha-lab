@@ -570,7 +570,7 @@ def _require_optional_probability_ratio(field_name: str, value: Decimal | None) 
     if value is None:
         return
     _require_decimal(field_name, value)
-    if value != value.quantize(RATIO_QUANTUM):
+    if value.as_tuple().exponent != RATIO_QUANTUM.as_tuple().exponent:
         raise ValueError(f"{field_name} must align to {RATIO_QUANTUM}")
     if value < ZERO or value > ONE:
         raise ValueError(f"{field_name} must be between 0 and 1")
