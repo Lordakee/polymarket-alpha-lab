@@ -574,6 +574,7 @@ def test_empty_journal_produces_empty_report_with_no_evidence(tmp_path):
     assert report.forecast_evidence_report is None
     assert report.paper_only is True
     assert report.report_only is True
+    assert report.readonly is True
 
 
 def test_outcome_tracking_log_round_trips_full_report_with_forecast_evidence(
@@ -622,6 +623,7 @@ def test_outcome_tracking_log_round_trips_full_report_with_forecast_evidence(
     )
     assert restored[0].paper_only is True
     assert restored[0].report_only is True
+    assert restored[0].readonly is True
 
 
 def test_outcome_tracking_log_round_trips_empty_report_and_skips_blank_lines(
@@ -665,6 +667,119 @@ def test_outcome_tracking_log_rejects_invalid_append_without_creating_file(tmp_p
 
     with pytest.raises(ValueError, match="report must be an OutcomeTrackingReport"):
         OutcomeTrackingLog(path).append(object())  # type: ignore[arg-type]
+
+    assert not path.exists()
+
+
+def test_outcome_tracking_log_rejects_tampered_readonly_before_writing(tmp_path):
+    report = OutcomeTrackingReport(
+        generated_at=GENERATED_AT,
+        config_version="outcome-tracker-v1",
+        total_markets_checked=0,
+        resolved_count=0,
+        pending_count=0,
+        observations=(),
+        forecast_evidence_report=None,
+    )
+    object.__setattr__(report, "readonly", False)
+    path = tmp_path / "outcomes.jsonl"
+
+    with pytest.raises(ValueError, match="readonly must be True"):
+        OutcomeTrackingLog(path).append(report)
+
+    assert not path.exists()
+
+
+def test_report_rejects_forecast_evidence_for_different_observations(tmp_path):
+    matching_record = _build_record(
+        condition_id="0xMATCH",
+        token_id="601",
+        market_slug="m-match",
+        outcome_name="YES",
+        packet_id="pkt-match",
+        fair_value_estimate=Decimal("0.61"),
+    )
+    mismatched_record = _build_record(
+        condition_id="0xMISMATCH",
+        token_id="602",
+        market_slug="m-mismatch",
+        outcome_name="YES",
+        packet_id="pkt-mismatch",
+        fair_value_estimate=Decimal("0.73"),
+    )
+    matching_root = tmp_path / "matching"
+    matching_root.mkdir()
+    mismatched_root = tmp_path / "mismatched"
+    mismatched_root.mkdir()
+    matching_report = check_outcomes(
+        client=FakeGammaClient([_yes_won_payload("0xMATCH")]),
+        journal_path=_write_journal(matching_root, [matching_record]),
+        config=OutcomeTrackingConfig(),
+        generated_at=GENERATED_AT,
+    )
+    mismatched_report = check_outcomes(
+        client=FakeGammaClient([_yes_won_payload("0xMISMATCH")]),
+        journal_path=_write_journal(mismatched_root, [mismatched_record]),
+        config=OutcomeTrackingConfig(),
+        generated_at=GENERATED_AT,
+    )
+
+    with pytest.raises(ValueError, match="forecast_evidence_report must match"):
+        OutcomeTrackingReport(
+            generated_at=GENERATED_AT,
+            config_version="outcome-tracker-v1",
+            total_markets_checked=1,
+            resolved_count=1,
+            pending_count=0,
+            observations=matching_report.observations,
+            forecast_evidence_report=mismatched_report.forecast_evidence_report,
+        )
+
+
+def test_outcome_tracking_log_rejects_tampered_forecast_evidence_before_writing(
+    tmp_path,
+):
+    matching_record = _build_record(
+        condition_id="0xLOGMATCH",
+        token_id="603",
+        market_slug="m-log-match",
+        outcome_name="YES",
+        packet_id="pkt-log-match",
+        fair_value_estimate=Decimal("0.62"),
+    )
+    mismatched_record = _build_record(
+        condition_id="0xLOGMISMATCH",
+        token_id="604",
+        market_slug="m-log-mismatch",
+        outcome_name="YES",
+        packet_id="pkt-log-mismatch",
+        fair_value_estimate=Decimal("0.74"),
+    )
+    log_matching_root = tmp_path / "log-matching"
+    log_matching_root.mkdir()
+    log_mismatched_root = tmp_path / "log-mismatched"
+    log_mismatched_root.mkdir()
+    report = check_outcomes(
+        client=FakeGammaClient([_yes_won_payload("0xLOGMATCH")]),
+        journal_path=_write_journal(log_matching_root, [matching_record]),
+        config=OutcomeTrackingConfig(),
+        generated_at=GENERATED_AT,
+    )
+    mismatched_report = check_outcomes(
+        client=FakeGammaClient([_yes_won_payload("0xLOGMISMATCH")]),
+        journal_path=_write_journal(log_mismatched_root, [mismatched_record]),
+        config=OutcomeTrackingConfig(),
+        generated_at=GENERATED_AT,
+    )
+    object.__setattr__(
+        report,
+        "forecast_evidence_report",
+        mismatched_report.forecast_evidence_report,
+    )
+    path = tmp_path / "outcomes.jsonl"
+
+    with pytest.raises(ValueError, match="forecast_evidence_report must match"):
+        OutcomeTrackingLog(path).append(report)
 
     assert not path.exists()
 
@@ -775,7 +890,7 @@ def test_report_hard_enforces_no_evidence_report_when_zero_observations():
         )
 
 
-def test_report_hard_enforces_paper_and_report_only_with_is():
+def test_report_hard_enforces_paper_report_and_readonly_with_is():
     # paper_only=False is rejected by the ``is True`` guard.
     with pytest.raises(ValueError, match="paper_only must be True"):
         OutcomeTrackingReport(
@@ -812,6 +927,18 @@ def test_report_hard_enforces_paper_and_report_only_with_is():
             observations=(),
             forecast_evidence_report=None,
             report_only=1,  # type: ignore[arg-type]
+        )
+    # readonly=1 (truthy but not True) is likewise rejected.
+    with pytest.raises(ValueError, match="readonly must be True"):
+        OutcomeTrackingReport(
+            generated_at=GENERATED_AT,
+            config_version="outcome-tracker-v1",
+            total_markets_checked=0,
+            resolved_count=0,
+            pending_count=0,
+            observations=(),
+            forecast_evidence_report=None,
+            readonly=1,  # type: ignore[arg-type]
         )
 
 

@@ -220,6 +220,8 @@ def _normalize_outcome_reports(
             raise ValueError("reports must contain paper_only OutcomeTrackingReport values")
         if report.report_only is not True:
             raise ValueError("reports must contain report_only OutcomeTrackingReport values")
+        if report.readonly is not True:
+            raise ValueError("reports must contain readonly OutcomeTrackingReport values")
     return items
 
 

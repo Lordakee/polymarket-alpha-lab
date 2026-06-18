@@ -79,6 +79,7 @@ def _tracking_report(
     suffix: str,
     paper_only: bool = True,
     report_only: bool = True,
+    readonly: bool = True,
 ) -> OutcomeTrackingReport:
     observations = tuple(
         _observation(generated_at, f"{suffix}-{index}")
@@ -103,6 +104,7 @@ def _tracking_report(
         forecast_evidence_report=forecast_evidence_report,
         paper_only=paper_only,
         report_only=report_only,
+        readonly=readonly,
     )
 
 
@@ -361,6 +363,20 @@ def test_outcome_freshness_rejects_invalid_builder_inputs_and_source_flags():
     with pytest.raises(ValueError, match="report_only"):
         build_outcome_freshness_report(
             (non_report,),
+            config=_config(),
+            generated_at=GENERATED_AT,
+        )
+
+    writable = _tracking_report(
+        total_markets_checked=1,
+        resolved_count=1,
+        pending_count=0,
+        suffix="writable",
+    )
+    object.__setattr__(writable, "readonly", False)
+    with pytest.raises(ValueError, match="readonly"):
+        build_outcome_freshness_report(
+            (writable,),
             config=_config(),
             generated_at=GENERATED_AT,
         )

@@ -9,8 +9,9 @@ time.
 
 Phase 1 boundary: read-only Gamma ``/markets`` re-fetch + pure computation. No
 orders, auth, wallets, private keys, credentials, relayers, account reads, or
-exchange writes. The OUTPUT ``OutcomeTrackingReport`` is paper-only/report-only
-(``paper_only is True`` / ``report_only is True`` hard-enforced with ``is``).
+exchange writes. The OUTPUT ``OutcomeTrackingReport`` is paper-only/report-only/
+readonly (``paper_only is True`` / ``report_only is True`` /
+``readonly is True`` hard-enforced with ``is``).
 
 Protocol-only (Q5): this module does NOT import ``api``. It depends on a local
 ``OutcomeTrackerClient`` Protocol (a subset of
@@ -127,7 +128,7 @@ class OutcomeTrackingConfig:
 
 @dataclass(frozen=True)
 class OutcomeTrackingReport:
-    """Frozen paper-only/report-only outcome-tracking summary.
+    """Frozen paper-only/report-only/readonly outcome-tracking summary.
 
     Invariants (hard-enforced in ``__post_init__``):
       - ``resolved_count == len(observations)`` (one observation per resolved
@@ -135,7 +136,8 @@ class OutcomeTrackingReport:
       - ``resolved_count + pending_count == total_markets_checked`` (every
         journaled trade leg is either resolved or pending).
       - ``forecast_evidence_report is None`` iff ``len(observations) == 0``.
-      - ``paper_only is True`` and ``report_only is True`` (compared with ``is``).
+      - ``paper_only is True``, ``report_only is True``, and ``readonly is True``
+        (compared with ``is``).
     """
 
     generated_at: datetime
@@ -147,6 +149,7 @@ class OutcomeTrackingReport:
     forecast_evidence_report: PaperForecastEvidenceReport | None
     paper_only: bool = True
     report_only: bool = True
+    readonly: bool = True
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "generated_at", _as_utc(self.generated_at))
@@ -181,10 +184,18 @@ class OutcomeTrackingReport:
             raise ValueError(
                 "forecast_evidence_report must not be None when there are observations"
             )
+        if len(self.observations) > 0 and self.forecast_evidence_report is not None:
+            _validate_forecast_evidence_report_matches_observations(
+                self.observations,
+                self.forecast_evidence_report,
+                generated_at=self.generated_at,
+            )
         if self.paper_only is not True:
             raise ValueError("paper_only must be True")
         if self.report_only is not True:
             raise ValueError("report_only must be True")
+        if self.readonly is not True:
+            raise ValueError("readonly must be True")
 
 
 @dataclass(frozen=True)
@@ -588,6 +599,7 @@ def _validate_report_tree(report: OutcomeTrackingReport) -> OutcomeTrackingRepor
         forecast_evidence_report=forecast_evidence_report,
         paper_only=report.paper_only,
         report_only=report.report_only,
+        readonly=report.readonly,
     )
 
 
@@ -640,6 +652,199 @@ def _clone_forecast_evidence_report(
         buckets=buckets,
         paper_only=report.paper_only,
     )
+
+
+def _validate_forecast_evidence_report_matches_observations(
+    observations: tuple[PaperForecastEvidenceObservation, ...],
+    forecast_evidence_report: PaperForecastEvidenceReport,
+    *,
+    generated_at: datetime,
+) -> None:
+    if forecast_evidence_report.paper_only is not True:
+        raise ValueError("forecast_evidence_report paper_only must be True")
+    if forecast_evidence_report.observation_count != len(observations):
+        raise ValueError("forecast_evidence_report must match observations")
+    try:
+        expected_report = build_paper_forecast_evidence_report(
+            observations,
+            config=_recover_forecast_evidence_config(forecast_evidence_report),
+            generated_at=generated_at,
+        )
+    except ValueError as exc:
+        raise ValueError("forecast_evidence_report must match observations") from exc
+    if not _forecast_evidence_reports_match(
+        expected_report,
+        forecast_evidence_report,
+    ):
+        raise ValueError("forecast_evidence_report must match observations")
+
+
+def _forecast_evidence_reports_match(
+    expected: PaperForecastEvidenceReport,
+    actual: PaperForecastEvidenceReport,
+) -> bool:
+    if (
+        expected.generated_at != actual.generated_at
+        or expected.config_version != actual.config_version
+        or expected.first_observed_at != actual.first_observed_at
+        or expected.last_observed_at != actual.last_observed_at
+        or expected.observation_count != actual.observation_count
+        or expected.probability_observation_count != actual.probability_observation_count
+        or expected.edge_observation_count != actual.edge_observation_count
+        or expected.unique_market_count != actual.unique_market_count
+        or expected.unique_strategy_count != actual.unique_strategy_count
+        or expected.unique_risk_tag_count != actual.unique_risk_tag_count
+        or expected.mean_probability_loss != actual.mean_probability_loss
+        or expected.worst_bucket_error != actual.worst_bucket_error
+        or expected.mean_edge_gap_ratio != actual.mean_edge_gap_ratio
+        or expected.positive_edge_hit_rate != actual.positive_edge_hit_rate
+        or expected.worst_residual_exposure_ratio != actual.worst_residual_exposure_ratio
+        or expected.status != actual.status
+        or expected.buckets != actual.buckets
+        or expected.paper_only != actual.paper_only
+    ):
+        return False
+    if len(expected.gate_results) != len(actual.gate_results):
+        return False
+    return all(
+        _forecast_evidence_gate_results_match(expected_gate, actual_gate)
+        for expected_gate, actual_gate in zip(
+            expected.gate_results,
+            actual.gate_results,
+            strict=True,
+        )
+    )
+
+
+def _forecast_evidence_gate_results_match(
+    expected: PaperForecastEvidenceGateResult,
+    actual: PaperForecastEvidenceGateResult,
+) -> bool:
+    return (
+        expected.gate_name == actual.gate_name
+        and expected.status == actual.status
+        and expected.message == actual.message
+        and _semantic_gate_value(expected.observed_value)
+        == _semantic_gate_value(actual.observed_value)
+        and _semantic_gate_value(expected.threshold)
+        == _semantic_gate_value(actual.threshold)
+    )
+
+
+def _semantic_gate_value(value: Decimal | int | str | None) -> Decimal | int | str | None:
+    if isinstance(value, Decimal):
+        _require_finite_decimal("forecast evidence gate value", value)
+        return str(value)
+    return value
+
+
+def _recover_forecast_evidence_config(
+    report: PaperForecastEvidenceReport,
+) -> PaperForecastEvidenceConfig:
+    gates = {gate.gate_name: gate for gate in report.gate_results}
+    sample_size_threshold = _parse_threshold_mapping(
+        gates["sample_size"].threshold,
+        field_name="sample_size threshold",
+        expected_names=(
+            "min_probability_observations",
+            "min_edge_observations",
+        ),
+    )
+    probability_threshold = _parse_threshold_mapping(
+        gates["probability_quality"].threshold,
+        field_name="probability_quality threshold",
+        expected_names=(
+            "max_mean_probability_loss",
+            "max_bucket_error",
+        ),
+    )
+    edge_threshold = _parse_threshold_mapping(
+        gates["executable_edge_quality"].threshold,
+        field_name="executable_edge_quality threshold",
+        expected_names=(
+            "max_mean_edge_gap_ratio",
+            "min_positive_edge_hit_rate",
+        ),
+    )
+    if not report.buckets:
+        raise ValueError("forecast_evidence_report must match observations")
+    bucket_width = report.buckets[0].upper_probability - report.buckets[0].lower_probability
+    return PaperForecastEvidenceConfig(
+        config_version=report.config_version,
+        min_probability_observations=_parse_threshold_int(
+            sample_size_threshold["min_probability_observations"],
+            field_name="min_probability_observations",
+        ),
+        min_edge_observations=_parse_threshold_int(
+            sample_size_threshold["min_edge_observations"],
+            field_name="min_edge_observations",
+        ),
+        probability_bucket_width=bucket_width,
+        max_mean_probability_loss=_parse_threshold_decimal(
+            probability_threshold["max_mean_probability_loss"],
+            field_name="max_mean_probability_loss",
+        ),
+        max_bucket_error=_parse_threshold_decimal(
+            probability_threshold["max_bucket_error"],
+            field_name="max_bucket_error",
+        ),
+        max_mean_edge_gap_ratio=_parse_threshold_decimal(
+            edge_threshold["max_mean_edge_gap_ratio"],
+            field_name="max_mean_edge_gap_ratio",
+        ),
+        min_positive_edge_hit_rate=_parse_threshold_decimal(
+            edge_threshold["min_positive_edge_hit_rate"],
+            field_name="min_positive_edge_hit_rate",
+        ),
+        max_residual_exposure_ratio=_parse_threshold_decimal(
+            gates["residual_exposure"].threshold,
+            field_name="max_residual_exposure_ratio",
+        ),
+    )
+
+
+def _parse_threshold_mapping(
+    value: Any,
+    *,
+    field_name: str,
+    expected_names: tuple[str, str],
+) -> dict[str, str]:
+    if not isinstance(value, str):
+        raise ValueError(f"{field_name} must be a string")
+    parts = [part.strip() for part in value.split(";")]
+    if len(parts) != len(expected_names):
+        raise ValueError(f"{field_name} is malformed")
+    parsed: dict[str, str] = {}
+    for part, expected_name in zip(parts, expected_names, strict=True):
+        key, separator, raw_value = part.partition("=")
+        if separator != "=" or key != expected_name or not raw_value:
+            raise ValueError(f"{field_name} is malformed")
+        if raw_value.strip() != raw_value:
+            raise ValueError(f"{field_name} is malformed")
+        parsed[key] = raw_value
+    return parsed
+
+
+def _parse_threshold_int(value: str, *, field_name: str) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{field_name} must be an int") from exc
+    if isinstance(parsed, bool):
+        raise ValueError(f"{field_name} must be an int")
+    return parsed
+
+
+def _parse_threshold_decimal(value: Any, *, field_name: str) -> Decimal:
+    if isinstance(value, bool):
+        raise ValueError(f"{field_name} must be a Decimal")
+    try:
+        parsed = Decimal(str(value))
+    except (InvalidOperation, ValueError, TypeError) as exc:
+        raise ValueError(f"{field_name} must be a Decimal") from exc
+    if not parsed.is_finite():
+        raise ValueError(f"{field_name} must be a Decimal")
+    return parsed
 
 
 def _as_utc(value: datetime) -> datetime:
