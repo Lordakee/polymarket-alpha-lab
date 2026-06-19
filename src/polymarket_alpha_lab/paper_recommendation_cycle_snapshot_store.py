@@ -110,7 +110,7 @@ def load_paper_recommendation_cycle_snapshots(
             {columns}
         FROM {table_name}
         {where_clause}
-        ORDER BY generated_at DESC
+        ORDER BY generated_at DESC, inserted_at DESC, snapshot_sha256 DESC
         {limit_clause}
         """
     cursor = connection.cursor()

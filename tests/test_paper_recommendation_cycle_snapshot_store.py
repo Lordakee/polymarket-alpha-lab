@@ -300,7 +300,7 @@ def test_load_paper_recommendation_cycle_snapshots_filters_and_limits_with_param
             readonly
         FROM cycle_snapshot_archive
         WHERE config_version = %s
-        ORDER BY generated_at DESC
+        ORDER BY generated_at DESC, inserted_at DESC, snapshot_sha256 DESC
         LIMIT %s
         """,
     )
