@@ -8,6 +8,9 @@ from typing import Iterable
 
 from polymarket_alpha_lab.research import ResearchPacket
 
+ZERO = Decimal("0")
+ONE = Decimal("1")
+
 ALLOWED_REASON_CODES = {
     "incomplete_packet",
     "low_confidence",
@@ -19,8 +22,28 @@ ALLOWED_REASON_CODES = {
     "blocked_risk_tag",
 }
 
+PROBABILITY_NUMERIC_FIELDS = frozenset(
+    (
+        "model_probability",
+        "confidence",
+        "bid",
+        "ask",
+        "midpoint",
+        "expected_entry_price",
+        "fair_value_estimate",
+    )
+)
+NONNEGATIVE_NUMERIC_FIELDS = frozenset(("spread", "slippage_estimate"))
+POSITIVE_NUMERIC_FIELDS = frozenset(("max_executable_size",))
 RISK_NUMERIC_FIELDS = (
+    "model_probability",
     "confidence",
+    "bid",
+    "ask",
+    "midpoint",
+    "expected_entry_price",
+    "fair_value_estimate",
+    "theoretical_edge",
     "cost_adjusted_edge",
     "spread",
     "slippage_estimate",
@@ -118,20 +141,22 @@ def evaluate_research_packet_risk(
         )
 
     reasons: list[RiskGateReason] = []
+    strategy_type = _canonical_packet_string("strategy_type", packet.strategy_type)
+    risk_tags = _canonical_packet_string_sequence("risk_tags", packet.risk_tags)
 
-    if config.allowed_strategy_types and packet.strategy_type not in config.allowed_strategy_types:
+    if config.allowed_strategy_types and strategy_type not in config.allowed_strategy_types:
         reasons.append(
             RiskGateReason(
                 code="strategy_not_allowed",
                 message="strategy type is not allowed by this gate config",
                 field_name="strategy_type",
-                observed_value=packet.strategy_type,
+                observed_value=strategy_type,
                 threshold=",".join(config.allowed_strategy_types),
             )
         )
 
     blocked_tags = set(config.blocked_risk_tags)
-    for tag in packet.risk_tags:
+    for tag in risk_tags:
         if tag in blocked_tags:
             reasons.append(
                 RiskGateReason(
@@ -263,7 +288,14 @@ def _risk_numeric_missing_fields(packet: ResearchPacket) -> tuple[str, ...]:
     missing: list[str] = []
     for field_name in RISK_NUMERIC_FIELDS:
         value = getattr(packet, field_name)
-        if not isinstance(value, Decimal) or not value.is_finite():
+        if not _is_finite_decimal(value):
+            missing.append(field_name)
+            continue
+        if field_name in PROBABILITY_NUMERIC_FIELDS and (value < ZERO or value > ONE):
+            missing.append(field_name)
+        elif field_name in NONNEGATIVE_NUMERIC_FIELDS and value < ZERO:
+            missing.append(field_name)
+        elif field_name in POSITIVE_NUMERIC_FIELDS and value <= ZERO:
             missing.append(field_name)
     return tuple(missing)
 
@@ -275,10 +307,42 @@ def _normalize_string_sequence(field_name: str, value: Iterable[str]) -> tuple[s
         normalized = tuple(value)
     except TypeError as exc:
         raise ValueError(f"{field_name} must be a sequence of strings") from exc
+    canonical: list[str] = []
     for item in normalized:
         if not isinstance(item, str) or not item.strip():
             raise ValueError(f"{field_name} must contain nonblank strings")
-    return normalized
+        canonical.append(_canonical_string_value(item))
+    return _ordered_unique(canonical)
+
+
+def _canonical_packet_string(field_name: str, value: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{field_name} must be a nonblank string")
+    return _canonical_string_value(value)
+
+
+def _canonical_packet_string_sequence(
+    field_name: str,
+    value: Iterable[str],
+) -> tuple[str, ...]:
+    if isinstance(value, (str, bytes)):
+        raise ValueError(f"{field_name} must be a sequence of strings")
+    try:
+        items = tuple(value)
+    except TypeError as exc:
+        raise ValueError(f"{field_name} must be a sequence of strings") from exc
+    canonical: list[str] = []
+    for item in items:
+        canonical.append(_canonical_packet_string(field_name, item))
+    return _ordered_unique(canonical)
+
+
+def _canonical_string_value(value: str) -> str:
+    return value.strip().lower()
+
+
+def _is_finite_decimal(value: object) -> bool:
+    return isinstance(value, Decimal) and value.is_finite()
 
 
 def _ordered_unique(values: Iterable[str]) -> tuple[str, ...]:

@@ -52,6 +52,18 @@ def _summary_report(**overrides) -> PaperEdgeCostSummaryReport:
         "status": "edge_cost_evidence_observed",
     }
     values.update(overrides)
+    if (
+        "mean_edge_cost_drag" in overrides
+        and "mean_theoretical_edge_ratio" not in overrides
+        and "mean_executable_edge_ratio" not in overrides
+    ):
+        values["mean_theoretical_edge_ratio"] = (
+            values["mean_executable_edge_ratio"] + values["mean_edge_cost_drag"]
+        ).quantize(Decimal("0.000001"))
+    elif "mean_edge_cost_drag" in overrides and "mean_executable_edge_ratio" not in overrides:
+        values["mean_executable_edge_ratio"] = (
+            values["mean_theoretical_edge_ratio"] - values["mean_edge_cost_drag"]
+        ).quantize(Decimal("0.000001"))
     return PaperEdgeCostSummaryReport(**values)
 
 
@@ -543,6 +555,31 @@ def test_edge_cost_summary_trend_report_revalidates_status_rows_streaks_and_wors
         replace(report, worst_observed_mean_residual_exposure_ratio=Decimal("0.200000"))
     with pytest.raises(ValueError, match="worst_observed_mean_residual_exposure_ratio"):
         replace(report, worst_observed_mean_residual_exposure_ratio=None)
+
+
+def test_edge_cost_summary_trend_direct_constructor_rejects_negative_cost_drag_metrics():
+    latest_observed = _trend_report(_summary_report())
+
+    with pytest.raises(ValueError, match="latest_mean_edge_cost_drag"):
+        PaperEdgeCostSummaryTrendReport(
+            **{
+                **vars(latest_observed),
+                "latest_mean_edge_cost_drag": Decimal("-0.000001"),
+            },
+        )
+
+    latest_empty_with_history = _trend_report(
+        _summary_report(),
+        _empty_summary_report(datetime(2026, 6, 18, 13, 0, tzinfo=UTC)),
+    )
+
+    with pytest.raises(ValueError, match="worst_observed_mean_edge_cost_drag"):
+        PaperEdgeCostSummaryTrendReport(
+            **{
+                **vars(latest_empty_with_history),
+                "worst_observed_mean_edge_cost_drag": Decimal("-0.000001"),
+            },
+        )
 
 
 def test_edge_cost_summary_trend_report_bounds_insufficient_sample_streak():

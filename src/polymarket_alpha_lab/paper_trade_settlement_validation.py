@@ -31,6 +31,7 @@ __all__ = (
 
 
 RATIO_QUANTUM = Decimal("0.000001")
+FORECAST_EVIDENCE_RATIO_QUANTUM = Decimal("0.0001")
 ZERO = Decimal("0")
 ONE = Decimal("1")
 
@@ -231,10 +232,15 @@ def build_paper_trade_settlement_validation_report(
         raise ValueError("config must be a PaperTradeSettlementValidationConfig")
     if type(generated_at) is not datetime:
         raise ValueError("generated_at must be a datetime")
+    generated_at_utc = _as_utc(generated_at)
     if outcome_report is not None:
         if type(outcome_report) is not OutcomeTrackingReport:
             raise ValueError("outcome_report must be an OutcomeTrackingReport or None")
         _validate_outcome_report_flags(outcome_report)
+        _validate_outcome_report_not_after_generated_at(
+            outcome_report,
+            generated_at_utc,
+        )
 
     trades = _normalize_trade_records(trade_records)
     observations = _normalize_outcome_observations(outcome_report)
@@ -349,7 +355,7 @@ def build_paper_trade_settlement_validation_report(
         build_paper_forecast_evidence_report(
             tuple(evidence_observations),
             config=config.forecast_evidence_config,
-            generated_at=generated_at,
+            generated_at=generated_at_utc,
         )
         if evidence_observations
         else None
@@ -358,7 +364,7 @@ def build_paper_trade_settlement_validation_report(
     observed_times = tuple(_as_utc(item.observed_at) for item in observations)
 
     return _report_from_rows(
-        generated_at=_as_utc(generated_at),
+        generated_at=generated_at_utc,
         config=config,
         rows=tuple(rows),
         outcome_observation_count=len(observations),
@@ -648,6 +654,33 @@ def _validate_outcome_report_flags(outcome_report: OutcomeTrackingReport) -> Non
         raise ValueError("outcome_report must be readonly")
 
 
+def _validate_outcome_report_not_after_generated_at(
+    outcome_report: OutcomeTrackingReport,
+    generated_at: datetime,
+) -> None:
+    _require_not_after_generated_at(
+        "outcome_report.generated_at",
+        outcome_report.generated_at,
+        generated_at,
+    )
+    if outcome_report.forecast_evidence_report is not None:
+        _require_not_after_generated_at(
+            "outcome_report.forecast_evidence_report.generated_at",
+            outcome_report.forecast_evidence_report.generated_at,
+            generated_at,
+        )
+        _require_not_after_generated_at(
+            "outcome_report.forecast_evidence_report.first_observed_at",
+            outcome_report.forecast_evidence_report.first_observed_at,
+            generated_at,
+        )
+        _require_not_after_generated_at(
+            "outcome_report.forecast_evidence_report.last_observed_at",
+            outcome_report.forecast_evidence_report.last_observed_at,
+            generated_at,
+        )
+
+
 def _trade_keys(
     trades: tuple[PaperTradeRecord, ...],
 ) -> set[tuple[str, str]]:
@@ -800,6 +833,7 @@ def _validate_row_consistency(row: PaperTradeSettlementValidationRow) -> None:
                 raise ValueError(f"{field_name} is required for observed rows")
         if row.reason_codes != ("settlement_observed",):
             raise ValueError("observed rows must use the settlement_observed reason code")
+        _validate_observed_row_math(row)
         return
     for field_name in (
         "settlement_payout",
@@ -817,12 +851,27 @@ def _validate_row_consistency(row: PaperTradeSettlementValidationRow) -> None:
         raise ValueError("quality flag rows must include a reason code")
 
 
+def _validate_observed_row_math(row: PaperTradeSettlementValidationRow) -> None:
+    if row.settlement_payout - row.entry_notional != row.realized_pnl:
+        raise ValueError("realized_pnl must equal settlement_payout minus entry_notional")
+    if row.return_ratio != _optional_ratio(row.realized_pnl, row.entry_notional):
+        raise ValueError("return_ratio must equal realized_pnl divided by entry_notional")
+    if row.probability_loss != _probability_loss(
+        row.predicted_probability,
+        row.actual_outcome_value,
+    ):
+        raise ValueError(
+            "probability_loss must equal squared prediction error for observed rows",
+        )
+
+
 def _validate_report_consistency(report: PaperTradeSettlementValidationReport) -> None:
     if report.row_count != len(report.rows):
         raise ValueError("row_count must equal rows length")
     if report.trade_count != report.row_count:
         raise ValueError("trade_count must equal row_count")
-    resolved_count = sum(1 for row in report.rows if row.status == "observed")
+    observed_rows = tuple(row for row in report.rows if row.status == "observed")
+    resolved_count = len(observed_rows)
     pending_count = sum(1 for row in report.rows if row.status == "pending")
     quality_flag_count = sum(
         1 for row in report.rows if row.status == "quality_flags"
@@ -848,12 +897,43 @@ def _validate_report_consistency(report: PaperTradeSettlementValidationReport) -
         ZERO,
     ):
         raise ValueError("total_realized_pnl must equal summed row realized pnl")
+    _validate_derived_report_metrics(report, observed_rows)
     if report.trade_count == 0:
         _require_none("first_trade_decision_at", report.first_trade_decision_at)
         _require_none("latest_trade_decision_at", report.latest_trade_decision_at)
+    else:
+        _require_present("first_trade_decision_at", report.first_trade_decision_at)
+        _require_present("latest_trade_decision_at", report.latest_trade_decision_at)
+        if report.latest_trade_decision_at < report.first_trade_decision_at:
+            raise ValueError("trade timestamp bounds must be chronological")
+        _require_not_after_generated_at(
+            "latest_trade_decision_at",
+            report.latest_trade_decision_at,
+            report.generated_at,
+        )
+        _require_not_after_generated_at(
+            "first_trade_decision_at",
+            report.first_trade_decision_at,
+            report.generated_at,
+        )
     if report.outcome_observation_count == 0:
         _require_none("first_observed_at", report.first_observed_at)
         _require_none("latest_observed_at", report.latest_observed_at)
+    else:
+        _require_present("first_observed_at", report.first_observed_at)
+        _require_present("latest_observed_at", report.latest_observed_at)
+        if report.latest_observed_at < report.first_observed_at:
+            raise ValueError("observed timestamp bounds must be chronological")
+        _require_not_after_generated_at(
+            "latest_observed_at",
+            report.latest_observed_at,
+            report.generated_at,
+        )
+        _require_not_after_generated_at(
+            "first_observed_at",
+            report.first_observed_at,
+            report.generated_at,
+        )
     if report.resolved_count == 0 and report.forecast_evidence_report is not None:
         raise ValueError(
             "forecast_evidence_report must be None when there are no resolved rows",
@@ -865,7 +945,124 @@ def _validate_report_consistency(report: PaperTradeSettlementValidationReport) -
             )
         if report.forecast_evidence_report.observation_count != report.resolved_count:
             raise ValueError("forecast_evidence_report must match resolved rows")
+        _validate_forecast_evidence_report_matches_rows(report, observed_rows)
     _validate_report_status_matches_counts(report)
+
+
+def _validate_derived_report_metrics(
+    report: PaperTradeSettlementValidationReport,
+    observed_rows: tuple[PaperTradeSettlementValidationRow, ...],
+) -> None:
+    if report.win_rate != _rate(
+        sum(1 for row in observed_rows if row.actual_outcome_value == ONE),
+        len(observed_rows),
+    ):
+        raise ValueError("win_rate must match observed rows")
+    if report.positive_return_rate != _rate(
+        sum(
+            1
+            for row in observed_rows
+            if row.return_ratio is not None and row.return_ratio > ZERO
+        ),
+        sum(1 for row in observed_rows if row.return_ratio is not None),
+    ):
+        raise ValueError("positive_return_rate must match observed rows")
+    if report.mean_probability_loss != _mean_optional(
+        row.probability_loss for row in observed_rows
+    ):
+        raise ValueError("mean_probability_loss must match observed rows")
+    if report.mean_return_ratio != _mean_optional(row.return_ratio for row in observed_rows):
+        raise ValueError("mean_return_ratio must match observed rows")
+    if report.mean_cost_adjusted_edge != _mean_optional(
+        row.cost_adjusted_edge for row in observed_rows
+    ):
+        raise ValueError("mean_cost_adjusted_edge must match observed rows")
+    if report.positive_edge_hit_rate != _positive_edge_hit_rate(observed_rows):
+        raise ValueError("positive_edge_hit_rate must match observed rows")
+
+
+def _validate_forecast_evidence_report_matches_rows(
+    report: PaperTradeSettlementValidationReport,
+    observed_rows: tuple[PaperTradeSettlementValidationRow, ...],
+) -> None:
+    evidence = report.forecast_evidence_report
+    if evidence is None:
+        return
+    _require_not_after_generated_at(
+        "forecast_evidence_report.generated_at",
+        evidence.generated_at,
+        report.generated_at,
+    )
+    _require_not_after_generated_at(
+        "forecast_evidence_report.first_observed_at",
+        evidence.first_observed_at,
+        report.generated_at,
+    )
+    _require_not_after_generated_at(
+        "forecast_evidence_report.last_observed_at",
+        evidence.last_observed_at,
+        report.generated_at,
+    )
+    if evidence.probability_observation_count != len(observed_rows):
+        raise ValueError("forecast_evidence_report probability observations must match rows")
+    expected_edge_observation_count = sum(
+        1 for row in observed_rows if row.return_ratio is not None
+    )
+    if evidence.edge_observation_count != expected_edge_observation_count:
+        raise ValueError("forecast_evidence_report edge observations must match rows")
+    if evidence.unique_market_count != len({row.market_slug for row in observed_rows}):
+        raise ValueError("forecast_evidence_report markets must match rows")
+    if evidence.unique_strategy_count != len({row.strategy_type for row in observed_rows}):
+        raise ValueError("forecast_evidence_report strategies must match rows")
+    if evidence.mean_probability_loss != _forecast_evidence_mean_probability_loss(
+        observed_rows,
+    ):
+        raise ValueError("forecast_evidence_report mean_probability_loss must match rows")
+    if evidence.positive_edge_hit_rate != _forecast_evidence_positive_edge_hit_rate(
+        observed_rows,
+    ):
+        raise ValueError("forecast_evidence_report positive_edge_hit_rate must match rows")
+
+
+def _forecast_evidence_mean_probability_loss(
+    observed_rows: tuple[PaperTradeSettlementValidationRow, ...],
+) -> Decimal | None:
+    return _mean_forecast_evidence_ratio(
+        _forecast_evidence_probability_loss(row)
+        for row in observed_rows
+        if row.predicted_probability is not None and row.actual_outcome_value is not None
+    )
+
+
+def _forecast_evidence_probability_loss(
+    row: PaperTradeSettlementValidationRow,
+) -> Decimal:
+    return _quantize_forecast_evidence_ratio(
+        (row.predicted_probability - row.actual_outcome_value) ** 2,
+    )
+
+
+def _forecast_evidence_positive_edge_hit_rate(
+    observed_rows: tuple[PaperTradeSettlementValidationRow, ...],
+) -> Decimal | None:
+    edge_rows = tuple(row for row in observed_rows if row.return_ratio is not None)
+    if not edge_rows:
+        return None
+    return _quantize_forecast_evidence_ratio(
+        Decimal(sum(1 for row in edge_rows if row.return_ratio > ZERO))
+        / Decimal(len(edge_rows)),
+    )
+
+
+def _mean_forecast_evidence_ratio(values: Iterable[Decimal]) -> Decimal | None:
+    items = tuple(values)
+    if not items:
+        return None
+    return _quantize_forecast_evidence_ratio(sum(items, ZERO) / Decimal(len(items)))
+
+
+def _quantize_forecast_evidence_ratio(value: Decimal) -> Decimal:
+    return value.quantize(FORECAST_EVIDENCE_RATIO_QUANTUM)
 
 
 def _validate_report_status_matches_counts(
@@ -945,6 +1142,17 @@ def _as_optional_utc(field_name: str, value: datetime | None) -> datetime | None
     return _as_utc(value)
 
 
+def _require_not_after_generated_at(
+    field_name: str,
+    value: datetime | None,
+    generated_at: datetime,
+) -> None:
+    if value is None:
+        return
+    if _as_utc(value) > generated_at:
+        raise ValueError(f"{field_name} must not be after generated_at")
+
+
 def _require_canonical_string(field_name: str, value: object) -> None:
     if type(value) is not str:
         raise ValueError(f"{field_name} must be a string")
@@ -992,6 +1200,8 @@ def _require_probability_decimal(field_name: str, value: object) -> None:
     _require_decimal(field_name, value)
     if value < ZERO or value > ONE:
         raise ValueError(f"{field_name} must be between 0 and 1")
+    if value != value.quantize(RATIO_QUANTUM):
+        raise ValueError(f"{field_name} must use 0.000001 precision")
 
 
 def _require_optional_probability_decimal(field_name: str, value: object) -> None:
@@ -1008,3 +1218,8 @@ def _require_zero_one_decimal(field_name: str, value: object) -> None:
 def _require_none(field_name: str, value: object) -> None:
     if value is not None:
         raise ValueError(f"{field_name} must be None")
+
+
+def _require_present(field_name: str, value: object) -> None:
+    if value is None:
+        raise ValueError(f"{field_name} is required")

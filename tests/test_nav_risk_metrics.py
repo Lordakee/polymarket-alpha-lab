@@ -1,5 +1,5 @@
 from dataclasses import FrozenInstanceError, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest
@@ -204,6 +204,68 @@ def test_nav_risk_metrics_computes_drawdown_volatility_and_latest_exposures():
     assert report.exposure_rows[1].share_of_exit_nav == Decimal("0.000000")
 
 
+def test_nav_risk_metrics_aggregates_binary_condition_exposure_rows():
+    binary_marks = (
+        _mark(
+            condition_id="condition-binary",
+            token_id="token-binary-no",
+            market_slug="market-binary",
+            outcome_name="NO",
+            open_size=Decimal("60.0000"),
+            cost_basis=Decimal("30.0000"),
+            exit_value=Decimal("36.0000"),
+            mark_status="fully_executable",
+        ),
+        _mark(
+            condition_id="condition-binary",
+            token_id="token-binary-yes",
+            market_slug="market-binary",
+            outcome_name="YES",
+            open_size=Decimal("40.0000"),
+            cost_basis=Decimal("22.0000"),
+            exit_value=Decimal("14.0000"),
+            mark_status="partially_executable",
+        ),
+        _mark(
+            condition_id="condition-other",
+            token_id="token-other",
+            market_slug="market-other",
+            open_size=Decimal("30.0000"),
+            cost_basis=Decimal("15.0000"),
+            exit_value=Decimal("9.0000"),
+            mark_status="fully_executable",
+        ),
+    )
+
+    report = _build_report(
+        (
+            _nav(
+                GENERATED_AT,
+                exit_nav=Decimal("1000.0000"),
+                marks=binary_marks,
+            ),
+        ),
+    )
+
+    assert report.pending_notional == Decimal("67.0000")
+    assert report.open_position_count == 3
+    assert report.fully_executable_count == 2
+    assert report.partially_executable_count == 1
+    assert report.no_exit_depth_count == 0
+    assert tuple(row.market_slug for row in report.exposure_rows) == (
+        "market-binary",
+        "market-other",
+    )
+    binary_row = report.exposure_rows[0]
+    assert binary_row.token_count == 2
+    assert binary_row.open_size == Decimal("100.0000")
+    assert binary_row.cost_basis == Decimal("52.0000")
+    assert binary_row.exit_value == Decimal("50.0000")
+    assert binary_row.share_of_exit_nav == Decimal("0.050000")
+    assert report.largest_market_exposure_value == Decimal("50.0000")
+    assert report.largest_market_exposure_share == Decimal("0.050000")
+
+
 def test_nav_risk_metrics_can_preserve_append_order_for_trend_metrics():
     timestamp_latest_marks = (
         _mark(
@@ -285,6 +347,35 @@ def test_nav_risk_metrics_marks_single_snapshot_delta_metrics_as_none():
     assert report.cumulative_return == Decimal("0.000000")
 
 
+def test_nav_risk_metrics_allows_zero_nav_cumulative_return_to_be_undefined():
+    report = _build_report(
+        (
+            _nav(
+                datetime(2026, 6, 16, 12, 0, tzinfo=UTC),
+                exit_nav=Decimal("0.0000"),
+                realized_pnl=Decimal("-1.0000"),
+            ),
+            _nav(
+                datetime(2026, 6, 16, 13, 0, tzinfo=UTC),
+                exit_nav=Decimal("0.0000"),
+                realized_pnl=Decimal("-1.0000"),
+            ),
+        ),
+    )
+
+    assert report.nav_snapshot_count == 2
+    assert report.latest_exit_nav == Decimal("0.0000")
+    assert report.latest_starting_cash == Decimal("1.0000")
+    assert report.cumulative_return is None
+
+
+def test_nav_risk_metrics_rejects_nonpositive_starting_cash_for_non_empty_reports():
+    report = _build_report((_nav(GENERATED_AT, exit_nav=Decimal("1000.0000")),))
+
+    with pytest.raises(ValueError, match="latest_starting_cash"):
+        replace(report, latest_starting_cash=Decimal("0.0000"))
+
+
 def test_nav_risk_metrics_rejects_invalid_inputs():
     with pytest.raises(ValueError, match="config_version"):
         _config(config_version="")
@@ -296,6 +387,166 @@ def test_nav_risk_metrics_rejects_invalid_inputs():
         build_paper_nav_risk_metrics_report((), config=_config(), generated_at="now")
     with pytest.raises(ValueError, match="PaperNavSnapshot"):
         _build_report((object(),))
+
+
+def test_nav_risk_metrics_normalizes_direct_report_timestamps_to_utc():
+    generated_at = datetime(
+        2026,
+        6,
+        16,
+        21,
+        0,
+        tzinfo=timezone(timedelta(hours=2)),
+    )
+    marked_at = datetime(2026, 6, 16, 16, 30)
+
+    report = PaperNavRiskMetricsReport(
+        generated_at=generated_at,
+        config_version="nav-risk-metrics-v0",
+        nav_snapshot_count=1,
+        first_marked_at=marked_at,
+        last_marked_at=marked_at,
+        latest_exit_nav=Decimal("1000.0000"),
+        latest_starting_cash=Decimal("1000.0000"),
+        latest_cash_balance=Decimal("1000.0000"),
+        latest_total_cost_basis=Decimal("0.0000"),
+        latest_unrealized_exit_pnl=Decimal("0.0000"),
+        peak_exit_nav=Decimal("1000.0000"),
+        trough_exit_nav=Decimal("1000.0000"),
+        cumulative_return=Decimal("0.000000"),
+        max_drawdown=Decimal("0.0000"),
+        max_drawdown_pct=Decimal("0.000000"),
+        worst_nav_delta=None,
+        nav_return_volatility=None,
+        pending_notional=Decimal("0.0000"),
+        open_position_count=0,
+        fully_executable_count=0,
+        partially_executable_count=0,
+        no_exit_depth_count=0,
+        largest_market_exposure_value=None,
+        largest_market_exposure_share=None,
+        exposure_rows=(),
+    )
+
+    assert report.generated_at == datetime(2026, 6, 16, 19, 0, tzinfo=UTC)
+    assert report.first_marked_at == datetime(2026, 6, 16, 16, 30, tzinfo=UTC)
+    assert report.last_marked_at == datetime(2026, 6, 16, 16, 30, tzinfo=UTC)
+
+
+def test_nav_risk_metrics_rejects_impossible_exposure_row_quantities():
+    with pytest.raises(ValueError, match="open_size"):
+        PaperNavRiskExposureRow(
+            condition_id="condition-row",
+            market_slug="market-row",
+            token_count=1,
+            open_size=Decimal("0.0000"),
+            cost_basis=Decimal("0.0000"),
+            exit_value=Decimal("0.0000"),
+            share_of_exit_nav=Decimal("0.000000"),
+        )
+
+    with pytest.raises(ValueError, match="cost_basis"):
+        PaperNavRiskExposureRow(
+            condition_id="condition-row",
+            market_slug="market-row",
+            token_count=1,
+            open_size=Decimal("10.0000"),
+            cost_basis=Decimal("11.0000"),
+            exit_value=Decimal("5.0000"),
+            share_of_exit_nav=Decimal("0.500000"),
+        )
+
+    with pytest.raises(ValueError, match="share_of_exit_nav"):
+        PaperNavRiskExposureRow(
+            condition_id="condition-row",
+            market_slug="market-row",
+            token_count=1,
+            open_size=Decimal("10.0000"),
+            cost_basis=Decimal("9.0000"),
+            exit_value=Decimal("5.0000"),
+            share_of_exit_nav=Decimal("1.000001"),
+        )
+
+
+def test_nav_risk_metrics_rejects_direct_report_aggregate_inconsistency():
+    valid = _build_report(
+        (
+            _nav(
+                GENERATED_AT,
+                exit_nav=Decimal("1000.0000"),
+                marks=(
+                    _mark(
+                        condition_id="condition-a",
+                        token_id="token-a",
+                        market_slug="market-a",
+                        open_size=Decimal("80.0000"),
+                        cost_basis=Decimal("50.0000"),
+                        exit_value=Decimal("40.0000"),
+                        mark_status="fully_executable",
+                    ),
+                    _mark(
+                        condition_id="condition-b",
+                        token_id="token-b",
+                        market_slug="market-b",
+                        open_size=Decimal("30.0000"),
+                        cost_basis=Decimal("20.0000"),
+                        exit_value=Decimal("12.0000"),
+                        mark_status="partially_executable",
+                    ),
+                ),
+            ),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="pending_notional"):
+        replace(valid, pending_notional=Decimal("69.0000"))
+    with pytest.raises(ValueError, match="open_position_count"):
+        replace(valid, open_position_count=1)
+    with pytest.raises(ValueError, match="mark status counts"):
+        replace(valid, no_exit_depth_count=1)
+    with pytest.raises(ValueError, match="largest_market_exposure_value"):
+        replace(valid, largest_market_exposure_value=Decimal("12.0000"))
+    with pytest.raises(ValueError, match="largest_market_exposure_share"):
+        replace(valid, largest_market_exposure_share=Decimal("0.012000"))
+    with pytest.raises(ValueError, match="latest_exit_nav"):
+        replace(valid, latest_exit_nav=Decimal("999.0000"))
+    with pytest.raises(ValueError, match="latest_unrealized_exit_pnl"):
+        replace(valid, latest_unrealized_exit_pnl=Decimal("-17.0000"))
+
+
+def test_nav_risk_metrics_rejects_zero_position_report_accounting_inconsistency():
+    valid = _build_report((_nav(GENERATED_AT, exit_nav=Decimal("1000.0000")),))
+
+    with pytest.raises(ValueError, match="latest_exit_nav"):
+        replace(valid, latest_cash_balance=Decimal("999.0000"))
+    with pytest.raises(ValueError, match="latest_total_cost_basis"):
+        replace(valid, latest_total_cost_basis=Decimal("1.0000"))
+    with pytest.raises(ValueError, match="latest_unrealized_exit_pnl"):
+        replace(valid, latest_unrealized_exit_pnl=Decimal("1.0000"))
+
+
+def test_nav_risk_metrics_rejects_empty_direct_report_with_populated_metrics():
+    empty = _build_report(())
+
+    with pytest.raises(ValueError, match="empty NAV risk metrics"):
+        replace(empty, latest_exit_nav=Decimal("1.0000"))
+    with pytest.raises(ValueError, match="empty NAV risk metrics"):
+        replace(empty, open_position_count=1)
+    with pytest.raises(ValueError, match="empty NAV risk metrics"):
+        replace(
+            empty,
+            exposure_rows=(
+                PaperNavRiskExposureRow(
+                    condition_id="condition-row",
+                    market_slug="market-row",
+                    token_count=1,
+                    open_size=Decimal("1.0000"),
+                    cost_basis=Decimal("1.0000"),
+                    exit_value=Decimal("1.0000"),
+                    share_of_exit_nav=Decimal("1.000000"),
+                ),
+            ),
+        )
 
 
 def test_nav_risk_metrics_allows_duplicate_marked_at_values_for_append_only_logs():

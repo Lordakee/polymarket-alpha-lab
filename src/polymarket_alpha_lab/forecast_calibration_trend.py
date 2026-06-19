@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from decimal import Decimal, ROUND_HALF_EVEN
+from decimal import Decimal
 from typing import Any
 
 from polymarket_alpha_lab.forecast_calibration import (
@@ -19,6 +19,7 @@ from polymarket_alpha_lab.forecast_calibration import (
 
 
 RATIO_QUANTUM = Decimal("0.000001")
+RATIO_MICRO_UNITS = 1_000_000
 ZERO = Decimal("0")
 ONE = Decimal("1")
 
@@ -128,8 +129,12 @@ def build_paper_forecast_calibration_trend_report(
         raise ValueError("config must be a PaperForecastCalibrationTrendConfig")
     if not isinstance(generated_at, datetime):
         raise ValueError("generated_at must be a datetime")
+    generated_at = _as_utc(generated_at)
 
     calibration_reports = _normalize_reports(reports)
+    for report in calibration_reports[:-1]:
+        if report.generated_at > generated_at:
+            raise ValueError("source report generated_at must not be after generated_at")
     report_count = len(calibration_reports)
     status_counts = _status_counts(calibration_reports)
     latest = calibration_reports[-1] if calibration_reports else None
@@ -208,13 +213,17 @@ def _build_status_rows(
     status_counts: dict[str, int],
     total: int,
 ) -> tuple[PaperForecastCalibrationTrendStatusRow, ...]:
+    ratios = _ratios_from_counts(
+        tuple(status_counts[status] for status in REPORT_STATUSES),
+        total,
+    )
     return tuple(
         PaperForecastCalibrationTrendStatusRow(
             calibration_status=status,
             report_count=status_counts[status],
-            report_ratio=_ratio(status_counts[status], total),
+            report_ratio=ratio,
         )
-        for status in REPORT_STATUSES
+        for status, ratio in zip(REPORT_STATUSES, ratios, strict=True)
     )
 
 
@@ -235,12 +244,30 @@ def _consecutive_status_count(
     return count
 
 
-def _ratio(numerator: int, denominator: int) -> Decimal | None:
-    if denominator == 0:
-        return None
-    return (Decimal(numerator) / Decimal(denominator)).quantize(
-        RATIO_QUANTUM,
-        rounding=ROUND_HALF_EVEN,
+def _ratios_from_counts(
+    counts: tuple[int, ...],
+    total: int,
+) -> tuple[Decimal | None, ...]:
+    if total == 0:
+        return tuple(None for _ in counts)
+
+    base_units: list[int] = []
+    remainders: list[tuple[int, int]] = []
+    for index, count in enumerate(counts):
+        numerator = count * RATIO_MICRO_UNITS
+        units, remainder = divmod(numerator, total)
+        base_units.append(units)
+        remainders.append((remainder, index))
+
+    units_to_allocate = RATIO_MICRO_UNITS - sum(base_units)
+    for _, index in sorted(remainders, key=lambda item: (-item[0], item[1]))[
+        :units_to_allocate
+    ]:
+        base_units[index] += 1
+
+    return tuple(
+        (Decimal(units) / Decimal(RATIO_MICRO_UNITS)).quantize(RATIO_QUANTUM)
+        for units in base_units
     )
 
 
@@ -284,10 +311,31 @@ def _validate_report_consistency(
             raise ValueError("latest_report_generated_at is required with reports")
         if report.latest_status is None:
             raise ValueError("latest_status is required with reports")
+        if report.latest_report_generated_at is not None and (
+            report.latest_report_generated_at > report.generated_at
+        ):
+            raise ValueError("latest_report_generated_at must not be after generated_at")
+        if report.first_report_generated_at is not None and (
+            report.first_report_generated_at > report.generated_at
+        ):
+            raise ValueError("first_report_generated_at must not be after generated_at")
+        _validate_latest_status_metrics(report)
+        _validate_latest_status_row_membership(report)
         if report.consecutive_insufficient_sample_count > report.calibration_report_count:
             raise ValueError("insufficient sample streak must not exceed report count")
         if report.consecutive_quality_flag_count > report.calibration_report_count:
             raise ValueError("quality flag streak must not exceed report count")
+        status_counts = _counts_from_status_rows(report.status_rows)
+        if (
+            report.consecutive_insufficient_sample_count
+            > status_counts["insufficient_calibration_sample"]
+        ):
+            raise ValueError("insufficient sample streak must not exceed status rows")
+        if (
+            report.consecutive_quality_flag_count
+            > status_counts["calibration_quality_flags"]
+        ):
+            raise ValueError("quality flag streak must not exceed status rows")
         if report.latest_status == "insufficient_calibration_sample":
             if report.consecutive_insufficient_sample_count < 1:
                 raise ValueError("insufficient sample latest report requires a streak")
@@ -330,9 +378,58 @@ def _validate_status_rows(report: PaperForecastCalibrationTrendReport) -> None:
         != report.calibration_report_count
     ):
         raise ValueError("status_rows counts must sum to calibration_report_count")
-    for row in report.status_rows:
-        if row.report_ratio != _ratio(row.report_count, report.calibration_report_count):
+    expected_ratios = _ratios_from_counts(
+        tuple(row.report_count for row in report.status_rows),
+        report.calibration_report_count,
+    )
+    for row, expected_ratio in zip(report.status_rows, expected_ratios, strict=True):
+        if row.report_ratio != expected_ratio:
             raise ValueError("status_rows ratios must match report counts")
+
+
+def _counts_from_status_rows(
+    rows: tuple[PaperForecastCalibrationTrendStatusRow, ...],
+) -> dict[str, int]:
+    return {row.calibration_status: row.report_count for row in rows}
+
+
+def _validate_latest_status_row_membership(
+    report: PaperForecastCalibrationTrendReport,
+) -> None:
+    counts = _counts_from_status_rows(report.status_rows)
+    if report.latest_status is None:
+        return
+    if counts[report.latest_status] < 1:
+        raise ValueError("latest_status must be counted in status_rows")
+
+
+def _validate_latest_status_metrics(report: PaperForecastCalibrationTrendReport) -> None:
+    if report.latest_status == "empty_calibration_history":
+        if report.latest_observation_count != 0:
+            raise ValueError("latest_observation_count must be zero for empty status")
+        if report.latest_bucket_count != 0:
+            raise ValueError("latest_bucket_count must be zero for empty status")
+        for field_name in (
+            "latest_brier_score",
+            "latest_mean_absolute_error",
+            "latest_expected_calibration_error",
+            "latest_max_bucket_error",
+        ):
+            if getattr(report, field_name) is not None:
+                raise ValueError(f"{field_name} must be absent for empty status")
+        return
+    if report.latest_observation_count == 0:
+        raise ValueError("latest_observation_count is required for latest_status")
+    if report.latest_bucket_count == 0:
+        raise ValueError("latest_bucket_count is required for latest_status")
+    for field_name in (
+        "latest_brier_score",
+        "latest_mean_absolute_error",
+        "latest_expected_calibration_error",
+        "latest_max_bucket_error",
+    ):
+        if getattr(report, field_name) is None:
+            raise ValueError(f"{field_name} is required for latest_status")
 
 
 def _validate_worst_not_below_latest(
@@ -416,10 +513,7 @@ def _require_optional_probability_decimal(
         raise ValueError(f"{field_name} must be finite")
     if value < ZERO or value > ONE:
         raise ValueError(f"{field_name} must be between zero and one")
-    if (
-        value != value.quantize(RATIO_QUANTUM, rounding=ROUND_HALF_EVEN)
-        or value.as_tuple().exponent != RATIO_QUANTUM.as_tuple().exponent
-    ):
+    if value != value.quantize(RATIO_QUANTUM):
         raise ValueError(f"{field_name} must align to {RATIO_QUANTUM}")
 
 

@@ -283,7 +283,20 @@ def _normalize_source_summaries(
                 "source_summaries must contain "
                 "PaperStrategyRecommendationHistorySourceSummary values",
             )
-    return summaries
+    return tuple(_clone_source_summary(summary) for summary in summaries)
+
+
+def _clone_source_summary(
+    summary: PaperStrategyRecommendationHistorySourceSummary,
+) -> PaperStrategyRecommendationHistorySourceSummary:
+    return PaperStrategyRecommendationHistorySourceSummary(
+        generated_at=summary.generated_at,
+        config_version=summary.config_version,
+        candidate_count=summary.candidate_count,
+        recommend_count=summary.recommend_count,
+        watch_count=summary.watch_count,
+        reject_count=summary.reject_count,
+    )
 
 
 def _order_source_summaries(

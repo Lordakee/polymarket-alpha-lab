@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 from decimal import Decimal
 from importlib import import_module
 from pathlib import Path
@@ -383,6 +383,44 @@ def test_empty_required_logs_yield_empty_trend_states(tmp_path):
         PaperStrategyEvidenceTrendGapRow(gap_name, 0, None)
         for gap_name in EVIDENCE_GAP_NAMES
     )
+
+
+def test_config_version_requires_exact_string_type():
+    class ConfigVersion(str):
+        pass
+
+    with pytest.raises(ValueError, match="config_version must be a string"):
+        _config(config_version=ConfigVersion("local-observability-trends-v0"))
+
+
+def test_report_direct_constructor_normalizes_generated_at_to_utc(tmp_path):
+    cycle_log, trade_log, nav_log = _write_empty_logs(tmp_path)
+    source_report = _run(
+        cycle_log=cycle_log,
+        trade_log=trade_log,
+        nav_log=nav_log,
+    )
+    _Config, LocalObservabilityTrendsReport, _runner = _runner_api()
+    generated_at = datetime(
+        2026,
+        6,
+        17,
+        14,
+        0,
+        tzinfo=timezone(-timedelta(hours=4)),
+    )
+
+    report = LocalObservabilityTrendsReport(
+        generated_at=generated_at,
+        config_version=source_report.config_version,
+        strategy_evidence_trend=source_report.strategy_evidence_trend,
+        outcome_freshness=source_report.outcome_freshness,
+        nav_risk_trend=source_report.nav_risk_trend,
+        paper_trade_cost_trend=source_report.paper_trade_cost_trend,
+    )
+
+    assert report.generated_at == GENERATED_AT
+    assert report.generated_at.tzinfo is UTC
 
 
 def test_absent_optional_logs_yield_empty_outcome_and_single_gap_snapshot(tmp_path):

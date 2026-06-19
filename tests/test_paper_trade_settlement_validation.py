@@ -353,6 +353,31 @@ def test_settlement_validation_computes_win_loss_rows_and_nested_evidence_report
     assert report.forecast_evidence_report.edge_observation_count == 2
 
 
+def test_settlement_validation_pays_winning_no_token_from_traded_side_outcome():
+    no_winner = _record(
+        1,
+        outcome_name="NO",
+        filled_size=Decimal("8"),
+        average_price=Decimal("0.3500"),
+        fair_value=Decimal("0.6500"),
+    )
+    outcome_report = _outcome_report(_observation(no_winner, Decimal("1")))
+
+    report = _report(no_winner, outcome_report=outcome_report)
+
+    assert report.status == "observed"
+    assert report.total_entry_notional == Decimal("2.8000")
+    assert report.total_settlement_payout == Decimal("8")
+    assert report.total_realized_pnl == Decimal("5.2000")
+    row = report.rows[0]
+    assert row.outcome_name == "NO"
+    assert row.actual_outcome_value == Decimal("1")
+    assert row.settlement_payout == Decimal("8")
+    assert row.realized_pnl == Decimal("5.2000")
+    assert row.return_ratio == Decimal("1.857143")
+    assert row.probability_loss == Decimal("0.122500")
+
+
 def test_settlement_validation_flags_sell_side_trades_as_unsupported_without_position_context():
     sell = _record(
         1,
@@ -422,6 +447,33 @@ def test_settlement_validation_aggregates_realized_metrics_and_positive_edge_hit
     assert report.positive_edge_hit_rate == Decimal("0.500000")
 
 
+def test_settlement_validation_includes_zero_edge_values_in_forecast_evidence():
+    trade = _record(
+        1,
+        filled_size=Decimal("7"),
+        unfilled_size=Decimal("3"),
+        average_price=Decimal("0.5000"),
+        theoretical_edge=Decimal("0"),
+        cost_adjusted_edge=Decimal("0"),
+    )
+    outcome_report = _outcome_report(_observation(trade, Decimal("1")))
+
+    report = _report(
+        trade,
+        outcome_report=outcome_report,
+        generated_at=GENERATED_AT + timedelta(seconds=1),
+    )
+
+    assert report.status == "observed"
+    assert report.forecast_evidence_report is not None
+    assert report.forecast_evidence_report.edge_observation_count == 1
+    assert report.forecast_evidence_report.mean_edge_gap_ratio == Decimal("0.000000")
+    assert report.forecast_evidence_report.positive_edge_hit_rate == Decimal("1.000000")
+    assert report.forecast_evidence_report.worst_residual_exposure_ratio == Decimal(
+        "0.300000",
+    )
+
+
 def test_settlement_validation_marks_insufficient_sample_below_config_threshold():
     trade = _record(1)
     outcome_report = _outcome_report(_observation(trade, Decimal("1")))
@@ -436,16 +488,21 @@ def test_settlement_validation_marks_insufficient_sample_below_config_threshold(
 
 def test_settlement_validation_flags_duplicate_outcomes_for_same_trade_key():
     trade = _record(1)
+    latest_duplicate_observed_at = GENERATED_AT + timedelta(seconds=1)
     outcome_report = _outcome_report(
         _observation(trade, Decimal("1"), observed_at=GENERATED_AT),
         _observation(
             trade,
             Decimal("0"),
-            observed_at=GENERATED_AT + timedelta(seconds=1),
+            observed_at=latest_duplicate_observed_at,
         ),
     )
 
-    report = _report(trade, outcome_report=outcome_report)
+    report = _report(
+        trade,
+        outcome_report=outcome_report,
+        generated_at=latest_duplicate_observed_at,
+    )
 
     assert report.status == "quality_flags"
     assert report.resolved_count == 0
@@ -613,10 +670,10 @@ def test_settlement_validation_normalizes_datetimes_to_utc():
     report = _report(
         trade,
         outcome_report=outcome_report,
-        generated_at=datetime(2026, 6, 18, 8, 0, tzinfo=eastern),
+        generated_at=datetime(2026, 6, 18, 9, 0, tzinfo=eastern),
     )
 
-    assert report.generated_at == GENERATED_AT
+    assert report.generated_at == datetime(2026, 6, 18, 13, 0, tzinfo=UTC)
     assert report.first_trade_decision_at == datetime(2026, 6, 18, 12, 30, tzinfo=UTC)
     assert report.latest_trade_decision_at == datetime(2026, 6, 18, 12, 30, tzinfo=UTC)
     assert report.first_observed_at == GENERATED_AT
@@ -723,3 +780,141 @@ def test_settlement_validation_report_rejects_status_inconsistent_with_counts():
 
     with pytest.raises(ValueError, match="status must match"):
         replace(report, status="pending")
+
+
+def test_settlement_validation_row_rejects_observed_pnl_math_inconsistency():
+    with pytest.raises(ValueError, match="realized_pnl"):
+        _row(realized_pnl=Decimal("5.0000"))
+    with pytest.raises(ValueError, match="return_ratio"):
+        _row(return_ratio=Decimal("1.400000"))
+    with pytest.raises(ValueError, match="probability_loss"):
+        _row(probability_loss=Decimal("0.100000"))
+
+
+def test_settlement_validation_report_rejects_timestamp_bounds_inconsistent_with_counts():
+    trade = _record(1)
+    report = _report(trade, outcome_report=_outcome_report(_observation(trade, Decimal("1"))))
+
+    with pytest.raises(ValueError, match="trade timestamp bounds"):
+        replace(report, latest_trade_decision_at=report.first_trade_decision_at - timedelta(seconds=1))
+    with pytest.raises(ValueError, match="observed timestamp bounds"):
+        replace(report, latest_observed_at=report.first_observed_at - timedelta(seconds=1))
+    with pytest.raises(ValueError, match="first_trade_decision_at"):
+        replace(report, first_trade_decision_at=None)
+    with pytest.raises(ValueError, match="first_observed_at"):
+        replace(report, first_observed_at=None)
+
+
+def test_settlement_validation_rejects_future_source_evidence():
+    future_trade = _record(
+        1,
+        decision_timestamp=GENERATED_AT + timedelta(minutes=1),
+    )
+    with pytest.raises(ValueError, match="latest_trade_decision_at"):
+        _report(future_trade, outcome_report=_outcome_report(pending_count=1))
+
+    trade = _record(2)
+    future_observation = _observation(
+        trade,
+        Decimal("1"),
+        observed_at=GENERATED_AT + timedelta(minutes=1),
+    )
+    with pytest.raises(
+        ValueError,
+        match="outcome_report.forecast_evidence_report.first_observed_at",
+    ):
+        _report(trade, outcome_report=_outcome_report(future_observation))
+
+    base_outcome_report = _outcome_report(_observation(trade, Decimal("1")))
+    future_outcome_generated_at = GENERATED_AT + timedelta(minutes=1)
+    future_outcome_report = replace(
+        base_outcome_report,
+        generated_at=future_outcome_generated_at,
+        forecast_evidence_report=replace(
+            base_outcome_report.forecast_evidence_report,
+            generated_at=future_outcome_generated_at,
+        ),
+    )
+    with pytest.raises(ValueError, match="outcome_report.generated_at"):
+        _report(trade, outcome_report=future_outcome_report)
+
+
+def test_settlement_validation_report_revalidates_derived_metrics_against_rows():
+    trade = _record(1)
+    report = _report(trade, outcome_report=_outcome_report(_observation(trade, Decimal("1"))))
+
+    invalid_changes = (
+        {"win_rate": Decimal("0.000000")},
+        {"positive_return_rate": Decimal("0.000000")},
+        {"mean_probability_loss": Decimal("0.000000")},
+        {"mean_return_ratio": Decimal("0.000000")},
+        {"mean_cost_adjusted_edge": Decimal("0.000000")},
+        {"positive_edge_hit_rate": Decimal("0.000000")},
+    )
+    for change in invalid_changes:
+        with pytest.raises(ValueError, match=next(iter(change))):
+            replace(report, **change)
+
+
+def test_settlement_validation_report_revalidates_nested_forecast_evidence():
+    trade = _record(1)
+    report = _report(trade, outcome_report=_outcome_report(_observation(trade, Decimal("1"))))
+
+    future_evidence = replace(
+        report.forecast_evidence_report,
+        generated_at=GENERATED_AT + timedelta(minutes=1),
+    )
+    with pytest.raises(ValueError, match="forecast_evidence_report.generated_at"):
+        replace(report, forecast_evidence_report=future_evidence)
+
+    drifted_evidence = replace(
+        report.forecast_evidence_report,
+        edge_observation_count=0,
+    )
+    with pytest.raises(ValueError, match="edge observations"):
+        replace(report, forecast_evidence_report=drifted_evidence)
+
+
+def test_settlement_validation_report_revalidates_nested_forecast_evidence_derived_metrics():
+    winner = _record(
+        1,
+        filled_size=Decimal("10"),
+        average_price=Decimal("0.4000"),
+        fair_value=Decimal("0.7000"),
+    )
+    loser = _record(
+        2,
+        filled_size=Decimal("10"),
+        average_price=Decimal("0.6000"),
+        fair_value=Decimal("0.3000"),
+    )
+    report = _report(
+        winner,
+        loser,
+        outcome_report=_outcome_report(
+            _observation(winner, Decimal("1")),
+            _observation(loser, Decimal("0")),
+        ),
+    )
+
+    drifted_probability_loss = replace(
+        report.forecast_evidence_report,
+        mean_probability_loss=Decimal("0.0000"),
+    )
+    with pytest.raises(ValueError, match="mean_probability_loss"):
+        replace(report, forecast_evidence_report=drifted_probability_loss)
+
+    drifted_edge_hit_rate = replace(
+        report.forecast_evidence_report,
+        positive_edge_hit_rate=Decimal("1.0000"),
+    )
+    with pytest.raises(ValueError, match="positive_edge_hit_rate"):
+        replace(report, forecast_evidence_report=drifted_edge_hit_rate)
+
+
+def test_settlement_validation_row_rejects_unquantized_report_probability_fields():
+    with pytest.raises(ValueError, match="predicted_probability"):
+        _row(
+            predicted_probability=Decimal("0.7000004"),
+            probability_loss=Decimal("0.090000"),
+        )

@@ -240,6 +240,46 @@ def test_forecast_calibration_trend_counts_status_rows_with_quantized_ratios():
     )
 
 
+def test_forecast_calibration_trend_allocates_non_terminating_status_ratios_exactly():
+    reports = (
+        _empty_calibration_report(datetime(2026, 6, 18, 11, 0, tzinfo=UTC)),
+        _calibration_report(
+            generated_at=datetime(2026, 6, 18, 12, 0, tzinfo=UTC),
+            probabilities=(Decimal("0.8000"), Decimal("0.2000")),
+            actuals=(Decimal("1"), Decimal("0")),
+            min_observation_count=3,
+        ),
+        _calibration_report(
+            generated_at=datetime(2026, 6, 18, 13, 0, tzinfo=UTC),
+            probabilities=(Decimal("0.8000"), Decimal("0.2000")),
+            actuals=(Decimal("1"), Decimal("0")),
+            min_observation_count=2,
+            max_expected_calibration_error=Decimal("0.250000"),
+        ),
+    )
+
+    report = _trend_report(*reports)
+
+    assert tuple(row.report_ratio for row in report.status_rows) == (
+        Decimal("0.333334"),
+        Decimal("0.333333"),
+        Decimal("0.333333"),
+        Decimal("0.000000"),
+    )
+    assert sum((row.report_ratio for row in report.status_rows), Decimal("0")) == Decimal(
+        "1.000000"
+    )
+
+
+def test_forecast_calibration_trend_rejects_reports_after_trend_generated_at():
+    future_report = _empty_calibration_report(
+        datetime(2026, 6, 18, 15, 1, tzinfo=UTC),
+    )
+
+    with pytest.raises(ValueError, match="latest_report_generated_at"):
+        _trend_report(future_report, generated_at=GENERATED_AT)
+
+
 def test_forecast_calibration_trend_resets_streaks_when_latest_is_observed():
     report = _trend_report(
         _calibration_report(
@@ -374,6 +414,20 @@ def test_forecast_calibration_trend_rejects_source_reports_with_nonfinal_flags(
         )
 
 
+def test_forecast_calibration_trend_rejects_source_reports_with_all_hard_flags_false():
+    calibration_report = _empty_calibration_report(GENERATED_AT)
+    object.__setattr__(calibration_report, "paper_only", False)
+    object.__setattr__(calibration_report, "report_only", False)
+    object.__setattr__(calibration_report, "readonly", False)
+
+    with pytest.raises(ValueError, match="paper_only"):
+        build_paper_forecast_calibration_trend_report(
+            (calibration_report,),
+            config=_config(),
+            generated_at=GENERATED_AT,
+        )
+
+
 def test_forecast_calibration_trend_dataclasses_are_frozen_and_revalidate_flags():
     report = _trend_report(_empty_calibration_report(GENERATED_AT))
 
@@ -424,6 +478,121 @@ def test_forecast_calibration_trend_report_revalidates_status_rows_and_streaks()
         replace(report, consecutive_quality_flag_count=0)
 
 
+def test_forecast_calibration_trend_revalidates_latest_status_row_membership():
+    report = _trend_report(
+        _calibration_report(
+            generated_at=GENERATED_AT,
+            probabilities=(Decimal("0.9000"), Decimal("0.9000")),
+            actuals=(Decimal("0"), Decimal("0")),
+            min_observation_count=2,
+        ),
+    )
+    rows_without_latest = (
+        PaperForecastCalibrationTrendStatusRow(
+            "empty_calibration_history",
+            1,
+            Decimal("1.000000"),
+        ),
+        PaperForecastCalibrationTrendStatusRow(
+            "insufficient_calibration_sample",
+            0,
+            Decimal("0.000000"),
+        ),
+        PaperForecastCalibrationTrendStatusRow(
+            "calibration_evidence_observed",
+            0,
+            Decimal("0.000000"),
+        ),
+        PaperForecastCalibrationTrendStatusRow(
+            "calibration_quality_flags",
+            0,
+            Decimal("0.000000"),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="latest_status"):
+        replace(report, status_rows=rows_without_latest)
+
+
+def test_forecast_calibration_trend_revalidates_streaks_against_status_rows():
+    first = _calibration_report(
+        generated_at=datetime(2026, 6, 18, 12, 0, tzinfo=UTC),
+        probabilities=(Decimal("0.8000"), Decimal("0.8000")),
+        actuals=(Decimal("0"), Decimal("0")),
+        min_observation_count=2,
+    )
+    latest = _calibration_report(
+        generated_at=datetime(2026, 6, 18, 13, 0, tzinfo=UTC),
+        probabilities=(Decimal("0.9000"), Decimal("0.9000")),
+        actuals=(Decimal("0"), Decimal("0")),
+        min_observation_count=2,
+    )
+    report = _trend_report(first, latest)
+
+    with pytest.raises(ValueError, match="quality flag streak"):
+        replace(report, consecutive_quality_flag_count=3)
+
+
+def test_forecast_calibration_trend_revalidates_latest_status_metrics():
+    report = _trend_report(_empty_calibration_report(GENERATED_AT))
+
+    with pytest.raises(ValueError, match="latest_observation_count"):
+        replace(
+            report,
+            latest_status="calibration_quality_flags",
+            latest_observation_count=0,
+            latest_brier_score=None,
+            latest_mean_absolute_error=None,
+            latest_expected_calibration_error=None,
+            latest_max_bucket_error=None,
+            latest_bucket_count=0,
+            worst_observed_brier_score=None,
+            worst_observed_expected_calibration_error=None,
+            worst_observed_max_bucket_error=None,
+            consecutive_quality_flag_count=1,
+            status_rows=(
+                PaperForecastCalibrationTrendStatusRow(
+                    "empty_calibration_history",
+                    0,
+                    Decimal("0.000000"),
+                ),
+                PaperForecastCalibrationTrendStatusRow(
+                    "insufficient_calibration_sample",
+                    0,
+                    Decimal("0.000000"),
+                ),
+                PaperForecastCalibrationTrendStatusRow(
+                    "calibration_evidence_observed",
+                    0,
+                    Decimal("0.000000"),
+                ),
+                PaperForecastCalibrationTrendStatusRow(
+                    "calibration_quality_flags",
+                    1,
+                    Decimal("1.000000"),
+                ),
+            ),
+        )
+
+
+def test_forecast_calibration_trend_revalidates_metric_decimal_precision():
+    report = _trend_report(
+        _calibration_report(
+            generated_at=GENERATED_AT,
+            probabilities=(Decimal("0.8000"), Decimal("0.2000")),
+            actuals=(Decimal("1"), Decimal("0")),
+            min_observation_count=2,
+            max_expected_calibration_error=Decimal("0.250000"),
+        ),
+    )
+
+    compatible = replace(report, latest_brier_score=Decimal("0.0400000"))
+    assert compatible.latest_brier_score == Decimal("0.0400000")
+
+    with pytest.raises(ValueError, match="latest_brier_score"):
+        replace(report, latest_brier_score=Decimal("0.0400004"))
+
+
 def test_forecast_calibration_trend_config_rows_and_all_are_exact():
     from polymarket_alpha_lab import forecast_calibration_trend
 
@@ -442,5 +611,5 @@ def test_forecast_calibration_trend_config_rows_and_all_are_exact():
         PaperForecastCalibrationTrendStatusRow(
             "calibration_evidence_observed",
             1,
-            Decimal("0.1"),
+            Decimal("0.1000004"),
         )

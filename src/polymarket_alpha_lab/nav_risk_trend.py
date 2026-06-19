@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal
 
 from polymarket_alpha_lab.nav_risk_metrics import PaperNavRiskMetricsReport
@@ -64,20 +64,27 @@ class PaperNavRiskTrendReport:
     readonly: bool = True
 
     def __post_init__(self) -> None:
-        if type(self.generated_at) is not datetime:
-            raise ValueError("generated_at must be a datetime")
+        object.__setattr__(self, "generated_at", _as_utc("generated_at", self.generated_at))
         _require_canonical_string("config_version", self.config_version)
         _require_nonnegative_int(
             "nav_risk_report_count",
             self.nav_risk_report_count,
         )
-        _require_optional_datetime(
+        object.__setattr__(
+            self,
             "first_report_generated_at",
-            self.first_report_generated_at,
+            _as_optional_utc(
+                "first_report_generated_at",
+                self.first_report_generated_at,
+            ),
         )
-        _require_optional_datetime(
+        object.__setattr__(
+            self,
             "latest_report_generated_at",
-            self.latest_report_generated_at,
+            _as_optional_utc(
+                "latest_report_generated_at",
+                self.latest_report_generated_at,
+            ),
         )
         for field_name in (
             "latest_exit_nav",
@@ -121,10 +128,12 @@ def build_paper_nav_risk_trend_report(
 ) -> PaperNavRiskTrendReport:
     if type(config) is not PaperNavRiskTrendConfig:
         raise ValueError("config must be a PaperNavRiskTrendConfig")
-    if type(generated_at) is not datetime:
-        raise ValueError("generated_at must be a datetime")
+    generated_at = _as_utc("generated_at", generated_at)
 
     normalized_reports = _normalize_reports(reports)
+    for report in normalized_reports[:-1]:
+        if report.generated_at > generated_at:
+            raise ValueError("source report generated_at must not be after generated_at")
     report_count = len(normalized_reports)
     status_counts = _status_counts(normalized_reports)
     latest = normalized_reports[-1] if normalized_reports else None
@@ -197,6 +206,10 @@ def _normalize_reports(
             raise ValueError("source report paper_only must be True")
         if getattr(report, "report_only", True) is not True:
             raise ValueError("source report report_only must be True")
+        if getattr(report, "readonly", True) is not True:
+            raise ValueError("source report readonly must be True")
+        if report.nav_snapshot_count == 0:
+            raise ValueError("source report must contain NAV snapshots")
     return normalized
 
 
@@ -292,6 +305,9 @@ def _validate_report_consistency(report: PaperNavRiskTrendReport) -> None:
     else:
         if not timestamps_present:
             raise ValueError("non-empty trend report must have report timestamps")
+        _require_report_timestamps_not_after_generated_at(report)
+        _validate_latest_position_counts(report)
+        _validate_latest_metric_surface(report)
         latest_unexecutable_count = _latest_unexecutable_open_position_count(report)
         if latest_unexecutable_count == 0:
             expected_status = "latest_nav_risk_observed"
@@ -299,11 +315,141 @@ def _validate_report_consistency(report: PaperNavRiskTrendReport) -> None:
             expected_status = "latest_nav_has_unexecutable_positions"
         if report.status != expected_status:
             raise ValueError("status must match nav risk trend observations")
+        _validate_status_rows_match_latest_status(report)
         if latest_unexecutable_count == 0:
             if report.consecutive_unexecutable_open_position_count != 0:
                 raise ValueError("observed latest report must reset the streak")
         elif report.consecutive_unexecutable_open_position_count < 1:
             raise ValueError("unexecutable latest report requires a streak")
+        if (
+            report.consecutive_unexecutable_open_position_count
+            > report.nav_risk_report_count
+        ):
+            raise ValueError(
+                "consecutive_unexecutable_open_position_count must not exceed "
+                "nav_risk_report_count",
+            )
+        status_counts = _counts_from_status_rows(report.status_rows)
+        if (
+            report.consecutive_unexecutable_open_position_count
+            > status_counts["latest_nav_has_unexecutable_positions"]
+        ):
+            raise ValueError(
+                "consecutive_unexecutable_open_position_count must not exceed "
+                "unexecutable status rows",
+            )
+        _validate_worst_drawdown_consistency(report)
+
+
+def _validate_latest_metric_surface(report: PaperNavRiskTrendReport) -> None:
+    for field_name in (
+        "latest_exit_nav",
+        "latest_max_drawdown",
+        "latest_max_drawdown_pct",
+    ):
+        if getattr(report, field_name) is None:
+            raise ValueError(f"{field_name} is required when NAV risk reports exist")
+
+    if report.latest_open_position_count == 0:
+        _require_none(
+            "latest_largest_market_exposure_value",
+            report.latest_largest_market_exposure_value,
+        )
+        _require_none(
+            "latest_largest_market_exposure_share",
+            report.latest_largest_market_exposure_share,
+        )
+        return
+
+    if report.latest_largest_market_exposure_value is None:
+        raise ValueError(
+            "latest_largest_market_exposure_value is required when positions are open",
+        )
+    if report.latest_exit_nav > ZERO:
+        if report.latest_largest_market_exposure_share is None:
+            raise ValueError(
+                "latest_largest_market_exposure_share is required when positions "
+                "are open and latest_exit_nav is positive",
+            )
+    elif report.latest_largest_market_exposure_share is not None:
+        raise ValueError(
+            "latest_largest_market_exposure_share must be None when latest_exit_nav "
+            "is zero",
+        )
+
+
+def _require_report_timestamps_not_after_generated_at(
+    report: PaperNavRiskTrendReport,
+) -> None:
+    if _datetime_after(
+        "latest_report_generated_at",
+        report.latest_report_generated_at,
+        report.generated_at,
+        "generated_at",
+    ):
+        raise ValueError("latest_report_generated_at must not be after generated_at")
+    if _datetime_after(
+        "first_report_generated_at",
+        report.first_report_generated_at,
+        report.generated_at,
+        "generated_at",
+    ):
+        raise ValueError("first_report_generated_at must not be after generated_at")
+
+
+def _datetime_after(
+    field_name: str,
+    value: datetime | None,
+    limit: datetime,
+    limit_name: str,
+) -> bool:
+    if value is None:
+        return False
+    try:
+        return value > limit
+    except TypeError as exc:
+        raise ValueError(f"{field_name} must be comparable to {limit_name}") from exc
+
+
+def _validate_latest_position_counts(report: PaperNavRiskTrendReport) -> None:
+    if (
+        report.latest_fully_executable_count
+        + report.latest_partially_executable_count
+        + report.latest_no_exit_depth_count
+        > report.latest_open_position_count
+    ):
+        raise ValueError(
+            "latest position counts must not exceed latest_open_position_count",
+        )
+
+
+def _validate_status_rows_match_latest_status(report: PaperNavRiskTrendReport) -> None:
+    counts = _counts_from_status_rows(report.status_rows)
+    if counts["empty_nav_risk_history"] != 0:
+        raise ValueError("status_rows must not count empty history when reports exist")
+    if counts[report.status] < 1:
+        raise ValueError("status_rows must include the latest report status")
+
+
+def _validate_worst_drawdown_consistency(report: PaperNavRiskTrendReport) -> None:
+    if report.latest_max_drawdown_pct is None:
+        return
+    if report.worst_observed_max_drawdown_pct is None:
+        raise ValueError(
+            "worst_observed_max_drawdown_pct must include latest_max_drawdown_pct",
+        )
+    if report.worst_observed_max_drawdown_pct < report.latest_max_drawdown_pct:
+        raise ValueError(
+            "worst_observed_max_drawdown_pct must not be below latest_max_drawdown_pct",
+        )
+    if (
+        report.nav_risk_report_count == 1
+        and report.worst_observed_max_drawdown_pct != report.latest_max_drawdown_pct
+    ):
+        raise ValueError(
+            "worst_observed_max_drawdown_pct must match latest_max_drawdown_pct "
+            "for a single report",
+        )
 
 
 def _latest_unexecutable_open_position_count(report: PaperNavRiskTrendReport) -> int:
@@ -362,6 +508,20 @@ def _counts_from_status_rows(
     return {row.status: row.report_count for row in rows}
 
 
+def _as_utc(field_name: str, value: datetime) -> datetime:
+    if type(value) is not datetime:
+        raise ValueError(f"{field_name} must be a datetime")
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
+def _as_optional_utc(field_name: str, value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    return _as_utc(field_name, value)
+
+
 def _require_canonical_string(field_name: str, value: str) -> None:
     if type(value) is not str:
         raise ValueError(f"{field_name} must be a string")
@@ -417,6 +577,11 @@ def _require_optional_ratio_decimal(
         raise ValueError(f"{field_name} must be at most one")
     if value != value.quantize(RATIO_QUANTUM):
         raise ValueError(f"{field_name} must use ratio quantum")
+
+
+def _require_none(field_name: str, value: object) -> None:
+    if value is not None:
+        raise ValueError(f"{field_name} must be None")
 
 
 __all__ = (

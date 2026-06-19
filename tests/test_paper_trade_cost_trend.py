@@ -56,6 +56,39 @@ def _cost_audit(**overrides) -> PaperTradeCostAuditReport:
         "largest_single_trade_cost_drag": Decimal("2.000000"),
     }
     values.update(overrides)
+
+    trade_count = values["trade_count"]
+    if trade_count == 0:
+        if "total_filled_size" not in overrides:
+            values["total_filled_size"] = Decimal("0")
+        if "total_requested_size" not in overrides:
+            values["total_requested_size"] = Decimal("0")
+        for field_name in (
+            "fill_rate",
+            "mean_theoretical_edge",
+            "mean_cost_adjusted_edge",
+            "mean_edge_cost_drag",
+            "total_edge_cost_drag",
+            "mean_research_slippage",
+            "mean_fill_slippage",
+            "largest_single_trade_cost_drag",
+        ):
+            if field_name not in overrides:
+                values[field_name] = None
+        if "partial_fill_count" not in overrides:
+            values["partial_fill_count"] = 0
+        if "negative_cost_adjusted_edge_count" not in overrides:
+            values["negative_cost_adjusted_edge_count"] = 0
+    elif "total_filled_size" not in overrides or "total_requested_size" not in overrides:
+        requested_size = Decimal(trade_count * 100).quantize(Decimal("0.0001"))
+        values["total_requested_size"] = requested_size
+        if values["fill_rate"] is None:
+            values["total_filled_size"] = requested_size
+            values["fill_rate"] = Decimal("1.000000")
+        else:
+            values["total_filled_size"] = (requested_size * values["fill_rate"]).quantize(
+                Decimal("0.000001"),
+            )
     return PaperTradeCostAuditReport(**values)
 
 
@@ -282,6 +315,18 @@ def test_cost_trend_rejects_non_paper_report_only_cost_audits(flag_name):
         build_paper_trade_cost_trend_report(
             (cost_audit,),
             config=_config(),
+                generated_at=GENERATED_AT,
+            )
+
+
+def test_cost_trend_rejects_non_readonly_cost_audits():
+    cost_audit = _cost_audit()
+    object.__setattr__(cost_audit, "readonly", False)
+
+    with pytest.raises(ValueError, match="reports must contain readonly"):
+        build_paper_trade_cost_trend_report(
+            (cost_audit,),
+            config=_config(),
             generated_at=GENERATED_AT,
         )
 
@@ -290,9 +335,9 @@ def test_cost_trend_rejects_source_reports_with_impossible_negative_edge_count()
     impossible = _cost_audit(
         generated_at=datetime(2026, 6, 17, 12, 0, tzinfo=UTC),
         trade_count=0,
-        negative_cost_adjusted_edge_count=1,
         mean_edge_cost_drag=None,
     )
+    object.__setattr__(impossible, "negative_cost_adjusted_edge_count", 1)
 
     with pytest.raises(
         ValueError,
@@ -350,8 +395,109 @@ def test_cost_trend_report_revalidates_status_and_rows():
                 *trend.status_rows[1:],
             ),
         )
+    missing_status_row = replace(
+        trend.status_rows[2],
+        status_count=0,
+        status_ratio=Decimal("0.000000"),
+    )
+    extra_observed_row = replace(
+        trend.status_rows[1],
+        status_count=1,
+        status_ratio=Decimal("1.000000"),
+    )
+    with pytest.raises(ValueError, match="status_rows"):
+        replace(
+            trend,
+            status_rows=(
+                trend.status_rows[0],
+                extra_observed_row,
+                missing_status_row,
+            ),
+        )
     with pytest.raises(ValueError, match="worst_observed_mean_edge_cost_drag"):
         replace(trend, worst_observed_mean_edge_cost_drag=None)
+
+
+def test_cost_trend_report_revalidates_report_timestamp_order():
+    future_source = _cost_audit(generated_at=datetime(2026, 6, 17, 18, 0, tzinfo=UTC))
+
+    with pytest.raises(ValueError, match="latest_report_generated_at"):
+        build_paper_trade_cost_trend_report(
+            (future_source,),
+            config=_config(),
+            generated_at=GENERATED_AT,
+        )
+
+
+def test_cost_trend_report_revalidates_direct_constructor_health_metrics():
+    trend = _trend_report(
+        _cost_audit(
+            generated_at=datetime(2026, 6, 17, 12, 0, tzinfo=UTC),
+            negative_cost_adjusted_edge_count=1,
+            mean_edge_cost_drag=Decimal("0.020000"),
+        ),
+        _cost_audit(
+            generated_at=datetime(2026, 6, 17, 13, 0, tzinfo=UTC),
+            negative_cost_adjusted_edge_count=0,
+            mean_edge_cost_drag=Decimal("0.010000"),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="worst_observed_mean_edge_cost_drag"):
+        replace(
+            trend,
+            latest_mean_edge_cost_drag=Decimal("0.010000"),
+            worst_observed_mean_edge_cost_drag=Decimal("0.009999"),
+        )
+    with pytest.raises(ValueError, match="worst_observed_negative_cost_adjusted_edge_count"):
+        replace(
+            trend,
+            latest_negative_cost_adjusted_edge_count=1,
+            worst_observed_negative_cost_adjusted_edge_count=0,
+            consecutive_negative_cost_adjusted_edge_count=1,
+            status="latest_negative_cost_adjusted_edges",
+            status_rows=(
+                replace(
+                    trend.status_rows[0],
+                    status_count=0,
+                    status_ratio=Decimal("0.000000"),
+                ),
+                replace(
+                    trend.status_rows[1],
+                    status_count=1,
+                    status_ratio=Decimal("0.500000"),
+                ),
+                replace(
+                    trend.status_rows[2],
+                    status_count=1,
+                    status_ratio=Decimal("0.500000"),
+                ),
+            ),
+        )
+    with pytest.raises(ValueError, match="negative cost-adjusted edge streak"):
+        replace(
+            trend,
+            latest_negative_cost_adjusted_edge_count=1,
+            consecutive_negative_cost_adjusted_edge_count=2,
+            status="latest_negative_cost_adjusted_edges",
+            status_rows=(
+                replace(
+                    trend.status_rows[0],
+                    status_count=0,
+                    status_ratio=Decimal("0.000000"),
+                ),
+                replace(
+                    trend.status_rows[1],
+                    status_count=1,
+                    status_ratio=Decimal("0.500000"),
+                ),
+                replace(
+                    trend.status_rows[2],
+                    status_count=1,
+                    status_ratio=Decimal("0.500000"),
+                ),
+            ),
+        )
 
 
 def test_cost_trend_config_and_rows_reject_invalid_values():

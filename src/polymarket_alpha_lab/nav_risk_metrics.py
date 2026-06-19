@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal
 
 from polymarket_alpha_lab.positions import PaperNavSnapshot
@@ -37,13 +37,18 @@ class PaperNavRiskExposureRow:
         _require_canonical_string("condition_id", self.condition_id)
         _require_canonical_string("market_slug", self.market_slug)
         _require_positive_int("token_count", self.token_count)
-        _require_nonnegative_decimal("open_size", self.open_size)
+        _require_positive_decimal("open_size", self.open_size)
         _require_nonnegative_decimal("cost_basis", self.cost_basis)
         _require_nonnegative_decimal("exit_value", self.exit_value)
         _require_optional_nonnegative_decimal(
             "share_of_exit_nav",
             self.share_of_exit_nav,
         )
+        _require_optional_ratio_decimal("share_of_exit_nav", self.share_of_exit_nav)
+        if self.cost_basis > self.open_size:
+            raise ValueError("cost_basis must not exceed open_size")
+        if self.exit_value > self.open_size:
+            raise ValueError("exit_value must not exceed open_size")
 
 
 @dataclass(frozen=True)
@@ -77,12 +82,19 @@ class PaperNavRiskMetricsReport:
     report_only: bool = True
 
     def __post_init__(self) -> None:
-        if not isinstance(self.generated_at, datetime):
-            raise ValueError("generated_at must be a datetime")
+        object.__setattr__(self, "generated_at", _as_utc("generated_at", self.generated_at))
         _require_canonical_string("config_version", self.config_version)
         _require_nonnegative_int("nav_snapshot_count", self.nav_snapshot_count)
-        _require_optional_datetime("first_marked_at", self.first_marked_at)
-        _require_optional_datetime("last_marked_at", self.last_marked_at)
+        object.__setattr__(
+            self,
+            "first_marked_at",
+            _as_optional_utc("first_marked_at", self.first_marked_at),
+        )
+        object.__setattr__(
+            self,
+            "last_marked_at",
+            _as_optional_utc("last_marked_at", self.last_marked_at),
+        )
         if (self.first_marked_at is None) != (self.last_marked_at is None):
             raise ValueError("first_marked_at and last_marked_at must match presence")
         for field_name in (
@@ -118,6 +130,7 @@ class PaperNavRiskMetricsReport:
             "exposure_rows",
             _normalize_exposure_rows(self.exposure_rows),
         )
+        _validate_report_consistency(self)
         if self.paper_only is not True:
             raise ValueError("paper_only must be True")
         if self.report_only is not True:
@@ -132,8 +145,7 @@ def build_paper_nav_risk_metrics_report(
 ) -> PaperNavRiskMetricsReport:
     if type(config) is not PaperNavRiskMetricsConfig:
         raise ValueError("config must be a PaperNavRiskMetricsConfig")
-    if not isinstance(generated_at, datetime):
-        raise ValueError("generated_at must be a datetime")
+    generated_at = _as_utc("generated_at", generated_at)
 
     snapshots = _normalize_nav_snapshots(
         nav_snapshots,
@@ -344,6 +356,139 @@ def _largest_exposure(
     return largest.exit_value, largest.share_of_exit_nav
 
 
+def _sum_decimal(values: Iterable[Decimal]) -> Decimal:
+    return sum(values, ZERO)
+
+
+def _exposure_totals(
+    exposure_rows: tuple[PaperNavRiskExposureRow, ...],
+) -> tuple[int, Decimal, Decimal, Decimal]:
+    return (
+        sum(row.token_count for row in exposure_rows),
+        _sum_decimal(row.open_size for row in exposure_rows),
+        _sum_decimal(row.cost_basis for row in exposure_rows),
+        _sum_decimal(row.exit_value for row in exposure_rows),
+    )
+
+
+def _validate_report_consistency(report: PaperNavRiskMetricsReport) -> None:
+    if report.nav_snapshot_count == 0:
+        _validate_empty_report(report)
+        return
+
+    if report.first_marked_at is None or report.last_marked_at is None:
+        raise ValueError("marked_at fields are required when NAV snapshots exist")
+    for field_name in (
+        "latest_exit_nav",
+        "latest_starting_cash",
+        "latest_cash_balance",
+        "latest_total_cost_basis",
+        "latest_unrealized_exit_pnl",
+        "peak_exit_nav",
+        "trough_exit_nav",
+        "max_drawdown",
+        "max_drawdown_pct",
+        "pending_notional",
+    ):
+        if getattr(report, field_name) is None:
+            raise ValueError(f"{field_name} is required when NAV snapshots exist")
+    _require_positive_decimal("latest_starting_cash", report.latest_starting_cash)
+
+    if report.open_position_count == 0:
+        if report.exposure_rows:
+            raise ValueError("exposure_rows must be empty when no positions are open")
+        _require_zero_decimal("pending_notional", report.pending_notional)
+        _require_zero_decimal("latest_total_cost_basis", report.latest_total_cost_basis)
+        _require_zero_decimal(
+            "latest_unrealized_exit_pnl",
+            report.latest_unrealized_exit_pnl,
+        )
+        if report.latest_cash_balance != report.latest_exit_nav:
+            raise ValueError("latest_exit_nav must equal cash balance plus exposure value")
+        _require_none("largest_market_exposure_value", report.largest_market_exposure_value)
+        _require_none("largest_market_exposure_share", report.largest_market_exposure_share)
+        _require_zero("fully_executable_count", report.fully_executable_count)
+        _require_zero("partially_executable_count", report.partially_executable_count)
+        _require_zero("no_exit_depth_count", report.no_exit_depth_count)
+        return
+
+    token_count, open_size, cost_basis, exit_value = _exposure_totals(report.exposure_rows)
+    if token_count != report.open_position_count:
+        raise ValueError("open_position_count must match exposure row token counts")
+    if (
+        report.fully_executable_count
+        + report.partially_executable_count
+        + report.no_exit_depth_count
+        != report.open_position_count
+    ):
+        raise ValueError("mark status counts must sum to open_position_count")
+    if report.latest_total_cost_basis != cost_basis:
+        raise ValueError("latest_total_cost_basis must match exposure row cost_basis")
+    if report.pending_notional != cost_basis:
+        raise ValueError("pending_notional must match latest_total_cost_basis")
+    if report.latest_exit_nav is not None:
+        for row in report.exposure_rows:
+            if row.share_of_exit_nav != _optional_ratio(row.exit_value, report.latest_exit_nav):
+                raise ValueError("share_of_exit_nav must match latest_exit_nav")
+    if report.latest_cash_balance is not None and report.latest_exit_nav is not None:
+        if report.latest_cash_balance + exit_value != report.latest_exit_nav:
+            raise ValueError("latest_exit_nav must equal cash balance plus exposure value")
+    if report.latest_unrealized_exit_pnl != exit_value - cost_basis:
+        raise ValueError("latest_unrealized_exit_pnl must match exposure row exit PnL")
+    if report.latest_starting_cash is not None and report.latest_cash_balance is not None:
+        realized_pnl = (
+            report.latest_exit_nav
+            - report.latest_starting_cash
+            - report.latest_unrealized_exit_pnl
+        )
+        if report.latest_cash_balance + report.latest_total_cost_basis - realized_pnl != (
+            report.latest_starting_cash
+        ):
+            raise ValueError("latest_starting_cash must match report accounting identity")
+    if open_size < exit_value:
+        raise ValueError("exposure row open_size must cover exit value")
+
+    largest_value, largest_share = _largest_exposure(report.exposure_rows)
+    if report.largest_market_exposure_value != largest_value:
+        raise ValueError("largest_market_exposure_value must match exposure rows")
+    if report.largest_market_exposure_share != largest_share:
+        raise ValueError("largest_market_exposure_share must match exposure rows")
+
+
+def _validate_empty_report(report: PaperNavRiskMetricsReport) -> None:
+    for field_name in (
+        "first_marked_at",
+        "last_marked_at",
+        "latest_exit_nav",
+        "latest_starting_cash",
+        "latest_cash_balance",
+        "latest_total_cost_basis",
+        "latest_unrealized_exit_pnl",
+        "peak_exit_nav",
+        "trough_exit_nav",
+        "cumulative_return",
+        "max_drawdown",
+        "max_drawdown_pct",
+        "worst_nav_delta",
+        "nav_return_volatility",
+        "pending_notional",
+        "largest_market_exposure_value",
+        "largest_market_exposure_share",
+    ):
+        if getattr(report, field_name) is not None:
+            raise ValueError("empty NAV risk metrics report cannot include populated metrics")
+    for field_name in (
+        "open_position_count",
+        "fully_executable_count",
+        "partially_executable_count",
+        "no_exit_depth_count",
+    ):
+        if getattr(report, field_name) != 0:
+            raise ValueError("empty NAV risk metrics report cannot include populated metrics")
+    if report.exposure_rows:
+        raise ValueError("empty NAV risk metrics report cannot include populated metrics")
+
+
 def _optional_ratio(numerator: Decimal, denominator: Decimal) -> Decimal | None:
     if denominator <= ZERO:
         return None
@@ -365,6 +510,20 @@ def _normalize_exposure_rows(
         if type(row) is not PaperNavRiskExposureRow:
             raise ValueError("exposure_rows must contain PaperNavRiskExposureRow values")
     return rows
+
+
+def _as_utc(field_name: str, value: datetime) -> datetime:
+    if type(value) is not datetime:
+        raise ValueError(f"{field_name} must be a datetime")
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
+def _as_optional_utc(field_name: str, value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    return _as_utc(field_name, value)
 
 
 def _require_canonical_string(field_name: str, value: str) -> None:
@@ -418,6 +577,12 @@ def _require_nonnegative_decimal(field_name: str, value: Decimal) -> None:
         raise ValueError(f"{field_name} must be nonnegative")
 
 
+def _require_positive_decimal(field_name: str, value: Decimal) -> None:
+    _require_decimal(field_name, value)
+    if value <= ZERO:
+        raise ValueError(f"{field_name} must be positive")
+
+
 def _require_optional_nonnegative_decimal(
     field_name: str,
     value: Decimal | None,
@@ -425,6 +590,29 @@ def _require_optional_nonnegative_decimal(
     if value is None:
         return
     _require_nonnegative_decimal(field_name, value)
+
+
+def _require_optional_ratio_decimal(field_name: str, value: Decimal | None) -> None:
+    if value is None:
+        return
+    _require_nonnegative_decimal(field_name, value)
+    if value > Decimal("1"):
+        raise ValueError(f"{field_name} must be between 0 and 1")
+
+
+def _require_none(field_name: str, value: object) -> None:
+    if value is not None:
+        raise ValueError(f"{field_name} must be None")
+
+
+def _require_zero(field_name: str, value: int) -> None:
+    if value != 0:
+        raise ValueError(f"{field_name} must be zero")
+
+
+def _require_zero_decimal(field_name: str, value: Decimal | None) -> None:
+    if value != ZERO:
+        raise ValueError(f"{field_name} must be zero")
 
 
 __all__ = (

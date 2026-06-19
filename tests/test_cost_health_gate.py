@@ -279,6 +279,112 @@ def test_cost_health_gate_blocks_negative_net_edge_from_edge_cost_trend():
     )
 
 
+def test_cost_health_gate_consumes_edge_cost_summary_trend_metrics_directly():
+    first_generated_at = datetime(
+        2026,
+        6,
+        18,
+        10,
+        0,
+        tzinfo=timezone(timedelta(hours=-2)),
+    )
+    latest_generated_at = datetime(2026, 6, 18, 13, 30, tzinfo=UTC)
+    trend = _edge_cost_trend(
+        generated_at=datetime(2026, 6, 18, 15, 0, tzinfo=UTC),
+        edge_cost_report_count=3,
+        first_report_generated_at=first_generated_at,
+        latest_report_generated_at=latest_generated_at,
+        latest_mean_theoretical_edge_ratio=Decimal("0.044000"),
+        latest_mean_executable_edge_ratio=Decimal("0.012000"),
+        latest_mean_edge_cost_drag=Decimal("0.015000"),
+        worst_observed_mean_edge_cost_drag=Decimal("0.029000"),
+        largest_negative_executable_edge_count=4,
+        consecutive_quality_flag_count=2,
+        status_rows=(
+            PaperEdgeCostSummaryTrendStatusRow(
+                "empty_edge_cost_history",
+                0,
+                Decimal("0.000000"),
+            ),
+            PaperEdgeCostSummaryTrendStatusRow(
+                "insufficient_edge_cost_sample",
+                1,
+                Decimal("0.333333"),
+            ),
+            PaperEdgeCostSummaryTrendStatusRow(
+                "edge_cost_evidence_observed",
+                0,
+                Decimal("0.000000"),
+            ),
+            PaperEdgeCostSummaryTrendStatusRow(
+                "edge_cost_quality_flags",
+                2,
+                Decimal("0.666667"),
+            ),
+        ),
+    )
+
+    report = _gate_report(
+        trend,
+        config=_config(
+            max_average_cost_drag=Decimal("0.028000"),
+            min_net_edge_after_cost=Decimal("0.010000"),
+        ),
+    )
+    rows = {row.gate_name: row for row in report.gate_rows}
+
+    assert report.status == "paper_cost_health_blocked"
+    assert report.source_report_kind == "paper_edge_cost_summary_trend"
+    assert report.source_report_count == 3
+    assert report.first_source_generated_at == datetime(2026, 6, 18, 12, 0, tzinfo=UTC)
+    assert report.latest_source_generated_at == latest_generated_at
+    assert rows["data_completeness"].observed_value == 3
+    assert rows["average_cost_drag"].status == "blocked"
+    assert rows["average_cost_drag"].observed_value == Decimal("0.029000")
+    assert rows["average_cost_drag"].threshold_value == Decimal("0.028000")
+    assert rows["average_cost_drag"].reason_codes == (
+        "average_cost_drag_above_threshold",
+    )
+    assert rows["net_edge_after_cost"].status == "pass"
+    assert rows["net_edge_after_cost"].observed_value == Decimal("0.012000")
+    assert rows["net_edge_after_cost"].threshold_value == Decimal("0.010000")
+    assert rows["net_edge_after_cost"].reason_codes == (
+        "net_edge_after_cost_within_threshold",
+    )
+    assert rows["spread_drag"].status == "watch"
+    assert rows["spread_drag"].observed_value is None
+    assert rows["spread_drag"].threshold_value == Decimal("0.010000")
+    assert rows["spread_drag"].reason_codes == ("spread_drag_missing",)
+    assert rows["negative_net_edge_streak"].status == "watch"
+    assert rows["negative_net_edge_streak"].observed_value is None
+    assert rows["negative_net_edge_streak"].threshold_value == 0
+    assert rows["negative_net_edge_streak"].reason_codes == (
+        "negative_net_edge_streak_unsupported",
+    )
+    assert report.reason_codes == (
+        "average_cost_drag_above_threshold",
+        "spread_drag_missing",
+        "negative_net_edge_streak_unsupported",
+    )
+    assert report.paper_only is True
+    assert report.report_only is True
+    assert report.readonly is True
+
+    object.__setattr__(trend, "paper_only", False)
+    with pytest.raises(ValueError, match="paper_only"):
+        _gate_report(trend)
+
+    object.__setattr__(trend, "paper_only", True)
+    object.__setattr__(trend, "report_only", False)
+    with pytest.raises(ValueError, match="report_only"):
+        _gate_report(trend)
+
+    object.__setattr__(trend, "report_only", True)
+    object.__setattr__(trend, "readonly", False)
+    with pytest.raises(ValueError, match="readonly"):
+        _gate_report(trend)
+
+
 def test_cost_health_gate_empty_source_blocks_and_keeps_metrics_from_passing():
     report = _gate_report(())
 

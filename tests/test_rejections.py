@@ -58,6 +58,178 @@ def rejected_decision(packet=None):
     )
 
 
+@pytest.mark.parametrize(
+    "field_name",
+    [
+        "model_probability",
+        "bid",
+        "ask",
+        "midpoint",
+        "expected_entry_price",
+        "fair_value_estimate",
+        "theoretical_edge",
+    ],
+)
+def test_risk_gate_rejects_bool_for_numeric_research_fields(field_name):
+    packet = complete_packet(
+        confidence=Decimal("0.80"),
+        cost_adjusted_edge=Decimal("0.020"),
+        **{field_name: True},
+    )
+
+    decision = evaluate_research_packet_risk(
+        packet,
+        RiskGateConfig(config_version="v1"),
+    )
+
+    assert decision.accepted is False
+    assert [reason.code for reason in decision.reasons] == ["incomplete_packet"]
+    assert decision.reasons[0].observed_value == field_name
+
+
+def test_risk_gate_reports_missing_numeric_fields_in_stable_packet_order():
+    packet = complete_packet(
+        model_probability=True,
+        confidence=float("nan"),
+        cost_adjusted_edge=Decimal("0.020"),
+        max_executable_size=Decimal("0"),
+    )
+
+    decision = evaluate_research_packet_risk(
+        packet,
+        RiskGateConfig(config_version="v1"),
+    )
+
+    assert decision.accepted is False
+    assert [reason.code for reason in decision.reasons] == ["incomplete_packet"]
+    assert (
+        decision.reasons[0].observed_value
+        == "model_probability,confidence,max_executable_size"
+    )
+
+
+def test_risk_gate_rejects_out_of_domain_probability_market_numerics():
+    packet = complete_packet(
+        model_probability=Decimal("1.01"),
+        confidence=Decimal("1.01"),
+        cost_adjusted_edge=Decimal("0.020"),
+        spread=Decimal("-0.01"),
+        slippage_estimate=Decimal("-0.001"),
+        max_executable_size=Decimal("0"),
+    )
+
+    decision = evaluate_research_packet_risk(
+        packet,
+        RiskGateConfig(config_version="v1"),
+    )
+
+    assert decision.accepted is False
+    assert [reason.code for reason in decision.reasons] == ["incomplete_packet"]
+    assert (
+        decision.reasons[0].observed_value
+        == "model_probability,confidence,spread,slippage_estimate,max_executable_size"
+    )
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    [
+        "model_probability",
+        "confidence",
+        "bid",
+        "ask",
+        "midpoint",
+        "expected_entry_price",
+        "fair_value_estimate",
+    ],
+)
+def test_risk_gate_rejects_each_out_of_domain_probability_field(field_name):
+    overrides = {
+        "confidence": Decimal("0.80"),
+        "cost_adjusted_edge": Decimal("0.020"),
+        "max_executable_size": Decimal("100"),
+        field_name: Decimal("1.01"),
+    }
+    packet = complete_packet(**overrides)
+
+    decision = evaluate_research_packet_risk(
+        packet,
+        RiskGateConfig(config_version="v1"),
+    )
+
+    assert decision.accepted is False
+    assert [reason.code for reason in decision.reasons] == ["incomplete_packet"]
+    assert decision.reasons[0].observed_value == field_name
+
+
+def test_risk_gate_canonicalizes_policy_strings_for_matching_and_reasons():
+    config = RiskGateConfig(
+        config_version="v1",
+        min_confidence=Decimal("0.50"),
+        min_cost_adjusted_edge=Decimal("0.00"),
+        allowed_strategy_types=(" Market_Quality ", "market_quality", "EVENT-DRIVEN"),
+        blocked_risk_tags=(" Liquidity ", "liquidity", "MANUAL-REVIEW"),
+    )
+    packet = complete_packet(
+        strategy_type="MARKET_QUALITY",
+        confidence=Decimal("0.80"),
+        cost_adjusted_edge=Decimal("0.020"),
+        risk_tags=(" manual-review ", "LIQUIDITY", "liquidity"),
+    )
+
+    decision = evaluate_research_packet_risk(packet, config)
+
+    assert config.allowed_strategy_types == ("market_quality", "event-driven")
+    assert config.blocked_risk_tags == ("liquidity", "manual-review")
+    assert decision.accepted is False
+    assert [reason.code for reason in decision.reasons] == [
+        "blocked_risk_tag",
+        "blocked_risk_tag",
+    ]
+    assert [reason.observed_value for reason in decision.reasons] == [
+        "manual-review",
+        "liquidity",
+    ]
+    assert [reason.threshold for reason in decision.reasons] == [
+        "liquidity,manual-review",
+        "liquidity,manual-review",
+    ]
+
+
+def test_risk_gate_emits_reasons_in_stable_policy_then_threshold_order():
+    config = RiskGateConfig(
+        config_version="v1",
+        min_confidence=Decimal("0.70"),
+        min_cost_adjusted_edge=Decimal("0.050"),
+        max_spread=Decimal("0.010"),
+        max_slippage_estimate=Decimal("0.005"),
+        min_max_executable_size=Decimal("200"),
+        allowed_strategy_types=("event-driven",),
+        blocked_risk_tags=("liquidity",),
+    )
+    packet = complete_packet(
+        strategy_type="market_quality",
+        risk_tags=("LIQUIDITY",),
+        confidence=Decimal("0.40"),
+        cost_adjusted_edge=Decimal("0.020"),
+        spread=Decimal("0.020"),
+        slippage_estimate=Decimal("0.010"),
+        max_executable_size=Decimal("100"),
+    )
+
+    decision = evaluate_research_packet_risk(packet, config)
+
+    assert [reason.code for reason in decision.reasons] == [
+        "strategy_not_allowed",
+        "blocked_risk_tag",
+        "low_confidence",
+        "low_cost_adjusted_edge",
+        "wide_spread",
+        "high_slippage",
+        "insufficient_executable_size",
+    ]
+
+
 def test_rejected_candidate_log_appends_jsonl_record(tmp_path):
     packet = complete_packet()
     decision = rejected_decision(packet)

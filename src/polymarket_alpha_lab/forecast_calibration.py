@@ -42,9 +42,9 @@ class PaperForecastCalibrationConfig:
             self.probability_bucket_width,
         )
         _require_nonnegative_int("min_observation_count", self.min_observation_count)
-        _require_nonnegative_ratio("max_brier_score", self.max_brier_score)
+        _require_probability("max_brier_score", self.max_brier_score)
         _require_ratio_quantum("max_brier_score", self.max_brier_score)
-        _require_nonnegative_ratio(
+        _require_probability(
             "max_expected_calibration_error",
             self.max_expected_calibration_error,
         )
@@ -88,6 +88,11 @@ class PaperForecastCalibrationBucket:
         _require_ratio_quantum("bucket_error", self.bucket_error)
         _require_probability("bucket_weight", self.bucket_weight)
         _require_ratio_quantum("bucket_weight", self.bucket_weight)
+        if self.bucket_error != _bucket_error(
+            self.mean_predicted_probability,
+            self.observed_frequency,
+        ):
+            raise ValueError("bucket_error must match bucket means")
         if self.bucket_label != _bucket_label(
             self.lower_probability,
             self.upper_probability,
@@ -192,6 +197,12 @@ class PaperForecastCalibrationReport:
                 != ONE.quantize(RATIO_QUANTUM)
             ):
                 raise ValueError("bucket weights must sum to 1.000000")
+            if tuple(bucket.bucket_weight for bucket in self.buckets) != (
+                _bucket_weights_from_counts(
+                    tuple(bucket.observation_count for bucket in self.buckets)
+                )
+            ):
+                raise ValueError("bucket weights must match bucket observation_count values")
             for field_name in (
                 "brier_score",
                 "mean_absolute_error",
@@ -208,6 +219,17 @@ class PaperForecastCalibrationReport:
                 bucket.bucket_error for bucket in self.buckets
             ):
                 raise ValueError("max_bucket_error must match buckets")
+            if self.brier_score > self.mean_absolute_error:
+                raise ValueError(
+                    "brier_score must not exceed mean_absolute_error",
+                )
+            if _exceeds_ratio_quantum_tolerance(
+                self.expected_calibration_error,
+                self.mean_absolute_error,
+            ):
+                raise ValueError(
+                    "mean_absolute_error must be at least expected_calibration_error",
+                )
         if self.paper_only is not True:
             raise ValueError("paper_only must be True")
         if self.report_only is not True:
@@ -321,8 +343,9 @@ def _build_buckets(
                 observation_count=len(items),
                 mean_predicted_probability=mean_predicted_probability,
                 observed_frequency=observed_frequency,
-                bucket_error=_quantize_ratio(
-                    abs(mean_predicted_probability - observed_frequency)
+                bucket_error=_bucket_error(
+                    mean_predicted_probability,
+                    observed_frequency,
                 ),
                 bucket_weight=bucket_weight,
             )
@@ -385,6 +408,13 @@ def _absolute_error(item: PaperForecastEvidenceObservation) -> Decimal:
     return abs(item.predicted_probability - item.actual_outcome_value)
 
 
+def _bucket_error(
+    mean_predicted_probability: Decimal,
+    observed_frequency: Decimal,
+) -> Decimal:
+    return _quantize_ratio(abs(mean_predicted_probability - observed_frequency))
+
+
 def _expected_calibration_error(
     buckets: tuple[PaperForecastCalibrationBucket, ...],
 ) -> Decimal | None:
@@ -393,6 +423,10 @@ def _expected_calibration_error(
     return _quantize_ratio(
         sum((bucket.bucket_weight * bucket.bucket_error for bucket in buckets), ZERO)
     )
+
+
+def _exceeds_ratio_quantum_tolerance(value: Decimal, upper_bound: Decimal) -> bool:
+    return value - upper_bound > RATIO_QUANTUM
 
 
 def _report_status(

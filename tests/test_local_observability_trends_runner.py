@@ -44,8 +44,9 @@ def _config(**overrides):
 
 
 def _cycle_report(index: int) -> PaperStrategyCycleReport:
+    generated_at = GENERATED_AT - timedelta(minutes=3 - index)
     return PaperStrategyCycleReport(
-        generated_at=GENERATED_AT + timedelta(minutes=index),
+        generated_at=generated_at,
         config_version="strategy-cycle-v1",
         scan_market_count=10,
         considered_count=0,
@@ -57,8 +58,9 @@ def _cycle_report(index: int) -> PaperStrategyCycleReport:
 
 
 def _nav_snapshot(index: int, *, exit_nav: Decimal) -> PaperNavSnapshot:
+    marked_at = GENERATED_AT - timedelta(minutes=3 - index)
     return PaperNavSnapshot(
-        marked_at=GENERATED_AT + timedelta(minutes=index),
+        marked_at=marked_at,
         starting_cash=Decimal("10000"),
         cash_balance=exit_nav,
         realized_pnl=exit_nav - Decimal("10000"),
@@ -71,9 +73,10 @@ def _nav_snapshot(index: int, *, exit_nav: Decimal) -> PaperNavSnapshot:
 
 
 def _trade_record(index: int, *, cost_adjusted_edge: Decimal) -> PaperTradeRecord:
+    trade_at = GENERATED_AT - timedelta(minutes=3 - index)
     return PaperTradeRecord(
         packet_id=f"pkt-{index}",
-        packet_created_at=GENERATED_AT + timedelta(minutes=index),
+        packet_created_at=trade_at,
         condition_id=f"0x{index:04x}",
         token_id=f"{index}",
         market_slug=f"market-{index}",
@@ -89,7 +92,7 @@ def _trade_record(index: int, *, cost_adjusted_edge: Decimal) -> PaperTradeRecor
         risk_tags=("liquidity",),
         rule_text_hash=HEX,
         resolution_source="Official source",
-        decision_timestamp_utc=GENERATED_AT + timedelta(minutes=index, seconds=30),
+        decision_timestamp_utc=trade_at + timedelta(seconds=30),
         model_probability=Decimal("0.6000"),
         confidence=Decimal("0.8000"),
         research_bid=Decimal("0.5000"),
@@ -114,7 +117,7 @@ def _trade_record(index: int, *, cost_adjusted_edge: Decimal) -> PaperTradeRecor
         fill_midpoint=Decimal("0.5200"),
         fill_spread=Decimal("0.0400"),
         fill_slippage_estimate=Decimal("0.006000"),
-        order_book_captured_at=GENERATED_AT + timedelta(minutes=index, seconds=20),
+        order_book_captured_at=trade_at + timedelta(seconds=20),
         account_equity_before_trade=Decimal("10000"),
         sizing_limiter="max_executable_size",
         planned_exit_rule="Hold to resolution.",
@@ -169,13 +172,14 @@ def _strategy_audit_report(
     *,
     status: str,
 ) -> PaperStrategyRiskAuditReport:
+    generated_at = GENERATED_AT - timedelta(minutes=3 - index) + timedelta(seconds=45)
     gate_status, pass_count, fail_count, incomplete_count = {
         "audit_ready": ("pass", 6, 0, 0),
         "insufficient_evidence": ("incomplete", 0, 0, 6),
         "blocked_by_risk": ("fail", 0, 6, 0),
     }[status]
     return PaperStrategyRiskAuditReport(
-        generated_at=GENERATED_AT + timedelta(minutes=index, seconds=45),
+        generated_at=generated_at,
         config_version="strategy-risk-audit-v0",
         status=status,
         gate_count=6,

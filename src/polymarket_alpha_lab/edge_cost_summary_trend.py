@@ -105,14 +105,17 @@ class PaperEdgeCostSummaryTrendReport:
         for field_name in (
             "latest_mean_theoretical_edge_ratio",
             "latest_mean_executable_edge_ratio",
-            "latest_mean_edge_cost_drag",
             "latest_mean_fill_probability",
             "latest_mean_residual_exposure_ratio",
             "latest_mean_paper_return_ratio",
-            "worst_observed_mean_edge_cost_drag",
             "worst_observed_mean_residual_exposure_ratio",
         ):
             _require_optional_decimal(field_name, getattr(self, field_name))
+        for field_name in (
+            "latest_mean_edge_cost_drag",
+            "worst_observed_mean_edge_cost_drag",
+        ):
+            _require_optional_nonnegative_decimal(field_name, getattr(self, field_name))
         for field_name in (
             "latest_negative_executable_edge_rate",
             "latest_low_fill_probability_rate",
@@ -672,6 +675,12 @@ def _require_optional_decimal(field_name: str, value: object) -> None:
     if value is None:
         return
     _require_decimal(field_name, value)
+
+
+def _require_optional_nonnegative_decimal(field_name: str, value: object) -> None:
+    _require_optional_decimal(field_name, value)
+    if value is not None and value < ZERO:
+        raise ValueError(f"{field_name} must be nonnegative")
 
 
 def _require_probability_decimal(field_name: str, value: object) -> None:

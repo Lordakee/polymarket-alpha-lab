@@ -133,6 +133,9 @@ def build_paper_trade_cost_trend_report(
         raise ValueError("generated_at must be a datetime")
 
     cost_audits = _normalize_cost_audit_reports(reports)
+    for report in cost_audits[:-1]:
+        if report.generated_at > generated_at:
+            raise ValueError("source report generated_at must not be after generated_at")
     report_count = len(cost_audits)
     status_counts = _status_counts(cost_audits)
     if not cost_audits:
@@ -204,6 +207,8 @@ def _normalize_cost_audit_reports(
             raise ValueError("reports must contain paper_only cost audit reports")
         if report.report_only is not True:
             raise ValueError("reports must contain report_only cost audit reports")
+        if report.readonly is not True:
+            raise ValueError("reports must contain readonly cost audit reports")
         if report.negative_cost_adjusted_edge_count > report.trade_count:
             raise ValueError(
                 "negative_cost_adjusted_edge_count must not exceed trade_count",
@@ -317,8 +322,15 @@ def _validate_report_consistency(report: PaperTradeCostTrendReport) -> None:
         raise ValueError("first_report_generated_at is required when reports exist")
     if report.latest_report_generated_at is None:
         raise ValueError("latest_report_generated_at is required when reports exist")
+    if report.latest_report_generated_at > report.generated_at:
+        raise ValueError("latest_report_generated_at must not be after generated_at")
+    if report.first_report_generated_at > report.generated_at:
+        raise ValueError("first_report_generated_at must not be after generated_at")
     if report.status == "empty_cost_audit_history":
         raise ValueError("status must match cost trend observations")
+    status_counts = _counts_from_status_rows(report.status_rows)
+    if status_counts[report.status] < 1:
+        raise ValueError("status_rows must include the latest status")
     if report.latest_negative_cost_adjusted_edge_count > report.latest_trade_count:
         raise ValueError(
             "latest_negative_cost_adjusted_edge_count must not exceed trades",
@@ -342,6 +354,13 @@ def _validate_report_consistency(report: PaperTradeCostTrendReport) -> None:
             raise ValueError("status must match latest negative cost-adjusted edges")
         if report.consecutive_negative_cost_adjusted_edge_count < 1:
             raise ValueError("negative latest report requires a streak")
+        if (
+            report.consecutive_negative_cost_adjusted_edge_count
+            > status_counts["latest_negative_cost_adjusted_edges"]
+        ):
+            raise ValueError(
+                "negative cost-adjusted edge streak must not exceed status rows",
+            )
     else:
         if report.latest_negative_cost_adjusted_edge_count != 0:
             raise ValueError("status must match latest negative cost-adjusted edges")

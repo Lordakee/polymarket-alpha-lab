@@ -172,7 +172,9 @@ def test_risk_gate_treats_nonpositive_executable_size_as_incomplete_packet():
 
     assert decision.accepted is False
     assert [reason.code for reason in decision.reasons] == ["incomplete_packet"]
-    assert "positive_max_executable_size" in str(decision.reasons[0].observed_value)
+    observed = str(decision.reasons[0].observed_value)
+    assert "max_executable_size" in observed
+    assert "positive_max_executable_size" not in observed
 
 
 def test_risk_gate_accepts_threshold_equal_values():

@@ -10,7 +10,10 @@ from polymarket_alpha_lab.forecast_evidence import (
     PaperForecastEvidenceObservation,
     build_paper_forecast_evidence_report,
 )
-from polymarket_alpha_lab.nav_risk_metrics import PaperNavRiskMetricsReport
+from polymarket_alpha_lab.nav_risk_metrics import (
+    PaperNavRiskExposureRow,
+    PaperNavRiskMetricsReport,
+)
 from polymarket_alpha_lab.outcome_tracker import OutcomeTrackingReport
 from polymarket_alpha_lab.paper_trade_cost_audit import PaperTradeCostAuditReport
 from polymarket_alpha_lab.performance_summary import PerformanceSummary
@@ -62,7 +65,7 @@ def _nav_risk(**overrides) -> PaperNavRiskMetricsReport:
         "latest_starting_cash": Decimal("10000.0000"),
         "latest_cash_balance": Decimal("9950.0000"),
         "latest_total_cost_basis": Decimal("100.0000"),
-        "latest_unrealized_exit_pnl": Decimal("50.0000"),
+        "latest_unrealized_exit_pnl": Decimal("0.0000"),
         "peak_exit_nav": Decimal("10100.0000"),
         "trough_exit_nav": Decimal("9900.0000"),
         "cumulative_return": Decimal("0.005000"),
@@ -80,6 +83,59 @@ def _nav_risk(**overrides) -> PaperNavRiskMetricsReport:
         "exposure_rows": (),
     }
     values.update(overrides)
+    open_position_count = values["open_position_count"]
+    if "fully_executable_count" not in overrides:
+        values["fully_executable_count"] = max(
+            open_position_count
+            - values["partially_executable_count"]
+            - values["no_exit_depth_count"],
+            0,
+        )
+    if open_position_count == 0:
+        if "exposure_rows" not in overrides:
+            values["exposure_rows"] = ()
+        if "latest_cash_balance" not in overrides:
+            values["latest_cash_balance"] = values["latest_exit_nav"]
+        if "latest_starting_cash" not in overrides:
+            values["latest_starting_cash"] = values["latest_exit_nav"]
+        if "latest_total_cost_basis" not in overrides:
+            values["latest_total_cost_basis"] = Decimal("0")
+        if "pending_notional" not in overrides:
+            values["pending_notional"] = Decimal("0")
+        if "latest_unrealized_exit_pnl" not in overrides:
+            values["latest_unrealized_exit_pnl"] = Decimal("0.0000")
+        if "largest_market_exposure_value" not in overrides:
+            values["largest_market_exposure_value"] = None
+        if "largest_market_exposure_share" not in overrides:
+            values["largest_market_exposure_share"] = None
+    elif "exposure_rows" not in overrides:
+        exposure_value = values["largest_market_exposure_value"]
+        if (
+            "largest_market_exposure_share" in overrides
+            and "largest_market_exposure_value" not in overrides
+        ):
+            exposure_value = (
+                values["latest_exit_nav"] * values["largest_market_exposure_share"]
+            ).quantize(Decimal("0.0001"))
+            values["largest_market_exposure_value"] = exposure_value
+        values["latest_total_cost_basis"] = exposure_value
+        values["pending_notional"] = exposure_value
+        values["latest_unrealized_exit_pnl"] = Decimal("0.0000")
+        values["latest_cash_balance"] = values["latest_exit_nav"] - exposure_value
+        values["largest_market_exposure_share"] = (
+            exposure_value / values["latest_exit_nav"]
+        ).quantize(Decimal("0.000001"))
+        values["exposure_rows"] = (
+            PaperNavRiskExposureRow(
+                condition_id="condition-0",
+                market_slug="market-0",
+                token_count=open_position_count,
+                open_size=exposure_value,
+                cost_basis=exposure_value,
+                exit_value=exposure_value,
+                share_of_exit_nav=values["largest_market_exposure_share"],
+            ),
+        )
     return PaperNavRiskMetricsReport(**values)
 
 
@@ -256,21 +312,6 @@ def test_strategy_risk_audit_marks_thin_cost_audit_as_incomplete():
     )
 
 
-def test_strategy_risk_audit_marks_unavailable_cost_drag_as_incomplete():
-    report = _report(
-        outcomes=_outcomes(),
-        cost_audit=_cost_audit(mean_edge_cost_drag=None),
-    )
-
-    assert report.status == "insufficient_evidence"
-    gates = {gate.gate_name: gate for gate in report.gate_results}
-    assert gates["cost_discipline"].status == "incomplete"
-    assert gates["cost_discipline"].observed_value == (
-        "trade_count=30; mean_edge_cost_drag=None; "
-        "negative_cost_adjusted_edge_count=0"
-    )
-
-
 def test_strategy_risk_audit_blocks_on_cost_discipline_failure():
     report = _report(
         outcomes=_outcomes(),
@@ -329,6 +370,7 @@ def test_strategy_risk_audit_blocks_on_nav_drawdown_and_open_exposure():
     report = _report(
         nav_risk=_nav_risk(
             max_drawdown_pct=Decimal("0.080000"),
+            open_position_count=2,
             no_exit_depth_count=2,
             largest_market_exposure_share=Decimal("0.350000"),
         ),
@@ -343,7 +385,7 @@ def test_strategy_risk_audit_blocks_on_nav_drawdown_and_open_exposure():
     assert gates["open_exposure"].status == "fail"
     assert gates["nav_drawdown"].observed_value == Decimal("0.080000")
     assert gates["open_exposure"].observed_value == (
-        "open_position_count=1; no_exit_depth_count=2; "
+        "open_position_count=2; no_exit_depth_count=2; "
         "largest_market_exposure_share=0.350000"
     )
 

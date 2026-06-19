@@ -9,7 +9,7 @@ execution, ranking, recommendations, trade instructions, or financial advice.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -104,8 +104,7 @@ class LocalObservabilityTrendsReport:
     readonly: bool = True
 
     def __post_init__(self) -> None:
-        if not isinstance(self.generated_at, datetime):
-            raise ValueError("generated_at must be a datetime")
+        object.__setattr__(self, "generated_at", _as_utc("generated_at", self.generated_at))
         _require_canonical_string("config_version", self.config_version)
         _require_exact_report(
             "strategy_evidence_trend",
@@ -358,7 +357,7 @@ def _require_exact_report(field_name: str, value: Any, expected_type: type) -> N
 
 
 def _require_canonical_string(field_name: str, value: Any) -> None:
-    if not isinstance(value, str):
+    if type(value) is not str:
         raise ValueError(f"{field_name} must be a string")
     if not value or value.strip() != value:
         raise ValueError(f"{field_name} must be a canonical nonblank string")
@@ -369,3 +368,11 @@ def _require_nonnegative_int(field_name: str, value: Any) -> None:
         raise ValueError(f"{field_name} must be a nonnegative integer")
     if value < 0:
         raise ValueError(f"{field_name} must be a nonnegative integer")
+
+
+def _as_utc(field_name: str, value: Any) -> datetime:
+    if type(value) is not datetime:
+        raise ValueError(f"{field_name} must be a datetime")
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)

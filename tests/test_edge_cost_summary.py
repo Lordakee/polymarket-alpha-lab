@@ -208,6 +208,32 @@ def test_edge_cost_summary_statuses_are_descriptive_sample_and_quality_states():
     assert observed.status == "edge_cost_evidence_observed"
 
 
+def test_edge_cost_summary_flags_quality_before_sample_shortfall():
+    report = build_paper_edge_cost_summary_report(
+        (
+            edge_observation(
+                1,
+                datetime(2026, 6, 1, tzinfo=UTC),
+                executable_edge_ratio=Decimal("-0.010000"),
+                fill_probability=Decimal("0.400000"),
+                residual_exposure_ratio=Decimal("0.300000"),
+            ),
+        ),
+        config=PaperEdgeCostSummaryConfig(
+            config_version="edge-cost-summary-test",
+            min_edge_observation_count=30,
+            min_fill_probability=Decimal("0.500000"),
+            max_residual_exposure_ratio=Decimal("0.250000"),
+        ),
+        generated_at=GENERATED_AT,
+    )
+
+    assert report.status == "edge_cost_quality_flags"
+    assert report.negative_executable_edge_count == 1
+    assert report.low_fill_probability_count == 1
+    assert report.high_residual_exposure_count == 1
+
+
 def test_edge_cost_summary_dataclasses_are_frozen_and_revalidate_final_flags():
     config = PaperEdgeCostSummaryConfig(config_version="edge-cost-summary-test")
     report = build_paper_edge_cost_summary_report(
@@ -271,6 +297,145 @@ def test_edge_cost_summary_report_revalidates_derived_rates_and_status():
     )
     with pytest.raises(ValueError, match="status"):
         replace(clean_report, status="edge_cost_quality_flags")
+
+
+def test_edge_cost_summary_empty_report_rejects_nonzero_direct_counts():
+    report = build_paper_edge_cost_summary_report(
+        (),
+        config=PaperEdgeCostSummaryConfig(
+            config_version="edge-cost-summary-test",
+            min_edge_observation_count=1,
+        ),
+        generated_at=GENERATED_AT,
+    )
+
+    with pytest.raises(ValueError, match="edge_observation_count"):
+        replace(report, negative_executable_edge_count=1)
+    with pytest.raises(ValueError, match="edge_observation_count"):
+        replace(report, low_fill_probability_count=1)
+    with pytest.raises(ValueError, match="edge_observation_count"):
+        replace(report, high_residual_exposure_count=1)
+    with pytest.raises(ValueError, match="edge_observation_count"):
+        replace(report, positive_paper_return_count=1)
+
+
+def test_edge_cost_summary_rejects_unquantized_decimal_thresholds_and_metrics():
+    with pytest.raises(ValueError, match="min_fill_probability"):
+        PaperEdgeCostSummaryConfig(
+            config_version="edge-cost-summary-test",
+            min_fill_probability=Decimal("0.5000001"),
+        )
+
+    report = build_paper_edge_cost_summary_report(
+        (edge_observation(1, datetime(2026, 6, 1, tzinfo=UTC)),),
+        config=PaperEdgeCostSummaryConfig(
+            config_version="edge-cost-summary-test",
+            min_edge_observation_count=1,
+        ),
+        generated_at=GENERATED_AT,
+    )
+
+    with pytest.raises(ValueError, match="mean_theoretical_edge_ratio"):
+        replace(report, mean_theoretical_edge_ratio=Decimal("0.0800001"))
+    with pytest.raises(ValueError, match="mean_fill_probability"):
+        replace(report, mean_fill_probability=Decimal("0.7000001"))
+
+
+def test_edge_cost_summary_report_rejects_unrealistic_cost_drag_metrics():
+    report = build_paper_edge_cost_summary_report(
+        (
+            edge_observation(
+                1,
+                datetime(2026, 6, 1, tzinfo=UTC),
+                theoretical_edge_ratio=Decimal("0.080000"),
+                executable_edge_ratio=Decimal("0.030000"),
+            ),
+            edge_observation(
+                2,
+                datetime(2026, 6, 2, tzinfo=UTC),
+                theoretical_edge_ratio=Decimal("0.040000"),
+                executable_edge_ratio=Decimal("0.020000"),
+            ),
+        ),
+        config=PaperEdgeCostSummaryConfig(
+            config_version="edge-cost-summary-test",
+            min_edge_observation_count=2,
+        ),
+        generated_at=GENERATED_AT,
+    )
+
+    with pytest.raises(ValueError, match="mean_edge_cost_drag"):
+        replace(report, mean_edge_cost_drag=Decimal("-0.000001"))
+    with pytest.raises(ValueError, match="mean_edge_cost_drag"):
+        replace(report, mean_edge_cost_drag=Decimal("0.030000"))
+
+
+def test_edge_cost_summary_report_rejects_out_of_range_fill_and_residual_metrics():
+    report = build_paper_edge_cost_summary_report(
+        (edge_observation(1, datetime(2026, 6, 1, tzinfo=UTC)),),
+        config=PaperEdgeCostSummaryConfig(
+            config_version="edge-cost-summary-test",
+            min_edge_observation_count=1,
+        ),
+        generated_at=GENERATED_AT,
+    )
+
+    with pytest.raises(ValueError, match="mean_fill_probability"):
+        replace(report, mean_fill_probability=Decimal("1.000001"))
+    with pytest.raises(ValueError, match="mean_residual_exposure_ratio"):
+        replace(report, mean_residual_exposure_ratio=Decimal("-0.000001"))
+
+
+def test_edge_cost_summary_accepts_independent_high_fill_and_residual_probabilities():
+    report = build_paper_edge_cost_summary_report(
+        (
+            edge_observation(
+                1,
+                datetime(2026, 6, 1, tzinfo=UTC),
+                fill_probability=Decimal("0.800000"),
+                residual_exposure_ratio=Decimal("0.300000"),
+            ),
+        ),
+        config=PaperEdgeCostSummaryConfig(
+            config_version="edge-cost-summary-test",
+            min_edge_observation_count=1,
+            min_fill_probability=Decimal("0.500000"),
+            max_residual_exposure_ratio=Decimal("0.250000"),
+        ),
+        generated_at=GENERATED_AT,
+    )
+
+    assert report.mean_fill_probability == Decimal("0.800000")
+    assert report.mean_residual_exposure_ratio == Decimal("0.300000")
+    assert report.high_residual_exposure_count == 1
+    assert report.high_residual_exposure_rate == Decimal("1.000000")
+    assert report.status == "edge_cost_quality_flags"
+
+
+def test_edge_cost_summary_report_rejects_negative_executable_mean_without_negative_count():
+    report = build_paper_edge_cost_summary_report(
+        (
+            edge_observation(
+                1,
+                datetime(2026, 6, 1, tzinfo=UTC),
+                executable_edge_ratio=Decimal("0.010000"),
+            ),
+            edge_observation(
+                2,
+                datetime(2026, 6, 2, tzinfo=UTC),
+                executable_edge_ratio=Decimal("0.020000"),
+            ),
+        ),
+        config=PaperEdgeCostSummaryConfig(
+            config_version="edge-cost-summary-test",
+            min_edge_observation_count=2,
+        ),
+        generated_at=GENERATED_AT,
+    )
+
+    assert report.negative_executable_edge_count == 0
+    with pytest.raises(ValueError, match="mean_executable_edge_ratio"):
+        replace(report, mean_executable_edge_ratio=Decimal("-0.000001"))
 
 
 def test_edge_cost_summary_rejects_non_decimal_thresholds_and_bad_inputs():

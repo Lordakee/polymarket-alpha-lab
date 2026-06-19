@@ -424,6 +424,8 @@ def _validate_report_consistency(report: PaperSettlementFreshnessGateReport) -> 
         row.reason for row in report.gate_rows if row.status == "watch"
     ):
         raise ValueError("watch_reasons must match gate_rows")
+    if report.source_kind == "outcome_tracking" and report.source_report_count != 1:
+        raise ValueError("source_report_count must be one for outcome_tracking source")
     if report.source_report_count == 0:
         if report.latest_check_generated_at is not None:
             raise ValueError("latest_check_generated_at must be absent without source")
@@ -440,9 +442,23 @@ def _validate_report_consistency(report: PaperSettlementFreshnessGateReport) -> 
             raise ValueError("latest_check_generated_at is required with source")
         if report.latest_check_age_hours is None:
             raise ValueError("latest_check_age_hours is required with source")
+    if report.pending_count > report.checked_market_count:
+        raise ValueError("pending_count must not exceed checked_market_count")
     if report.stale_pending_count > report.pending_count:
         raise ValueError("stale_pending_count must not exceed pending_count")
     _validate_gate_row_semantics(report)
+    if (
+        report.source_report_count > 0
+        and report.latest_check_generated_at is not None
+        and report.latest_check_age_hours
+        != _age_hours(
+            generated_at_utc=report.generated_at,
+            latest_check_generated_at=report.latest_check_generated_at,
+        )
+    ):
+        raise ValueError(
+            "latest_check_age_hours must match generated_at and latest_check_generated_at",
+        )
 
 
 def _validate_gate_row_semantics(report: PaperSettlementFreshnessGateReport) -> None:
@@ -456,10 +472,10 @@ def _validate_checking_coverage_row(
     report: PaperSettlementFreshnessGateReport,
     row: PaperSettlementFreshnessGateRow,
 ) -> None:
+    _require_int_gate_value("checking_coverage observed_value", row.observed_value)
+    _require_int_gate_value("checking_coverage threshold", row.threshold)
     if row.observed_value != report.checked_market_count:
         raise ValueError("checking_coverage observed_value must match checked_market_count")
-    if row.threshold is None:
-        raise ValueError("checking_coverage threshold is required")
     expected_status = (
         "watch"
         if report.source_report_count == 0
@@ -481,10 +497,10 @@ def _validate_pending_count_row(
     report: PaperSettlementFreshnessGateReport,
     row: PaperSettlementFreshnessGateRow,
 ) -> None:
+    _require_int_gate_value("pending_count observed_value", row.observed_value)
+    _require_int_gate_value("pending_count threshold", row.threshold)
     if row.observed_value != report.pending_count:
         raise ValueError("pending_count observed_value must match pending_count")
-    if row.threshold is None:
-        raise ValueError("pending_count threshold is required")
     expected_status = "block" if report.pending_count > row.threshold else "pass"
     _require_gate_row_status("pending_count", row.status, expected_status)
     expected_reason = (
@@ -499,12 +515,15 @@ def _validate_unresolved_age_row(
     report: PaperSettlementFreshnessGateReport,
     row: PaperSettlementFreshnessGateRow,
 ) -> None:
+    _require_optional_decimal_gate_value(
+        "unresolved_age observed_value",
+        row.observed_value,
+    )
+    _require_decimal_gate_value("unresolved_age threshold", row.threshold)
     if row.observed_value != report.latest_check_age_hours:
         raise ValueError(
             "unresolved_age observed_value must match latest_check_age_hours",
         )
-    if row.threshold is None:
-        raise ValueError("unresolved_age threshold is required")
     expected_stale_pending_count = (
         report.pending_count
         if report.pending_count > 0
@@ -540,6 +559,25 @@ def _require_gate_row_reason(
 ) -> None:
     if actual_reason != expected_reason:
         raise ValueError(f"{gate_name} reason must match observed values")
+
+
+def _require_int_gate_value(field_name: str, value: int | Decimal | None) -> None:
+    if type(value) is not int:
+        raise ValueError(f"{field_name} must be an integer")
+
+
+def _require_decimal_gate_value(field_name: str, value: int | Decimal | None) -> None:
+    if type(value) is not Decimal:
+        raise ValueError(f"{field_name} must be a Decimal")
+
+
+def _require_optional_decimal_gate_value(
+    field_name: str,
+    value: int | Decimal | None,
+) -> None:
+    if value is None:
+        return
+    _require_decimal_gate_value(field_name, value)
 
 
 def _normalize_gate_rows(

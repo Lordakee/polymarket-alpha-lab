@@ -166,6 +166,28 @@ def test_build_paper_forecast_calibration_report_marks_insufficient_evidence_bef
     assert report.status == "insufficient_calibration_sample"
 
 
+def test_build_paper_forecast_calibration_report_allows_ece_quantum_rounding():
+    report = build_paper_forecast_calibration_report(
+        [
+            probability_observation(1, probability=Decimal("0.0000"), actual=Decimal("0")),
+            probability_observation(2, probability=Decimal("0.0000"), actual=Decimal("1")),
+            probability_observation(3, probability=Decimal("0.0100"), actual=Decimal("1")),
+        ],
+        config=PaperForecastCalibrationConfig(
+            config_version="calibration-test",
+            probability_bucket_width=Decimal("1.0000"),
+            min_observation_count=3,
+            max_brier_score=Decimal("0.700000"),
+            max_expected_calibration_error=Decimal("0.700000"),
+        ),
+        generated_at=GENERATED_AT,
+    )
+
+    assert report.mean_absolute_error == Decimal("0.663333")
+    assert report.expected_calibration_error == Decimal("0.663334")
+    assert report.status == "calibration_evidence_observed"
+
+
 def test_build_paper_forecast_calibration_report_emits_exact_total_bucket_weight():
     report = build_paper_forecast_calibration_report(
         [
@@ -267,10 +289,20 @@ def test_forecast_calibration_dataclasses_reject_invalid_inputs_and_flags():
             config_version="calibration-test",
             max_brier_score=Decimal("0.2500004"),
         )
+    with pytest.raises(ValueError, match="max_brier_score"):
+        PaperForecastCalibrationConfig(
+            config_version="calibration-test",
+            max_brier_score=Decimal("1.000001"),
+        )
     with pytest.raises(ValueError, match="max_expected_calibration_error"):
         PaperForecastCalibrationConfig(
             config_version="calibration-test",
             max_expected_calibration_error=Decimal("0.1000004"),
+        )
+    with pytest.raises(ValueError, match="max_expected_calibration_error"):
+        PaperForecastCalibrationConfig(
+            config_version="calibration-test",
+            max_expected_calibration_error=Decimal("1.000001"),
         )
     with pytest.raises(ValueError, match="paper_only"):
         replace(
@@ -427,6 +459,20 @@ def test_forecast_calibration_bucket_rejects_subquantum_fields_and_label_mismatc
         replace(valid_calibration_report().buckets[0], bucket_label="mismatched")
 
 
+def test_forecast_calibration_bucket_rejects_error_that_does_not_match_means():
+    with pytest.raises(ValueError, match="bucket_error"):
+        PaperForecastCalibrationBucket(
+            bucket_label="0.0000-0.5000",
+            lower_probability=Decimal("0.0000"),
+            upper_probability=Decimal("0.5000"),
+            observation_count=1,
+            mean_predicted_probability=Decimal("0.200000"),
+            observed_frequency=Decimal("0.000000"),
+            bucket_error=Decimal("0.100000"),
+            bucket_weight=Decimal("1.000000"),
+        )
+
+
 def test_forecast_calibration_allocates_bucket_weights_without_negative_residual():
     from polymarket_alpha_lab.forecast_calibration import _bucket_weights_from_counts
 
@@ -461,6 +507,90 @@ def test_forecast_calibration_report_direct_construction_rejects_bucket_invarian
             mean_absolute_error=Decimal("0.200000"),
             expected_calibration_error=Decimal("0.200000"),
             max_bucket_error=Decimal("0.200000"),
+            bucket_count=1,
+            status="calibration_evidence_observed",
+            buckets=(bucket,),
+        )
+
+
+def test_forecast_calibration_report_rejects_bucket_weights_that_do_not_match_counts():
+    first_bucket = PaperForecastCalibrationBucket(
+        bucket_label="0.0000-0.5000",
+        lower_probability=Decimal("0.0000"),
+        upper_probability=Decimal("0.5000"),
+        observation_count=2,
+        mean_predicted_probability=Decimal("0.200000"),
+        observed_frequency=Decimal("0.000000"),
+        bucket_error=Decimal("0.200000"),
+        bucket_weight=Decimal("0.500000"),
+    )
+    second_bucket = PaperForecastCalibrationBucket(
+        bucket_label="0.5000-1.0000",
+        lower_probability=Decimal("0.5000"),
+        upper_probability=Decimal("1.0000"),
+        observation_count=1,
+        mean_predicted_probability=Decimal("0.800000"),
+        observed_frequency=Decimal("1.000000"),
+        bucket_error=Decimal("0.200000"),
+        bucket_weight=Decimal("0.500000"),
+    )
+
+    with pytest.raises(ValueError, match="bucket weights"):
+        PaperForecastCalibrationReport(
+            generated_at=GENERATED_AT,
+            config_version="calibration-test",
+            observation_count=3,
+            first_observed_at=datetime(2026, 9, 1, tzinfo=UTC),
+            last_observed_at=datetime(2026, 9, 3, tzinfo=UTC),
+            brier_score=Decimal("0.040000"),
+            mean_absolute_error=Decimal("0.200000"),
+            expected_calibration_error=Decimal("0.200000"),
+            max_bucket_error=Decimal("0.200000"),
+            bucket_count=2,
+            status="calibration_evidence_observed",
+            buckets=(first_bucket, second_bucket),
+        )
+
+
+def test_forecast_calibration_report_rejects_impossible_probability_loss_metrics():
+    bucket = PaperForecastCalibrationBucket(
+        bucket_label="0.0000-1.0000",
+        lower_probability=Decimal("0.0000"),
+        upper_probability=Decimal("1.0000"),
+        observation_count=1,
+        mean_predicted_probability=Decimal("0.500000"),
+        observed_frequency=Decimal("0.000000"),
+        bucket_error=Decimal("0.500000"),
+        bucket_weight=Decimal("1.000000"),
+    )
+
+    with pytest.raises(ValueError, match="brier_score"):
+        PaperForecastCalibrationReport(
+            generated_at=GENERATED_AT,
+            config_version="calibration-test",
+            observation_count=1,
+            first_observed_at=datetime(2026, 9, 1, tzinfo=UTC),
+            last_observed_at=datetime(2026, 9, 1, tzinfo=UTC),
+            brier_score=Decimal("0.600000"),
+            mean_absolute_error=Decimal("0.500000"),
+            expected_calibration_error=Decimal("0.500000"),
+            max_bucket_error=Decimal("0.500000"),
+            bucket_count=1,
+            status="calibration_evidence_observed",
+            buckets=(bucket,),
+        )
+
+    with pytest.raises(ValueError, match="mean_absolute_error"):
+        PaperForecastCalibrationReport(
+            generated_at=GENERATED_AT,
+            config_version="calibration-test",
+            observation_count=1,
+            first_observed_at=datetime(2026, 9, 1, tzinfo=UTC),
+            last_observed_at=datetime(2026, 9, 1, tzinfo=UTC),
+            brier_score=Decimal("0.250000"),
+            mean_absolute_error=Decimal("0.400000"),
+            expected_calibration_error=Decimal("0.500000"),
+            max_bucket_error=Decimal("0.500000"),
             bucket_count=1,
             status="calibration_evidence_observed",
             buckets=(bucket,),

@@ -99,11 +99,14 @@ class PaperEdgeCostSummaryReport:
             "mean_theoretical_edge_ratio",
             "mean_executable_edge_ratio",
             "mean_edge_cost_drag",
-            "mean_fill_probability",
-            "mean_residual_exposure_ratio",
             "mean_paper_return_ratio",
         ):
-            _require_optional_decimal(field_name, getattr(self, field_name))
+            _require_optional_ratio_decimal(field_name, getattr(self, field_name))
+        for field_name in (
+            "mean_fill_probability",
+            "mean_residual_exposure_ratio",
+        ):
+            _require_optional_probability_decimal(field_name, getattr(self, field_name))
         for field_name in (
             "negative_executable_edge_rate",
             "low_fill_probability_rate",
@@ -281,14 +284,14 @@ def _summary_status(
 ) -> str:
     if edge_observation_count == 0:
         return "empty_edge_cost_history"
-    if edge_observation_count < config.min_edge_observation_count:
-        return "insufficient_edge_cost_sample"
     if (
         negative_executable_edge_count > 0
         or low_fill_probability_count > 0
         or high_residual_exposure_count > 0
     ):
         return "edge_cost_quality_flags"
+    if edge_observation_count < config.min_edge_observation_count:
+        return "insufficient_edge_cost_sample"
     return "edge_cost_evidence_observed"
 
 
@@ -310,6 +313,14 @@ def _validate_report_consistency(report: PaperEdgeCostSummaryReport) -> None:
         ):
             if getattr(report, field_name) is not None:
                 raise ValueError(f"{field_name} must be absent without observations")
+        for field_name in (
+            "negative_executable_edge_count",
+            "low_fill_probability_count",
+            "high_residual_exposure_count",
+            "positive_paper_return_count",
+        ):
+            if getattr(report, field_name) != 0:
+                raise ValueError(f"{field_name} must be zero without edge_observation_count")
         if report.status != "empty_edge_cost_history":
             raise ValueError("status must match edge cost observations")
         return
@@ -365,6 +376,30 @@ def _validate_report_consistency(report: PaperEdgeCostSummaryReport) -> None:
     for field_name, count, rate in expected_rates:
         if rate != _rate(count, report.edge_observation_count):
             raise ValueError(f"{field_name} must match edge observation count")
+    if report.mean_edge_cost_drag is not None and report.mean_edge_cost_drag < ZERO:
+        raise ValueError("mean_edge_cost_drag must be nonnegative")
+    if (
+        report.mean_executable_edge_ratio is not None
+        and report.mean_executable_edge_ratio < ZERO
+        and report.negative_executable_edge_count == 0
+    ):
+        raise ValueError(
+            "mean_executable_edge_ratio cannot be negative without negative observations",
+        )
+    if (
+        report.mean_theoretical_edge_ratio is not None
+        and report.mean_executable_edge_ratio is not None
+        and report.mean_edge_cost_drag is not None
+        and report.mean_edge_cost_drag + RATIO_QUANTUM
+        < _quantize_ratio(
+            max(
+                report.mean_theoretical_edge_ratio
+                - report.mean_executable_edge_ratio,
+                ZERO,
+            ),
+        )
+    ):
+        raise ValueError("mean_edge_cost_drag must cover mean executable drag")
     quality_count = (
         report.negative_executable_edge_count
         + report.low_fill_probability_count
@@ -412,10 +447,18 @@ def _require_optional_decimal(field_name: str, value: object) -> None:
     _require_decimal(field_name, value)
 
 
+def _require_optional_ratio_decimal(field_name: str, value: object) -> None:
+    _require_optional_decimal(field_name, value)
+    if value is not None and value != value.quantize(RATIO_QUANTUM):
+        raise ValueError(f"{field_name} must align to {RATIO_QUANTUM}")
+
+
 def _require_probability_decimal(field_name: str, value: object) -> None:
     _require_decimal(field_name, value)
     if value < ZERO or value > ONE:
         raise ValueError(f"{field_name} must be between 0 and 1")
+    if value != value.quantize(RATIO_QUANTUM):
+        raise ValueError(f"{field_name} must align to {RATIO_QUANTUM}")
 
 
 def _require_optional_probability_decimal(field_name: str, value: object) -> None:

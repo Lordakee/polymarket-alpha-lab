@@ -1,5 +1,5 @@
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest
@@ -210,6 +210,180 @@ def test_strategy_recommendation_history_orders_input_by_generated_at_then_confi
     assert history.latest_recommend_count == 0
     assert history.latest_watch_count == 1
     assert history.latest_reject_count == 0
+
+
+def test_strategy_recommendation_history_orders_sources_after_timezone_normalization():
+    earlier = _recommendation_report(
+        datetime(2026, 6, 18, 10, 0, tzinfo=UTC),
+        config_version="strategy-recommendation-v1",
+        rows=(_row("market-a", action="recommend"),),
+    )
+    later = _recommendation_report(
+        datetime(2026, 6, 18, 12, 30, tzinfo=UTC),
+        config_version="strategy-recommendation-v2",
+        rows=(_row("market-b", action="watch"),),
+    )
+    same_as_earlier_in_non_utc_zone = datetime(
+        2026,
+        6,
+        18,
+        6,
+        0,
+        tzinfo=timezone(timedelta(hours=-4)),
+    )
+    object.__setattr__(earlier, "generated_at", same_as_earlier_in_non_utc_zone)
+
+    history = _history_report(later, earlier)
+
+    assert tuple(summary.generated_at for summary in history.source_summaries) == (
+        datetime(2026, 6, 18, 10, 0, tzinfo=UTC),
+        datetime(2026, 6, 18, 12, 30, tzinfo=UTC),
+    )
+    assert history.first_generated_at == datetime(2026, 6, 18, 10, 0, tzinfo=UTC)
+    assert history.latest_generated_at == datetime(2026, 6, 18, 12, 30, tzinfo=UTC)
+    assert history.latest_config_version == "strategy-recommendation-v2"
+
+
+def test_strategy_recommendation_history_normalizes_direct_source_summary_timestamps():
+    earlier = PaperStrategyRecommendationHistorySourceSummary(
+        generated_at=datetime(2026, 6, 18, 10, 0, tzinfo=UTC),
+        config_version="strategy-recommendation-v1",
+        candidate_count=1,
+        recommend_count=1,
+        watch_count=0,
+        reject_count=0,
+    )
+    later = PaperStrategyRecommendationHistorySourceSummary(
+        generated_at=datetime(2026, 6, 18, 11, 0, tzinfo=UTC),
+        config_version="strategy-recommendation-v2",
+        candidate_count=1,
+        recommend_count=0,
+        watch_count=1,
+        reject_count=0,
+    )
+    object.__setattr__(
+        earlier,
+        "generated_at",
+        datetime(2026, 6, 18, 6, 0, tzinfo=timezone(timedelta(hours=-4))),
+    )
+
+    history = PaperStrategyRecommendationHistoryReport(
+        generated_at=GENERATED_AT,
+        config_version="recommendation-history-v0",
+        source_report_count=2,
+        total_candidate_count=2,
+        total_recommend_count=1,
+        total_watch_count=1,
+        total_reject_count=0,
+        first_generated_at=datetime(2026, 6, 18, 10, 0, tzinfo=UTC),
+        latest_generated_at=later.generated_at,
+        latest_config_version="strategy-recommendation-v2",
+        latest_candidate_count=1,
+        latest_recommend_count=0,
+        latest_watch_count=1,
+        latest_reject_count=0,
+        source_summaries=(earlier, later),
+    )
+
+    assert tuple(summary.generated_at for summary in history.source_summaries) == (
+        datetime(2026, 6, 18, 10, 0, tzinfo=UTC),
+        datetime(2026, 6, 18, 11, 0, tzinfo=UTC),
+    )
+    assert history.source_summaries[0].generated_at.tzinfo is UTC
+
+
+def test_strategy_recommendation_history_allows_duplicate_source_summary_keys_for_stable_ties():
+    generated_at = datetime(2026, 6, 18, 10, 0, tzinfo=UTC)
+    first = PaperStrategyRecommendationHistorySourceSummary(
+        generated_at=generated_at,
+        config_version="strategy-recommendation-v0",
+        candidate_count=1,
+        recommend_count=1,
+        watch_count=0,
+        reject_count=0,
+    )
+    duplicate = PaperStrategyRecommendationHistorySourceSummary(
+        generated_at=generated_at,
+        config_version="strategy-recommendation-v0",
+        candidate_count=1,
+        recommend_count=0,
+        watch_count=1,
+        reject_count=0,
+    )
+
+    history = PaperStrategyRecommendationHistoryReport(
+        generated_at=GENERATED_AT,
+        config_version="recommendation-history-v0",
+        source_report_count=2,
+        total_candidate_count=2,
+        total_recommend_count=1,
+        total_watch_count=1,
+        total_reject_count=0,
+        first_generated_at=generated_at,
+        latest_generated_at=generated_at,
+        latest_config_version="strategy-recommendation-v0",
+        latest_candidate_count=1,
+        latest_recommend_count=0,
+        latest_watch_count=1,
+        latest_reject_count=0,
+        source_summaries=(first, duplicate),
+    )
+
+    assert history.source_summaries == (first, duplicate)
+    assert history.latest_watch_count == 1
+
+
+def test_strategy_recommendation_history_builder_preserves_duplicate_key_stable_ties():
+    generated_at = datetime(2026, 6, 18, 10, 0, tzinfo=UTC)
+    recommend_report = _recommendation_report(
+        generated_at,
+        config_version="strategy-recommendation-v0",
+        rows=(_row("market-a", action="recommend"),),
+    )
+    watch_report = _recommendation_report(
+        generated_at,
+        config_version="strategy-recommendation-v0",
+        rows=(_row("market-b", action="watch"),),
+    )
+
+    first_order = _history_report(recommend_report, watch_report)
+    second_order = _history_report(watch_report, recommend_report)
+
+    assert first_order.latest_recommend_count == 0
+    assert first_order.latest_watch_count == 1
+    assert second_order.latest_recommend_count == 1
+    assert second_order.latest_watch_count == 0
+
+
+def test_strategy_recommendation_history_revalidates_direct_source_summary_counts():
+    summary = PaperStrategyRecommendationHistorySourceSummary(
+        generated_at=datetime(2026, 6, 18, 10, 0, tzinfo=UTC),
+        config_version="strategy-recommendation-v0",
+        candidate_count=1,
+        recommend_count=1,
+        watch_count=0,
+        reject_count=0,
+    )
+    object.__setattr__(summary, "recommend_count", True)
+
+    with pytest.raises(ValueError, match="recommend_count must be an int"):
+        PaperStrategyRecommendationHistoryReport(
+            generated_at=GENERATED_AT,
+            config_version="recommendation-history-v0",
+            source_report_count=1,
+            total_candidate_count=1,
+            total_recommend_count=1,
+            total_watch_count=0,
+            total_reject_count=0,
+            first_generated_at=summary.generated_at,
+            latest_generated_at=summary.generated_at,
+            latest_config_version="strategy-recommendation-v0",
+            latest_candidate_count=1,
+            latest_recommend_count=1,
+            latest_watch_count=0,
+            latest_reject_count=0,
+            source_summaries=(summary,),
+        )
 
 
 def test_strategy_recommendation_history_rejects_invalid_source_type():
