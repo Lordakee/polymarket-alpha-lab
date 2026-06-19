@@ -1,10 +1,14 @@
 import json
+import sys
 from datetime import UTC, datetime
 from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
 
+from polymarket_alpha_lab.paper_recommendation_artifact_index import (
+    build_paper_recommendation_artifact_index_report,
+)
 from polymarket_alpha_lab.cli import main
 from polymarket_alpha_lab.forecast_evidence import (
     PaperForecastEvidenceConfig,
@@ -19,6 +23,14 @@ from polymarket_alpha_lab.outcome_tracker import (
 )
 from polymarket_alpha_lab.paper_recommendation_cycle_snapshot import (
     PaperRecommendationCycleSnapshotReport,
+    build_paper_recommendation_cycle_snapshot_report,
+)
+from polymarket_alpha_lab.paper_recommendation_cycle_snapshot_db_row import (
+    paper_recommendation_cycle_snapshot_to_db_row,
+)
+from polymarket_alpha_lab.paper_recommendation_pipeline import (
+    PaperRecommendationPipelineStage,
+    build_paper_recommendation_pipeline_report,
 )
 from polymarket_alpha_lab.nav_risk_metrics import (
     PaperNavRiskMetricsConfig,
@@ -1698,6 +1710,166 @@ def test_cycle_snapshot_db_trend_cli_reads_db_config_and_prints_summary(
     assert "blocked_share=0.333333" in captured.out
     assert "test-dsn-value" not in captured.out
     assert "test-dsn-value" not in captured.err
+
+
+def test_cycle_snapshot_db_trend_cli_default_psycopg_load_path_no_network(
+    monkeypatch,
+    capsys,
+):
+    fake_dsn = "postgresql://fake.example.invalid/cycle-snapshots"
+    monkeypatch.setenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_ENABLED", "true")
+    monkeypatch.setenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_DSN", fake_dsn)
+    monkeypatch.setenv(
+        "POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_TABLE",
+        "cycle_snapshot_archive",
+    )
+
+    config_version = "paper-recommendation-cycle-snapshot-v0"
+
+    def snapshot_row(generated_at, *, final_status):
+        pipeline_report = build_paper_recommendation_pipeline_report(
+            generated_at=generated_at,
+            config_version="paper-recommendation-pipeline-v0",
+            stages=(
+                PaperRecommendationPipelineStage(
+                    stage_name=f"{final_status}_stage",
+                    status="pass",
+                    message=f"{final_status} stage",
+                    input_count=1,
+                    output_count=1,
+                ),
+            ),
+        )
+        artifact_index_report = build_paper_recommendation_artifact_index_report(
+            generated_at=generated_at,
+            config_version="paper-recommendation-artifact-index-v0",
+            artifacts=(
+                SimpleNamespace(
+                    artifact_name=f"{final_status}_artifact",
+                    config_version="paper-recommendation-artifact-index-v0",
+                    generated_at=generated_at,
+                    status=final_status,
+                    item_count=1,
+                    reason_codes=(f"{final_status}_snapshot",),
+                    flags=("paper_only", "report_only", "readonly"),
+                    paper_only=True,
+                    report_only=True,
+                    readonly=True,
+                ),
+            ),
+        )
+        row = paper_recommendation_cycle_snapshot_to_db_row(
+            build_paper_recommendation_cycle_snapshot_report(
+                generated_at=generated_at,
+                config_version=config_version,
+                pipeline_report=pipeline_report,
+                artifact_index_report=artifact_index_report,
+            ),
+        )
+        return (
+            row.snapshot_sha256,
+            row.generated_at,
+            row.config_version,
+            row.final_status,
+            row.stage_counts_json,
+            row.artifact_counts_json,
+            list(row.reason_codes),
+            row.payload_json,
+            row.paper_only,
+            row.report_only,
+            row.readonly,
+        )
+
+    rows = (
+        snapshot_row(datetime(2026, 6, 19, 14, 0, tzinfo=UTC), final_status="blocked"),
+        snapshot_row(datetime(2026, 6, 19, 12, 0, tzinfo=UTC), final_status="pass"),
+    )
+
+    class FakeCursor:
+        def __init__(self):
+            self.calls = []
+            self.closed = False
+
+        def execute(self, sql, params=()):
+            self.calls.append((" ".join(sql.split()), params))
+
+        def fetchall(self):
+            return rows
+
+        def close(self):
+            self.closed = True
+
+    class FakeConnection:
+        def __init__(self):
+            self.cursor_instance = FakeCursor()
+            self.cursor_count = 0
+            self.commit_count = 0
+            self.rollback_count = 0
+            self.close_count = 0
+
+        def cursor(self):
+            self.cursor_count += 1
+            return self.cursor_instance
+
+        def commit(self):
+            self.commit_count += 1
+
+        def rollback(self):
+            self.rollback_count += 1
+
+        def close(self):
+            self.close_count += 1
+
+    class FakeJsonb:
+        def __init__(self, value):
+            self.value = value
+
+    connection = FakeConnection()
+    connect_calls = []
+    monkeypatch.setitem(
+        sys.modules,
+        "psycopg",
+        SimpleNamespace(connect=lambda dsn: connect_calls.append(dsn) or connection),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "psycopg.types.json",
+        SimpleNamespace(Jsonb=FakeJsonb),
+    )
+
+    exit_code = main(
+        [
+            "cycle-snapshot-db-trend",
+            "--source-config-version",
+            config_version,
+            "--limit",
+            "2",
+        ],
+        client_factory=lambda: (_ for _ in ()).throw(
+            AssertionError("client should not be constructed"),
+        ),
+    )
+
+    assert exit_code == 0
+    assert connect_calls == [fake_dsn]
+    assert connection.cursor_count == 1
+    assert connection.commit_count == 1
+    assert connection.rollback_count == 0
+    assert connection.close_count == 1
+    assert connection.cursor_instance.closed is True
+    sql, params = connection.cursor_instance.calls[0]
+    assert "FROM cycle_snapshot_archive" in sql
+    assert "ORDER BY generated_at DESC, inserted_at DESC, snapshot_sha256 DESC" in sql
+    assert params == (config_version, 2)
+
+    captured = capsys.readouterr()
+    assert "cycle-snapshot-db-trend:" in captured.out
+    assert "snapshots=2" in captured.out
+    assert "pass=1" in captured.out
+    assert "blocked=1" in captured.out
+    assert "latest_status=blocked" in captured.out
+    assert fake_dsn not in captured.out
+    assert fake_dsn not in captured.err
 
 
 def test_cycle_snapshot_db_trend_cli_runner_failure_redacts_dsn(
