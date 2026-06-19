@@ -13,6 +13,9 @@ dependencies = []
 dev = [
   "pytest>=8.0",
 ]
+postgres = [
+  "psycopg[binary]>=3.2",
+]
 
 [project.scripts]
 polymarket-alpha-lab = "polymarket_alpha_lab.cli:main"
