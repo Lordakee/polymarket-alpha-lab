@@ -16,7 +16,7 @@ from decimal import Decimal
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PACKAGE_ROOT_PATH = REPO_ROOT / "src" / "polymarket_alpha_lab" / "__init__.py"
 
-RECOMMENDATION_MODULE_NAMES = (
+IMPLEMENTED_RECOMMENDATION_MODULE_NAMES = (
     "strategy_candidate_recommendation",
     "strategy_signal_adapter",
     "paper_capital_cost_model",
@@ -30,6 +30,214 @@ RECOMMENDATION_MODULE_NAMES = (
     "strategy_recommendation_queue",
     "strategy_recommendation_reason_trend",
 )
+
+PLANNED_RECOMMENDATION_MODULE_NAMES = (
+    "paper_capital_cost",
+    "paper_correlation_grouping",
+    "paper_cost_stress",
+    "paper_liquidity_depth_gate",
+    "paper_outcome_uncertainty",
+    "paper_probability_recommendation_queue",
+    "paper_recommendation_queue",
+    "paper_recommendation_allocation",
+    "paper_recommendation_calibration_gate",
+    "paper_recommendation_consistency",
+    "paper_recommendation_gate_summary",
+    "paper_recommendation_health",
+    "paper_recommendation_manifest",
+    "paper_recommendation_readiness",
+    "paper_recommendation_reason_trend",
+    "paper_recommendation_shadow_nav",
+    "paper_recommendation_thresholds",
+    "paper_research_packet",
+    "paper_settlement_timing",
+    "paper_side_edge_adapter",
+)
+
+RECOMMENDATION_MODULE_NAMES = IMPLEMENTED_RECOMMENDATION_MODULE_NAMES
+
+PLANNED_RECOMMENDATION_PUBLIC_NAMES = {
+    "paper_capital_cost": frozenset(
+        {
+            "PaperCapitalCostConfig",
+            "PaperCapitalCostReport",
+            "PaperCapitalCostRow",
+            "build_paper_capital_cost_report",
+        },
+    ),
+    "paper_correlation_grouping": frozenset(
+        {
+            "PaperCorrelationGroupingConfig",
+            "PaperCorrelationGroupingReport",
+            "PaperCorrelationGroupRow",
+            "PaperCorrelationInputRow",
+            "build_paper_correlation_grouping_report",
+        },
+    ),
+    "paper_cost_stress": frozenset(
+        {
+            "PaperCostStressConfig",
+            "PaperCostStressInput",
+            "PaperCostStressReport",
+            "PaperCostStressScenarioRow",
+            "build_paper_cost_stress_report",
+        },
+    ),
+    "paper_liquidity_depth_gate": frozenset(
+        {
+            "PaperLiquidityDepthGateConfig",
+            "PaperLiquidityDepthGateInput",
+            "PaperLiquidityDepthGateReport",
+            "PaperLiquidityDepthGateRow",
+            "build_paper_liquidity_depth_gate_report",
+        },
+    ),
+    "paper_outcome_uncertainty": frozenset(
+        {
+            "PaperOutcomeUncertaintyConfig",
+            "PaperOutcomeUncertaintyInput",
+            "PaperOutcomeUncertaintyReport",
+            "PaperOutcomeUncertaintyRow",
+            "build_paper_outcome_uncertainty_report",
+        },
+    ),
+    "paper_probability_recommendation_queue": frozenset(
+        {
+            "PaperProbabilityRecommendationQueueConfig",
+            "PaperProbabilityRecommendationQueueReport",
+            "PaperProbabilityRecommendationQueueRow",
+            "build_paper_probability_recommendation_queue_report",
+        },
+    ),
+    "paper_recommendation_queue": frozenset(
+        {
+            "PaperRecommendationQueueConfig",
+            "PaperRecommendationQueueReport",
+            "PaperRecommendationQueueRow",
+            "build_paper_recommendation_queue_report",
+        },
+    ),
+    "paper_recommendation_allocation": frozenset(
+        {
+            "PaperRecommendationAllocationConfig",
+            "PaperRecommendationAllocationInput",
+            "PaperRecommendationAllocationReport",
+            "PaperRecommendationAllocationRow",
+            "build_paper_recommendation_allocation_report",
+        },
+    ),
+    "paper_recommendation_calibration_gate": frozenset(
+        {
+            "PaperRecommendationCalibrationGateConfig",
+            "PaperRecommendationCalibrationGateMetric",
+            "PaperRecommendationCalibrationGateReport",
+            "PaperRecommendationCalibrationGateRow",
+            "PaperRecommendationCalibrationGateSourceRow",
+            "build_paper_recommendation_calibration_gate_report",
+        },
+    ),
+    "paper_recommendation_consistency": frozenset(
+        {
+            "PaperRecommendationConsistencyConfig",
+            "PaperRecommendationConsistencyFact",
+            "PaperRecommendationConsistencyReport",
+            "PaperRecommendationConsistencyRow",
+            "build_paper_recommendation_consistency_report",
+        },
+    ),
+    "paper_recommendation_gate_summary": frozenset(
+        {
+            "GateReasonCodeCount",
+            "PaperRecommendationGateInputRow",
+            "PaperRecommendationGateSummaryReport",
+            "PaperRecommendationGateSummaryRow",
+            "build_paper_recommendation_gate_summary_report",
+        },
+    ),
+    "paper_recommendation_health": frozenset(
+        {
+            "PaperRecommendationHealthConfig",
+            "PaperRecommendationHealthInputRow",
+            "PaperRecommendationHealthReasonCodeCount",
+            "PaperRecommendationHealthReport",
+            "build_paper_recommendation_health_report",
+        },
+    ),
+    "paper_recommendation_manifest": frozenset(
+        {
+            "PaperRecommendationManifestConfig",
+            "PaperRecommendationManifestItem",
+            "PaperRecommendationManifestReport",
+            "build_paper_recommendation_manifest_report",
+        },
+    ),
+    "paper_recommendation_readiness": frozenset(
+        {
+            "PaperRecommendationReadinessConfig",
+            "PaperRecommendationReadinessGateInput",
+            "PaperRecommendationReadinessReport",
+            "PaperRecommendationReadinessRow",
+            "build_paper_recommendation_readiness_report",
+        },
+    ),
+    "paper_recommendation_reason_trend": frozenset(
+        {
+            "PaperRecommendationReasonTrendConfig",
+            "PaperRecommendationReasonTrendReport",
+            "PaperRecommendationReasonTrendRow",
+            "PaperRecommendationTransitionTrendRow",
+            "build_paper_recommendation_reason_trend_report",
+        },
+    ),
+    "paper_recommendation_shadow_nav": frozenset(
+        {
+            "PaperRecommendationShadowNavAllocationRow",
+            "PaperRecommendationShadowNavConfig",
+            "PaperRecommendationShadowNavReport",
+            "build_paper_recommendation_shadow_nav_report",
+        },
+    ),
+    "paper_recommendation_thresholds": frozenset(
+        {
+            "PaperRecommendationThresholdsConfig",
+            "PaperRecommendationThresholdsInputRow",
+            "PaperRecommendationThresholdsReport",
+            "PaperRecommendationThresholdsRow",
+            "build_paper_recommendation_thresholds_report",
+        },
+    ),
+    "paper_research_packet": frozenset(
+        {
+            "PaperResearchPacketConfig",
+            "PaperResearchPacketInputRow",
+            "PaperResearchPacketReport",
+            "PaperResearchPacketRow",
+            "build_paper_research_packet",
+            "build_paper_research_packet_report",
+        },
+    ),
+    "paper_settlement_timing": frozenset(
+        {
+            "PaperSettlementTimingConfig",
+            "PaperSettlementTimingInput",
+            "PaperSettlementTimingReport",
+            "PaperSettlementTimingRow",
+            "build_paper_settlement_timing_report",
+        },
+    ),
+    "paper_side_edge_adapter": frozenset(
+        {
+            "PaperSideEdgeAdapterConfig",
+            "PaperSideEdgeAdapterInput",
+            "PaperSideEdgeStrategyRow",
+            "build_paper_side_edge_report",
+            "build_paper_side_edge_report_from_adapter_inputs",
+            "build_paper_side_edge_report_from_strategy_rows",
+            "paper_side_edge_inputs_from_adapter_inputs",
+            "paper_side_edge_inputs_from_strategy_rows",
+        },
+    ),
+}
 
 SAFETY_DATACLASS_FIELDS = ("paper_only", "report_only", "readonly")
 
@@ -321,7 +529,7 @@ def test_recommendation_layer_documented_modules_exist() -> None:
 
 
 def test_recommendation_layer_scope_includes_current_recommendation_modules() -> None:
-    assert set(RECOMMENDATION_MODULE_NAMES) == {
+    assert set(IMPLEMENTED_RECOMMENDATION_MODULE_NAMES) == {
         "strategy_candidate_recommendation",
         "strategy_signal_adapter",
         "paper_capital_cost_model",
@@ -335,6 +543,40 @@ def test_recommendation_layer_scope_includes_current_recommendation_modules() ->
         "strategy_recommendation_queue",
         "strategy_recommendation_reason_trend",
     }
+
+
+def test_recommendation_layer_scope_lists_planned_recommendation_modules() -> None:
+    assert set(PLANNED_RECOMMENDATION_MODULE_NAMES) == {
+        "paper_capital_cost",
+        "paper_correlation_grouping",
+        "paper_cost_stress",
+        "paper_liquidity_depth_gate",
+        "paper_outcome_uncertainty",
+        "paper_probability_recommendation_queue",
+        "paper_recommendation_queue",
+        "paper_recommendation_allocation",
+        "paper_recommendation_calibration_gate",
+        "paper_recommendation_consistency",
+        "paper_recommendation_gate_summary",
+        "paper_recommendation_health",
+        "paper_recommendation_manifest",
+        "paper_recommendation_readiness",
+        "paper_recommendation_reason_trend",
+        "paper_recommendation_shadow_nav",
+        "paper_recommendation_thresholds",
+        "paper_research_packet",
+        "paper_settlement_timing",
+        "paper_side_edge_adapter",
+    }
+
+
+def test_planned_recommendation_public_names_are_not_package_root_exports() -> None:
+    package_exports = package_root_exports()
+    package_bound_names = package_root_bound_names()
+    for public_names in PLANNED_RECOMMENDATION_PUBLIC_NAMES.values():
+        for public_name in public_names:
+            assert public_name not in package_exports, public_name
+            assert public_name not in package_bound_names, public_name
 
 
 def import_recommendation_module(module_name: str) -> ModuleType:
@@ -373,6 +615,35 @@ def _absolute_import_from_module(module_name: str, node: ast.ImportFrom) -> str:
     if node.module is None:
         return "polymarket_alpha_lab"
     return f"polymarket_alpha_lab.{node.module}"
+
+
+def assert_recommendation_tree_omits_forbidden_import_prefixes(
+    module_name: str,
+    tree: ast.AST,
+) -> None:
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                assert not any(
+                    _module_matches_prefix(alias.name, prefix)
+                    for prefix in FORBIDDEN_IMPORT_PREFIXES
+                ), (module_name, alias.name)
+                _assert_import_alias_omits_forbidden_fragments(
+                    alias.asname or alias.name,
+                )
+        elif isinstance(node, ast.ImportFrom):
+            imported_module = _absolute_import_from_module(module_name, node)
+            assert not any(
+                _module_matches_prefix(imported_module, prefix)
+                for prefix in FORBIDDEN_IMPORT_PREFIXES
+            ), (module_name, imported_module)
+            _assert_imported_names_are_allowed(
+                module_name=module_name,
+                imported_module=imported_module,
+                imported_names=tuple(node.names),
+                allowed_names=None,
+                enforce_symbol_allowlist=False,
+            )
 
 
 def _assert_identifier_omits_forbidden_fragments(
@@ -647,6 +918,11 @@ def assert_safety_field_defaults_to_true(dataclass_type: type[Any]) -> None:
             assert field.default is True, (dataclass_type.__name__, field.name)
 
 
+def assert_source_declares_safety_fields(module_name: str, source: str) -> None:
+    for field_name in SAFETY_DATACLASS_FIELDS:
+        assert field_name in source, (module_name, field_name)
+
+
 def module_source(module: ModuleType) -> str:
     module_path = getattr(module, "__file__", None)
     assert module_path is not None, module.__name__
@@ -672,6 +948,24 @@ def assert_no_package_root_import_dependency(module: ModuleType) -> None:
                 module.__name__,
                 ast.unparse(node),
             )
+
+
+@pytest.mark.parametrize("module_name", PLANNED_RECOMMENDATION_MODULE_NAMES)
+def test_planned_recommendation_module_source_boundary_when_present(
+    module_name: str,
+) -> None:
+    path = module_path(module_name)
+    if not path.exists():
+        return
+
+    source = path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+
+    assert_source_declares_safety_fields(module_name, source)
+    for forbidden_term in FORBIDDEN_LIVE_EXECUTION_TERMS:
+        assert forbidden_term not in source.lower(), (module_name, forbidden_term)
+    assert_recommendation_tree_omits_forbidden_import_prefixes(module_name, tree)
+    assert_recommendation_tree_omits_forbidden_names_and_calls(tree)
 
 
 @pytest.mark.parametrize("module_name", RECOMMENDATION_MODULE_NAMES)

@@ -138,6 +138,43 @@ modules that can be developed in parallel. Each module consumes local paper
 inputs or prior paper reports, emits deterministic report rows, and keeps hard
 `paper_only`, `report_only`, and `readonly` flags.
 
+Reducer modules for this stage are:
+
+- `paper_probability_side_edge` for side-level YES/NO probability edge rows.
+- `paper_capital_cost` for explicit paper capital carrying-cost estimates.
+- `paper_side_edge_adapter` for converting supplied strategy/economics rows into
+  canonical side-edge inputs.
+- `paper_probability_recommendation_queue` for side-edge review/research queue
+  status reports.
+- `paper_cost_stress` for checking whether recommendations survive extra cost
+  shocks.
+- `paper_liquidity_depth_gate` for supplied depth/fill-ratio gates.
+- `paper_settlement_timing` for time-to-resolution and settlement freshness
+  penalties.
+- `paper_outcome_uncertainty` for ambiguous outcome-definition penalties.
+- `paper_recommendation_calibration_gate` for supplied forecaster calibration
+  gates.
+- `paper_recommendation_thresholds` for edge, score, depth, and cost threshold
+  checks.
+- `paper_recommendation_allocation` for row-level paper notional allocation.
+- `paper_correlation_grouping` for event/theme/correlation exposure summaries.
+- `paper_recommendation_risk_budget` for local paper allocation caps.
+- `paper_recommendation_shadow_nav` for paper NAV-at-risk summaries.
+- `paper_recommendation_gate_summary` for cross-gate status summaries.
+- `paper_recommendation_readiness` for per-market readiness aggregation.
+- `paper_research_packet` for analyst/research review packets.
+- `paper_recommendation_health` for batch-level recommendation quality health.
+- `paper_recommendation_manifest` for supplied report-presence manifests.
+- `paper_recommendation_consistency` for cross-reducer consistency checks.
+- `paper_recommendation_queue` for a planned generic readonly review queue.
+- `paper_recommendation_reason_trend` for readonly reason-code and transition
+  trend summaries.
+
+Those reducer modules are paper-only/report-only/readonly surfaces. They should
+not be package-root exports, and Phase 2 modules should not import them. Until a
+parallel worker creates a planned module, documentation and boundary tests should
+treat its name as planned scope only rather than importing it.
+
 ### Probability Side Edge
 
 Probability-event recommendations should be scored at the side level, not only
@@ -221,11 +258,21 @@ or network state.
 The modules can be built by separate workers if their report contracts stay
 explicit:
 
-- Node A: probability side edge report.
-- Node B: paper capital cost report.
-- Node C: paper recommendation queue report.
-- Node D: paper risk budget report.
-- Node E: reason-code trend report.
+- Node A: `paper_side_edge_adapter` and `paper_probability_side_edge` side-edge
+  reports.
+- Node B: `paper_cost_stress`, `paper_liquidity_depth_gate`,
+  `paper_settlement_timing`, `paper_outcome_uncertainty`,
+  `paper_recommendation_calibration_gate`, and
+  `paper_recommendation_thresholds` recommendation gates.
+- Node C: `paper_probability_recommendation_queue`, `paper_research_packet`,
+  `paper_recommendation_manifest`, and `paper_recommendation_consistency`
+  review/research summaries.
+- Node D: `paper_recommendation_allocation`, `paper_correlation_grouping`,
+  `paper_recommendation_risk_budget`, and `paper_recommendation_shadow_nav`
+  paper allocation and risk reports.
+- Node E: `paper_recommendation_gate_summary`,
+  `paper_recommendation_readiness`, `paper_recommendation_health`, and
+  `paper_recommendation_reason_trend` aggregate health/trend reports.
 - Node F: CLI/report-only workflow and documentation after report shapes are
   stable.
 
@@ -383,6 +430,26 @@ The recommendation-layer work is expected to use module-level reducers named:
   selection, and explanation reports into one paper cycle artifact
 - `strategy_recommendation_log` for append-only JSONL persistence and recovery
   of bundle reports
+- `paper_probability_side_edge` for side-aware probability-event scoring
+- `paper_capital_cost` for local paper capital carrying-cost reports
+- `paper_side_edge_adapter` for canonical supplied-input side-edge conversion
+- `paper_probability_recommendation_queue` for readonly side-edge review-queue
+  summaries
+- `paper_cost_stress`, `paper_liquidity_depth_gate`,
+  `paper_settlement_timing`, `paper_outcome_uncertainty`,
+  `paper_recommendation_calibration_gate`, and
+  `paper_recommendation_thresholds` for paper-only gates
+- `paper_recommendation_allocation`, `paper_correlation_grouping`, and
+  `paper_recommendation_shadow_nav` for paper allocation and exposure views
+- `paper_research_packet`, `paper_recommendation_gate_summary`,
+  `paper_recommendation_readiness`, `paper_recommendation_health`,
+  `paper_recommendation_manifest`, and `paper_recommendation_consistency` for
+  review packets, aggregate readiness, report presence, and consistency checks
+- `paper_recommendation_queue` for a planned generic readonly review queue
+- `paper_recommendation_risk_budget` for paper allocation caps and budget
+  status
+- `paper_recommendation_reason_trend` for readonly reason-code and transition
+  trend summaries
 
 Those modules should preserve the existing reducer style: frozen dataclasses,
 validated paper/report/readonly flags, deterministic ordering, Decimal-only

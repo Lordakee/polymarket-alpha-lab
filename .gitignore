@@ -14,4 +14,4 @@ build/
 data/
 artifacts/
 tmp/
-
+.omo/
