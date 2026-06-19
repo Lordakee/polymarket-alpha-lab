@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict
+from dataclasses import asdict, is_dataclass
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -109,8 +109,9 @@ def _validate_report_tree(
 def _report_from_jsonable(row: Any) -> PaperStrategyRecommendationBundleReport:
     if not isinstance(row, dict):
         raise ValueError("report row must be a JSON object")
-    _validate_json_report_shape(row)
-    report = from_jsonable(PaperStrategyRecommendationBundleReport, row)
+    normalized_row = _with_legacy_default_hard_flags(row)
+    _validate_json_report_shape(normalized_row)
+    report = from_jsonable(PaperStrategyRecommendationBundleReport, normalized_row)
     if type(report) is not PaperStrategyRecommendationBundleReport:
         raise ValueError("report must be a PaperStrategyRecommendationBundleReport")
     return report
@@ -141,6 +142,27 @@ def _validate_json_report_shape(row: dict[str, Any]) -> None:
         "explanation_rows",
     ):
         _require_json_array(_require_json_object_value(explanation_row), "reason_codes")
+
+
+def _with_legacy_default_hard_flags(row: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(row)
+    _default_missing_hard_flags(normalized)
+    for field_name in (
+        "recommendation_report",
+        "selection_policy_report",
+        "explanation_report",
+    ):
+        value = normalized.get(field_name)
+        if isinstance(value, dict):
+            nested = dict(value)
+            _default_missing_hard_flags(nested)
+            normalized[field_name] = nested
+    return normalized
+
+
+def _default_missing_hard_flags(row: dict[str, Any]) -> None:
+    for flag_name in ("paper_only", "report_only", "readonly"):
+        row.setdefault(flag_name, True)
 
 
 def _require_json_hard_flags(row: dict[str, Any], field_name: str) -> None:
@@ -186,6 +208,8 @@ def _validate_report_flags(report: Any, *, field_name: str = "report") -> None:
 def _json_ready(value: Any) -> Any:
     if value is None:
         return None
+    if is_dataclass(value) and not isinstance(value, type):
+        return _json_ready(asdict(value))
     if isinstance(value, Decimal):
         if not value.is_finite():
             raise ValueError("JSON Decimal value must be finite")

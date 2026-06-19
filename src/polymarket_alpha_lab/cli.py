@@ -100,6 +100,7 @@ StrategyRecommendationHistoryRunner = Callable[
 CostAuditRunner = Callable[..., PaperTradeCostAuditReport]
 StrategyEvidenceRunner = Callable[..., "PaperStrategyEvidenceSnapshotReport"]
 ObservabilityTrendsRunner = Callable[..., LocalObservabilityTrendsReport]
+_MISSING = object()
 
 
 def _apply_json_config(args: argparse.Namespace) -> None:
@@ -664,6 +665,7 @@ def main(
                 report,
                 latest_selected_count,
                 latest_selected_notional,
+                selection_score_metrics,
             ) = _run_strategy_recommendation_history(
                 recommendation_log=args.recommendation_log,
                 runner=strategy_recommendation_history_runner,
@@ -672,6 +674,7 @@ def main(
                 report,
                 latest_selected_count=latest_selected_count,
                 latest_selected_notional=latest_selected_notional,
+                selection_score_metrics=selection_score_metrics,
             )
             return 0
         except Exception as exc:
@@ -1100,7 +1103,7 @@ def _run_strategy_recommendation_history(
     *,
     recommendation_log: Path,
     runner: StrategyRecommendationHistoryRunner | None,
-) -> tuple[PaperStrategyRecommendationHistoryReport, int, Decimal]:
+) -> tuple[PaperStrategyRecommendationHistoryReport, int, Decimal, dict[str, object]]:
     bundles = read_paper_strategy_recommendation_bundle_log(recommendation_log)
     recommendation_reports = tuple(bundle.recommendation_report for bundle in bundles)
     config_version = "strategy-recommendation-history-v0"
@@ -1124,19 +1127,229 @@ def _run_strategy_recommendation_history(
         if latest_bundle is None
         else latest_bundle.total_selected_notional
     )
-    return report, latest_selected_count, latest_selected_notional
+    selection_score_metrics = _strategy_recommendation_history_selection_score_metrics(
+        report,
+        bundles,
+    )
+    return (
+        report,
+        latest_selected_count,
+        latest_selected_notional,
+        selection_score_metrics,
+    )
 
 
 def _latest_strategy_recommendation_bundle(bundles):
-    if not bundles:
+    ordered = _ordered_strategy_recommendation_bundles(bundles)
+    if not ordered:
         return None
-    return sorted(
-        bundles,
-        key=lambda bundle: (
-            bundle.recommendation_report.generated_at,
-            bundle.recommendation_report.config_version,
+    return ordered[-1]
+
+
+def _ordered_strategy_recommendation_bundles(bundles) -> tuple[object, ...]:
+    return tuple(
+        sorted(
+            bundles,
+            key=_strategy_recommendation_bundle_order_key,
         ),
-    )[-1]
+    )
+
+
+def _strategy_recommendation_bundle_order_key(bundle: object) -> tuple[datetime, str]:
+    recommendation_report = getattr(bundle, "recommendation_report", None)
+    generated_at = getattr(recommendation_report, "generated_at", None)
+    if not isinstance(generated_at, datetime):
+        generated_at = getattr(bundle, "generated_at", None)
+    if not isinstance(generated_at, datetime):
+        generated_at = datetime.min.replace(tzinfo=UTC)
+    elif generated_at.tzinfo is None:
+        generated_at = generated_at.replace(tzinfo=UTC)
+    else:
+        generated_at = generated_at.astimezone(UTC)
+
+    config_version = getattr(recommendation_report, "config_version", None)
+    if not isinstance(config_version, str):
+        config_version = getattr(bundle, "config_version", "")
+    if not isinstance(config_version, str):
+        config_version = ""
+    return generated_at, config_version
+
+
+def _strategy_recommendation_history_selection_score_metrics(
+    report: PaperStrategyRecommendationHistoryReport,
+    bundles: tuple[object, ...],
+) -> dict[str, object]:
+    metrics: dict[str, object] = {}
+    _copy_existing_metrics(
+        metrics,
+        report,
+        (
+            "total_selected_count",
+            "total_selected",
+            "total_selected_notional",
+            "latest_selected_count",
+            "latest_selected",
+            "latest_selected_notional",
+            "first_recommendation_score",
+            "latest_recommendation_score",
+            "latest_selected_score",
+        ),
+    )
+    _copy_matching_selection_score_metrics(metrics, report)
+
+    ordered_bundles = _ordered_strategy_recommendation_bundles(bundles)
+    if not ordered_bundles:
+        return metrics
+
+    first_bundle = ordered_bundles[0]
+    latest_bundle = ordered_bundles[-1]
+    _copy_existing_metrics(
+        metrics,
+        latest_bundle,
+        (
+            "latest_selected_count",
+            "latest_selected",
+            "latest_selected_notional",
+            "latest_recommendation_score",
+            "latest_selected_score",
+        ),
+    )
+
+    if not _has_any_metric(metrics, ("total_selected", "total_selected_count")):
+        total_selected = _sum_bundle_int_metric(ordered_bundles, "selected_count")
+        if total_selected is not None:
+            metrics["total_selected"] = total_selected
+    if "total_selected_notional" not in metrics:
+        total_selected_notional = _sum_bundle_decimal_metric(
+            ordered_bundles,
+            "total_selected_notional",
+        )
+        if total_selected_notional is not None:
+            metrics["total_selected_notional"] = total_selected_notional
+    if "first_recommendation_score" not in metrics:
+        first_score = _max_recommendation_score(
+            getattr(first_bundle, "recommendation_report", None),
+        )
+        if first_score is not None:
+            metrics["first_recommendation_score"] = first_score
+    if "latest_recommendation_score" not in metrics:
+        latest_score = _max_recommendation_score(
+            getattr(latest_bundle, "recommendation_report", None),
+        )
+        if latest_score is not None:
+            metrics["latest_recommendation_score"] = latest_score
+    if "latest_selected_score" not in metrics:
+        latest_selected_score = _max_selected_score(latest_bundle)
+        if latest_selected_score is not None:
+            metrics["latest_selected_score"] = latest_selected_score
+    _copy_matching_selection_score_metrics(metrics, latest_bundle)
+    return metrics
+
+
+def _copy_existing_metrics(
+    metrics: dict[str, object],
+    source: object,
+    field_names: tuple[str, ...],
+) -> None:
+    for field_name in field_names:
+        value = getattr(source, field_name, _MISSING)
+        if value is not _MISSING and field_name not in metrics:
+            metrics[field_name] = value
+
+
+def _copy_matching_selection_score_metrics(
+    metrics: dict[str, object],
+    source: object,
+) -> None:
+    for field_name in dir(source):
+        if field_name.startswith("_") or field_name in metrics:
+            continue
+        if not _is_selection_score_metric_name(field_name):
+            continue
+        try:
+            value = getattr(source, field_name)
+        except Exception:
+            continue
+        if _is_printable_metric_value(value):
+            metrics[field_name] = value
+
+
+def _is_selection_score_metric_name(field_name: str) -> bool:
+    return (
+        "selected" in field_name
+        or "selection" in field_name
+        or "score" in field_name
+    )
+
+
+def _is_printable_metric_value(value: object) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return False
+    return isinstance(value, (int, Decimal, str))
+
+
+def _has_any_metric(metrics: dict[str, object], field_names: tuple[str, ...]) -> bool:
+    return any(field_name in metrics for field_name in field_names)
+
+
+def _sum_bundle_int_metric(bundles: tuple[object, ...], field_name: str) -> int | None:
+    total = 0
+    observed = False
+    for bundle in bundles:
+        value = getattr(bundle, field_name, None)
+        if isinstance(value, bool) or not isinstance(value, int):
+            continue
+        total += value
+        observed = True
+    return total if observed else None
+
+
+def _sum_bundle_decimal_metric(
+    bundles: tuple[object, ...],
+    field_name: str,
+) -> Decimal | None:
+    total = Decimal("0")
+    observed = False
+    for bundle in bundles:
+        value = getattr(bundle, field_name, None)
+        if not isinstance(value, Decimal):
+            continue
+        total += value
+        observed = True
+    return total if observed else None
+
+
+def _max_recommendation_score(report: object) -> Decimal | None:
+    rows = _tuple_or_empty(getattr(report, "recommendation_rows", ()))
+    scores = tuple(
+        score
+        for row in rows
+        if isinstance((score := getattr(row, "recommendation_score", None)), Decimal)
+    )
+    return max(scores) if scores else None
+
+
+def _max_selected_score(bundle: object) -> Decimal | None:
+    selection_report = getattr(bundle, "selection_policy_report", None)
+    rows = _tuple_or_empty(getattr(selection_report, "selection_rows", ()))
+    scores = tuple(
+        score
+        for row in rows
+        if getattr(row, "decision", None) == "selected"
+        and isinstance((score := getattr(row, "recommendation_score", None)), Decimal)
+    )
+    return max(scores) if scores else None
+
+
+def _tuple_or_empty(value: object) -> tuple[object, ...]:
+    if value is None or isinstance(value, (str, bytes)):
+        return ()
+    try:
+        return tuple(value)
+    except TypeError:
+        return ()
 
 
 def _run_strategy_evidence(
@@ -1332,6 +1545,7 @@ def _print_strategy_recommendation_history_summary(
     *,
     latest_selected_count: int,
     latest_selected_notional: Decimal,
+    selection_score_metrics: dict[str, object] | None = None,
 ) -> None:
     print(
         "strategy-recommendation-history: "
@@ -1347,6 +1561,33 @@ def _print_strategy_recommendation_history_summary(
         f"first={_iso_or_none(report.first_generated_at)} "
         f"latest={_iso_or_none(report.latest_generated_at)}",
     )
+    _print_selection_score_trend_metrics(selection_score_metrics or {})
+
+
+def _print_selection_score_trend_metrics(metrics: dict[str, object]) -> None:
+    metric_order = (
+        "total_selected",
+        "total_selected_count",
+        "total_selected_notional",
+        "latest_selected",
+        "latest_selected_count",
+        "latest_selected_notional",
+        "first_recommendation_score",
+        "latest_recommendation_score",
+        "latest_selected_score",
+    )
+    parts = [
+        f"{field_name}={metrics[field_name]}"
+        for field_name in metric_order
+        if field_name in metrics
+    ]
+    parts.extend(
+        f"{field_name}={value}"
+        for field_name, value in metrics.items()
+        if field_name not in metric_order
+    )
+    if parts:
+        print("  selection_score_trend: " + " ".join(parts))
 
 
 def _print_strategy_evidence_summary(

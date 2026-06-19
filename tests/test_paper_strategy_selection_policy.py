@@ -194,6 +194,10 @@ def test_selection_policy_skips_recommendations_after_total_cap_is_reached():
     assert report.skipped_count == 2
     assert report.not_selected_count == 1
     assert report.total_selected_notional == Decimal("10.000000")
+    assert report.total_suggested_notional == Decimal("30.000000")
+    assert report.skipped_suggested_notional == Decimal("20.000000")
+    assert report.remaining_total_notional == Decimal("5.000000")
+    assert report.total_notional_utilization == Decimal("0.666667")
     assert report.selection_rows[1].suggested_position_notional == Decimal("10.000000")
     assert report.selection_rows[1].selected_position_notional == ZERO_NOTIONAL
     assert report.selection_rows[1].reason_codes[0] == "total_notional_cap_reached"
@@ -235,6 +239,10 @@ def test_selection_policy_marks_watch_and_reject_inputs_not_selected():
         ZERO_NOTIONAL,
         ZERO_NOTIONAL,
     )
+    assert report.total_suggested_notional == ZERO_NOTIONAL
+    assert report.skipped_suggested_notional == ZERO_NOTIONAL
+    assert report.remaining_total_notional == Decimal("100.000000")
+    assert report.total_notional_utilization == ZERO_NOTIONAL
     assert report.selection_rows[0].reason_codes == (
         "source_action_watch",
         "needs_more_liquidity",
@@ -306,6 +314,10 @@ def test_selection_policy_report_constructor_validates_counts_and_total():
         skipped_count=0,
         not_selected_count=1,
         total_selected_notional=Decimal("5.000000"),
+        total_suggested_notional=Decimal("5.000000"),
+        skipped_suggested_notional=ZERO_NOTIONAL,
+        remaining_total_notional=Decimal("5.000000"),
+        total_notional_utilization=Decimal("0.500000"),
         selection_rows=(selected_row, not_selected_row),
     )
     with pytest.raises(ValueError, match="row_count"):
@@ -317,6 +329,10 @@ def test_selection_policy_report_constructor_validates_counts_and_total():
             skipped_count=0,
             not_selected_count=1,
             total_selected_notional=Decimal("5.000000"),
+            total_suggested_notional=Decimal("5.000000"),
+            skipped_suggested_notional=ZERO_NOTIONAL,
+            remaining_total_notional=Decimal("5.000000"),
+            total_notional_utilization=Decimal("0.500000"),
             selection_rows=(selected_row, not_selected_row),
         )
     with pytest.raises(ValueError, match="selected_count"):
@@ -328,6 +344,10 @@ def test_selection_policy_report_constructor_validates_counts_and_total():
             skipped_count=0,
             not_selected_count=0,
             total_selected_notional=Decimal("5.000000"),
+            total_suggested_notional=Decimal("5.000000"),
+            skipped_suggested_notional=ZERO_NOTIONAL,
+            remaining_total_notional=Decimal("5.000000"),
+            total_notional_utilization=Decimal("0.500000"),
             selection_rows=(selected_row, not_selected_row),
         )
     with pytest.raises(ValueError, match="total_selected_notional"):
@@ -339,6 +359,40 @@ def test_selection_policy_report_constructor_validates_counts_and_total():
             skipped_count=0,
             not_selected_count=1,
             total_selected_notional=Decimal("4.000000"),
+            total_suggested_notional=Decimal("5.000000"),
+            skipped_suggested_notional=ZERO_NOTIONAL,
+            remaining_total_notional=Decimal("5.000000"),
+            total_notional_utilization=Decimal("0.500000"),
+            selection_rows=(selected_row, not_selected_row),
+        )
+    with pytest.raises(ValueError, match="total_suggested_notional"):
+        PaperStrategySelectionPolicyReport(
+            generated_at=GENERATED_AT,
+            config_version="selection-policy-v1",
+            row_count=2,
+            selected_count=1,
+            skipped_count=0,
+            not_selected_count=1,
+            total_selected_notional=Decimal("5.000000"),
+            total_suggested_notional=Decimal("4.000000"),
+            skipped_suggested_notional=ZERO_NOTIONAL,
+            remaining_total_notional=Decimal("5.000000"),
+            total_notional_utilization=Decimal("0.500000"),
+            selection_rows=(selected_row, not_selected_row),
+        )
+    with pytest.raises(ValueError, match="skipped_suggested_notional"):
+        PaperStrategySelectionPolicyReport(
+            generated_at=GENERATED_AT,
+            config_version="selection-policy-v1",
+            row_count=2,
+            selected_count=1,
+            skipped_count=0,
+            not_selected_count=1,
+            total_selected_notional=Decimal("5.000000"),
+            total_suggested_notional=Decimal("5.000000"),
+            skipped_suggested_notional=Decimal("1.000000"),
+            remaining_total_notional=Decimal("5.000000"),
+            total_notional_utilization=Decimal("0.500000"),
             selection_rows=(selected_row, not_selected_row),
         )
 

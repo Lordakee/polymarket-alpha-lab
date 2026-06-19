@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -22,6 +23,7 @@ from polymarket_alpha_lab.strategy_recommendation_bundle import (
     PaperStrategyRecommendationBundleReport,
 )
 from polymarket_alpha_lab.strategy_recommendation_log import (
+    _json_ready,
     append_paper_strategy_recommendation_bundle_log,
     read_paper_strategy_recommendation_bundle_log,
 )
@@ -154,6 +156,17 @@ def _bundle_report(
     )
 
 
+def _assert_jsonable_contains_no_floats(value):
+    if isinstance(value, float):
+        pytest.fail("jsonable recommendation log payload must not contain floats")
+    if isinstance(value, dict):
+        for item in value.values():
+            _assert_jsonable_contains_no_floats(item)
+    elif isinstance(value, list):
+        for item in value:
+            _assert_jsonable_contains_no_floats(item)
+
+
 def test_empty_existing_file_returns_empty_tuple(tmp_path):
     path = tmp_path / "empty" / "strategy-recommendations.jsonl"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -232,6 +245,74 @@ def test_recommendation_bundle_log_skips_blank_lines(tmp_path):
     assert read_paper_strategy_recommendation_bundle_log(path) == (first, second)
 
 
+def test_recommendation_bundle_log_reads_legacy_minimal_rows_without_hard_flags(
+    tmp_path,
+):
+    path = tmp_path / "strategy-recommendations.jsonl"
+    report = _bundle_report()
+    append_paper_strategy_recommendation_bundle_log(path, report)
+    payload = json.loads(path.read_text(encoding="utf-8").splitlines()[0])
+    for report_payload in (
+        payload,
+        payload["recommendation_report"],
+        payload["selection_policy_report"],
+        payload["explanation_report"],
+    ):
+        report_payload.pop("paper_only")
+        report_payload.pop("report_only")
+        report_payload.pop("readonly")
+    path.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+
+    assert read_paper_strategy_recommendation_bundle_log(path) == (report,)
+
+
+def test_recommendation_bundle_log_json_ready_serializes_summary_shapes_without_floats():
+    @dataclass(frozen=True)
+    class ReasonCount:
+        reason_code: str
+        count: int
+        share: Decimal
+
+    @dataclass(frozen=True)
+    class RecommendationSummary:
+        score_mean: Decimal
+        score_quantiles: tuple[Decimal, Decimal]
+        reason_count_pairs: tuple[tuple[str, int], ...]
+        reason_count_rows: tuple[ReasonCount, ...]
+
+    payload = _json_ready(
+        RecommendationSummary(
+            score_mean=Decimal("0.750000"),
+            score_quantiles=(Decimal("0.500000"), Decimal("0.900000")),
+            reason_count_pairs=(("assessment_ready", 2), ("readiness_passed", 1)),
+            reason_count_rows=(
+                ReasonCount(
+                    reason_code="assessment_ready",
+                    count=2,
+                    share=Decimal("0.666667"),
+                ),
+            ),
+        ),
+    )
+
+    assert payload == {
+        "score_mean": "0.750000",
+        "score_quantiles": ["0.500000", "0.900000"],
+        "reason_count_pairs": [["assessment_ready", 2], ["readiness_passed", 1]],
+        "reason_count_rows": [
+            {
+                "reason_code": "assessment_ready",
+                "count": 2,
+                "share": "0.666667",
+            },
+        ],
+    }
+    _assert_jsonable_contains_no_floats(payload)
+    encoded = json.dumps(payload, allow_nan=False, sort_keys=True)
+    assert '"0.750000"' in encoded
+    assert '"0.666667"' in encoded
+
+
 def test_recommendation_bundle_log_invalid_json_reports_line_number(tmp_path):
     path = tmp_path / "strategy-recommendations.jsonl"
     report = _bundle_report()
@@ -275,14 +356,14 @@ def test_recommendation_bundle_log_malformed_decimal_reports_line_number(tmp_pat
         read_paper_strategy_recommendation_bundle_log(path)
 
 
-def test_recommendation_bundle_log_missing_top_level_hard_flag_reports_line_number(
+def test_recommendation_bundle_log_false_top_level_hard_flag_reports_line_number(
     tmp_path,
 ):
     path = tmp_path / "strategy-recommendations.jsonl"
     report = _bundle_report()
     append_paper_strategy_recommendation_bundle_log(path, report)
     payload = json.loads(path.read_text(encoding="utf-8").splitlines()[0])
-    payload.pop("readonly")
+    payload["readonly"] = False
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(payload, sort_keys=True) + "\n")
 
@@ -293,14 +374,14 @@ def test_recommendation_bundle_log_missing_top_level_hard_flag_reports_line_numb
         read_paper_strategy_recommendation_bundle_log(path)
 
 
-def test_recommendation_bundle_log_missing_nested_hard_flag_reports_line_number(
+def test_recommendation_bundle_log_false_nested_hard_flag_reports_line_number(
     tmp_path,
 ):
     path = tmp_path / "strategy-recommendations.jsonl"
     report = _bundle_report()
     append_paper_strategy_recommendation_bundle_log(path, report)
     payload = json.loads(path.read_text(encoding="utf-8").splitlines()[0])
-    payload["selection_policy_report"].pop("readonly")
+    payload["selection_policy_report"]["readonly"] = False
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(payload, sort_keys=True) + "\n")
 

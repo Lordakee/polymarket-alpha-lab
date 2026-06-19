@@ -132,6 +132,11 @@ def test_build_recommendation_explanation_report_reduces_rows_in_source_order():
         "low_net_edge",
         "no_reason_code",
     ]
+    assert report.primary_reason_code_counts == (
+        ("assessment_ready", 1),
+        ("low_net_edge", 1),
+        ("no_reason_code", 1),
+    )
     assert [row.reason_codes for row in report.explanation_rows] == [
         ("assessment_ready", "liquidity_ok"),
         ("low_net_edge",),
@@ -142,6 +147,66 @@ def test_build_recommendation_explanation_report_reduces_rows_in_source_order():
         "watch no because low_net_edge (score 0.5200)",
         "reject none because no_reason_code (score 0.0000)",
     ]
+
+
+def test_build_recommendation_explanation_report_counts_primary_reason_codes():
+    source_report = _RecommendationReport(
+        recommendation_rows=(
+            _row(
+                "market-no-reason-a",
+                action="reject",
+                selected_side="none",
+                score=Decimal("0.0000"),
+                reason_codes=(),
+            ),
+            _row(
+                "market-edge-a",
+                action="recommend",
+                selected_side="yes",
+                score=Decimal("0.8100"),
+                reason_codes=("edge_positive", "liquidity_ok"),
+            ),
+            _row(
+                "market-no-reason-b",
+                action="watch",
+                selected_side="none",
+                score=Decimal("0.2100"),
+                reason_codes=(),
+            ),
+            _row(
+                "market-assessment",
+                action="watch",
+                selected_side="no",
+                score=Decimal("0.4200"),
+                reason_codes=("assessment_ready",),
+            ),
+            _row(
+                "market-edge-b",
+                action="recommend",
+                selected_side="yes",
+                score=Decimal("0.8300"),
+                reason_codes=("edge_positive",),
+            ),
+        ),
+    )
+
+    report = build_paper_strategy_recommendation_explanation_report(
+        source_report,
+        generated_at=GENERATED_AT,
+    )
+
+    assert [row.market_slug for row in report.explanation_rows] == [
+        "market-no-reason-a",
+        "market-edge-a",
+        "market-no-reason-b",
+        "market-assessment",
+        "market-edge-b",
+    ]
+    assert report.primary_reason_code_counts == (
+        ("edge_positive", 2),
+        ("no_reason_code", 2),
+        ("assessment_ready", 1),
+    )
 
 
 def test_explanation_row_validates_primary_reason_matches_reason_codes():
@@ -187,8 +252,18 @@ def test_explanation_report_validates_direct_constructor_counts():
         watch_count=1,
         reject_count=1,
         explanation_rows=rows,
+        primary_reason_code_counts=(
+            ("assessment_ready", 1),
+            ("low_net_edge", 1),
+            ("no_reason_code", 1),
+        ),
     )
     assert report.recommendation_count == 3
+    assert report.primary_reason_code_counts == (
+        ("assessment_ready", 1),
+        ("low_net_edge", 1),
+        ("no_reason_code", 1),
+    )
 
     with pytest.raises(ValueError, match="recommendation_count"):
         replace(report, recommendation_count=2)
@@ -198,6 +273,11 @@ def test_explanation_report_validates_direct_constructor_counts():
         replace(report, watch_count=2)
     with pytest.raises(ValueError, match="reject_count"):
         replace(report, reject_count=2)
+    with pytest.raises(ValueError, match="primary_reason_code_counts"):
+        replace(
+            report,
+            primary_reason_code_counts=(("assessment_ready", 3),),
+        )
 
 
 def test_build_rejects_wrong_source_type_and_false_source_flags():

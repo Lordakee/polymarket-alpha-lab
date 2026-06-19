@@ -14,6 +14,7 @@ PHASE_2_MODULE_PATHS = tuple(
 FORBIDDEN_RECOMMENDATION_IMPORT_PREFIXES = (
     "polymarket_alpha_lab.paper_strategy_selection_policy",
     "polymarket_alpha_lab.strategy_candidate_recommendation",
+    "polymarket_alpha_lab.strategy_signal_adapter",
     "polymarket_alpha_lab.strategy_recommendation_bundle",
     "polymarket_alpha_lab.strategy_recommendation_explain",
     "polymarket_alpha_lab.strategy_recommendation_history",
@@ -24,8 +25,15 @@ FORBIDDEN_PACKAGE_ROOT_RECOMMENDATION_EXPORTS = (
     "PaperStrategyRecommendationBundleConfig",
     "PaperStrategyRecommendationBundleReport",
     "append_paper_strategy_recommendation_bundle_log",
+    "build_paper_strategy_readiness_signals",
     "build_paper_strategy_recommendation_bundle_report",
     "read_paper_strategy_recommendation_bundle_log",
+    "signals_from_calibration_gate_report",
+    "signals_from_cost_health_gate_report",
+    "signals_from_exposure_gate_report",
+    "signals_from_liquidity_gate_report",
+    "signals_from_market_context_freshness_report",
+    "signals_from_settlement_freshness_gate_report",
 )
 
 
@@ -75,6 +83,18 @@ def assert_phase_2_tree_has_no_recommendation_imports(tree: ast.AST) -> None:
 
 def test_phase_2_modules_exist_for_recommendation_boundary_regression() -> None:
     assert PHASE_2_MODULE_PATHS
+
+
+def test_phase_2_boundary_blocks_current_recommendation_modules() -> None:
+    assert set(FORBIDDEN_RECOMMENDATION_IMPORT_PREFIXES) == {
+        "polymarket_alpha_lab.paper_strategy_selection_policy",
+        "polymarket_alpha_lab.strategy_candidate_recommendation",
+        "polymarket_alpha_lab.strategy_signal_adapter",
+        "polymarket_alpha_lab.strategy_recommendation_bundle",
+        "polymarket_alpha_lab.strategy_recommendation_explain",
+        "polymarket_alpha_lab.strategy_recommendation_history",
+        "polymarket_alpha_lab.strategy_recommendation_log",
+    }
 
 
 @pytest.mark.parametrize(

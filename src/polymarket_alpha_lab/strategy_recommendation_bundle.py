@@ -66,6 +66,12 @@ class PaperStrategyRecommendationBundleReport:
     recommendation_report: PaperStrategyCandidateRecommendationReport
     selection_policy_report: PaperStrategySelectionPolicyReport
     explanation_report: PaperStrategyRecommendationExplanationReport
+    skipped_count: int | None = None
+    not_selected_count: int | None = None
+    total_suggested_notional: Decimal | None = None
+    skipped_suggested_notional: Decimal | None = None
+    remaining_total_notional: Decimal | None = None
+    primary_reason_code_counts: tuple[tuple[str, int], ...] | None = None
     paper_only: bool = True
     report_only: bool = True
     readonly: bool = True
@@ -95,7 +101,9 @@ class PaperStrategyRecommendationBundleReport:
             self.explanation_report,
             PaperStrategyRecommendationExplanationReport,
         )
+        _normalize_summary_fields(self)
         _validate_report_consistency(self)
+        _normalize_primary_reason_code_counts_field(self)
         _validate_hard_flags("bundle_report", self)
 
 
@@ -139,6 +147,116 @@ def build_paper_strategy_recommendation_bundle_report(
         recommendation_report=recommendation_report,
         selection_policy_report=selection_policy_report,
         explanation_report=explanation_report,
+        skipped_count=_summary_int(
+            selection_policy_report,
+            "skipped_count",
+            _decision_count(selection_policy_report.selection_rows, "skipped"),
+        ),
+        not_selected_count=_summary_int(
+            selection_policy_report,
+            "not_selected_count",
+            _decision_count(selection_policy_report.selection_rows, "not_selected"),
+        ),
+        total_suggested_notional=_summary_notional(
+            selection_policy_report,
+            "total_suggested_notional",
+            _total_suggested_notional(selection_policy_report.selection_rows),
+        ),
+        skipped_suggested_notional=_summary_notional(
+            selection_policy_report,
+            "skipped_suggested_notional",
+            _skipped_suggested_notional(selection_policy_report.selection_rows),
+        ),
+        remaining_total_notional=_optional_summary_notional(
+            selection_policy_report,
+            "remaining_total_notional",
+        ),
+        primary_reason_code_counts=_summary_primary_reason_code_counts(
+            explanation_report,
+        ),
+    )
+
+
+def _normalize_summary_fields(report: PaperStrategyRecommendationBundleReport) -> None:
+    selection_rows = report.selection_policy_report.selection_rows
+    object.__setattr__(
+        report,
+        "skipped_count",
+        _normalize_report_int(
+            "skipped_count",
+            report.skipped_count,
+            _summary_int(
+                report.selection_policy_report,
+                "skipped_count",
+                _decision_count(selection_rows, "skipped"),
+            ),
+        ),
+    )
+    object.__setattr__(
+        report,
+        "not_selected_count",
+        _normalize_report_int(
+            "not_selected_count",
+            report.not_selected_count,
+            _summary_int(
+                report.selection_policy_report,
+                "not_selected_count",
+                _decision_count(selection_rows, "not_selected"),
+            ),
+        ),
+    )
+    object.__setattr__(
+        report,
+        "total_suggested_notional",
+        _normalize_report_notional(
+            "total_suggested_notional",
+            report.total_suggested_notional,
+            _summary_notional(
+                report.selection_policy_report,
+                "total_suggested_notional",
+                _total_suggested_notional(selection_rows),
+            ),
+        ),
+    )
+    object.__setattr__(
+        report,
+        "skipped_suggested_notional",
+        _normalize_report_notional(
+            "skipped_suggested_notional",
+            report.skipped_suggested_notional,
+            _summary_notional(
+                report.selection_policy_report,
+                "skipped_suggested_notional",
+                _skipped_suggested_notional(selection_rows),
+            ),
+        ),
+    )
+    object.__setattr__(
+        report,
+        "remaining_total_notional",
+        _normalize_optional_report_notional(
+            "remaining_total_notional",
+            report.remaining_total_notional,
+            _optional_summary_notional(
+                report.selection_policy_report,
+                "remaining_total_notional",
+            ),
+        ),
+    )
+
+
+def _normalize_primary_reason_code_counts_field(
+    report: PaperStrategyRecommendationBundleReport,
+) -> None:
+    explanation_rows = report.explanation_report.explanation_rows
+    object.__setattr__(
+        report,
+        "primary_reason_code_counts",
+        _normalize_primary_reason_code_counts(
+            report.primary_reason_code_counts,
+            _summary_primary_reason_code_counts(report.explanation_report),
+            explanation_rows,
+        ),
     )
 
 
@@ -174,10 +292,39 @@ def _validate_report_consistency(
 
     if report.selected_count != selection_policy_report.selected_count:
         raise ValueError("selected_count must match selection_policy_report")
+    if report.skipped_count != _summary_int(
+        selection_policy_report,
+        "skipped_count",
+        _decision_count(selection_policy_report.selection_rows, "skipped"),
+    ):
+        raise ValueError("skipped_count must match selection_policy_report")
+    if report.not_selected_count != _summary_int(
+        selection_policy_report,
+        "not_selected_count",
+        _decision_count(selection_policy_report.selection_rows, "not_selected"),
+    ):
+        raise ValueError("not_selected_count must match selection_policy_report")
     if report.total_selected_notional != selection_policy_report.total_selected_notional:
         raise ValueError(
             "total_selected_notional must match selection_policy_report",
         )
+    if report.total_suggested_notional != _summary_notional(
+        selection_policy_report,
+        "total_suggested_notional",
+        _total_suggested_notional(selection_policy_report.selection_rows),
+    ):
+        raise ValueError("total_suggested_notional must match selection_policy_report")
+    if report.skipped_suggested_notional != _summary_notional(
+        selection_policy_report,
+        "skipped_suggested_notional",
+        _skipped_suggested_notional(selection_policy_report.selection_rows),
+    ):
+        raise ValueError("skipped_suggested_notional must match selection_policy_report")
+    if report.remaining_total_notional != _optional_summary_notional(
+        selection_policy_report,
+        "remaining_total_notional",
+    ):
+        raise ValueError("remaining_total_notional must match selection_policy_report")
     if explanation_report.source_config_version != recommendation_report.config_version:
         raise ValueError(
             "explanation_report source_config_version must match "
@@ -251,6 +398,166 @@ def _validate_hard_flags(field_name: str, report: Any) -> None:
     for flag_name in ("paper_only", "report_only", "readonly"):
         if getattr(report, flag_name, None) is not True:
             raise ValueError(f"{field_name} must be {flag_name}")
+
+
+def _normalize_report_int(
+    field_name: str,
+    value: int | None,
+    expected: int,
+) -> int:
+    if value is None:
+        return expected
+    _require_nonnegative_int(field_name, value)
+    if value != expected:
+        raise ValueError(f"{field_name} must match nested reports")
+    return value
+
+
+def _normalize_report_notional(
+    field_name: str,
+    value: Decimal | None,
+    expected: Decimal,
+) -> Decimal:
+    if value is None:
+        return expected
+    _require_nonnegative_decimal(field_name, value)
+    if value != expected:
+        raise ValueError(f"{field_name} must match nested reports")
+    return value
+
+
+def _normalize_optional_report_notional(
+    field_name: str,
+    value: Decimal | None,
+    expected: Decimal | None,
+) -> Decimal | None:
+    if expected is None:
+        if value is not None:
+            _require_nonnegative_decimal(field_name, value)
+            raise ValueError(f"{field_name} must match nested reports")
+        return None
+    return _normalize_report_notional(field_name, value, expected)
+
+
+def _normalize_primary_reason_code_counts(
+    value: tuple[tuple[str, int], ...] | None,
+    expected: tuple[tuple[str, int], ...],
+    rows: tuple[Any, ...],
+) -> tuple[tuple[str, int], ...]:
+    if value is None:
+        return expected
+    counts = _normalize_reason_code_counts("primary_reason_code_counts", value)
+    if counts != expected:
+        raise ValueError("primary_reason_code_counts must match nested reports")
+    row_derived = _primary_reason_code_counts_from_rows(rows)
+    if counts != row_derived:
+        raise ValueError("primary_reason_code_counts must match explanation rows")
+    return counts
+
+
+def _summary_int(report: object, field_name: str, fallback: int) -> int:
+    value = getattr(report, field_name, None)
+    if value is None:
+        return fallback
+    _require_nonnegative_int(field_name, value)
+    if value != fallback:
+        raise ValueError(f"{field_name} must match rows")
+    return value
+
+
+def _summary_notional(
+    report: object,
+    field_name: str,
+    fallback: Decimal,
+) -> Decimal:
+    value = getattr(report, field_name, None)
+    if value is None:
+        return fallback
+    _require_nonnegative_decimal(field_name, value)
+    if value != fallback:
+        raise ValueError(f"{field_name} must match rows")
+    return value
+
+
+def _optional_summary_notional(report: object, field_name: str) -> Decimal | None:
+    value = getattr(report, field_name, None)
+    if value is None:
+        return None
+    _require_nonnegative_decimal(field_name, value)
+    return value
+
+
+def _summary_primary_reason_code_counts(
+    report: object,
+) -> tuple[tuple[str, int], ...]:
+    rows = tuple(getattr(report, "explanation_rows", ()))
+    row_counts = _primary_reason_code_counts_from_rows(rows)
+    value = getattr(report, "primary_reason_code_counts", None)
+    if value is None:
+        return row_counts
+    counts = _normalize_reason_code_counts("primary_reason_code_counts", value)
+    if counts != row_counts:
+        raise ValueError("primary_reason_code_counts must match explanation rows")
+    return counts
+
+
+def _decision_count(rows: tuple[Any, ...], decision: str) -> int:
+    return sum(1 for row in rows if row.decision == decision)
+
+
+def _total_suggested_notional(rows: tuple[Any, ...]) -> Decimal:
+    return sum(
+        (
+            row.suggested_position_notional
+            for row in rows
+            if row.source_action == "recommend"
+        ),
+        ZERO,
+    )
+
+
+def _skipped_suggested_notional(rows: tuple[Any, ...]) -> Decimal:
+    return sum(
+        (
+            row.suggested_position_notional
+            for row in rows
+            if row.decision == "skipped"
+        ),
+        ZERO,
+    )
+
+
+def _primary_reason_code_counts_from_rows(rows: tuple[Any, ...]) -> tuple[tuple[str, int], ...]:
+    counts: dict[str, int] = {}
+    for row in rows:
+        reason_code = getattr(row, "primary_reason_code")
+        _require_canonical_string("primary_reason_code", reason_code)
+        counts[reason_code] = counts.get(reason_code, 0) + 1
+    return tuple(
+        sorted(
+            counts.items(),
+            key=lambda item: (-item[1], item[0]),
+        ),
+    )
+
+
+def _normalize_reason_code_counts(
+    field_name: str,
+    value: tuple[tuple[str, int], ...],
+) -> tuple[tuple[str, int], ...]:
+    if isinstance(value, (str, bytes)):
+        raise ValueError(f"{field_name} must be an iterable")
+    try:
+        counts = tuple(value)
+    except TypeError as exc:
+        raise ValueError(f"{field_name} must be an iterable") from exc
+    for item in counts:
+        if not isinstance(item, tuple) or len(item) != 2:
+            raise ValueError(f"{field_name} entries must be (reason_code, count) pairs")
+        reason_code, count = item
+        _require_canonical_string(f"{field_name} reason_code", reason_code)
+        _require_nonnegative_int(f"{field_name} count", count)
+    return counts
 
 
 def _as_utc(value: Any) -> datetime:

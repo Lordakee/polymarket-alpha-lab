@@ -191,6 +191,7 @@ MODULE_SPECS = (
             "signals_from_exposure_gate_report",
             "signals_from_liquidity_gate_report",
             "signals_from_market_context_freshness_report",
+            "signals_from_nav_liquidity_risk_report",
             "signals_from_settlement_freshness_gate_report",
         ),
         {
@@ -201,6 +202,7 @@ MODULE_SPECS = (
             "polymarket_alpha_lab.exposure_gate",
             "polymarket_alpha_lab.liquidity_gate",
             "polymarket_alpha_lab.market_context_freshness",
+            "polymarket_alpha_lab.paper_nav_liquidity_risk",
             "polymarket_alpha_lab.settlement_freshness_gate",
             "polymarket_alpha_lab.strategy_readiness_state",
         },

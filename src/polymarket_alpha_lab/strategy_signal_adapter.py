@@ -14,6 +14,7 @@ from polymarket_alpha_lab.liquidity_gate import PaperLiquidityGateReport
 from polymarket_alpha_lab.market_context_freshness import (
     PaperMarketContextFreshnessReport,
 )
+from polymarket_alpha_lab.paper_nav_liquidity_risk import PaperNavLiquidityRiskReport
 from polymarket_alpha_lab.settlement_freshness_gate import (
     PaperSettlementFreshnessGateReport,
 )
@@ -89,6 +90,25 @@ def signals_from_liquidity_gate_report(
     )
 
 
+def signals_from_nav_liquidity_risk_report(
+    report: PaperNavLiquidityRiskReport,
+) -> tuple[PaperStrategyReadinessSignal, ...]:
+    if type(report) is not PaperNavLiquidityRiskReport:
+        raise ValueError("report must be a PaperNavLiquidityRiskReport")
+    _require_report_flags(report)
+    status = _map_nav_liquidity_risk_status(report.status)
+    return (
+        PaperStrategyReadinessSignal(
+            source_name="nav_liquidity_risk",
+            status=status,
+            reason_codes=_nav_liquidity_risk_reason_codes(report.status),
+            severity=SEVERITY_BY_STATUS[status],
+            observed_value=_nav_liquidity_risk_observed_value(report),
+            threshold=None,
+        ),
+    )
+
+
 def signals_from_exposure_gate_report(
     report: PaperExposureGateReport,
 ) -> tuple[PaperStrategyReadinessSignal, ...]:
@@ -154,6 +174,7 @@ def build_paper_strategy_readiness_signals(
         PaperCalibrationGateReport
         | PaperCostHealthGateReport
         | PaperLiquidityGateReport
+        | PaperNavLiquidityRiskReport
         | PaperExposureGateReport
         | PaperMarketContextFreshnessReport
         | PaperSettlementFreshnessGateReport
@@ -174,6 +195,8 @@ def _signals_from_report(
         return signals_from_cost_health_gate_report(report)
     if type(report) is PaperLiquidityGateReport:
         return signals_from_liquidity_gate_report(report)
+    if type(report) is PaperNavLiquidityRiskReport:
+        return signals_from_nav_liquidity_risk_report(report)
     if type(report) is PaperExposureGateReport:
         return signals_from_exposure_gate_report(report)
     if type(report) is PaperMarketContextFreshnessReport:
@@ -221,6 +244,16 @@ def _map_status(status: str) -> str:
     raise ValueError("status must be blocked, watch, pass, or passed")
 
 
+def _map_nav_liquidity_risk_status(status: str) -> str:
+    if status == "empty_nav_liquidity_risk_history":
+        return "watch"
+    if status == "latest_nav_liquidity_observed":
+        return "pass"
+    if status == "latest_nav_has_unexecutable_liquidity":
+        return "blocked"
+    return _map_status(status)
+
+
 def _map_settlement_status(status: str) -> str:
     if status == "block":
         return "blocked"
@@ -261,6 +294,25 @@ def _settlement_reason_codes(
     )
 
 
+def _nav_liquidity_risk_reason_codes(status: str) -> tuple[str, ...]:
+    readiness_status = _map_nav_liquidity_risk_status(status)
+    if status == "empty_nav_liquidity_risk_history":
+        return ("nav_liquidity_risk_history_empty",)
+    if readiness_status == "blocked":
+        return ("nav_liquidity_risk_unexecutable_liquidity",)
+    if readiness_status == "watch":
+        return ("nav_liquidity_risk_watch",)
+    return ("nav_liquidity_risk_passed",)
+
+
+def _nav_liquidity_risk_observed_value(
+    report: PaperNavLiquidityRiskReport,
+) -> Decimal | None:
+    if report.latest_unexecutable_cost_basis_share is not None:
+        return report.latest_unexecutable_cost_basis_share
+    return report.latest_unfilled_open_size_share
+
+
 def _max_report_age_seconds(
     report: PaperMarketContextFreshnessReport,
 ) -> Decimal | None:
@@ -276,5 +328,6 @@ __all__ = (
     "signals_from_exposure_gate_report",
     "signals_from_liquidity_gate_report",
     "signals_from_market_context_freshness_report",
+    "signals_from_nav_liquidity_risk_report",
     "signals_from_settlement_freshness_gate_report",
 )

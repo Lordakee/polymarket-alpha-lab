@@ -20,6 +20,7 @@ __all__ = (
 ZERO = Decimal("0")
 ONE = Decimal("1")
 NOTIONAL_QUANTUM = Decimal("0.000001")
+RATIO_QUANTUM = Decimal("0.000001")
 SOURCE_ACTIONS = ("recommend", "watch", "reject")
 SELECTED_SIDES = ("yes", "no", "none")
 DECISIONS = ("selected", "skipped", "not_selected")
@@ -98,6 +99,10 @@ class PaperStrategySelectionPolicyReport:
     not_selected_count: int
     total_selected_notional: Decimal
     selection_rows: tuple[PaperStrategySelectionPolicyRow, ...]
+    total_suggested_notional: Decimal | None = None
+    skipped_suggested_notional: Decimal | None = None
+    remaining_total_notional: Decimal | None = None
+    total_notional_utilization: Decimal | None = None
     paper_only: bool = True
     report_only: bool = True
     readonly: bool = True
@@ -110,11 +115,33 @@ class PaperStrategySelectionPolicyReport:
         _require_nonnegative_int("skipped_count", self.skipped_count)
         _require_nonnegative_int("not_selected_count", self.not_selected_count)
         _require_notional("total_selected_notional", self.total_selected_notional)
+        selection_rows = _normalize_selection_rows(self.selection_rows)
+        object.__setattr__(self, "selection_rows", selection_rows)
         object.__setattr__(
             self,
-            "selection_rows",
-            _normalize_selection_rows(self.selection_rows),
+            "total_suggested_notional",
+            _normalize_report_notional(
+                "total_suggested_notional",
+                self.total_suggested_notional,
+                _total_suggested_notional(selection_rows),
+            ),
         )
+        object.__setattr__(
+            self,
+            "skipped_suggested_notional",
+            _normalize_report_notional(
+                "skipped_suggested_notional",
+                self.skipped_suggested_notional,
+                _skipped_suggested_notional(selection_rows),
+            ),
+        )
+        if self.remaining_total_notional is not None:
+            _require_notional("remaining_total_notional", self.remaining_total_notional)
+        if self.total_notional_utilization is not None:
+            _require_utilization_ratio(
+                "total_notional_utilization",
+                self.total_notional_utilization,
+            )
         _validate_report_consistency(self)
         if self.paper_only is not True:
             raise ValueError("paper_only must be True")
@@ -193,6 +220,16 @@ def build_paper_strategy_selection_policy_report(
         skipped_count=_decision_count(rows, "skipped"),
         not_selected_count=_decision_count(rows, "not_selected"),
         total_selected_notional=total_selected_notional,
+        total_suggested_notional=_total_suggested_notional(rows),
+        skipped_suggested_notional=_skipped_suggested_notional(rows),
+        remaining_total_notional=_remaining_total_notional(
+            total_selected_notional,
+            config.max_total_notional,
+        ),
+        total_notional_utilization=_total_notional_utilization(
+            total_selected_notional,
+            config.max_total_notional,
+        ),
         selection_rows=rows,
     )
 
@@ -383,6 +420,32 @@ def _validate_report_consistency(report: PaperStrategySelectionPolicyReport) -> 
     )
     if report.total_selected_notional != total_selected_notional:
         raise ValueError("total_selected_notional must match selection_rows")
+    total_suggested_notional = _total_suggested_notional(report.selection_rows)
+    if report.total_suggested_notional != total_suggested_notional:
+        raise ValueError("total_suggested_notional must match selection_rows")
+    skipped_suggested_notional = _skipped_suggested_notional(report.selection_rows)
+    if report.skipped_suggested_notional != skipped_suggested_notional:
+        raise ValueError("skipped_suggested_notional must match selection_rows")
+    if report.remaining_total_notional is None:
+        if report.total_notional_utilization is not None:
+            raise ValueError(
+                "total_notional_utilization requires remaining_total_notional",
+            )
+        return
+    capacity = _quantize_notional(
+        report.total_selected_notional + report.remaining_total_notional,
+    )
+    if capacity == ZERO.quantize(NOTIONAL_QUANTUM):
+        expected_utilization = None
+    else:
+        expected_utilization = _quantize_ratio(
+            report.total_selected_notional / capacity,
+        )
+    if report.total_notional_utilization != expected_utilization:
+        raise ValueError(
+            "total_notional_utilization must match total_selected_notional "
+            "and remaining_total_notional",
+        )
 
 
 def _decision_count(
@@ -390,6 +453,52 @@ def _decision_count(
     decision: str,
 ) -> int:
     return sum(1 for row in rows if row.decision == decision)
+
+
+def _total_suggested_notional(
+    rows: tuple[PaperStrategySelectionPolicyRow, ...],
+) -> Decimal:
+    return _quantize_notional(
+        sum(
+            (
+                row.suggested_position_notional
+                for row in rows
+                if row.source_action == "recommend"
+            ),
+            ZERO,
+        ),
+    )
+
+
+def _skipped_suggested_notional(
+    rows: tuple[PaperStrategySelectionPolicyRow, ...],
+) -> Decimal:
+    return _quantize_notional(
+        sum(
+            (
+                row.suggested_position_notional
+                for row in rows
+                if row.decision == "skipped"
+            ),
+            ZERO,
+        ),
+    )
+
+
+def _remaining_total_notional(
+    total_selected_notional: Decimal,
+    max_total_notional: Decimal,
+) -> Decimal:
+    return _quantize_notional(max_total_notional - total_selected_notional)
+
+
+def _total_notional_utilization(
+    total_selected_notional: Decimal,
+    max_total_notional: Decimal,
+) -> Decimal | None:
+    if max_total_notional <= ZERO:
+        return None
+    return _quantize_ratio(total_selected_notional / max_total_notional)
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -437,6 +546,14 @@ def _require_notional(field_name: str, value: object) -> None:
         raise ValueError(f"{field_name} must be quantized to 0.000001")
 
 
+def _require_utilization_ratio(field_name: str, value: object) -> None:
+    _require_nonnegative_decimal(field_name, value)
+    if value > ONE:
+        raise ValueError(f"{field_name} must be at most 1")
+    if value != _quantize_ratio(value):
+        raise ValueError(f"{field_name} must be quantized to 0.000001")
+
+
 def _require_source_action(field_name: str, value: object) -> None:
     if type(value) is not str or value not in SOURCE_ACTIONS:
         raise ValueError(f"{field_name} must be recommend, watch, or reject")
@@ -469,6 +586,17 @@ def _normalize_selection_rows(
     return rows
 
 
+def _normalize_report_notional(
+    field_name: str,
+    value: Decimal | None,
+    expected: Decimal,
+) -> Decimal:
+    if value is None:
+        return expected
+    _require_notional(field_name, value)
+    return value
+
+
 def _normalize_reason_codes(value: tuple[str, ...]) -> tuple[str, ...]:
     items = _normalize_source_reason_codes(value)
     if not items:
@@ -491,3 +619,8 @@ def _normalize_source_reason_codes(value: object) -> tuple[str, ...]:
 def _quantize_notional(value: Decimal) -> Decimal:
     _require_nonnegative_decimal("notional", value)
     return value.quantize(NOTIONAL_QUANTUM)
+
+
+def _quantize_ratio(value: Decimal) -> Decimal:
+    _require_nonnegative_decimal("ratio", value)
+    return value.quantize(RATIO_QUANTUM)

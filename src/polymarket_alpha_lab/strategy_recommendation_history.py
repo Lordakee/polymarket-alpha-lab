@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Any, Iterable
 
 from polymarket_alpha_lab.strategy_candidate_recommendation import (
@@ -17,6 +18,9 @@ __all__ = (
     "build_paper_strategy_recommendation_history_report",
 )
 
+ZERO = Decimal("0")
+SCORE_QUANTUM = Decimal("0.000001")
+
 
 @dataclass(frozen=True)
 class PaperStrategyRecommendationHistorySourceSummary:
@@ -26,6 +30,8 @@ class PaperStrategyRecommendationHistorySourceSummary:
     recommend_count: int
     watch_count: int
     reject_count: int
+    top_recommendation_score: Decimal | None
+    average_recommendation_score: Decimal | None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "generated_at", _as_utc(self.generated_at))
@@ -42,6 +48,23 @@ class PaperStrategyRecommendationHistorySourceSummary:
             != self.candidate_count
         ):
             raise ValueError("action counts must sum to candidate_count")
+        object.__setattr__(
+            self,
+            "top_recommendation_score",
+            _normalize_optional_recommendation_score(
+                "top_recommendation_score",
+                self.top_recommendation_score,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "average_recommendation_score",
+            _normalize_optional_recommendation_score(
+                "average_recommendation_score",
+                self.average_recommendation_score,
+            ),
+        )
+        _validate_source_summary_score_metrics(self)
 
 
 @dataclass(frozen=True)
@@ -60,6 +83,10 @@ class PaperStrategyRecommendationHistoryReport:
     latest_recommend_count: int
     latest_watch_count: int
     latest_reject_count: int
+    latest_top_recommendation_score: Decimal | None
+    best_observed_recommendation_score: Decimal | None
+    average_recommendation_score: Decimal | None
+    latest_average_recommendation_score: Decimal | None
     source_summaries: tuple[PaperStrategyRecommendationHistorySourceSummary, ...]
     paper_only: bool = True
     report_only: bool = True
@@ -92,6 +119,20 @@ class PaperStrategyRecommendationHistoryReport:
             "latest_reject_count",
         ):
             _require_nonnegative_int(field_name, getattr(self, field_name))
+        for field_name in (
+            "latest_top_recommendation_score",
+            "best_observed_recommendation_score",
+            "average_recommendation_score",
+            "latest_average_recommendation_score",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _normalize_optional_recommendation_score(
+                    field_name,
+                    getattr(self, field_name),
+                ),
+            )
         object.__setattr__(
             self,
             "source_summaries",
@@ -148,6 +189,16 @@ def build_paper_strategy_recommendation_history_report(
         latest_recommend_count=latest.recommend_count if latest is not None else 0,
         latest_watch_count=latest.watch_count if latest is not None else 0,
         latest_reject_count=latest.reject_count if latest is not None else 0,
+        latest_top_recommendation_score=latest.top_recommendation_score
+        if latest is not None
+        else None,
+        best_observed_recommendation_score=_best_observed_recommendation_score(
+            source_summaries,
+        ),
+        average_recommendation_score=_average_recommendation_score(source_summaries),
+        latest_average_recommendation_score=latest.average_recommendation_score
+        if latest is not None
+        else None,
         source_summaries=source_summaries,
     )
 
@@ -185,6 +236,7 @@ def _normalize_recommendation_reports(
 def _summary_from_report(
     report: PaperStrategyCandidateRecommendationReport,
 ) -> PaperStrategyRecommendationHistorySourceSummary:
+    recommendation_scores = _recommendation_scores(report)
     return PaperStrategyRecommendationHistorySourceSummary(
         generated_at=report.generated_at,
         config_version=report.config_version,
@@ -192,6 +244,10 @@ def _summary_from_report(
         recommend_count=report.recommend_count,
         watch_count=report.watch_count,
         reject_count=report.reject_count,
+        top_recommendation_score=max(recommendation_scores)
+        if recommendation_scores
+        else None,
+        average_recommendation_score=_average_scores(recommendation_scores),
     )
 
 
@@ -231,6 +287,7 @@ def _validate_report_consistency(
         _validate_empty_report(report)
     else:
         _validate_nonempty_report(report)
+    _validate_score_metrics(report)
 
 
 def _validate_empty_report(report: PaperStrategyRecommendationHistoryReport) -> None:
@@ -268,6 +325,32 @@ def _validate_nonempty_report(report: PaperStrategyRecommendationHistoryReport) 
         raise ValueError("latest_reject_count must match source_summaries")
 
 
+def _validate_score_metrics(report: PaperStrategyRecommendationHistoryReport) -> None:
+    latest = report.source_summaries[-1] if report.source_summaries else None
+    expected_latest_top_score = (
+        latest.top_recommendation_score if latest is not None else None
+    )
+    expected_latest_average_score = (
+        latest.average_recommendation_score if latest is not None else None
+    )
+    if report.latest_top_recommendation_score != expected_latest_top_score:
+        raise ValueError("latest_top_recommendation_score must match source_summaries")
+    if (
+        report.best_observed_recommendation_score
+        != _best_observed_recommendation_score(report.source_summaries)
+    ):
+        raise ValueError("best_observed_recommendation_score must match source_summaries")
+    if (
+        report.average_recommendation_score
+        != _average_recommendation_score(report.source_summaries)
+    ):
+        raise ValueError("average_recommendation_score must match source_summaries")
+    if report.latest_average_recommendation_score != expected_latest_average_score:
+        raise ValueError(
+            "latest_average_recommendation_score must match source_summaries",
+        )
+
+
 def _normalize_source_summaries(
     source_summaries: tuple[PaperStrategyRecommendationHistorySourceSummary, ...],
 ) -> tuple[PaperStrategyRecommendationHistorySourceSummary, ...]:
@@ -296,6 +379,8 @@ def _clone_source_summary(
         recommend_count=summary.recommend_count,
         watch_count=summary.watch_count,
         reject_count=summary.reject_count,
+        top_recommendation_score=summary.top_recommendation_score,
+        average_recommendation_score=summary.average_recommendation_score,
     )
 
 
@@ -322,6 +407,95 @@ def _as_optional_utc(value: datetime | None) -> datetime | None:
     return None if value is None else _as_utc(value)
 
 
+def _recommendation_scores(
+    report: PaperStrategyCandidateRecommendationReport,
+) -> tuple[Decimal, ...]:
+    return tuple(
+        _normalize_recommendation_score(
+            "recommendation_score",
+            row.recommendation_score,
+        )
+        for row in report.recommendation_rows
+    )
+
+
+def _average_scores(scores: tuple[Decimal, ...]) -> Decimal | None:
+    if not scores:
+        return None
+    return _normalize_recommendation_score(
+        "average_recommendation_score",
+        sum(scores, ZERO) / len(scores),
+    )
+
+
+def _best_observed_recommendation_score(
+    source_summaries: tuple[PaperStrategyRecommendationHistorySourceSummary, ...],
+) -> Decimal | None:
+    scores = tuple(
+        summary.top_recommendation_score
+        for summary in source_summaries
+        if summary.top_recommendation_score is not None
+    )
+    return max(scores) if scores else None
+
+
+def _average_recommendation_score(
+    source_summaries: tuple[PaperStrategyRecommendationHistorySourceSummary, ...],
+) -> Decimal | None:
+    total_candidate_count = sum(
+        summary.candidate_count for summary in source_summaries
+    )
+    if total_candidate_count == 0:
+        return None
+    score_total = sum(
+        summary.average_recommendation_score * summary.candidate_count
+        for summary in source_summaries
+        if summary.average_recommendation_score is not None
+    )
+    return _normalize_recommendation_score(
+        "average_recommendation_score",
+        score_total / total_candidate_count,
+    )
+
+
+def _validate_source_summary_score_metrics(
+    summary: PaperStrategyRecommendationHistorySourceSummary,
+) -> None:
+    if summary.candidate_count == 0:
+        if (
+            summary.top_recommendation_score is not None
+            or summary.average_recommendation_score is not None
+        ):
+            raise ValueError("score metrics must be absent without candidates")
+        return
+    if (
+        summary.top_recommendation_score is None
+        or summary.average_recommendation_score is None
+    ):
+        raise ValueError("score metrics must be present with candidates")
+    if summary.average_recommendation_score > summary.top_recommendation_score:
+        raise ValueError(
+            "average_recommendation_score must be at most top_recommendation_score",
+        )
+
+
+def _normalize_recommendation_score(field_name: str, value: Any) -> Decimal:
+    normalized = _normalize_optional_recommendation_score(field_name, value)
+    if normalized is None:
+        raise ValueError(f"{field_name} must be a Decimal")
+    return normalized
+
+
+def _normalize_optional_recommendation_score(
+    field_name: str,
+    value: Any,
+) -> Decimal | None:
+    if value is None:
+        return None
+    _require_nonnegative_decimal(field_name, value)
+    return value.quantize(SCORE_QUANTUM)
+
+
 def _require_canonical_string(field_name: str, value: Any) -> None:
     if type(value) is not str:
         raise ValueError(f"{field_name} must be a string")
@@ -333,4 +507,13 @@ def _require_nonnegative_int(field_name: str, value: Any) -> None:
     if type(value) is not int:
         raise ValueError(f"{field_name} must be an int")
     if value < 0:
+        raise ValueError(f"{field_name} must be nonnegative")
+
+
+def _require_nonnegative_decimal(field_name: str, value: Any) -> None:
+    if type(value) is not Decimal:
+        raise ValueError(f"{field_name} must be a Decimal")
+    if not value.is_finite():
+        raise ValueError(f"{field_name} must be finite")
+    if value < ZERO:
         raise ValueError(f"{field_name} must be nonnegative")

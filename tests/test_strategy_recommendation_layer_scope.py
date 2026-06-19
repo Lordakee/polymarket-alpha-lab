@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import dataclasses
 import inspect
+import re
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -17,6 +18,7 @@ PACKAGE_ROOT_PATH = REPO_ROOT / "src" / "polymarket_alpha_lab" / "__init__.py"
 
 RECOMMENDATION_MODULE_NAMES = (
     "strategy_candidate_recommendation",
+    "strategy_signal_adapter",
     "paper_strategy_selection_policy",
     "strategy_recommendation_explain",
     "strategy_recommendation_history",
@@ -48,6 +50,37 @@ RECOMMENDATION_IMPORT_ALLOWLIST: dict[
             {"PaperStrategyReadinessStateReport"},
         ),
     },
+    "strategy_signal_adapter": {
+        "__future__": frozenset({"annotations"}),
+        "decimal": frozenset({"Decimal"}),
+        "polymarket_alpha_lab.calibration_gate": frozenset(
+            {"PaperCalibrationGateReport"},
+        ),
+        "polymarket_alpha_lab.cost_health_gate": frozenset(
+            {
+                "PaperCostHealthGateReport",
+                "PaperCostHealthGateRow",
+            },
+        ),
+        "polymarket_alpha_lab.exposure_gate": frozenset(
+            {"PaperExposureGateReport"},
+        ),
+        "polymarket_alpha_lab.liquidity_gate": frozenset(
+            {"PaperLiquidityGateReport"},
+        ),
+        "polymarket_alpha_lab.market_context_freshness": frozenset(
+            {"PaperMarketContextFreshnessReport"},
+        ),
+        "polymarket_alpha_lab.paper_nav_liquidity_risk": frozenset(
+            {"PaperNavLiquidityRiskReport"},
+        ),
+        "polymarket_alpha_lab.settlement_freshness_gate": frozenset(
+            {"PaperSettlementFreshnessGateReport"},
+        ),
+        "polymarket_alpha_lab.strategy_readiness_state": frozenset(
+            {"PaperStrategyReadinessSignal"},
+        ),
+    },
     "paper_strategy_selection_policy": {
         "__future__": frozenset({"annotations"}),
         "dataclasses": frozenset({"dataclass"}),
@@ -70,6 +103,7 @@ RECOMMENDATION_IMPORT_ALLOWLIST: dict[
         "__future__": frozenset({"annotations"}),
         "dataclasses": frozenset({"dataclass"}),
         "datetime": frozenset({"UTC", "datetime"}),
+        "decimal": frozenset({"Decimal"}),
         "typing": frozenset({"Any", "Iterable"}),
         "polymarket_alpha_lab.strategy_candidate_recommendation": frozenset(
             {"PaperStrategyCandidateRecommendationReport"},
@@ -105,7 +139,7 @@ RECOMMENDATION_IMPORT_ALLOWLIST: dict[
     "strategy_recommendation_log": {
         "__future__": frozenset({"annotations"}),
         "json": WHOLE_MODULE_IMPORT,
-        "dataclasses": frozenset({"asdict"}),
+        "dataclasses": frozenset({"asdict", "is_dataclass"}),
         "datetime": frozenset({"UTC", "datetime"}),
         "decimal": frozenset({"Decimal", "InvalidOperation"}),
         "pathlib": frozenset({"Path"}),
@@ -131,6 +165,7 @@ FORBIDDEN_IMPORT_PREFIXES = (
     "clob_client",
     "eth_account",
     "eth_keys",
+    "http",
     "httpx",
     "py_clob_client",
     "requests",
@@ -148,6 +183,8 @@ FORBIDDEN_IMPORT_PREFIXES = (
     "polymarket_alpha_lab.execution",
     "polymarket_alpha_lab.journal",
     "polymarket_alpha_lab.orders",
+    "polymarket_alpha_lab.paper",
+    "polymarket_alpha_lab.paper_execution",
     "polymarket_alpha_lab.positions",
     "polymarket_alpha_lab.trading",
 )
@@ -206,10 +243,40 @@ ALLOWED_DYNAMIC_IMPORT_TARGETS = {
     "polymarket_alpha_lab.strategy_candidate_recommendation",
 }
 
+FIRST_PARTY_IMPORT_ROOT = "polymarket_alpha_lab"
+IDENTIFIER_TOKEN_RE = re.compile(
+    r"[A-Z]+(?=[A-Z][a-z]|\d|$)|[A-Z]?[a-z]+|\d+",
+)
+FORBIDDEN_NAME_TOKEN_ALIASES = {
+    "apikey": (("api", "key"),),
+    "privatekey": (("private", "key"),),
+    "clobclient": (("clob", "client"),),
+    "liveorder": (("live", "order"),),
+    "orderbuilder": (("order", "builder"),),
+    "createorder": (("create", "order"),),
+    "postorder": (("post", "order"),),
+    "cancelorder": (("cancel", "order"),),
+    "submitorder": (("submit", "order"),),
+    "sendorder": (("send", "order"),),
+    "signorder": (("sign", "order"),),
+}
+
 
 def test_recommendation_layer_documented_modules_exist() -> None:
     for module_name in RECOMMENDATION_MODULE_NAMES:
         assert module_path(module_name).exists(), module_name
+
+
+def test_recommendation_layer_scope_includes_current_recommendation_modules() -> None:
+    assert set(RECOMMENDATION_MODULE_NAMES) == {
+        "strategy_candidate_recommendation",
+        "strategy_signal_adapter",
+        "paper_strategy_selection_policy",
+        "strategy_recommendation_explain",
+        "strategy_recommendation_history",
+        "strategy_recommendation_bundle",
+        "strategy_recommendation_log",
+    }
 
 
 def import_recommendation_module(module_name: str) -> ModuleType:
@@ -226,6 +293,15 @@ def module_path(module_name: str) -> Path:
 
 def _normalize_identifier(value: str) -> str:
     return "".join(character for character in value.lower() if character.isalnum())
+
+
+def _identifier_tokens(identifier: str) -> tuple[str, ...]:
+    tokens: list[str] = []
+    for chunk in re.split(r"[^0-9A-Za-z]+", identifier):
+        if not chunk:
+            continue
+        tokens.extend(match.group(0).lower() for match in IDENTIFIER_TOKEN_RE.finditer(chunk))
+    return tuple(tokens)
 
 
 def _module_matches_prefix(module_name: str, prefix: str) -> bool:
@@ -246,11 +322,81 @@ def _assert_identifier_omits_forbidden_fragments(
     fragments: tuple[str, ...],
 ) -> None:
     normalized_identifier = _normalize_identifier(identifier)
+    identifier_tokens = _identifier_tokens(identifier)
+    identifier_token_set = set(identifier_tokens)
     for fragment in fragments:
-        assert _normalize_identifier(fragment) not in normalized_identifier, (
+        normalized_fragment = _normalize_identifier(fragment)
+        alias_token_groups = FORBIDDEN_NAME_TOKEN_ALIASES.get(
+            normalized_fragment,
+            ((normalized_fragment,),),
+        )
+        assert all(
+            not _identifier_tokens_contain(identifier_tokens, alias_tokens)
+            for alias_tokens in alias_token_groups
+        ), (identifier, fragment)
+        assert normalized_fragment not in identifier_token_set, (
             identifier,
             fragment,
         )
+
+
+def _identifier_tokens_contain(
+    identifier_tokens: tuple[str, ...],
+    forbidden_tokens: tuple[str, ...],
+) -> bool:
+    if len(forbidden_tokens) > len(identifier_tokens):
+        return False
+    return any(
+        identifier_tokens[index : index + len(forbidden_tokens)] == forbidden_tokens
+        for index in range(len(identifier_tokens) - len(forbidden_tokens) + 1)
+    )
+
+
+def _assert_import_alias_omits_forbidden_fragments(alias_name: str) -> None:
+    _assert_identifier_omits_forbidden_fragments(
+        alias_name.split(".", 1)[0],
+        FORBIDDEN_NAME_FRAGMENTS,
+    )
+
+
+def _allowlisted_import_kind(
+    module_name: str,
+    imported_module: str,
+    allowed_imports: dict[str, frozenset[str] | None],
+) -> str:
+    assert not any(
+        _module_matches_prefix(imported_module, prefix)
+        for prefix in FORBIDDEN_IMPORT_PREFIXES
+    ), (module_name, imported_module)
+    assert imported_module in allowed_imports, (module_name, imported_module)
+    return "allowlisted"
+
+
+def _assert_imported_names_are_allowed(
+    *,
+    module_name: str,
+    imported_module: str,
+    imported_names: tuple[ast.alias, ...],
+    allowed_names: frozenset[str] | None,
+    enforce_symbol_allowlist: bool,
+) -> set[str]:
+    if enforce_symbol_allowlist:
+        assert allowed_names is not WHOLE_MODULE_IMPORT, (
+            module_name,
+            imported_module,
+        )
+    seen_names: set[str] = set()
+    for alias in imported_names:
+        if enforce_symbol_allowlist:
+            assert allowed_names is not None
+            assert alias.name in allowed_names, (
+                module_name,
+                imported_module,
+                alias.name,
+            )
+        _assert_import_alias_omits_forbidden_fragments(alias.asname or alias.name)
+        seen_names.add(alias.name)
+    return seen_names
 
 
 def assert_recommendation_module_imports_are_allowed(
@@ -258,54 +404,42 @@ def assert_recommendation_module_imports_are_allowed(
     tree: ast.AST,
 ) -> None:
     allowed_imports = RECOMMENDATION_IMPORT_ALLOWLIST[module_name]
-    seen_imports: dict[str, set[str] | None] = {}
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
-                assert alias.name in allowed_imports, (module_name, alias.name)
-                assert allowed_imports[alias.name] is WHOLE_MODULE_IMPORT, (
+                import_kind = _allowlisted_import_kind(
                     module_name,
                     alias.name,
+                    allowed_imports,
                 )
-                assert not any(
-                    _module_matches_prefix(alias.name, prefix)
-                    for prefix in FORBIDDEN_IMPORT_PREFIXES
-                ), (module_name, alias.name)
-                _assert_identifier_omits_forbidden_fragments(
+                if import_kind == "allowlisted":
+                    assert allowed_imports[alias.name] is WHOLE_MODULE_IMPORT, (
+                        module_name,
+                        alias.name,
+                    )
+                _assert_import_alias_omits_forbidden_fragments(
                     alias.asname or alias.name,
-                    FORBIDDEN_NAME_FRAGMENTS,
                 )
-                seen_imports[alias.name] = WHOLE_MODULE_IMPORT
         elif isinstance(node, ast.ImportFrom):
             imported_module = _absolute_import_from_module(module_name, node)
-            assert imported_module in allowed_imports, (module_name, imported_module)
-            allowed_names = allowed_imports[imported_module]
-            assert allowed_names is not WHOLE_MODULE_IMPORT, (
+            import_kind = _allowlisted_import_kind(
                 module_name,
                 imported_module,
+                allowed_imports,
             )
-            assert not any(
-                _module_matches_prefix(imported_module, prefix)
-                for prefix in FORBIDDEN_IMPORT_PREFIXES
-            ), (module_name, imported_module)
-            imported_names: set[str] = set()
-            for alias in node.names:
-                assert alias.name in allowed_names, (
-                    module_name,
-                    imported_module,
-                    alias.name,
-                )
-                _assert_identifier_omits_forbidden_fragments(
-                    alias.asname or alias.name,
-                    FORBIDDEN_NAME_FRAGMENTS,
-                )
-                imported_names.add(alias.name)
-            seen_imports.setdefault(imported_module, set())
-            assert seen_imports[imported_module] is not WHOLE_MODULE_IMPORT
-            seen_imports[imported_module].update(imported_names)
-
-    assert seen_imports == allowed_imports
+            allowed_names = (
+                allowed_imports[imported_module]
+                if import_kind == "allowlisted"
+                else None
+            )
+            _assert_imported_names_are_allowed(
+                module_name=module_name,
+                imported_module=imported_module,
+                imported_names=tuple(node.names),
+                allowed_names=allowed_names,
+                enforce_symbol_allowlist=import_kind == "allowlisted",
+            )
 
 
 def _call_name(node: ast.Call) -> str | None:
@@ -552,6 +686,37 @@ def test_recommendation_layer_ast_omits_live_execution_names_and_calls(
             id="network-import",
         ),
         pytest.param(
+            "from http.client import HTTPConnection\n",
+            "strategy_recommendation_log",
+            id="stdlib-network-import",
+        ),
+        pytest.param(
+            "import smtplib\n",
+            "strategy_recommendation_log",
+            id="stdlib-smtp-import",
+        ),
+        pytest.param(
+            "import ftplib\n",
+            "strategy_recommendation_log",
+            id="stdlib-ftp-import",
+        ),
+        pytest.param(
+            "from ctypes import CDLL\n",
+            "strategy_recommendation_log",
+            id="stdlib-ctypes-import",
+        ),
+        pytest.param(
+            "from pickle import loads\n",
+            "strategy_recommendation_log",
+            id="stdlib-pickle-import",
+        ),
+        pytest.param(
+            "from polymarket_alpha_lab.paper_execution import "
+            "execute_paper_trade_from_screening\n",
+            "strategy_recommendation_bundle",
+            id="first-party-paper-execution-import",
+        ),
+        pytest.param(
             "from pathlib import Path, PurePath\n",
             "strategy_recommendation_log",
             id="non-allowlisted-imported-symbol",
@@ -567,6 +732,18 @@ def test_recommendation_layer_import_scope_guard_rejects_forbidden_imports(
             module_name,
             ast.parse(bad_source),
         )
+
+
+def test_recommendation_layer_import_scope_guard_allows_allowlisted_stdlib_imports() -> None:
+    assert_recommendation_module_imports_are_allowed(
+        "strategy_recommendation_log",
+        ast.parse(
+            """
+from pathlib import Path
+from decimal import Decimal
+""",
+        ),
+    )
 
 
 @pytest.mark.parametrize(
@@ -612,6 +789,18 @@ def test_recommendation_layer_name_scope_guard_rejects_forbidden_names(
         assert_recommendation_tree_omits_forbidden_names_and_calls(
             ast.parse(bad_source),
         )
+
+
+def test_recommendation_layer_name_scope_guard_allows_non_forbidden_substrings() -> None:
+    assert_recommendation_tree_omits_forbidden_names_and_calls(
+        ast.parse(
+            """
+def summarize_capital(report):
+    capital_score = 1
+    return capital_score
+""",
+        ),
+    )
 
 
 def test_recommendation_layer_real_report_feeds_selection_and_explanation() -> None:

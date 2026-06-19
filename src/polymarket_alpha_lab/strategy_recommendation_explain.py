@@ -61,6 +61,7 @@ class PaperStrategyRecommendationExplanationReport:
     watch_count: int
     reject_count: int
     explanation_rows: tuple[PaperStrategyRecommendationExplanationRow, ...]
+    primary_reason_code_counts: tuple[tuple[str, int], ...] | None = None
     paper_only: bool = True
     report_only: bool = True
     readonly: bool = True
@@ -74,6 +75,15 @@ class PaperStrategyRecommendationExplanationReport:
         _require_nonnegative_int("reject_count", self.reject_count)
         explanation_rows = _normalize_explanation_rows(self.explanation_rows)
         object.__setattr__(self, "explanation_rows", explanation_rows)
+        primary_reason_code_counts = _normalize_primary_reason_code_counts(
+            self.primary_reason_code_counts,
+            explanation_rows,
+        )
+        object.__setattr__(
+            self,
+            "primary_reason_code_counts",
+            primary_reason_code_counts,
+        )
         if self.recommendation_count != len(explanation_rows):
             raise ValueError("recommendation_count must match explanation_rows")
         if self.recommend_count != _action_count(explanation_rows, "recommend"):
@@ -111,6 +121,7 @@ def build_paper_strategy_recommendation_explanation_report(
         watch_count=_action_count(explanation_rows, "watch"),
         reject_count=_action_count(explanation_rows, "reject"),
         explanation_rows=explanation_rows,
+        primary_reason_code_counts=_primary_reason_code_counts(explanation_rows),
     )
 
 
@@ -177,6 +188,44 @@ def _action_count(
     action: str,
 ) -> int:
     return sum(1 for row in rows if row.action == action)
+
+
+def _primary_reason_code_counts(
+    rows: tuple[PaperStrategyRecommendationExplanationRow, ...],
+) -> tuple[tuple[str, int], ...]:
+    counts: dict[str, int] = {}
+    for row in rows:
+        counts[row.primary_reason_code] = counts.get(row.primary_reason_code, 0) + 1
+    return tuple(
+        sorted(
+            counts.items(),
+            key=lambda item: (-item[1], item[0]),
+        ),
+    )
+
+
+def _normalize_primary_reason_code_counts(
+    value: Iterable[tuple[str, int]] | None,
+    rows: tuple[PaperStrategyRecommendationExplanationRow, ...],
+) -> tuple[tuple[str, int], ...]:
+    expected = _primary_reason_code_counts(rows)
+    if value is None:
+        return expected
+    if isinstance(value, (str, bytes)):
+        raise ValueError("primary_reason_code_counts must be an iterable")
+    try:
+        counts = tuple(value)
+    except TypeError as exc:
+        raise ValueError("primary_reason_code_counts must be an iterable") from exc
+    for row in counts:
+        if type(row) is not tuple or len(row) != 2:
+            raise ValueError("primary_reason_code_counts must contain tuple rows")
+        reason_code, count = row
+        _require_canonical_string("primary_reason_code_counts reason_code", reason_code)
+        _require_nonnegative_int("primary_reason_code_counts count", count)
+    if counts != expected:
+        raise ValueError("primary_reason_code_counts must match explanation_rows")
+    return counts
 
 
 def _normalize_explanation_rows(

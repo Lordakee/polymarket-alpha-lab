@@ -24,6 +24,10 @@ from polymarket_alpha_lab.market_context_freshness import (
     PaperMarketContextFreshnessReport,
     PaperMarketContextFreshnessRow,
 )
+from polymarket_alpha_lab.paper_nav_liquidity_risk import (
+    PaperNavLiquidityRiskMarketRow,
+    PaperNavLiquidityRiskReport,
+)
 from polymarket_alpha_lab.settlement_freshness_gate import (
     PaperSettlementFreshnessGateReport,
     PaperSettlementFreshnessGateRow,
@@ -44,6 +48,10 @@ class _CostHealthReportSubclass(PaperCostHealthGateReport):
 
 
 class _LiquidityReportSubclass(PaperLiquidityGateReport):
+    pass
+
+
+class _NavLiquidityRiskReportSubclass(PaperNavLiquidityRiskReport):
     pass
 
 
@@ -441,6 +449,146 @@ def _liquidity_report(
     )
 
 
+def _empty_nav_liquidity_risk_report(
+    report_type=PaperNavLiquidityRiskReport,
+) -> PaperNavLiquidityRiskReport:
+    return report_type(
+        generated_at=GENERATED_AT,
+        config_version="paper-nav-liquidity-risk-v0",
+        nav_snapshot_count=0,
+        first_marked_at=None,
+        last_marked_at=None,
+        latest_open_position_count=0,
+        latest_fully_executable_count=0,
+        latest_partially_executable_count=0,
+        latest_no_exit_depth_count=0,
+        latest_total_open_size=None,
+        latest_total_cost_basis=None,
+        latest_unfilled_size=None,
+        latest_unfilled_open_size_share=None,
+        latest_unexecutable_cost_basis=None,
+        latest_unexecutable_cost_basis_share=None,
+        latest_weighted_slippage=None,
+        latest_widest_spread=None,
+        largest_unexecutable_condition_id=None,
+        largest_unexecutable_market_slug=None,
+        largest_unexecutable_cost_basis=None,
+        consecutive_unexecutable_snapshot_count=0,
+        worst_observed_unexecutable_cost_basis_share=None,
+        status="empty_nav_liquidity_risk_history",
+        market_rows=(),
+    )
+
+
+def _nav_liquidity_risk_report(
+    report_type=PaperNavLiquidityRiskReport,
+    *,
+    zero_cost_basis: bool = False,
+) -> PaperNavLiquidityRiskReport:
+    cost_basis = Decimal("0.0000") if zero_cost_basis else Decimal("10.0000")
+    unexecutable_cost_basis = Decimal("0") if zero_cost_basis else Decimal("5.0000")
+    unexecutable_cost_basis_share = (
+        None if zero_cost_basis else Decimal("0.500000")
+    )
+    largest_condition_id = None if zero_cost_basis else "condition-risky"
+    largest_market_slug = None if zero_cost_basis else "market-risky"
+    largest_cost_basis = None if zero_cost_basis else Decimal("5.0000")
+    worst_share = None if zero_cost_basis else Decimal("0.500000")
+    row = PaperNavLiquidityRiskMarketRow(
+        condition_id="condition-risky",
+        market_slug="market-risky",
+        token_count=1,
+        open_size=Decimal("10.0000"),
+        cost_basis=cost_basis,
+        exit_filled_size=Decimal("5.0000"),
+        exit_unfilled_size=Decimal("5.0000"),
+        exit_value=Decimal("2.5000"),
+        unfilled_open_size_share=Decimal("0.500000"),
+        unexecutable_cost_basis=unexecutable_cost_basis,
+        unexecutable_cost_basis_share=unexecutable_cost_basis_share,
+        weighted_slippage=Decimal("0.010000"),
+        widest_spread=Decimal("0.0200"),
+        fully_executable_count=0,
+        partially_executable_count=1,
+        no_exit_depth_count=0,
+    )
+    return report_type(
+        generated_at=GENERATED_AT,
+        config_version="paper-nav-liquidity-risk-v0",
+        nav_snapshot_count=1,
+        first_marked_at=SOURCE_GENERATED_AT,
+        last_marked_at=SOURCE_GENERATED_AT,
+        latest_open_position_count=1,
+        latest_fully_executable_count=0,
+        latest_partially_executable_count=1,
+        latest_no_exit_depth_count=0,
+        latest_total_open_size=Decimal("10.0000"),
+        latest_total_cost_basis=cost_basis,
+        latest_unfilled_size=Decimal("5.0000"),
+        latest_unfilled_open_size_share=Decimal("0.500000"),
+        latest_unexecutable_cost_basis=unexecutable_cost_basis,
+        latest_unexecutable_cost_basis_share=unexecutable_cost_basis_share,
+        latest_weighted_slippage=Decimal("0.010000"),
+        latest_widest_spread=Decimal("0.0200"),
+        largest_unexecutable_condition_id=largest_condition_id,
+        largest_unexecutable_market_slug=largest_market_slug,
+        largest_unexecutable_cost_basis=largest_cost_basis,
+        consecutive_unexecutable_snapshot_count=1,
+        worst_observed_unexecutable_cost_basis_share=worst_share,
+        status="latest_nav_has_unexecutable_liquidity",
+        market_rows=(row,),
+    )
+
+
+def _passing_nav_liquidity_risk_report(
+    report_type=PaperNavLiquidityRiskReport,
+) -> PaperNavLiquidityRiskReport:
+    row = PaperNavLiquidityRiskMarketRow(
+        condition_id="condition-liquid",
+        market_slug="market-liquid",
+        token_count=1,
+        open_size=Decimal("10.0000"),
+        cost_basis=Decimal("10.0000"),
+        exit_filled_size=Decimal("10.0000"),
+        exit_unfilled_size=Decimal("0.0000"),
+        exit_value=Decimal("5.0000"),
+        unfilled_open_size_share=Decimal("0.000000"),
+        unexecutable_cost_basis=Decimal("0"),
+        unexecutable_cost_basis_share=Decimal("0.000000"),
+        weighted_slippage=Decimal("0.010000"),
+        widest_spread=Decimal("0.0200"),
+        fully_executable_count=1,
+        partially_executable_count=0,
+        no_exit_depth_count=0,
+    )
+    return report_type(
+        generated_at=GENERATED_AT,
+        config_version="paper-nav-liquidity-risk-v0",
+        nav_snapshot_count=1,
+        first_marked_at=SOURCE_GENERATED_AT,
+        last_marked_at=SOURCE_GENERATED_AT,
+        latest_open_position_count=1,
+        latest_fully_executable_count=1,
+        latest_partially_executable_count=0,
+        latest_no_exit_depth_count=0,
+        latest_total_open_size=Decimal("10.0000"),
+        latest_total_cost_basis=Decimal("10.0000"),
+        latest_unfilled_size=Decimal("0.0000"),
+        latest_unfilled_open_size_share=Decimal("0.000000"),
+        latest_unexecutable_cost_basis=Decimal("0"),
+        latest_unexecutable_cost_basis_share=Decimal("0.000000"),
+        latest_weighted_slippage=Decimal("0.010000"),
+        latest_widest_spread=Decimal("0.0200"),
+        largest_unexecutable_condition_id=None,
+        largest_unexecutable_market_slug=None,
+        largest_unexecutable_cost_basis=None,
+        consecutive_unexecutable_snapshot_count=0,
+        worst_observed_unexecutable_cost_basis_share=Decimal("0.000000"),
+        status="latest_nav_liquidity_observed",
+        market_rows=(row,),
+    )
+
+
 def _exposure_report(
     report_type=PaperExposureGateReport,
 ) -> PaperExposureGateReport:
@@ -557,12 +705,14 @@ def test_adapter_builds_signals_in_deterministic_readiness_order():
         _passing_calibration_report(),
         _freshness_report(),
         _liquidity_report(),
+        _nav_liquidity_risk_report(),
         _exposure_report(),
         _cost_health_report(),
     )
 
     assert tuple(signal.source_name for signal in signals) == (
         "liquidity_gate",
+        "nav_liquidity_risk",
         "cost_health_gate",
         "market_context_freshness",
         "calibration_gate",
@@ -570,10 +720,87 @@ def test_adapter_builds_signals_in_deterministic_readiness_order():
     )
     assert tuple(signal.status for signal in signals) == (
         "blocked",
+        "blocked",
         "watch",
         "watch",
         "pass",
         "pass",
+    )
+
+
+@pytest.mark.parametrize(
+    (
+        "report_factory",
+        "readiness_status",
+        "severity",
+        "reason_codes",
+        "observed_value",
+    ),
+    (
+        (
+            _empty_nav_liquidity_risk_report,
+            "watch",
+            50,
+            ("nav_liquidity_risk_history_empty",),
+            None,
+        ),
+        (
+            _passing_nav_liquidity_risk_report,
+            "pass",
+            0,
+            ("nav_liquidity_risk_passed",),
+            Decimal("0.000000"),
+        ),
+        (
+            _nav_liquidity_risk_report,
+            "blocked",
+            100,
+            ("nav_liquidity_risk_unexecutable_liquidity",),
+            Decimal("0.500000"),
+        ),
+    ),
+)
+def test_adapter_builds_readiness_signals_from_nav_liquidity_risk_reports(
+    report_factory,
+    readiness_status,
+    severity,
+    reason_codes,
+    observed_value,
+):
+    adapter = _adapter_module()
+    report = report_factory()
+
+    signals = adapter.signals_from_nav_liquidity_risk_report(report)
+
+    assert signals == (
+        PaperStrategyReadinessSignal(
+            source_name="nav_liquidity_risk",
+            status=readiness_status,
+            reason_codes=reason_codes,
+            severity=severity,
+            observed_value=observed_value,
+            threshold=None,
+        ),
+    )
+
+
+def test_nav_liquidity_risk_signal_falls_back_to_unfilled_share_when_cost_basis_share_missing():
+    adapter = _adapter_module()
+    report = _nav_liquidity_risk_report(zero_cost_basis=True)
+
+    signals = adapter.build_paper_strategy_readiness_signals(report)
+
+    assert report.latest_unexecutable_cost_basis_share is None
+    assert report.latest_unfilled_open_size_share == Decimal("0.500000")
+    assert signals == (
+        PaperStrategyReadinessSignal(
+            source_name="nav_liquidity_risk",
+            status="blocked",
+            reason_codes=("nav_liquidity_risk_unexecutable_liquidity",),
+            severity=100,
+            observed_value=Decimal("0.500000"),
+            threshold=None,
+        ),
     )
 
 
@@ -680,6 +907,10 @@ def test_adapter_rejects_unknown_and_subclassed_report_inputs():
         adapter.signals_from_liquidity_gate_report(
             _liquidity_report(_LiquidityReportSubclass),
         )
+    with pytest.raises(ValueError, match="PaperNavLiquidityRiskReport"):
+        adapter.signals_from_nav_liquidity_risk_report(
+            _nav_liquidity_risk_report(_NavLiquidityRiskReportSubclass),
+        )
     with pytest.raises(ValueError, match="PaperExposureGateReport"):
         adapter.signals_from_exposure_gate_report(
             _exposure_report(_ExposureReportSubclass),
@@ -698,6 +929,21 @@ def test_adapter_rejects_unknown_and_subclassed_report_inputs():
         (_calibration_report, "signals_from_calibration_gate_report", "paper_only"),
         (_cost_health_report, "signals_from_cost_health_gate_report", "report_only"),
         (_liquidity_report, "signals_from_liquidity_gate_report", "readonly"),
+        (
+            _nav_liquidity_risk_report,
+            "signals_from_nav_liquidity_risk_report",
+            "paper_only",
+        ),
+        (
+            _nav_liquidity_risk_report,
+            "signals_from_nav_liquidity_risk_report",
+            "report_only",
+        ),
+        (
+            _nav_liquidity_risk_report,
+            "signals_from_nav_liquidity_risk_report",
+            "readonly",
+        ),
         (_exposure_report, "signals_from_exposure_gate_report", "paper_only"),
         (
             _freshness_report,

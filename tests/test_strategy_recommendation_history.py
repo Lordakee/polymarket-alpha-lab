@@ -81,6 +81,29 @@ def _history_report(
     )
 
 
+def _source_summary(
+    generated_at: datetime,
+    *,
+    config_version: str = "strategy-recommendation-v0",
+    candidate_count: int = 1,
+    recommend_count: int = 1,
+    watch_count: int = 0,
+    reject_count: int = 0,
+    top_recommendation_score: Decimal | None = Decimal("0.500000"),
+    average_recommendation_score: Decimal | None = Decimal("0.500000"),
+) -> PaperStrategyRecommendationHistorySourceSummary:
+    return PaperStrategyRecommendationHistorySourceSummary(
+        generated_at=generated_at,
+        config_version=config_version,
+        candidate_count=candidate_count,
+        recommend_count=recommend_count,
+        watch_count=watch_count,
+        reject_count=reject_count,
+        top_recommendation_score=top_recommendation_score,
+        average_recommendation_score=average_recommendation_score,
+    )
+
+
 def test_strategy_recommendation_history_empty_input_is_readonly_report():
     history = _history_report()
 
@@ -97,6 +120,10 @@ def test_strategy_recommendation_history_empty_input_is_readonly_report():
     assert history.latest_recommend_count == 0
     assert history.latest_watch_count == 0
     assert history.latest_reject_count == 0
+    assert history.latest_top_recommendation_score is None
+    assert history.best_observed_recommendation_score is None
+    assert history.average_recommendation_score is None
+    assert history.latest_average_recommendation_score is None
     assert history.source_summaries == ()
     assert history.paper_only is True
     assert history.report_only is True
@@ -115,6 +142,10 @@ def test_strategy_recommendation_history_empty_iterable_is_readonly_report():
     assert history.first_generated_at is None
     assert history.latest_generated_at is None
     assert history.latest_config_version is None
+    assert history.latest_top_recommendation_score is None
+    assert history.best_observed_recommendation_score is None
+    assert history.average_recommendation_score is None
+    assert history.latest_average_recommendation_score is None
     assert history.source_summaries == ()
     assert history.paper_only is True
     assert history.report_only is True
@@ -160,6 +191,61 @@ def test_strategy_recommendation_history_summarizes_two_ordered_reports_and_late
     )
     assert history.source_summaries[-1].config_version == "strategy-recommendation-v2"
     assert history.source_summaries[-1].candidate_count == 3
+
+
+def test_strategy_recommendation_history_summarizes_recommendation_score_trends():
+    first = _recommendation_report(
+        datetime(2026, 6, 18, 10, 0, tzinfo=UTC),
+        config_version="strategy-recommendation-v1",
+        rows=(
+            _row("market-a", action="recommend", score=Decimal("0.900000")),
+        ),
+    )
+    latest = _recommendation_report(
+        datetime(2026, 6, 18, 11, 0, tzinfo=UTC),
+        config_version="strategy-recommendation-v2",
+        rows=(
+            _row("market-b", action="recommend", score=Decimal("0.600000")),
+            _row("market-c", action="watch", score=Decimal("0.300000")),
+            _row("market-d", action="reject", score=Decimal("0.300000")),
+        ),
+    )
+
+    history = _history_report(latest, first)
+
+    assert history.latest_top_recommendation_score == Decimal("0.600000")
+    assert history.best_observed_recommendation_score == Decimal("0.900000")
+    assert history.average_recommendation_score == Decimal("0.525000")
+    assert history.latest_average_recommendation_score == Decimal("0.400000")
+    assert tuple(
+        (
+            summary.top_recommendation_score,
+            summary.average_recommendation_score,
+        )
+        for summary in history.source_summaries
+    ) == (
+        (Decimal("0.900000"), Decimal("0.900000")),
+        (Decimal("0.600000"), Decimal("0.400000")),
+    )
+
+
+def test_strategy_recommendation_history_handles_sources_without_candidates():
+    empty_source = _recommendation_report(
+        datetime(2026, 6, 18, 10, 0, tzinfo=UTC),
+        config_version="strategy-recommendation-v1",
+        rows=(),
+    )
+
+    history = _history_report(empty_source)
+
+    assert history.source_report_count == 1
+    assert history.total_candidate_count == 0
+    assert history.latest_top_recommendation_score is None
+    assert history.best_observed_recommendation_score is None
+    assert history.average_recommendation_score is None
+    assert history.latest_average_recommendation_score is None
+    assert history.source_summaries[0].top_recommendation_score is None
+    assert history.source_summaries[0].average_recommendation_score is None
 
 
 def test_strategy_recommendation_history_orders_input_by_generated_at():
@@ -245,7 +331,7 @@ def test_strategy_recommendation_history_orders_sources_after_timezone_normaliza
 
 
 def test_strategy_recommendation_history_normalizes_direct_source_summary_timestamps():
-    earlier = PaperStrategyRecommendationHistorySourceSummary(
+    earlier = _source_summary(
         generated_at=datetime(2026, 6, 18, 10, 0, tzinfo=UTC),
         config_version="strategy-recommendation-v1",
         candidate_count=1,
@@ -253,13 +339,15 @@ def test_strategy_recommendation_history_normalizes_direct_source_summary_timest
         watch_count=0,
         reject_count=0,
     )
-    later = PaperStrategyRecommendationHistorySourceSummary(
+    later = _source_summary(
         generated_at=datetime(2026, 6, 18, 11, 0, tzinfo=UTC),
         config_version="strategy-recommendation-v2",
         candidate_count=1,
         recommend_count=0,
         watch_count=1,
         reject_count=0,
+        top_recommendation_score=Decimal("0.300000"),
+        average_recommendation_score=Decimal("0.300000"),
     )
     object.__setattr__(
         earlier,
@@ -282,6 +370,10 @@ def test_strategy_recommendation_history_normalizes_direct_source_summary_timest
         latest_recommend_count=0,
         latest_watch_count=1,
         latest_reject_count=0,
+        latest_top_recommendation_score=Decimal("0.300000"),
+        best_observed_recommendation_score=Decimal("0.500000"),
+        average_recommendation_score=Decimal("0.400000"),
+        latest_average_recommendation_score=Decimal("0.300000"),
         source_summaries=(earlier, later),
     )
 
@@ -294,21 +386,25 @@ def test_strategy_recommendation_history_normalizes_direct_source_summary_timest
 
 def test_strategy_recommendation_history_allows_duplicate_source_summary_keys_for_stable_ties():
     generated_at = datetime(2026, 6, 18, 10, 0, tzinfo=UTC)
-    first = PaperStrategyRecommendationHistorySourceSummary(
+    first = _source_summary(
         generated_at=generated_at,
         config_version="strategy-recommendation-v0",
         candidate_count=1,
         recommend_count=1,
         watch_count=0,
         reject_count=0,
+        top_recommendation_score=Decimal("0.600000"),
+        average_recommendation_score=Decimal("0.600000"),
     )
-    duplicate = PaperStrategyRecommendationHistorySourceSummary(
+    duplicate = _source_summary(
         generated_at=generated_at,
         config_version="strategy-recommendation-v0",
         candidate_count=1,
         recommend_count=0,
         watch_count=1,
         reject_count=0,
+        top_recommendation_score=Decimal("0.300000"),
+        average_recommendation_score=Decimal("0.300000"),
     )
 
     history = PaperStrategyRecommendationHistoryReport(
@@ -326,6 +422,10 @@ def test_strategy_recommendation_history_allows_duplicate_source_summary_keys_fo
         latest_recommend_count=0,
         latest_watch_count=1,
         latest_reject_count=0,
+        latest_top_recommendation_score=Decimal("0.300000"),
+        best_observed_recommendation_score=Decimal("0.600000"),
+        average_recommendation_score=Decimal("0.450000"),
+        latest_average_recommendation_score=Decimal("0.300000"),
         source_summaries=(first, duplicate),
     )
 
@@ -356,7 +456,7 @@ def test_strategy_recommendation_history_builder_preserves_duplicate_key_stable_
 
 
 def test_strategy_recommendation_history_revalidates_direct_source_summary_counts():
-    summary = PaperStrategyRecommendationHistorySourceSummary(
+    summary = _source_summary(
         generated_at=datetime(2026, 6, 18, 10, 0, tzinfo=UTC),
         config_version="strategy-recommendation-v0",
         candidate_count=1,
@@ -382,8 +482,52 @@ def test_strategy_recommendation_history_revalidates_direct_source_summary_count
             latest_recommend_count=1,
             latest_watch_count=0,
             latest_reject_count=0,
+            latest_top_recommendation_score=Decimal("0.500000"),
+            best_observed_recommendation_score=Decimal("0.500000"),
+            average_recommendation_score=Decimal("0.500000"),
+            latest_average_recommendation_score=Decimal("0.500000"),
             source_summaries=(summary,),
         )
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value", "expected_message"),
+    (
+        (
+            "top_recommendation_score",
+            0.5,
+            "top_recommendation_score must be a Decimal",
+        ),
+        (
+            "average_recommendation_score",
+            Decimal("-0.000001"),
+            "average_recommendation_score must be nonnegative",
+        ),
+        (
+            "average_recommendation_score",
+            Decimal("NaN"),
+            "average_recommendation_score must be finite",
+        ),
+    ),
+)
+def test_strategy_recommendation_history_source_summary_validates_score_metrics(
+    field_name: str,
+    value: object,
+    expected_message: str,
+):
+    kwargs = {
+        "generated_at": datetime(2026, 6, 18, 10, 0, tzinfo=UTC),
+        "candidate_count": 1,
+        "recommend_count": 1,
+        "watch_count": 0,
+        "reject_count": 0,
+        "top_recommendation_score": Decimal("0.500000"),
+        "average_recommendation_score": Decimal("0.500000"),
+    }
+    kwargs[field_name] = value
+
+    with pytest.raises(ValueError, match=expected_message):
+        _source_summary(**kwargs)  # type: ignore[arg-type]
 
 
 def test_strategy_recommendation_history_rejects_invalid_source_type():
@@ -438,6 +582,10 @@ def test_strategy_recommendation_history_direct_constructor_validates_mismatches
         {"latest_config_version": "different-version"},
         {"latest_candidate_count": 2},
         {"latest_recommend_count": 0},
+        {"latest_top_recommendation_score": Decimal("0.000000")},
+        {"best_observed_recommendation_score": Decimal("0.000000")},
+        {"average_recommendation_score": Decimal("0.000000")},
+        {"latest_average_recommendation_score": Decimal("0.000000")},
         {"paper_only": False},
         {"report_only": False},
         {"readonly": False},
@@ -465,6 +613,10 @@ def test_strategy_recommendation_history_direct_constructor_validates_empty_inva
             latest_recommend_count=0,
             latest_watch_count=0,
             latest_reject_count=0,
+            latest_top_recommendation_score=None,
+            best_observed_recommendation_score=None,
+            average_recommendation_score=None,
+            latest_average_recommendation_score=None,
             source_summaries=(),
         )
 
@@ -484,6 +636,10 @@ def test_strategy_recommendation_history_direct_constructor_validates_empty_inva
             latest_recommend_count=0,
             latest_watch_count=0,
             latest_reject_count=0,
+            latest_top_recommendation_score=None,
+            best_observed_recommendation_score=None,
+            average_recommendation_score=None,
+            latest_average_recommendation_score=None,
             source_summaries=(),
         )
 
@@ -503,26 +659,34 @@ def test_strategy_recommendation_history_direct_constructor_validates_empty_inva
             latest_recommend_count=0,
             latest_watch_count=0,
             latest_reject_count=0,
+            latest_top_recommendation_score=None,
+            best_observed_recommendation_score=None,
+            average_recommendation_score=None,
+            latest_average_recommendation_score=None,
             source_summaries=(),
         )
 
 
 def test_strategy_recommendation_history_direct_constructor_requires_deterministic_summaries():
-    older = PaperStrategyRecommendationHistorySourceSummary(
+    older = _source_summary(
         generated_at=datetime(2026, 6, 18, 10, 0, tzinfo=UTC),
         config_version="strategy-recommendation-v0",
         candidate_count=1,
         recommend_count=1,
         watch_count=0,
         reject_count=0,
+        top_recommendation_score=Decimal("0.600000"),
+        average_recommendation_score=Decimal("0.600000"),
     )
-    newer = PaperStrategyRecommendationHistorySourceSummary(
+    newer = _source_summary(
         generated_at=datetime(2026, 6, 18, 11, 0, tzinfo=UTC),
         config_version="strategy-recommendation-v0",
         candidate_count=1,
         recommend_count=0,
         watch_count=1,
         reject_count=0,
+        top_recommendation_score=Decimal("0.300000"),
+        average_recommendation_score=Decimal("0.300000"),
     )
 
     with pytest.raises(ValueError, match="source_summaries must be ordered"):
@@ -541,6 +705,10 @@ def test_strategy_recommendation_history_direct_constructor_requires_determinist
             latest_recommend_count=0,
             latest_watch_count=1,
             latest_reject_count=0,
+            latest_top_recommendation_score=Decimal("0.300000"),
+            best_observed_recommendation_score=Decimal("0.600000"),
+            average_recommendation_score=Decimal("0.450000"),
+            latest_average_recommendation_score=Decimal("0.300000"),
             source_summaries=(newer, older),
         )
 

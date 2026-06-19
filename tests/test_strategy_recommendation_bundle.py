@@ -158,7 +158,16 @@ def test_build_bundle_report_reduces_recommendations_selection_and_explanations(
     assert report.candidate_count == 3
     assert report.recommend_count == 1
     assert report.selected_count == 1
+    assert report.skipped_count == 0
+    assert report.not_selected_count == 2
     assert report.total_selected_notional == Decimal("12.000000")
+    assert report.total_suggested_notional == Decimal("12.000000")
+    assert report.skipped_suggested_notional == Decimal("0.000000")
+    assert report.remaining_total_notional == Decimal("8.000000")
+    assert report.primary_reason_code_counts == (
+        ("assessment_ready", 2),
+        ("missing_cost_report", 1),
+    )
     assert report.paper_only is True
     assert report.report_only is True
     assert report.readonly is True
@@ -215,7 +224,13 @@ def test_build_bundle_report_accepts_empty_candidate_set():
     assert report.candidate_count == 0
     assert report.recommend_count == 0
     assert report.selected_count == 0
+    assert report.skipped_count == 0
+    assert report.not_selected_count == 0
     assert report.total_selected_notional == Decimal("0")
+    assert report.total_suggested_notional == Decimal("0")
+    assert report.skipped_suggested_notional == Decimal("0")
+    assert report.remaining_total_notional == Decimal("20.000000")
+    assert report.primary_reason_code_counts == ()
     assert report.recommendation_report.recommendation_rows == ()
     assert report.selection_policy_report.selection_rows == ()
     assert report.explanation_report.explanation_rows == ()
@@ -266,8 +281,23 @@ def test_bundle_report_direct_constructor_rejects_count_inconsistency():
         replace(report, recommend_count=report.recommend_count + 1)
     with pytest.raises(ValueError, match="selected_count"):
         replace(report, selected_count=report.selected_count + 1)
+    with pytest.raises(ValueError, match="skipped_count"):
+        replace(report, skipped_count=report.skipped_count + 1)
+    with pytest.raises(ValueError, match="not_selected_count"):
+        replace(report, not_selected_count=report.not_selected_count + 1)
     with pytest.raises(ValueError, match="total_selected_notional"):
         replace(report, total_selected_notional=Decimal("0.000000"))
+    with pytest.raises(ValueError, match="total_suggested_notional"):
+        replace(report, total_suggested_notional=Decimal("0.000000"))
+    with pytest.raises(ValueError, match="skipped_suggested_notional"):
+        replace(report, skipped_suggested_notional=Decimal("1.000000"))
+    with pytest.raises(ValueError, match="remaining_total_notional"):
+        replace(report, remaining_total_notional=Decimal("1.000000"))
+    with pytest.raises(ValueError, match="primary_reason_code_counts"):
+        replace(
+            report,
+            primary_reason_code_counts=(("assessment_ready", 999),),
+        )
     with pytest.raises(ValueError, match="paper_only"):
         replace(report, paper_only=False)
     with pytest.raises(ValueError, match="report_only"):
@@ -334,9 +364,9 @@ def test_bundle_report_direct_constructor_rejects_explanation_row_mismatches(
             explanation_rows[row_index],
             **row_updates,
         )
-    explanation_report = replace(
+    explanation_report = _replace_explanation_report_rows(
         report.explanation_report,
-        explanation_rows=tuple(explanation_rows),
+        tuple(explanation_rows),
     )
 
     with pytest.raises(
@@ -364,6 +394,13 @@ def _replace_explanation_row(row, **row_updates):
             f"(score {recommendation_score})"
         ),
     )
+
+
+def _replace_explanation_report_rows(report, explanation_rows):
+    updates = {"explanation_rows": explanation_rows}
+    if hasattr(report, "primary_reason_code_counts"):
+        updates["primary_reason_code_counts"] = None
+    return replace(report, **updates)
 
 
 def test_bundle_report_normalizes_generated_at_to_utc():

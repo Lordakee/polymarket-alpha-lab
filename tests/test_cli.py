@@ -1109,8 +1109,8 @@ def _recommendation_bundle_report(
     generated_at: datetime = datetime(2026, 6, 18, 16, 0, tzinfo=UTC),
     market_slug: str = "market-alpha",
     notional: Decimal = Decimal("7.500000"),
+    score: Decimal = Decimal("0.750000"),
 ) -> PaperStrategyRecommendationBundleReport:
-    score = Decimal("0.750000")
     recommendation_report = PaperStrategyCandidateRecommendationReport(
         generated_at=generated_at,
         config_version="strategy-candidate-recommendation-v1",
@@ -1239,6 +1239,109 @@ def test_strategy_recommendation_history_cli_reads_log_and_prints_summary_withou
     assert "total_recommend=2" in captured.out
     assert "latest_selected=1" in captured.out
     assert "latest_selected_notional=12.500000" in captured.out
+
+
+def test_strategy_recommendation_history_cli_prints_bundle_score_selection_trend(
+    tmp_path,
+    capsys,
+):
+    recommendation_log = tmp_path / "strategy-recommendations.jsonl"
+    append_paper_strategy_recommendation_bundle_log(
+        recommendation_log,
+        _recommendation_bundle_report(
+            generated_at=datetime(2026, 6, 18, 16, 0, tzinfo=UTC),
+            market_slug="market-alpha",
+            notional=Decimal("7.500000"),
+            score=Decimal("0.250000"),
+        ),
+    )
+    append_paper_strategy_recommendation_bundle_log(
+        recommendation_log,
+        _recommendation_bundle_report(
+            generated_at=datetime(2026, 6, 18, 16, 5, tzinfo=UTC),
+            market_slug="market-beta",
+            notional=Decimal("12.500000"),
+            score=Decimal("0.800000"),
+        ),
+    )
+    before = recommendation_log.read_bytes()
+    client_factory_calls = 0
+
+    def forbidden_client_factory():
+        nonlocal client_factory_calls
+        client_factory_calls += 1
+        raise AssertionError("client should not be constructed")
+
+    exit_code = main(
+        [
+            "strategy-recommendation-history",
+            "--recommendation-log",
+            str(recommendation_log),
+        ],
+        client_factory=forbidden_client_factory,
+    )
+
+    assert exit_code == 0
+    assert client_factory_calls == 0
+    assert recommendation_log.read_bytes() == before
+    captured = capsys.readouterr()
+    assert "selection_score_trend:" in captured.out
+    assert "total_selected=2" in captured.out
+    assert "total_selected_notional=20.000000" in captured.out
+    assert "first_recommendation_score=0.250000" in captured.out
+    assert "latest_recommendation_score=0.800000" in captured.out
+    assert "latest_selected_score=0.800000" in captured.out
+
+
+def test_strategy_recommendation_history_cli_prints_optional_report_metrics(
+    tmp_path,
+    capsys,
+):
+    recommendation_log = tmp_path / "strategy-recommendations.jsonl"
+    recommendation_log.write_text("", encoding="utf-8")
+
+    def fake_strategy_recommendation_history_runner(
+        *,
+        recommendation_reports,
+        config_version,
+        generated_at,
+    ):
+        report = build_paper_strategy_recommendation_history_report(
+            recommendation_reports,
+            config_version=config_version,
+            generated_at=generated_at,
+        )
+        object.__setattr__(report, "total_selected_count", 3)
+        object.__setattr__(report, "total_selected_notional", Decimal("31.000000"))
+        object.__setattr__(report, "selection_rate", Decimal("0.6000"))
+        object.__setattr__(
+            report,
+            "latest_recommendation_score",
+            Decimal("0.660000"),
+        )
+        return report
+
+    exit_code = main(
+        [
+            "strategy-recommendation-history",
+            "--recommendation-log",
+            str(recommendation_log),
+        ],
+        strategy_recommendation_history_runner=(
+            fake_strategy_recommendation_history_runner
+        ),
+        client_factory=lambda: (_ for _ in ()).throw(
+            AssertionError("client should not be constructed"),
+        ),
+    )
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    assert "selection_score_trend:" in captured.out
+    assert "total_selected_count=3" in captured.out
+    assert "total_selected_notional=31.000000" in captured.out
+    assert "selection_rate=0.6000" in captured.out
+    assert "latest_recommendation_score=0.660000" in captured.out
 
 
 def test_strategy_recommendation_history_cli_aligns_latest_selection_with_history_order(
