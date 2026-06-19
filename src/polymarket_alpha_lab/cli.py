@@ -46,6 +46,10 @@ from polymarket_alpha_lab.pipeline import MarketScanConfig, run_market_scan
 from polymarket_alpha_lab.positions import PaperNavLog, PaperNavSnapshot
 from polymarket_alpha_lab.paper_recommendation_cycle_snapshot_psycopg import (
     insert_paper_recommendation_cycle_snapshot_with_psycopg,
+    load_paper_recommendation_cycle_snapshots_with_psycopg,
+)
+from polymarket_alpha_lab.paper_recommendation_cycle_snapshot_trend import (
+    build_paper_recommendation_cycle_snapshot_trend_report,
 )
 from polymarket_alpha_lab.performance_summary import (
     PerformanceSummary,
@@ -108,6 +112,7 @@ StrategyEvidenceRunner = Callable[..., "PaperStrategyEvidenceSnapshotReport"]
 ObservabilityTrendsRunner = Callable[..., LocalObservabilityTrendsReport]
 CycleSnapshotSource = Callable[..., object]
 CycleSnapshotDbSink = Callable[..., object]
+CycleSnapshotDbTrendRunner = Callable[..., object]
 _MISSING = object()
 
 
@@ -188,6 +193,7 @@ def main(
     cycle_snapshot_db_sink: CycleSnapshotDbSink = (
         insert_paper_recommendation_cycle_snapshot_with_psycopg
     ),
+    cycle_snapshot_db_trend_runner: CycleSnapshotDbTrendRunner | None = None,
 ) -> int:
     parser = argparse.ArgumentParser(prog="polymarket-alpha-lab")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -417,6 +423,14 @@ def main(
         default=86_400,
         dest="outcome_stale_after_seconds",
     )
+
+    cycle_snapshot_db_trend = subparsers.add_parser("cycle-snapshot-db-trend")
+    cycle_snapshot_db_trend.add_argument(
+        "--source-config-version",
+        default=None,
+        dest="source_config_version",
+    )
+    cycle_snapshot_db_trend.add_argument("--limit", type=int, default=50)
 
     # Stage 17 market search: search Polymarket markets by keyword.
     search_parser = subparsers.add_parser("search")
@@ -729,6 +743,19 @@ def main(
             print(f"observability-trends failed: {exc}", file=sys.stderr)
             return 1
 
+    if args.command == "cycle-snapshot-db-trend":
+        try:
+            report = _run_cycle_snapshot_db_trend(
+                source_config_version=args.source_config_version,
+                limit=args.limit,
+                runner=cycle_snapshot_db_trend_runner,
+            )
+            _print_cycle_snapshot_db_trend_summary(report)
+            return 0
+        except Exception as exc:
+            print(f"cycle-snapshot-db-trend failed: {exc}", file=sys.stderr)
+            return 1
+
     if args.command == "run":
         try:
             cycle_snapshot_db_config = from_cycle_snapshot_db_env()
@@ -1032,6 +1059,47 @@ def _run_nav_risk(
         nav_snapshots,
         config=config,
         generated_at=generated_at,
+    )
+
+
+def _run_cycle_snapshot_db_trend(
+    *,
+    source_config_version: str | None,
+    limit: int,
+    runner: CycleSnapshotDbTrendRunner | None,
+) -> object:
+    if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+        raise ValueError("limit must be a positive integer")
+    db_config = from_cycle_snapshot_db_env()
+    if not db_config.enabled:
+        raise ValueError("cycle-snapshot-db-trend requires cycle snapshot DB to be enabled")
+    if db_config.dsn is None:
+        raise ValueError("cycle-snapshot-db-trend requires a DB DSN")
+    generated_at = datetime.now(UTC)
+    config_version = "cycle-snapshot-db-trend-v0"
+    if runner is not None:
+        return runner(
+            dsn=db_config.dsn,
+            generated_at=generated_at,
+            config_version=config_version,
+            source_config_version=source_config_version,
+            limit=limit,
+            table_name=db_config.table_name,
+        )
+    snapshots = load_paper_recommendation_cycle_snapshots_with_psycopg(
+        db_config.dsn,
+        config_version=source_config_version,
+        limit=limit,
+        table_name=db_config.table_name,
+    )
+    if not snapshots:
+        raise ValueError("no paper recommendation cycle snapshots found")
+    # Store-backed loaders return newest-first; the trend builder expects
+    # chronological input so equal-timestamp latest-status tie handling is stable.
+    return build_paper_recommendation_cycle_snapshot_trend_report(
+        generated_at=generated_at,
+        config_version=config_version,
+        snapshots=tuple(reversed(snapshots)),
     )
 
 
@@ -1686,6 +1754,23 @@ def _print_observability_trends_summary(
     print(
         "  cost_latest_mean_edge_cost_drag="
         f"{_none_or_value(cost.latest_mean_edge_cost_drag)}",
+    )
+
+
+def _print_cycle_snapshot_db_trend_summary(report: object) -> None:
+    print(
+        "cycle-snapshot-db-trend: "
+        f"snapshots={report.snapshot_count} "
+        f"pass={report.pass_count} "
+        f"watch={report.watch_count} "
+        f"blocked={report.blocked_count} "
+        f"latest_status={report.latest_status} "
+        f"first={report.first_generated_at.isoformat()} "
+        f"last={report.last_generated_at.isoformat()} "
+        f"blocked_share={report.blocked_share} "
+        f"watch_share={report.watch_share} "
+        f"avg_stage_count={report.average_stage_count} "
+        f"avg_artifact_count={report.average_artifact_count}",
     )
 
 

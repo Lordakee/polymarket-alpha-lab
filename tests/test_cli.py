@@ -1582,6 +1582,139 @@ def test_strategy_recommendation_history_cli_returns_one_when_runner_fails(
     )
 
 
+def test_cycle_snapshot_db_trend_cli_requires_enabled_db_config(
+    monkeypatch,
+    capsys,
+):
+    monkeypatch.delenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_ENABLED", raising=False)
+    monkeypatch.delenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_DSN", raising=False)
+
+    def forbidden_runner(**kwargs):
+        raise AssertionError("trend runner should not run")
+
+    def forbidden_client_factory():
+        raise AssertionError("client should not be constructed")
+
+    exit_code = main(
+        ["cycle-snapshot-db-trend"],
+        cycle_snapshot_db_trend_runner=forbidden_runner,
+        client_factory=forbidden_client_factory,
+    )
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert "cycle-snapshot-db-trend failed:" in captured.err
+    assert "requires cycle snapshot DB to be enabled" in captured.err
+
+
+def test_cycle_snapshot_db_trend_cli_reads_db_config_and_prints_summary(
+    monkeypatch,
+    capsys,
+):
+    monkeypatch.setenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_ENABLED", "true")
+    monkeypatch.setenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_DSN", "test-dsn-value")
+    monkeypatch.setenv(
+        "POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_TABLE",
+        "cycle_snapshot_archive",
+    )
+    calls = []
+
+    def fake_trend_runner(
+        *,
+        dsn,
+        generated_at,
+        config_version,
+        source_config_version,
+        limit,
+        table_name,
+    ):
+        calls.append(
+            {
+                "dsn": dsn,
+                "generated_at": generated_at,
+                "config_version": config_version,
+                "source_config_version": source_config_version,
+                "limit": limit,
+                "table_name": table_name,
+            },
+        )
+        return SimpleNamespace(
+            snapshot_count=3,
+            pass_count=1,
+            watch_count=1,
+            blocked_count=1,
+            latest_status="blocked",
+            first_generated_at=datetime(2026, 6, 19, 10, 0, tzinfo=UTC),
+            last_generated_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
+            blocked_share=Decimal("0.333333"),
+            watch_share=Decimal("0.333333"),
+            average_stage_count=Decimal("4.000000"),
+            average_artifact_count=Decimal("7.000000"),
+            paper_only=True,
+            report_only=True,
+            readonly=True,
+        )
+
+    def forbidden_client_factory():
+        raise AssertionError("client should not be constructed")
+
+    exit_code = main(
+        [
+            "cycle-snapshot-db-trend",
+            "--source-config-version",
+            "paper-recommendation-cycle-snapshot-v0",
+            "--limit",
+            "25",
+        ],
+        cycle_snapshot_db_trend_runner=fake_trend_runner,
+        client_factory=forbidden_client_factory,
+    )
+
+    assert exit_code == 0
+    assert len(calls) == 1
+    assert calls[0]["dsn"] == "test-dsn-value"
+    assert calls[0]["config_version"] == "cycle-snapshot-db-trend-v0"
+    assert (
+        calls[0]["source_config_version"]
+        == "paper-recommendation-cycle-snapshot-v0"
+    )
+    assert calls[0]["limit"] == 25
+    assert calls[0]["table_name"] == "cycle_snapshot_archive"
+    assert isinstance(calls[0]["generated_at"], datetime)
+
+    captured = capsys.readouterr()
+    assert "cycle-snapshot-db-trend:" in captured.out
+    assert "snapshots=3" in captured.out
+    assert "pass=1" in captured.out
+    assert "watch=1" in captured.out
+    assert "blocked=1" in captured.out
+    assert "latest_status=blocked" in captured.out
+    assert "blocked_share=0.333333" in captured.out
+    assert "test-dsn-value" not in captured.out
+    assert "test-dsn-value" not in captured.err
+
+
+def test_cycle_snapshot_db_trend_cli_runner_failure_redacts_dsn(
+    monkeypatch,
+    capsys,
+):
+    monkeypatch.setenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_ENABLED", "true")
+    monkeypatch.setenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_DSN", "test-dsn-value")
+
+    def broken_runner(**kwargs):
+        raise RuntimeError("database unavailable")
+
+    exit_code = main(
+        ["cycle-snapshot-db-trend"],
+        cycle_snapshot_db_trend_runner=broken_runner,
+    )
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert "cycle-snapshot-db-trend failed: database unavailable" in captured.err
+    assert "test-dsn-value" not in captured.err
+
+
 def _strategy_evidence_stub_report(
     *,
     status: str = "local_evidence_observed",
