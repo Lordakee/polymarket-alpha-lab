@@ -17,6 +17,9 @@ from polymarket_alpha_lab.outcome_tracker import (
     OutcomeTrackingLog,
     OutcomeTrackingReport,
 )
+from polymarket_alpha_lab.paper_recommendation_cycle_snapshot import (
+    PaperRecommendationCycleSnapshotReport,
+)
 from polymarket_alpha_lab.nav_risk_metrics import (
     PaperNavRiskMetricsConfig,
     PaperNavRiskMetricsReport,
@@ -3139,6 +3142,148 @@ def test_run_cli_uses_default_cycle_snapshot_source_when_db_enabled_without_inje
     assert "cycle_snapshots_persisted=1" in captured.out
     assert "test-dsn-value" not in captured.out
     assert "test-dsn-value" not in captured.err
+
+
+def test_run_cli_default_loop_persists_default_snapshot_report_from_real_cycle(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    fake_dsn = "postgresql://fake.example.invalid/paper-only"
+    monkeypatch.setenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_ENABLED", "true")
+    monkeypatch.setenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_DSN", fake_dsn)
+    monkeypatch.setenv(
+        "POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_TABLE",
+        "cycle_snapshot_archive",
+    )
+
+    yes_token_id = "fake-yes-token"
+    no_token_id = "fake-no-token"
+    raw_market = {
+        "conditionId": "0xfakecondition",
+        "slug": "fake-local-market",
+        "question": "Will the local fake event resolve yes?",
+        "active": True,
+        "closed": False,
+        "acceptingOrders": True,
+        "enableOrderBook": True,
+        "endDate": "2030-01-01T00:00:00Z",
+        "volume24hr": "5000",
+        "liquidity": "10000",
+        "orderMinSize": "5",
+        "orderPriceMinTickSize": "0.01",
+        "outcomes": ["Yes", "No"],
+        "clobTokenIds": [yes_token_id, no_token_id],
+        "description": "Resolves according to a local fake public source.",
+        "resolutionSource": "https://example.invalid/fake-resolution",
+    }
+    raw_books = {
+        yes_token_id: {
+            "asset_id": yes_token_id,
+            "bids": [{"price": "0.5300", "size": "100.0000"}],
+            "asks": [{"price": "0.5500", "size": "100.0000"}],
+        },
+        no_token_id: {
+            "asset_id": no_token_id,
+            "bids": [{"price": "0.3700", "size": "100.0000"}],
+            "asks": [{"price": "0.4000", "size": "100.0000"}],
+        },
+    }
+    list_markets_calls = []
+    order_book_calls = []
+    sink_calls = []
+
+    class FakeMarketDataClient:
+        def list_markets(self, *, active, closed, limit, search=None):
+            list_markets_calls.append(
+                {
+                    "active": active,
+                    "closed": closed,
+                    "limit": limit,
+                    "search": search,
+                }
+            )
+            return [raw_market]
+
+        def get_order_book(self, *, token_id):
+            order_book_calls.append(token_id)
+            return raw_books[token_id]
+
+    fake_client = FakeMarketDataClient()
+
+    def fake_cycle_snapshot_db_sink(*, dsn, report, table_name):
+        sink_calls.append((dsn, report, table_name))
+
+    archive_root = tmp_path / "raw"
+    cycle_log = tmp_path / "cycle.jsonl"
+    nav_log = tmp_path / "nav.jsonl"
+
+    exit_code = main(
+        [
+            "run",
+            "--limit",
+            "1",
+            "--max-markets",
+            "1",
+            "--no-prefilter",
+            "--archive-root",
+            str(archive_root),
+            "--cycle-log",
+            str(cycle_log),
+            "--nav-log",
+            str(nav_log),
+            "--starting-cash",
+            "10000",
+            "--max-iterations",
+            "1",
+        ],
+        client_factory=lambda: fake_client,
+        cycle_snapshot_db_sink=fake_cycle_snapshot_db_sink,
+    )
+
+    assert exit_code == 0
+    assert list_markets_calls == [
+        {
+            "active": True,
+            "closed": False,
+            "limit": 1,
+            "search": None,
+        },
+    ]
+    assert order_book_calls == [yes_token_id, no_token_id]
+    assert len(sink_calls) == 1
+    dsn, report, table_name = sink_calls[0]
+    assert dsn == fake_dsn
+    assert table_name == "cycle_snapshot_archive"
+    assert isinstance(report, PaperRecommendationCycleSnapshotReport)
+    assert report.paper_only is True
+    assert report.report_only is True
+    assert report.readonly is True
+    assert report.final_status == "pass"
+    # The default strategy-cycle snapshot source currently emits four pipeline
+    # stages and two artifacts; this integration test should catch wiring drift.
+    assert report.stage_count == 4
+    assert report.artifact_count == 2
+    assert "screening_ready_candidates" in report.reason_codes
+
+    captured = capsys.readouterr()
+    assert "completed=1" in captured.out
+    assert "failed=0" in captured.out
+    assert "cycle_snapshots_persisted=1" in captured.out
+    assert fake_dsn not in captured.out
+    assert fake_dsn not in captured.err
+
+    cycle_reports = PaperStrategyCycleLog.read(cycle_log)
+    assert len(cycle_reports) == 1
+    cycle_report = cycle_reports[0]
+    assert isinstance(cycle_report, PaperStrategyCycleReport)
+    assert cycle_report.paper_only is True
+    assert cycle_report.report_only is True
+    assert cycle_report.scan_market_count == 1
+    assert cycle_report.considered_count == 1
+    assert cycle_report.snapshot_ready_count == 1
+    assert cycle_report.cost_aware_report_count == 1
+    assert cycle_report.screening_report is not None
 
 
 def test_run_cli_returns_one_when_loop_runner_fails(tmp_path, capsys):
