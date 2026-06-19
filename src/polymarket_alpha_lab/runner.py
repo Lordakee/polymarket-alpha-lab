@@ -33,6 +33,10 @@ account/position reads, or exchange writes. Synchronous ``time.sleep`` loop
 only (async/scheduler/daemon is a later stage). The output ``RunLoopSummary``
 is paper-only/report-only (``paper_only is True`` / ``report_only is True`` are
 hard-enforced with ``is``).
+
+Optional recommendation cycle snapshot persistence is injected as a source/sink
+pair, so this module never fakes a recommendation snapshot from a
+``PaperStrategyCycleReport`` and never imports DB adapters.
 """
 
 from __future__ import annotations
@@ -78,6 +82,7 @@ class RunLoopSummary:
     last_iteration_at: datetime
     last_error: str | None
     nav_marks_skipped: int = 0
+    cycle_snapshots_persisted: int = 0
     paper_only: bool = True
     report_only: bool = True
 
@@ -85,6 +90,10 @@ class RunLoopSummary:
         _require_nonnegative_int("iterations_completed", self.iterations_completed)
         _require_nonnegative_int("iterations_failed", self.iterations_failed)
         _require_nonnegative_int("nav_marks_skipped", self.nav_marks_skipped)
+        _require_nonnegative_int(
+            "cycle_snapshots_persisted",
+            self.cycle_snapshots_persisted,
+        )
         if not isinstance(self.first_iteration_at, datetime):
             raise ValueError("first_iteration_at must be a datetime")
         if not isinstance(self.last_iteration_at, datetime):
@@ -121,6 +130,8 @@ def run_strategy_loop(
     interval_seconds: int = 0,
     max_iterations: int = 1,
     on_cycle_error: str = "log_and_continue",
+    cycle_snapshot_source: object | None = None,
+    cycle_snapshot_sink: object | None = None,
 ) -> RunLoopSummary:
     """Run the strategy cycle + NAV mark loop ``max_iterations`` times.
 
@@ -141,6 +152,11 @@ def run_strategy_loop(
     (``iterations_failed`` + ``last_error``) and continues;
     ``on_cycle_error="raise"`` propagates immediately. The returned
     ``RunLoopSummary`` is paper-only/report-only.
+
+    ``cycle_snapshot_source`` and ``cycle_snapshot_sink`` are optional. They are
+    called only when both are supplied, after the strategy cycle report is
+    appended and before NAV marking. A source/sink failure is treated like any
+    other iteration failure by the existing ``on_cycle_error`` policy.
     """
     _validate_loop_params(
         client=client,
@@ -153,11 +169,14 @@ def run_strategy_loop(
         interval_seconds=interval_seconds,
         max_iterations=max_iterations,
         on_cycle_error=on_cycle_error,
+        cycle_snapshot_source=cycle_snapshot_source,
+        cycle_snapshot_sink=cycle_snapshot_sink,
     )
 
     iterations_completed = 0
     iterations_failed = 0
     nav_marks_skipped = 0
+    cycle_snapshots_persisted = 0
     last_error: str | None = None
     first_iteration_at: datetime | None = None
     last_iteration_at: datetime | None = None
@@ -177,7 +196,16 @@ def run_strategy_loop(
             )
             # (b) Append the validated report to the cycle JSONL log.
             PaperStrategyCycleLog(cycle_report_log_path).append(report)
-            # (c) Optional NAV mark.
+            # (c) Optional supplied recommendation-cycle snapshot persistence.
+            if cycle_snapshot_source is not None and cycle_snapshot_sink is not None:
+                cycle_snapshot = cycle_snapshot_source(
+                    cycle_report=report,
+                    iteration_started_at=iteration_at,
+                )
+                _require_snapshot_safety_flags(cycle_snapshot)
+                cycle_snapshot_sink(cycle_snapshot)
+                cycle_snapshots_persisted += 1
+            # (d) Optional NAV mark.
             nav_marks_skipped += _mark_nav_or_skip(
                 cycle_config=cycle_config,
                 client=client,
@@ -206,6 +234,7 @@ def run_strategy_loop(
         last_iteration_at=last_iteration_at,  # type: ignore[arg-type]
         last_error=last_error,
         nav_marks_skipped=nav_marks_skipped,
+        cycle_snapshots_persisted=cycle_snapshots_persisted,
     )
 
 
@@ -258,6 +287,8 @@ def _validate_loop_params(
     interval_seconds: object,
     max_iterations: object,
     on_cycle_error: str,
+    cycle_snapshot_source: object,
+    cycle_snapshot_sink: object,
 ) -> None:
     if not isinstance(client, MarketDataClient):
         raise ValueError("client must be a MarketDataClient")
@@ -293,6 +324,10 @@ def _validate_loop_params(
         raise ValueError("max_iterations must be positive")
     if on_cycle_error not in ("log_and_continue", "raise"):
         raise ValueError("on_cycle_error must be 'log_and_continue' or 'raise'")
+    if cycle_snapshot_source is not None and not callable(cycle_snapshot_source):
+        raise ValueError("cycle_snapshot_source must be callable or None")
+    if cycle_snapshot_sink is not None and not callable(cycle_snapshot_sink):
+        raise ValueError("cycle_snapshot_sink must be callable or None")
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -308,3 +343,12 @@ def _require_nonnegative_int(field_name: str, value: object) -> None:
         raise ValueError(f"{field_name} must be an int")
     if value < 0:
         raise ValueError(f"{field_name} must be nonnegative")
+
+
+def _require_snapshot_safety_flags(snapshot: object) -> None:
+    if getattr(snapshot, "paper_only", None) is not True:
+        raise ValueError("cycle snapshot must be paper_only")
+    if getattr(snapshot, "report_only", None) is not True:
+        raise ValueError("cycle snapshot must be report_only")
+    if getattr(snapshot, "readonly", None) is not True:
+        raise ValueError("cycle snapshot must be readonly")

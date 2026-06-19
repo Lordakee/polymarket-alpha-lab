@@ -10,7 +10,7 @@ check ordering/validity, not exact wall-clock values.
 from __future__ import annotations
 
 import json
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -110,6 +110,15 @@ class FailingMarketDataClient:
 
     def get_order_book(self, *, token_id):  # pragma: no cover - never reached
         raise AssertionError("get_order_book should not be reached when list_markets fails")
+
+
+@dataclass(frozen=True)
+class CycleSnapshotShape:
+    generated_at: datetime
+    config_version: str = "cycle-snapshot-test-v0"
+    paper_only: bool = True
+    report_only: bool = True
+    readonly: bool = True
 
 
 def _screening_ready_market_and_books():
@@ -558,6 +567,90 @@ def test_none_journal_path_skips_nav_mark_without_counting_as_skip(tmp_path):
     assert not nav_log.exists()
 
 
+def test_cycle_snapshot_source_and_sink_run_once_per_completed_iteration(tmp_path):
+    market, books = _screening_ready_market_and_books()
+    client = FakeMarketDataClient([market], books)
+    source_calls = []
+    sink_calls = []
+
+    def cycle_snapshot_source(*, cycle_report, iteration_started_at):
+        source_calls.append((cycle_report, iteration_started_at))
+        return CycleSnapshotShape(generated_at=iteration_started_at)
+
+    def cycle_snapshot_sink(snapshot):
+        sink_calls.append(snapshot)
+
+    with patch("polymarket_alpha_lab.runner.time.sleep"):
+        summary = run_strategy_loop(
+            client=client,
+            scan_config=scan_config(tmp_path),
+            cycle_config=cycle_config(),
+            starting_cash=Decimal("10000"),
+            nav_log_path=tmp_path / "nav.jsonl",
+            cycle_report_log_path=tmp_path / "cycle.jsonl",
+            repeat_mode="interval",
+            interval_seconds=0,
+            max_iterations=2,
+            cycle_snapshot_source=cycle_snapshot_source,
+            cycle_snapshot_sink=cycle_snapshot_sink,
+        )
+
+    assert summary.iterations_completed == 2
+    assert summary.iterations_failed == 0
+    assert summary.cycle_snapshots_persisted == 2
+    assert len(source_calls) == 2
+    assert len(sink_calls) == 2
+    assert all(snapshot.paper_only is True for snapshot in sink_calls)
+    assert all(snapshot.report_only is True for snapshot in sink_calls)
+    assert all(snapshot.readonly is True for snapshot in sink_calls)
+
+
+def test_cycle_snapshot_sink_is_inert_without_source(tmp_path):
+    market, books = _screening_ready_market_and_books()
+    sink_calls = []
+
+    summary = run_strategy_loop(
+        client=FakeMarketDataClient([market], books),
+        scan_config=scan_config(tmp_path),
+        cycle_config=cycle_config(),
+        starting_cash=Decimal("10000"),
+        nav_log_path=tmp_path / "nav.jsonl",
+        cycle_report_log_path=tmp_path / "cycle.jsonl",
+        cycle_snapshot_sink=lambda snapshot: sink_calls.append(snapshot),
+    )
+
+    assert summary.iterations_completed == 1
+    assert summary.cycle_snapshots_persisted == 0
+    assert sink_calls == []
+
+
+def test_cycle_snapshot_sink_failure_counts_as_iteration_failure(tmp_path):
+    market, books = _screening_ready_market_and_books()
+
+    def cycle_snapshot_source(*, cycle_report, iteration_started_at):
+        return CycleSnapshotShape(generated_at=iteration_started_at)
+
+    def broken_cycle_snapshot_sink(snapshot):
+        raise RuntimeError("snapshot db unavailable")
+
+    summary = run_strategy_loop(
+        client=FakeMarketDataClient([market], books),
+        scan_config=scan_config(tmp_path),
+        cycle_config=cycle_config(),
+        starting_cash=Decimal("10000"),
+        nav_log_path=tmp_path / "nav.jsonl",
+        cycle_report_log_path=tmp_path / "cycle.jsonl",
+        cycle_snapshot_source=cycle_snapshot_source,
+        cycle_snapshot_sink=broken_cycle_snapshot_sink,
+        on_cycle_error="log_and_continue",
+    )
+
+    assert summary.iterations_completed == 0
+    assert summary.iterations_failed == 1
+    assert summary.cycle_snapshots_persisted == 0
+    assert summary.last_error == "RuntimeError: snapshot db unavailable"
+
+
 @pytest.mark.parametrize(
     ("overrides", "message"),
     (
@@ -569,6 +662,14 @@ def test_none_journal_path_skips_nav_mark_without_counting_as_skip(tmp_path):
         ({"max_iterations": True}, "max_iterations|int"),
         ({"on_cycle_error": "stop"}, "on_cycle_error"),
         ({"starting_cash": 10000}, "starting_cash must be a Decimal"),
+        (
+            {"cycle_snapshot_source": object()},
+            "cycle_snapshot_source must be callable or None",
+        ),
+        (
+            {"cycle_snapshot_sink": object()},
+            "cycle_snapshot_sink must be callable or None",
+        ),
     ),
 )
 def test_run_strategy_loop_rejects_invalid_loop_params(tmp_path, overrides, message):

@@ -44,6 +44,9 @@ from polymarket_alpha_lab.paper_trade_cost_audit import (
 )
 from polymarket_alpha_lab.pipeline import MarketScanConfig, run_market_scan
 from polymarket_alpha_lab.positions import PaperNavLog, PaperNavSnapshot
+from polymarket_alpha_lab.paper_recommendation_cycle_snapshot_psycopg import (
+    insert_paper_recommendation_cycle_snapshot_with_psycopg,
+)
 from polymarket_alpha_lab.performance_summary import (
     PerformanceSummary,
     PerformanceSummaryConfig,
@@ -75,6 +78,9 @@ from polymarket_alpha_lab.strategy_risk_audit import (
     build_paper_strategy_risk_audit_report,
 )
 from polymarket_alpha_lab.strategy_risk_audit_log import PaperStrategyRiskAuditLog
+from polymarket_alpha_lab.supabase_cycle_snapshot_config import (
+    from_cycle_snapshot_db_env,
+)
 
 if TYPE_CHECKING:
     from polymarket_alpha_lab.nav_risk_metrics import PaperNavRiskMetricsReport
@@ -100,6 +106,8 @@ StrategyRecommendationHistoryRunner = Callable[
 CostAuditRunner = Callable[..., PaperTradeCostAuditReport]
 StrategyEvidenceRunner = Callable[..., "PaperStrategyEvidenceSnapshotReport"]
 ObservabilityTrendsRunner = Callable[..., LocalObservabilityTrendsReport]
+CycleSnapshotSource = Callable[..., object]
+CycleSnapshotDbSink = Callable[..., object]
 _MISSING = object()
 
 
@@ -175,6 +183,10 @@ def main(
     strategy_evidence_runner: StrategyEvidenceRunner | None = None,
     observability_trends_runner: ObservabilityTrendsRunner = (
         run_local_observability_trends
+    ),
+    cycle_snapshot_source: CycleSnapshotSource | None = None,
+    cycle_snapshot_db_sink: CycleSnapshotDbSink = (
+        insert_paper_recommendation_cycle_snapshot_with_psycopg
     ),
 ) -> int:
     parser = argparse.ArgumentParser(prog="polymarket-alpha-lab")
@@ -719,6 +731,28 @@ def main(
 
     if args.command == "run":
         try:
+            cycle_snapshot_db_config = from_cycle_snapshot_db_env()
+            run_cycle_snapshot_source = None
+            run_cycle_snapshot_sink = None
+            if cycle_snapshot_db_config.enabled:
+                if cycle_snapshot_source is None:
+                    raise ValueError(
+                        "cycle snapshot DB persistence requires a cycle snapshot source",
+                    )
+                dsn = cycle_snapshot_db_config.dsn
+                if dsn is None:
+                    raise ValueError(
+                        "cycle snapshot DB persistence requires a DB DSN",
+                    )
+
+                def run_cycle_snapshot_sink(report: object) -> object:
+                    return cycle_snapshot_db_sink(
+                        dsn=dsn,
+                        report=report,
+                        table_name=cycle_snapshot_db_config.table_name,
+                    )
+
+                run_cycle_snapshot_source = cycle_snapshot_source
             scan_config = MarketScanConfig(
                 limit=args.limit,
                 archive_root=args.archive_root,
@@ -766,6 +800,8 @@ def main(
                 repeat_mode=repeat_mode,
                 interval_seconds=args.repeat_interval,
                 max_iterations=args.max_iterations,
+                cycle_snapshot_source=run_cycle_snapshot_source,
+                cycle_snapshot_sink=run_cycle_snapshot_sink,
             )
             _print_run_loop_summary(summary)
             return 0
@@ -1666,11 +1702,17 @@ def _none_or_value(value: object | None) -> str:
 
 
 def _print_run_loop_summary(summary: RunLoopSummary) -> None:
+    cycle_snapshots_text = ""
+    if hasattr(summary, "cycle_snapshots_persisted"):
+        cycle_snapshots_text = (
+            f" cycle_snapshots_persisted={summary.cycle_snapshots_persisted}"
+        )
     print(
         "run: "
         f"completed={summary.iterations_completed} "
         f"failed={summary.iterations_failed} "
-        f"nav_skipped={summary.nav_marks_skipped} "
+        f"nav_skipped={summary.nav_marks_skipped}"
+        f"{cycle_snapshots_text} "
         f"span={summary.first_iteration_at.isoformat()} "
         f"to {summary.last_iteration_at.isoformat()}",
     )

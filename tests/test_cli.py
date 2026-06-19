@@ -2678,7 +2678,8 @@ def test_run_cli_builds_loop_call_single_shot(tmp_path, capsys):
 
     def fake_loop_runner(*, client, scan_config, cycle_config, starting_cash,
                          nav_log_path, cycle_report_log_path, repeat_mode,
-                         interval_seconds, max_iterations):
+                         interval_seconds, max_iterations,
+                         cycle_snapshot_source=None, cycle_snapshot_sink=None):
         calls.append(
             {
                 "client": client,
@@ -2690,6 +2691,8 @@ def test_run_cli_builds_loop_call_single_shot(tmp_path, capsys):
                 "repeat_mode": repeat_mode,
                 "interval_seconds": interval_seconds,
                 "max_iterations": max_iterations,
+                "cycle_snapshot_source": cycle_snapshot_source,
+                "cycle_snapshot_sink": cycle_snapshot_sink,
             }
         )
         return _empty_run_summary()
@@ -2736,6 +2739,8 @@ def test_run_cli_builds_loop_call_single_shot(tmp_path, capsys):
     assert call["repeat_mode"] == "once"
     assert call["interval_seconds"] == 0
     assert call["max_iterations"] == 1
+    assert call["cycle_snapshot_source"] is None
+    assert call["cycle_snapshot_sink"] is None
 
     captured = capsys.readouterr()
     assert "run:" in captured.out
@@ -2748,12 +2753,15 @@ def test_run_cli_maps_positive_repeat_interval_to_interval_mode(tmp_path):
 
     def fake_loop_runner(*, client, scan_config, cycle_config, starting_cash,
                          nav_log_path, cycle_report_log_path, repeat_mode,
-                         interval_seconds, max_iterations):
+                         interval_seconds, max_iterations,
+                         cycle_snapshot_source=None, cycle_snapshot_sink=None):
         calls.append(
             {
                 "repeat_mode": repeat_mode,
                 "interval_seconds": interval_seconds,
                 "max_iterations": max_iterations,
+                "cycle_snapshot_source": cycle_snapshot_source,
+                "cycle_snapshot_sink": cycle_snapshot_sink,
             }
         )
         return _empty_run_summary()
@@ -2782,6 +2790,8 @@ def test_run_cli_maps_positive_repeat_interval_to_interval_mode(tmp_path):
             "repeat_mode": "interval",
             "interval_seconds": 3600,
             "max_iterations": 10,
+            "cycle_snapshot_source": None,
+            "cycle_snapshot_sink": None,
         },
     ]
 
@@ -2791,7 +2801,8 @@ def test_run_cli_paper_execute_flag_enables_inline_paper_pass(tmp_path):
 
     def fake_loop_runner(*, client, scan_config, cycle_config, starting_cash,
                          nav_log_path, cycle_report_log_path, repeat_mode,
-                         interval_seconds, max_iterations):
+                         interval_seconds, max_iterations,
+                         cycle_snapshot_source=None, cycle_snapshot_sink=None):
         calls.append(cycle_config)
         return _empty_run_summary()
 
@@ -2822,10 +2833,135 @@ def test_run_cli_paper_execute_flag_enables_inline_paper_pass(tmp_path):
     assert cycle_config.paper_trade_journal_path == journal_path
 
 
+def test_run_cli_leaves_cycle_snapshot_db_disabled_by_default(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.delenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_ENABLED", raising=False)
+    monkeypatch.delenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_DSN", raising=False)
+    calls = []
+
+    def fake_loop_runner(**kwargs):
+        calls.append(kwargs)
+        return _empty_run_summary()
+
+    exit_code = main(
+        [
+            "run",
+            "--archive-root",
+            str(tmp_path / "raw"),
+            "--starting-cash",
+            "10000",
+            "--cycle-log",
+            str(tmp_path / "cycle.jsonl"),
+        ],
+        loop_runner=fake_loop_runner,
+        client_factory=lambda: "fake-client",
+    )
+
+    assert exit_code == 0
+    assert len(calls) == 1
+    assert calls[0]["cycle_snapshot_source"] is None
+    assert calls[0]["cycle_snapshot_sink"] is None
+
+
+def test_run_cli_wires_cycle_snapshot_db_sink_when_env_enabled(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_ENABLED", "true")
+    monkeypatch.setenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_DSN", "test-dsn-value")
+    monkeypatch.setenv(
+        "POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_TABLE",
+        "cycle_snapshot_archive",
+    )
+    calls = []
+    sink_calls = []
+    source_value = SimpleNamespace(paper_only=True, report_only=True, readonly=True)
+
+    def fake_loop_runner(**kwargs):
+        calls.append(kwargs)
+        assert kwargs["cycle_snapshot_source"] is not None
+        snapshot = kwargs["cycle_snapshot_source"](
+            cycle_report=object(),
+            iteration_started_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
+        )
+        kwargs["cycle_snapshot_sink"](snapshot)
+        return RunLoopSummary(
+            iterations_completed=1,
+            iterations_failed=0,
+            first_iteration_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
+            last_iteration_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
+            last_error=None,
+            cycle_snapshots_persisted=1,
+        )
+
+    def fake_cycle_snapshot_source(*, cycle_report, iteration_started_at):
+        return source_value
+
+    def fake_cycle_snapshot_sink(*, dsn, report, table_name):
+        sink_calls.append((dsn, report, table_name))
+
+    exit_code = main(
+        [
+            "run",
+            "--archive-root",
+            str(tmp_path / "raw"),
+            "--starting-cash",
+            "10000",
+            "--cycle-log",
+            str(tmp_path / "cycle.jsonl"),
+        ],
+        loop_runner=fake_loop_runner,
+        client_factory=lambda: "fake-client",
+        cycle_snapshot_source=fake_cycle_snapshot_source,
+        cycle_snapshot_db_sink=fake_cycle_snapshot_sink,
+    )
+
+    assert exit_code == 0
+    assert len(calls) == 1
+    assert sink_calls == [
+        (
+            "test-dsn-value",
+            source_value,
+            "cycle_snapshot_archive",
+        ),
+    ]
+
+
+def test_run_cli_rejects_enabled_cycle_snapshot_db_without_source(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    monkeypatch.setenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_ENABLED", "true")
+    monkeypatch.setenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_DSN", "test-dsn-value")
+
+    exit_code = main(
+        [
+            "run",
+            "--archive-root",
+            str(tmp_path / "raw"),
+            "--starting-cash",
+            "10000",
+            "--cycle-log",
+            str(tmp_path / "cycle.jsonl"),
+        ],
+        loop_runner=lambda **kwargs: _empty_run_summary(),
+        client_factory=lambda: "fake-client",
+    )
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert "cycle snapshot DB persistence requires a cycle snapshot source" in captured.err
+    assert "test-dsn-value" not in captured.err
+
+
 def test_run_cli_returns_one_when_loop_runner_fails(tmp_path, capsys):
     def broken_loop_runner(*, client, scan_config, cycle_config, starting_cash,
                            nav_log_path, cycle_report_log_path, repeat_mode,
-                           interval_seconds, max_iterations):
+                           interval_seconds, max_iterations,
+                           cycle_snapshot_source=None, cycle_snapshot_sink=None):
         raise RuntimeError("loop failed")
 
     exit_code = main(
@@ -2850,7 +2986,8 @@ def test_run_cli_returns_one_when_loop_runner_fails(tmp_path, capsys):
 def test_run_cli_prints_last_error_when_iterations_failed(tmp_path, capsys):
     def partial_loop_runner(*, client, scan_config, cycle_config, starting_cash,
                             nav_log_path, cycle_report_log_path, repeat_mode,
-                            interval_seconds, max_iterations):
+                            interval_seconds, max_iterations,
+                            cycle_snapshot_source=None, cycle_snapshot_sink=None):
         return RunLoopSummary(
             iterations_completed=2,
             iterations_failed=1,
