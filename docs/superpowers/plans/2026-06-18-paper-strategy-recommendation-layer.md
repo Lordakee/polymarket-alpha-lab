@@ -1,394 +1,205 @@
-# Paper Strategy Recommendation Layer Implementation Plan
+# Paper Strategy Recommendation Layer As-Built Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** this file is now an as-built reference plus future-only follow-up checklist. The original test-first implementation tasks have landed; do not treat this document as instructions to recreate modules, tests, or CLI surfaces.
 
-**Goal:** Build a paper-only recommendation and selection layer that turns candidate assessment and readiness gates into auditable ranked recommendations without live trading or order placement.
+**Goal:** Keep the paper-only recommendation and selection layer aligned with the current reducer API. The layer turns candidate assessment and readiness gates into auditable ranked recommendations, paper sizing suggestions, and deterministic explanations without live trading or order placement.
 
-**Architecture:** Keep this as reducer-only modules with frozen dataclasses and direct-constructor validation. The recommendation reducer owns ranked candidate actions, the selection policy owns paper sizing caps, and the explanation reducer owns deterministic human-readable rationale.
+**Architecture:** Reducer-only modules use frozen dataclasses, `Decimal` math, direct-constructor validation, deterministic ordering, and hard `paper_only`, `report_only`, and `readonly` flags. The selection policy emits paper sizing suggestions only; it never emits executable orders.
 
 **Tech Stack:** Python dataclasses, `Decimal`, pytest, CodeGraph, existing `polymarket_alpha_lab` paper-only reducers.
 
 ---
 
-## File Ownership
+## As-Built File Ownership
 
-- `src/polymarket_alpha_lab/strategy_candidate_recommendation.py`: recommendation ranking reducer only.
-- `tests/test_strategy_candidate_recommendation.py`: tests for recommendation ranking and validation.
-- `src/polymarket_alpha_lab/paper_strategy_selection_policy.py`: paper-only sizing and selection policy only.
-- `tests/test_paper_strategy_selection_policy.py`: tests for selection caps and validation.
-- `src/polymarket_alpha_lab/strategy_recommendation_explain.py`: deterministic explanation reducer only.
-- `tests/test_strategy_recommendation_explain.py`: tests for explanation output and validation.
-- `src/polymarket_alpha_lab/settlement_freshness_gate.py`: direct-constructor semantic hardening only.
-- `tests/test_settlement_freshness_gate.py`: settlement hardening tests only.
-- Do not modify `src/polymarket_alpha_lab/__init__.py`.
-- Do not add live trading, auth, wallet, relayer, private key, or real order concepts.
+- `src/polymarket_alpha_lab/strategy_candidate_recommendation.py`: recommendation ranking reducer.
+- `tests/test_strategy_candidate_recommendation.py`: recommendation ranking and validation coverage.
+- `src/polymarket_alpha_lab/paper_strategy_selection_policy.py`: paper-only sizing and selection policy reducer.
+- `tests/test_paper_strategy_selection_policy.py`: selection caps and validation coverage.
+- `src/polymarket_alpha_lab/strategy_recommendation_explain.py`: deterministic explanation reducer.
+- `tests/test_strategy_recommendation_explain.py`: explanation output and validation coverage.
+- `src/polymarket_alpha_lab/settlement_freshness_gate.py`: direct-constructor semantic hardening.
+- `tests/test_settlement_freshness_gate.py`: settlement hardening coverage.
+- Core recommendation reducers remain module-level APIs. The bundle and log
+  helpers are intentionally imported directly from their defining modules by
+  the read-only CLI and artifact recovery surface; they are not package-root
+  exports.
 
-## Parallel Nodes
+## As-Built API
 
-### Task 1: Recommendation Reducer
+### Recommendation Reducer
 
-**Files:**
-- Create: `src/polymarket_alpha_lab/strategy_candidate_recommendation.py`
-- Create: `tests/test_strategy_candidate_recommendation.py`
+`PaperStrategyCandidateRecommendationConfig` fields:
 
-- [x] **Step 1: Inspect source reducer shapes**
+- `config_version`
+- `min_recommendation_score`
 
-Run:
+`PaperStrategyCandidateRecommendationRow` fields:
 
-```bash
-codegraph explore "PaperCandidateAssessmentReport PaperCandidateAssessmentRow PaperStrategyReadinessStateReport recommendation reducer"
-```
+- `market_slug`
+- `question`
+- `action`
+- `assessment_status`
+- `readiness_status`
+- `selected_side`
+- `scoring_side`
+- `recommendation_score`
+- `reason_codes`
 
-Expected: source for candidate assessment and readiness state is available.
+`PaperStrategyCandidateRecommendationReport` fields:
 
-- [ ] **Step 2: Write failing recommendation tests**
+- `generated_at`
+- `config_version`
+- `readiness_overall_status`
+- `candidate_count`
+- `recommend_count`
+- `watch_count`
+- `reject_count`
+- `recommendation_rows`
+- `paper_only`
+- `report_only`
+- `readonly`
 
-Test cases:
-
-```python
-def test_recommends_ready_candidate_when_readiness_passes():
-    report = build_paper_strategy_candidate_recommendation_report(
-        assessment_report_with_ready_candidate(),
-        readiness_report("pass"),
-        config=PaperStrategyCandidateRecommendationConfig(
-            config_version="recommendation-test",
-            min_recommendation_score=Decimal("0.010000"),
-        ),
-        generated_at=NOW,
-    )
-    assert report.recommend_count == 1
-    assert report.recommendation_rows[0].action == "recommend"
-    assert "readiness_passed" in report.recommendation_rows[0].reason_codes
-```
-
-Also cover readiness watch, readiness blocked, blocked candidate, deterministic ordering, input flag validation, and direct-constructor count validation.
-
-- [ ] **Step 3: Implement reducer**
-
-Public API:
+Public builder:
 
 ```python
-@dataclass(frozen=True)
-class PaperStrategyCandidateRecommendationConfig:
-    config_version: str
-    min_recommendation_score: Decimal = Decimal("0.010000")
-
-
-@dataclass(frozen=True)
-class PaperStrategyCandidateRecommendationRow:
-    market_slug: str
-    question: str
-    action: str
-    selected_side: str
-    assessment_status: str
-    readiness_status: str
-    recommendation_score: Decimal
-    reason_codes: tuple[str, ...]
-
-
-@dataclass(frozen=True)
-class PaperStrategyCandidateRecommendationReport:
-    generated_at: datetime
-    config_version: str
-    candidate_count: int
-    recommend_count: int
-    watch_count: int
-    reject_count: int
-    recommendation_rows: tuple[PaperStrategyCandidateRecommendationRow, ...]
-    paper_only: bool = True
-    report_only: bool = True
-    readonly: bool = True
+build_paper_strategy_candidate_recommendation_report(
+    assessment_report,
+    readiness_report,
+    *,
+    config,
+    generated_at,
+)
 ```
 
-Use `build_paper_strategy_candidate_recommendation_report(assessment_report, readiness_report, *, config, generated_at)` and deterministic ordering by action priority, descending `recommendation_score`, then `market_slug`.
+Current behavior:
 
-- [ ] **Step 4: Run focused tests**
+- Validates exact assessment/readiness report types and paper/report/readonly flags.
+- Builds one recommendation row per assessment row.
+- Uses assessment `selected_side` and `scoring_side`.
+- Quantizes `recommendation_score` to `0.000001`.
+- Emits actions `recommend`, `watch`, or `reject`.
+- Orders rows by action priority, descending `recommendation_score`, then `market_slug`.
+- Validates report counts and deterministic row order through direct constructors.
 
-Run:
+### Selection Policy Reducer
 
-```bash
-.venv/bin/python -m pytest tests/test_strategy_candidate_recommendation.py -q
-```
+`PaperStrategySelectionPolicyConfig` fields:
 
-Expected: all recommendation tests pass.
+- `config_version`
+- `base_position_notional`
+- `max_position_notional`
+- `max_total_notional`
 
-### Task 2: Selection Policy Reducer
+`PaperStrategySelectionPolicyRow` fields:
 
-**Files:**
-- Create: `src/polymarket_alpha_lab/paper_strategy_selection_policy.py`
-- Create: `tests/test_paper_strategy_selection_policy.py`
+- `market_slug`
+- `question`
+- `source_action`
+- `selected_side`
+- `recommendation_score`
+- `decision`
+- `suggested_position_notional`
+- `selected_position_notional`
+- `reason_codes`
 
-- [ ] **Step 1: Wait for recommendation public API**
+`PaperStrategySelectionPolicyReport` fields:
 
-Run:
+- `generated_at`
+- `config_version`
+- `row_count`
+- `selected_count`
+- `skipped_count`
+- `not_selected_count`
+- the aggregate selected-position notional field
+- `selection_rows`
+- `paper_only`
+- `report_only`
+- `readonly`
 
-```bash
-test -f src/polymarket_alpha_lab/strategy_candidate_recommendation.py
-```
-
-Expected: exit code `0`. If absent, pause this node until Task 1 lands.
-
-- [ ] **Step 2: Write failing selection tests**
-
-Test cases:
+Public builder:
 
 ```python
-def test_selects_recommended_candidates_under_caps():
-    report = build_paper_strategy_selection_policy_report(
-        recommendation_report_with_actions(("recommend", "watch", "reject")),
-        config=PaperStrategySelectionPolicyConfig(
-            config_version="selection-test",
-            base_position_notional=Decimal("10.000000"),
-            max_position_notional=Decimal("5.000000"),
-            max_total_notional=Decimal("10.000000"),
-        ),
-        generated_at=NOW,
-    )
-    assert report.selected_count == 1
-    assert report.selection_rows[0].decision == "selected"
+build_paper_strategy_selection_policy_report(
+    recommendation_report,
+    *,
+    config,
+    generated_at,
+)
 ```
 
-Also cover per-position cap, total cap, non-recommend rows, source flag validation, and direct-constructor total/count mismatch validation.
+Current behavior:
 
-- [ ] **Step 3: Implement reducer**
+- Accepts only `PaperStrategyCandidateRecommendationReport` input.
+- Converts non-`recommend` source rows into `not_selected` rows.
+- Calculates `suggested_position_notional` from score-weighted base notional capped per position.
+- Emits `selected_position_notional` only for selected rows, otherwise quantized zero.
+- Enforces total cap behavior with `skipped` rows once the cap is reached.
+- Uses `row_count` to match `selection_rows`; the recommendation report owns `candidate_count`.
 
-Public API:
+### Recommendation Explanation Reducer
+
+`PaperStrategyRecommendationExplanationRow` fields:
+
+- `market_slug`
+- `action`
+- `selected_side`
+- `recommendation_score`
+- `primary_reason_code`
+- `reason_codes`
+- `explanation`
+
+`PaperStrategyRecommendationExplanationReport` fields:
+
+- `generated_at`
+- `source_config_version`
+- `recommendation_count`
+- `recommend_count`
+- `watch_count`
+- `reject_count`
+- `explanation_rows`
+- `paper_only`
+- `report_only`
+- `readonly`
+
+Public builder:
 
 ```python
-@dataclass(frozen=True)
-class PaperStrategySelectionPolicyConfig:
-    config_version: str
-    base_position_notional: Decimal
-    max_position_notional: Decimal
-    max_total_notional: Decimal
-
-
-@dataclass(frozen=True)
-class PaperStrategySelectionPolicyRow:
-    market_slug: str
-    question: str
-    selected_side: str
-    decision: str
-    requested_notional: Decimal
-    selected_notional: Decimal
-    reason_codes: tuple[str, ...]
-
-
-@dataclass(frozen=True)
-class PaperStrategySelectionPolicyReport:
-    generated_at: datetime
-    config_version: str
-    candidate_count: int
-    selected_count: int
-    skipped_count: int
-    not_selected_count: int
-    total_selected_notional: Decimal
-    selection_rows: tuple[PaperStrategySelectionPolicyRow, ...]
-    paper_only: bool = True
-    report_only: bool = True
-    readonly: bool = True
+build_paper_strategy_recommendation_explanation_report(
+    recommendation_report,
+    *,
+    generated_at,
+)
 ```
 
-Use Decimal-only sizing. Never create order objects.
+Current behavior:
 
-- [ ] **Step 4: Run focused tests**
+- Accepts only `PaperStrategyCandidateRecommendationReport` input.
+- Preserves recommendation row order.
+- Uses the first reason code as `primary_reason_code`, or `no_reason_code` when absent.
+- Requires canonical explanation text of the form `"{action} {selected_side} because {primary_reason_code} (score {recommendation_score})"`.
 
-Run:
+### Settlement Constructor Hardening
 
-```bash
-.venv/bin/python -m pytest tests/test_paper_strategy_selection_policy.py -q
-```
+Current behavior:
 
-Expected: all selection policy tests pass.
+- Settlement freshness reports reject pending counts and stale pending counts when no source reports exist.
+- Row-level semantic validation requires canonical reason strings that match observed gate values and status.
 
-### Task 3: Recommendation Explanation Reducer
+## Historical Implementation Notes
 
-**Files:**
-- Create: `src/polymarket_alpha_lab/strategy_recommendation_explain.py`
-- Create: `tests/test_strategy_recommendation_explain.py`
+The first implementation pass followed the original plan:
 
-- [ ] **Step 1: Wait for recommendation public API**
+- Add failing tests for recommendation, selection, explanation, and settlement hardening.
+- Implement the reducers with direct-constructor validation.
+- Run focused tests, compile checks, full suite, diff checks, CodeGraph sync, and review before merge.
 
-Run:
+Those steps are historical. Future workers should not leave implementation tasks open for these modules unless they are adding new behavior.
 
-```bash
-test -f src/polymarket_alpha_lab/strategy_candidate_recommendation.py
-```
+## Future Tasks Only
 
-Expected: exit code `0`. If absent, pause this node until Task 1 lands.
-
-- [ ] **Step 2: Write failing explanation tests**
-
-Test cases:
-
-```python
-def test_explains_recommend_watch_and_reject_rows():
-    report = build_paper_strategy_recommendation_explanation_report(
-        recommendation_report_with_actions(("recommend", "watch", "reject")),
-        generated_at=NOW,
-    )
-    assert report.recommend_count == 1
-    assert report.watch_count == 1
-    assert report.reject_count == 1
-    assert report.explanation_rows[0].primary_reason_code
-```
-
-Also cover source flag validation and direct-constructor count mismatch validation.
-
-- [ ] **Step 3: Implement reducer**
-
-Public API:
-
-```python
-@dataclass(frozen=True)
-class PaperStrategyRecommendationExplanationRow:
-    market_slug: str
-    action: str
-    selected_side: str
-    recommendation_score: Decimal
-    primary_reason_code: str
-    reason_codes: tuple[str, ...]
-    explanation: str
-
-
-@dataclass(frozen=True)
-class PaperStrategyRecommendationExplanationReport:
-    generated_at: datetime
-    source_config_version: str
-    row_count: int
-    recommend_count: int
-    watch_count: int
-    reject_count: int
-    explanation_rows: tuple[PaperStrategyRecommendationExplanationRow, ...]
-    paper_only: bool = True
-    report_only: bool = True
-    readonly: bool = True
-```
-
-Explanations must be deterministic template strings based on row action and primary reason code.
-
-- [ ] **Step 4: Run focused tests**
-
-Run:
-
-```bash
-.venv/bin/python -m pytest tests/test_strategy_recommendation_explain.py -q
-```
-
-Expected: all explanation tests pass.
-
-### Task 4: Settlement Constructor Hardening
-
-**Files:**
-- Modify: `src/polymarket_alpha_lab/settlement_freshness_gate.py`
-- Modify: `tests/test_settlement_freshness_gate.py`
-
-- [ ] **Step 1: Add failing hardening tests**
-
-Test cases:
-
-```python
-def test_report_rejects_pending_counts_without_source():
-    with pytest.raises(ValueError, match="pending_count must be zero without source"):
-        PaperSettlementFreshnessGateReport(
-            source_report_count=0,
-            pending_count=1,
-            stale_pending_count=0,
-            ...
-        )
-```
-
-Also reject stale count without source and wrong canonical row reason strings.
-
-- [ ] **Step 2: Harden validation**
-
-In `_validate_report_consistency`, require `pending_count == 0` and `stale_pending_count == 0` when `source_report_count == 0`.
-
-In row semantic validation, require canonical reasons for each gate based on observed values and status.
-
-- [ ] **Step 3: Run focused tests**
-
-Run:
-
-```bash
-.venv/bin/python -m pytest tests/test_settlement_freshness_gate.py -q
-```
-
-Expected: all settlement freshness tests pass.
-
-### Task 5: Integration Verification
-
-**Files:**
-- Modify only if tests expose integration gaps in the modules above.
-
-- [ ] **Step 1: Run focused new-module tests**
-
-Run:
-
-```bash
-.venv/bin/python -m pytest \
-  tests/test_strategy_candidate_recommendation.py \
-  tests/test_paper_strategy_selection_policy.py \
-  tests/test_strategy_recommendation_explain.py \
-  tests/test_settlement_freshness_gate.py \
-  -q
-```
-
-Expected: all focused tests pass.
-
-- [ ] **Step 2: Run compileall**
-
-Run:
-
-```bash
-.venv/bin/python -m compileall -q src/polymarket_alpha_lab tests
-```
-
-Expected: exit code `0`.
-
-- [ ] **Step 3: Run full suite**
-
-Run:
-
-```bash
-.venv/bin/python -m pytest -q
-```
-
-Expected: all tests pass.
-
-- [ ] **Step 4: Run diff checks**
-
-Run:
-
-```bash
-git diff --check
-git diff --cached --check
-```
-
-Expected: both commands exit `0`.
-
-- [ ] **Step 5: Sync CodeGraph**
-
-Run:
-
-```bash
-codegraph sync
-```
-
-Expected: sync completes successfully.
-
-- [ ] **Step 6: Final audit**
-
-Run Claude Code audit with `claude-opus-4-8` and effort `max` over the staged diff. Required result: no blocking Critical/High/Medium findings before push.
-
-- [ ] **Step 7: Commit and push**
-
-Run:
-
-```bash
-git add src/polymarket_alpha_lab tests docs/superpowers/plans/2026-06-18-paper-strategy-recommendation-layer.md
-git commit -m "Add paper-only strategy recommendation layer"
-git push origin main
-```
-
-Expected: commit exists locally and `origin/main` advances to that commit.
+- [ ] **Cycle integration:** map where recommendation bundles should be built relative to `strategy_cycle`, `runner`, and CLI entry points while source assessment/readiness reports are still available.
+- [ ] **Documentation hardening:** keep user-facing strategy recommendation docs synchronized with the current dataclass field names, especially `scoring_side`, `row_count`, `suggested_position_notional`, and `selected_position_notional`.
+- [ ] **Test hardening:** add focused regression coverage for cross-report field alignment when cycle/runner integration starts passing recommendation outputs between reducers.
+- [ ] **Scope hardening:** keep no-live-trading boundary tests aligned with any new recommendation-layer modules or CLI surfaces.
+- [ ] **Operational verification:** when future integration changes land, run focused recommendation tests, relevant CLI/cycle tests, `compileall`, full pytest, `git diff --check`, and `codegraph sync`.

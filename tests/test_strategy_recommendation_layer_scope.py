@@ -26,24 +26,190 @@ RECOMMENDATION_MODULE_NAMES = (
 
 SAFETY_DATACLASS_FIELDS = ("paper_only", "report_only", "readonly")
 
+WHOLE_MODULE_IMPORT: frozenset[str] | None = None
+
+RECOMMENDATION_IMPORT_ALLOWLIST: dict[
+    str,
+    dict[str, frozenset[str] | None],
+] = {
+    "strategy_candidate_recommendation": {
+        "__future__": frozenset({"annotations"}),
+        "dataclasses": frozenset({"dataclass"}),
+        "datetime": frozenset({"UTC", "datetime"}),
+        "decimal": frozenset({"Decimal"}),
+        "typing": frozenset({"Any"}),
+        "polymarket_alpha_lab.candidate_assessment": frozenset(
+            {
+                "PaperCandidateAssessmentReport",
+                "PaperCandidateAssessmentRow",
+            },
+        ),
+        "polymarket_alpha_lab.strategy_readiness_state": frozenset(
+            {"PaperStrategyReadinessStateReport"},
+        ),
+    },
+    "paper_strategy_selection_policy": {
+        "__future__": frozenset({"annotations"}),
+        "dataclasses": frozenset({"dataclass"}),
+        "datetime": frozenset({"UTC", "datetime"}),
+        "decimal": frozenset({"Decimal"}),
+        "importlib": frozenset({"import_module"}),
+        "typing": frozenset({"Any"}),
+    },
+    "strategy_recommendation_explain": {
+        "__future__": frozenset({"annotations"}),
+        "dataclasses": frozenset({"dataclass"}),
+        "datetime": frozenset({"UTC", "datetime"}),
+        "decimal": frozenset({"Decimal"}),
+        "typing": frozenset({"Iterable"}),
+        "polymarket_alpha_lab.strategy_candidate_recommendation": frozenset(
+            {"PaperStrategyCandidateRecommendationReport"},
+        ),
+    },
+    "strategy_recommendation_history": {
+        "__future__": frozenset({"annotations"}),
+        "dataclasses": frozenset({"dataclass"}),
+        "datetime": frozenset({"UTC", "datetime"}),
+        "typing": frozenset({"Any", "Iterable"}),
+        "polymarket_alpha_lab.strategy_candidate_recommendation": frozenset(
+            {"PaperStrategyCandidateRecommendationReport"},
+        ),
+    },
+    "strategy_recommendation_bundle": {
+        "__future__": frozenset({"annotations"}),
+        "dataclasses": frozenset({"dataclass"}),
+        "datetime": frozenset({"UTC", "datetime"}),
+        "decimal": frozenset({"Decimal"}),
+        "typing": frozenset({"Any"}),
+        "polymarket_alpha_lab.paper_strategy_selection_policy": frozenset(
+            {
+                "PaperStrategySelectionPolicyConfig",
+                "PaperStrategySelectionPolicyReport",
+                "build_paper_strategy_selection_policy_report",
+            },
+        ),
+        "polymarket_alpha_lab.strategy_candidate_recommendation": frozenset(
+            {
+                "PaperStrategyCandidateRecommendationConfig",
+                "PaperStrategyCandidateRecommendationReport",
+                "build_paper_strategy_candidate_recommendation_report",
+            },
+        ),
+        "polymarket_alpha_lab.strategy_recommendation_explain": frozenset(
+            {
+                "PaperStrategyRecommendationExplanationReport",
+                "build_paper_strategy_recommendation_explanation_report",
+            },
+        ),
+    },
+    "strategy_recommendation_log": {
+        "__future__": frozenset({"annotations"}),
+        "json": WHOLE_MODULE_IMPORT,
+        "dataclasses": frozenset({"asdict"}),
+        "datetime": frozenset({"UTC", "datetime"}),
+        "decimal": frozenset({"Decimal", "InvalidOperation"}),
+        "pathlib": frozenset({"Path"}),
+        "typing": frozenset({"Any"}),
+        "polymarket_alpha_lab.json_recovery": frozenset({"from_jsonable"}),
+        "polymarket_alpha_lab.paper_strategy_selection_policy": frozenset(
+            {"PaperStrategySelectionPolicyReport"},
+        ),
+        "polymarket_alpha_lab.strategy_candidate_recommendation": frozenset(
+            {"PaperStrategyCandidateRecommendationReport"},
+        ),
+        "polymarket_alpha_lab.strategy_recommendation_bundle": frozenset(
+            {"PaperStrategyRecommendationBundleReport"},
+        ),
+        "polymarket_alpha_lab.strategy_recommendation_explain": frozenset(
+            {"PaperStrategyRecommendationExplanationReport"},
+        ),
+    },
+}
+
+FORBIDDEN_IMPORT_PREFIXES = (
+    "aiohttp",
+    "clob_client",
+    "eth_account",
+    "eth_keys",
+    "httpx",
+    "py_clob_client",
+    "requests",
+    "socket",
+    "ssl",
+    "subprocess",
+    "urllib",
+    "urllib3",
+    "web3",
+    "websocket",
+    "websockets",
+    "polymarket_alpha_lab.api",
+    "polymarket_alpha_lab.auth",
+    "polymarket_alpha_lab.cli",
+    "polymarket_alpha_lab.execution",
+    "polymarket_alpha_lab.journal",
+    "polymarket_alpha_lab.orders",
+    "polymarket_alpha_lab.positions",
+    "polymarket_alpha_lab.trading",
+)
+
 FORBIDDEN_LIVE_EXECUTION_TERMS = (
+    "api_key",
+    "secret",
+    "credential",
     "private_key",
     "wallet",
     "allowance",
     "signature",
     "relayer",
+    "clob_client",
     "live_order",
     "order_builder",
-    "clob_client",
     "create_order",
     "post_order",
+    "cancel_order",
+    "submit_order",
+    "send_order",
+    "sign_order",
 )
+
+FORBIDDEN_NAME_FRAGMENTS = (
+    "apikey",
+    "api",
+    "auth",
+    "client",
+    "credential",
+    "secret",
+    "privatekey",
+    "wallet",
+    "allowance",
+    "signature",
+    "relayer",
+    "clobclient",
+    "liveorder",
+    "orderbuilder",
+    "createorder",
+    "postorder",
+    "cancelorder",
+    "submitorder",
+    "sendorder",
+    "signorder",
+)
+
+FORBIDDEN_CALL_NAMES = (
+    "__import__",
+    "compile",
+    "eval",
+    "exec",
+)
+
+ALLOWED_DYNAMIC_IMPORT_TARGETS = {
+    "polymarket_alpha_lab.strategy_candidate_recommendation",
+}
 
 
 def test_recommendation_layer_documented_modules_exist() -> None:
     for module_name in RECOMMENDATION_MODULE_NAMES:
-        module_path = REPO_ROOT / "src" / "polymarket_alpha_lab" / f"{module_name}.py"
-        assert module_path.exists(), module_name
+        assert module_path(module_name).exists(), module_name
 
 
 def import_recommendation_module(module_name: str) -> ModuleType:
@@ -52,6 +218,167 @@ def import_recommendation_module(module_name: str) -> ModuleType:
 
 def parse_module(path: Path) -> ast.AST:
     return ast.parse(path.read_text(encoding="utf-8"))
+
+
+def module_path(module_name: str) -> Path:
+    return REPO_ROOT / "src" / "polymarket_alpha_lab" / f"{module_name}.py"
+
+
+def _normalize_identifier(value: str) -> str:
+    return "".join(character for character in value.lower() if character.isalnum())
+
+
+def _module_matches_prefix(module_name: str, prefix: str) -> bool:
+    return module_name == prefix or module_name.startswith(f"{prefix}.")
+
+
+def _absolute_import_from_module(module_name: str, node: ast.ImportFrom) -> str:
+    if node.level == 0:
+        return node.module or ""
+    assert node.level == 1, (module_name, ast.unparse(node))
+    if node.module is None:
+        return "polymarket_alpha_lab"
+    return f"polymarket_alpha_lab.{node.module}"
+
+
+def _assert_identifier_omits_forbidden_fragments(
+    identifier: str,
+    fragments: tuple[str, ...],
+) -> None:
+    normalized_identifier = _normalize_identifier(identifier)
+    for fragment in fragments:
+        assert _normalize_identifier(fragment) not in normalized_identifier, (
+            identifier,
+            fragment,
+        )
+
+
+def assert_recommendation_module_imports_are_allowed(
+    module_name: str,
+    tree: ast.AST,
+) -> None:
+    allowed_imports = RECOMMENDATION_IMPORT_ALLOWLIST[module_name]
+    seen_imports: dict[str, set[str] | None] = {}
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                assert alias.name in allowed_imports, (module_name, alias.name)
+                assert allowed_imports[alias.name] is WHOLE_MODULE_IMPORT, (
+                    module_name,
+                    alias.name,
+                )
+                assert not any(
+                    _module_matches_prefix(alias.name, prefix)
+                    for prefix in FORBIDDEN_IMPORT_PREFIXES
+                ), (module_name, alias.name)
+                _assert_identifier_omits_forbidden_fragments(
+                    alias.asname or alias.name,
+                    FORBIDDEN_NAME_FRAGMENTS,
+                )
+                seen_imports[alias.name] = WHOLE_MODULE_IMPORT
+        elif isinstance(node, ast.ImportFrom):
+            imported_module = _absolute_import_from_module(module_name, node)
+            assert imported_module in allowed_imports, (module_name, imported_module)
+            allowed_names = allowed_imports[imported_module]
+            assert allowed_names is not WHOLE_MODULE_IMPORT, (
+                module_name,
+                imported_module,
+            )
+            assert not any(
+                _module_matches_prefix(imported_module, prefix)
+                for prefix in FORBIDDEN_IMPORT_PREFIXES
+            ), (module_name, imported_module)
+            imported_names: set[str] = set()
+            for alias in node.names:
+                assert alias.name in allowed_names, (
+                    module_name,
+                    imported_module,
+                    alias.name,
+                )
+                _assert_identifier_omits_forbidden_fragments(
+                    alias.asname or alias.name,
+                    FORBIDDEN_NAME_FRAGMENTS,
+                )
+                imported_names.add(alias.name)
+            seen_imports.setdefault(imported_module, set())
+            assert seen_imports[imported_module] is not WHOLE_MODULE_IMPORT
+            seen_imports[imported_module].update(imported_names)
+
+    assert seen_imports == allowed_imports
+
+
+def _call_name(node: ast.Call) -> str | None:
+    if isinstance(node.func, ast.Name):
+        return node.func.id
+    if isinstance(node.func, ast.Attribute):
+        return node.func.attr
+    return None
+
+
+def assert_recommendation_tree_omits_forbidden_names_and_calls(
+    tree: ast.AST,
+) -> None:
+    dynamic_import_targets = {
+        node.targets[0].id: node.value.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and node.targets[0].id.endswith("_MODULE_NAME")
+        and isinstance(node.value, ast.Constant)
+        and isinstance(node.value.value, str)
+    }
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            _assert_identifier_omits_forbidden_fragments(
+                node.name,
+                FORBIDDEN_NAME_FRAGMENTS,
+            )
+        elif isinstance(node, ast.arg):
+            _assert_identifier_omits_forbidden_fragments(
+                node.arg,
+                FORBIDDEN_NAME_FRAGMENTS,
+            )
+        elif isinstance(node, ast.keyword) and node.arg is not None:
+            _assert_identifier_omits_forbidden_fragments(
+                node.arg,
+                FORBIDDEN_NAME_FRAGMENTS,
+            )
+        elif isinstance(node, ast.Name):
+            _assert_identifier_omits_forbidden_fragments(
+                node.id,
+                FORBIDDEN_NAME_FRAGMENTS,
+            )
+        elif isinstance(node, ast.Attribute):
+            _assert_identifier_omits_forbidden_fragments(
+                node.attr,
+                FORBIDDEN_NAME_FRAGMENTS,
+            )
+        elif isinstance(node, ast.Call):
+            callee_name = _call_name(node)
+            if callee_name is not None:
+                assert callee_name not in FORBIDDEN_CALL_NAMES, callee_name
+                _assert_identifier_omits_forbidden_fragments(
+                    callee_name,
+                    FORBIDDEN_NAME_FRAGMENTS,
+                )
+                if callee_name == "import_module":
+                    assert node.args, "import_module requires an explicit target"
+                    first_arg = node.args[0]
+                    if isinstance(first_arg, ast.Constant) and isinstance(
+                        first_arg.value,
+                        str,
+                    ):
+                        import_target = first_arg.value
+                    elif isinstance(first_arg, ast.Name):
+                        import_target = dynamic_import_targets.get(first_arg.id)
+                    else:
+                        import_target = None
+                    assert import_target in ALLOWED_DYNAMIC_IMPORT_TARGETS, (
+                        "import_module target must be allowlisted",
+                        import_target,
+                    )
 
 
 def package_root_exports() -> set[str]:
@@ -191,6 +518,100 @@ def test_recommendation_layer_source_omits_live_execution_and_auth_terms(
     source = module_source(module).lower()
     for forbidden_term in FORBIDDEN_LIVE_EXECUTION_TERMS:
         assert forbidden_term not in source, (module.__name__, forbidden_term)
+
+
+@pytest.mark.parametrize("module_name", RECOMMENDATION_MODULE_NAMES)
+def test_recommendation_layer_imports_only_allowlisted_dependencies(
+    module_name: str,
+) -> None:
+    tree = parse_module(module_path(module_name))
+
+    assert_recommendation_module_imports_are_allowed(module_name, tree)
+
+
+@pytest.mark.parametrize("module_name", RECOMMENDATION_MODULE_NAMES)
+def test_recommendation_layer_ast_omits_live_execution_names_and_calls(
+    module_name: str,
+) -> None:
+    tree = parse_module(module_path(module_name))
+
+    assert_recommendation_tree_omits_forbidden_names_and_calls(tree)
+
+
+@pytest.mark.parametrize(
+    ("bad_source", "module_name"),
+    (
+        pytest.param(
+            "from polymarket_alpha_lab.auth import ApiKey\n",
+            "strategy_recommendation_bundle",
+            id="first-party-auth-import",
+        ),
+        pytest.param(
+            "import requests\n",
+            "strategy_recommendation_log",
+            id="network-import",
+        ),
+        pytest.param(
+            "from pathlib import Path, PurePath\n",
+            "strategy_recommendation_log",
+            id="non-allowlisted-imported-symbol",
+        ),
+    ),
+)
+def test_recommendation_layer_import_scope_guard_rejects_forbidden_imports(
+    bad_source: str,
+    module_name: str,
+) -> None:
+    with pytest.raises(AssertionError):
+        assert_recommendation_module_imports_are_allowed(
+            module_name,
+            ast.parse(bad_source),
+        )
+
+
+@pytest.mark.parametrize(
+    "bad_source",
+    (
+        pytest.param(
+            """
+def build_wallet_order(report):
+    return report
+""",
+            id="forbidden-function-name",
+        ),
+        pytest.param(
+            """
+def build_report(path):
+    return __import__("polymarket_alpha_lab.auth")
+""",
+            id="dynamic-import-call",
+        ),
+        pytest.param(
+            """
+from importlib import import_module
+RECOMMENDATION_MODULE_NAME = "polymarket_alpha_lab.auth"
+
+def build_report():
+    return import_module(RECOMMENDATION_MODULE_NAME)
+""",
+            id="forbidden-import-module-target",
+        ),
+        pytest.param(
+            """
+def build_report(client):
+    return client.post_order()
+""",
+            id="forbidden-attribute-call",
+        ),
+    ),
+)
+def test_recommendation_layer_name_scope_guard_rejects_forbidden_names(
+    bad_source: str,
+) -> None:
+    with pytest.raises(AssertionError):
+        assert_recommendation_tree_omits_forbidden_names_and_calls(
+            ast.parse(bad_source),
+        )
 
 
 def test_recommendation_layer_real_report_feeds_selection_and_explanation() -> None:

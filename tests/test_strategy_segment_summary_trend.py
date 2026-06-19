@@ -326,6 +326,29 @@ def test_segment_summary_trend_report_revalidates_status_rows_and_latest_state()
     with pytest.raises(ValueError, match="status_rows"):
         replace(trend, status_rows=tuple(reversed(trend.status_rows)))
 
+    missing_latest_status_rows = (
+        PaperStrategySegmentSummaryTrendStatusRow(
+            "insufficient_segment_probability_sample",
+            0,
+            Decimal("0.000000"),
+        ),
+        PaperStrategySegmentSummaryTrendStatusRow(
+            "segment_evidence_observed",
+            1,
+            Decimal("1.000000"),
+        ),
+        PaperStrategySegmentSummaryTrendStatusRow(
+            "segment_return_evidence_observed",
+            0,
+            Decimal("0.000000"),
+        ),
+    )
+    with pytest.raises(ValueError, match="latest_status"):
+        replace(
+            trend,
+            status_rows=missing_latest_status_rows,
+        )
+
     drifted_row = replace(trend.status_rows[0])
     object.__setattr__(drifted_row, "report_ratio", Decimal("0.500000"))
     with pytest.raises(ValueError, match="status_rows ratios"):
@@ -335,6 +358,28 @@ def test_segment_summary_trend_report_revalidates_status_rows_and_latest_state()
                 drifted_row,
                 *trend.status_rows[1:],
             ),
+        )
+
+
+def test_segment_summary_trend_report_revalidates_zero_observation_latest_metrics():
+    trend = _trend_report(
+        _summary_report(
+            generated_at=datetime(2026, 6, 17, 12, 0, tzinfo=UTC),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="latest_status"):
+        replace(trend, latest_status="segment_evidence_observed")
+    with pytest.raises(ValueError, match="latest_strategy_segment_count"):
+        replace(trend, latest_strategy_segment_count=1)
+    with pytest.raises(ValueError, match="latest_risk_tag_segment_count"):
+        replace(trend, latest_risk_tag_segment_count=1)
+    with pytest.raises(ValueError, match="latest_incomplete_segment_count"):
+        replace(
+            trend,
+            latest_incomplete_segment_count=1,
+            largest_observed_incomplete_segment_count=1,
+            consecutive_incomplete_segment_count=1,
         )
 
 

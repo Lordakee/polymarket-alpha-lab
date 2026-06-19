@@ -103,6 +103,24 @@ def test_strategy_recommendation_history_empty_input_is_readonly_report():
     assert history.readonly is True
 
 
+def test_strategy_recommendation_history_empty_iterable_is_readonly_report():
+    history = build_paper_strategy_recommendation_history_report(
+        (report for report in ()),
+        config_version="recommendation-history-v0",
+        generated_at=GENERATED_AT,
+    )
+
+    assert history.source_report_count == 0
+    assert history.total_candidate_count == 0
+    assert history.first_generated_at is None
+    assert history.latest_generated_at is None
+    assert history.latest_config_version is None
+    assert history.source_summaries == ()
+    assert history.paper_only is True
+    assert history.report_only is True
+    assert history.readonly is True
+
+
 def test_strategy_recommendation_history_summarizes_two_ordered_reports_and_latest_counts():
     first = _recommendation_report(
         datetime(2026, 6, 18, 10, 0, tzinfo=UTC),
@@ -144,7 +162,7 @@ def test_strategy_recommendation_history_summarizes_two_ordered_reports_and_late
     assert history.source_summaries[-1].candidate_count == 3
 
 
-def test_strategy_recommendation_history_normalizes_unsorted_input():
+def test_strategy_recommendation_history_orders_input_by_generated_at():
     older = _recommendation_report(
         datetime(2026, 6, 18, 10, 0, tzinfo=UTC),
         rows=(_row("market-a", action="watch"),),
@@ -166,7 +184,35 @@ def test_strategy_recommendation_history_normalizes_unsorted_input():
     assert history.latest_reject_count == 0
 
 
-def test_strategy_recommendation_history_rejects_invalid_source_type_and_flags():
+def test_strategy_recommendation_history_orders_input_by_generated_at_then_config_version():
+    generated_at = datetime(2026, 6, 18, 10, 0, tzinfo=UTC)
+    earlier_config = _recommendation_report(
+        generated_at,
+        config_version="strategy-recommendation-v1",
+        rows=(_row("market-a", action="recommend"),),
+    )
+    latest_config = _recommendation_report(
+        generated_at,
+        config_version="strategy-recommendation-v2",
+        rows=(_row("market-b", action="watch"),),
+    )
+
+    history = _history_report(latest_config, earlier_config)
+
+    assert tuple(summary.config_version for summary in history.source_summaries) == (
+        "strategy-recommendation-v1",
+        "strategy-recommendation-v2",
+    )
+    assert history.first_generated_at == generated_at
+    assert history.latest_generated_at == generated_at
+    assert history.latest_config_version == "strategy-recommendation-v2"
+    assert history.latest_candidate_count == 1
+    assert history.latest_recommend_count == 0
+    assert history.latest_watch_count == 1
+    assert history.latest_reject_count == 0
+
+
+def test_strategy_recommendation_history_rejects_invalid_source_type():
     valid_report = _recommendation_report(
         datetime(2026, 6, 18, 10, 0, tzinfo=UTC),
     )
@@ -180,17 +226,27 @@ def test_strategy_recommendation_history_rejects_invalid_source_type_and_flags()
     with pytest.raises(ValueError, match="recommendation_reports must contain"):
         _history_report(object())  # type: ignore[arg-type]
 
-    object.__setattr__(valid_report, "paper_only", False)
-    with pytest.raises(ValueError, match="paper_only"):
-        _history_report(valid_report)
-    object.__setattr__(valid_report, "paper_only", True)
-    object.__setattr__(valid_report, "report_only", False)
-    with pytest.raises(ValueError, match="report_only"):
-        _history_report(valid_report)
-    object.__setattr__(valid_report, "report_only", True)
-    object.__setattr__(valid_report, "readonly", False)
-    with pytest.raises(ValueError, match="readonly"):
-        _history_report(valid_report)
+
+@pytest.mark.parametrize(
+    ("flag_name", "expected_message"),
+    (
+        ("paper_only", "paper_only"),
+        ("report_only", "report_only"),
+        ("readonly", "readonly"),
+    ),
+)
+def test_strategy_recommendation_history_rejects_source_reports_without_hard_flags(
+    flag_name: str,
+    expected_message: str,
+):
+    report = _recommendation_report(
+        datetime(2026, 6, 18, 10, 0, tzinfo=UTC),
+    )
+
+    object.__setattr__(report, flag_name, False)
+
+    with pytest.raises(ValueError, match=expected_message):
+        _history_report(report)
 
 
 def test_strategy_recommendation_history_direct_constructor_validates_mismatches():
@@ -216,6 +272,65 @@ def test_strategy_recommendation_history_direct_constructor_validates_mismatches
     for changes in invalid_changes:
         with pytest.raises(ValueError):
             replace(history, **changes)
+
+
+def test_strategy_recommendation_history_direct_constructor_validates_empty_invariants():
+    with pytest.raises(ValueError, match="source_report_count must match"):
+        PaperStrategyRecommendationHistoryReport(
+            generated_at=GENERATED_AT,
+            config_version="recommendation-history-v0",
+            source_report_count=1,
+            total_candidate_count=0,
+            total_recommend_count=0,
+            total_watch_count=0,
+            total_reject_count=0,
+            first_generated_at=None,
+            latest_generated_at=None,
+            latest_config_version=None,
+            latest_candidate_count=0,
+            latest_recommend_count=0,
+            latest_watch_count=0,
+            latest_reject_count=0,
+            source_summaries=(),
+        )
+
+    with pytest.raises(ValueError, match="generated_at bounds must be absent"):
+        PaperStrategyRecommendationHistoryReport(
+            generated_at=GENERATED_AT,
+            config_version="recommendation-history-v0",
+            source_report_count=0,
+            total_candidate_count=0,
+            total_recommend_count=0,
+            total_watch_count=0,
+            total_reject_count=0,
+            first_generated_at=GENERATED_AT,
+            latest_generated_at=None,
+            latest_config_version=None,
+            latest_candidate_count=0,
+            latest_recommend_count=0,
+            latest_watch_count=0,
+            latest_reject_count=0,
+            source_summaries=(),
+        )
+
+    with pytest.raises(ValueError, match="latest_config_version must be absent"):
+        PaperStrategyRecommendationHistoryReport(
+            generated_at=GENERATED_AT,
+            config_version="recommendation-history-v0",
+            source_report_count=0,
+            total_candidate_count=0,
+            total_recommend_count=0,
+            total_watch_count=0,
+            total_reject_count=0,
+            first_generated_at=None,
+            latest_generated_at=None,
+            latest_config_version="strategy-recommendation-v0",
+            latest_candidate_count=0,
+            latest_recommend_count=0,
+            latest_watch_count=0,
+            latest_reject_count=0,
+            source_summaries=(),
+        )
 
 
 def test_strategy_recommendation_history_direct_constructor_requires_deterministic_summaries():

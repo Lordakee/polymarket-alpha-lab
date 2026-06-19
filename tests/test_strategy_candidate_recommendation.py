@@ -172,6 +172,25 @@ def test_strategy_candidate_recommendation_readiness_watch_downgrades_ready_cand
     assert "candidate_ready" in row.reason_codes
 
 
+def test_strategy_candidate_recommendation_recommends_candidate_at_exact_threshold():
+    report = build_paper_strategy_candidate_recommendation_report(
+        _assessment_report(
+            _assessment_row(
+                "threshold-candidate",
+                readiness_score=Decimal("0.100000"),
+            ),
+        ),
+        _readiness_report("pass"),
+        config=_config(min_recommendation_score=Decimal("0.100000")),
+        generated_at=RECOMMENDATION_GENERATED_AT,
+    )
+
+    row = report.recommendation_rows[0]
+    assert row.action == "recommend"
+    assert row.recommendation_score == Decimal("0.100000")
+    assert "below_recommendation_threshold" not in row.reason_codes
+
+
 def test_strategy_candidate_recommendation_readiness_blocked_prevents_recommendations():
     report = _build_report(
         _assessment_report(
@@ -296,6 +315,37 @@ def test_strategy_candidate_recommendation_validates_constructors_counts_types_a
         replace(row, recommendation_score=0.1)
     with pytest.raises(ValueError, match="min_recommendation_score"):
         _config(min_recommendation_score=0.1)
+
+
+@pytest.mark.parametrize(
+    ("source_name", "flag_name"),
+    (
+        ("assessment_report", "paper_only"),
+        ("assessment_report", "report_only"),
+        ("assessment_report", "readonly"),
+        ("readiness_report", "paper_only"),
+        ("readiness_report", "report_only"),
+        ("readiness_report", "readonly"),
+    ),
+)
+def test_strategy_candidate_recommendation_rejects_false_source_hard_flags(
+    source_name,
+    flag_name,
+):
+    assessment_report = _assessment_report(_assessment_row("ready-candidate"))
+    readiness_report = _readiness_report("pass")
+    source_report = (
+        assessment_report if source_name == "assessment_report" else readiness_report
+    )
+    object.__setattr__(source_report, flag_name, False)
+
+    with pytest.raises(ValueError, match=f"{source_name} must be {flag_name}"):
+        build_paper_strategy_candidate_recommendation_report(
+            assessment_report,
+            readiness_report,
+            config=_config(),
+            generated_at=RECOMMENDATION_GENERATED_AT,
+        )
 
 
 def test_strategy_candidate_recommendation_validates_builder_inputs_and_input_flags():

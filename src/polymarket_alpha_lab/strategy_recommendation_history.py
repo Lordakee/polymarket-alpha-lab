@@ -224,7 +224,9 @@ def _validate_report_consistency(
     ):
         raise ValueError("total_reject_count must match source_summaries")
     if report.source_summaries != _order_source_summaries(report.source_summaries):
-        raise ValueError("source_summaries must be ordered by generated_at")
+        raise ValueError(
+            "source_summaries must be ordered by generated_at and config_version",
+        )
     if report.source_report_count == 0:
         _validate_empty_report(report)
     else:

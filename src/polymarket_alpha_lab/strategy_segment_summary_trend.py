@@ -382,6 +382,29 @@ def _validate_report_consistency(
         raise ValueError("latest_report_generated_at is required with reports")
     if report.latest_status is None:
         raise ValueError("latest_status is required with reports")
+    if _status_report_count(report, report.latest_status) < 1:
+        raise ValueError("latest_status must be counted in status_rows")
+    if report.latest_total_observation_count == 0:
+        if report.latest_status != "insufficient_segment_probability_sample":
+            raise ValueError("latest_status must match latest segment observations")
+        for field_name in (
+            "latest_probability_observation_count",
+            "latest_return_observation_count",
+            "latest_strategy_segment_count",
+            "latest_risk_tag_segment_count",
+            "latest_incomplete_segment_count",
+            "latest_return_only_segment_count",
+        ):
+            _require_zero(field_name, getattr(report, field_name))
+        _require_zero(
+            "consecutive_incomplete_segment_count",
+            report.consecutive_incomplete_segment_count,
+        )
+        _require_zero(
+            "consecutive_return_only_segment_count",
+            report.consecutive_return_only_segment_count,
+        )
+        return
     if (
         report.latest_probability_observation_count
         > report.latest_total_observation_count
@@ -513,6 +536,17 @@ def _ratio_value_matches(value: Decimal | None, expected: Decimal | None) -> boo
     return (
         value == value.quantize(RATIO_QUANTUM, rounding=ROUND_HALF_EVEN)
         and value.as_tuple().exponent == RATIO_QUANTUM.as_tuple().exponent
+    )
+
+
+def _status_report_count(
+    report: PaperStrategySegmentSummaryTrendReport,
+    summary_status: str,
+) -> int:
+    return sum(
+        row.report_count
+        for row in report.status_rows
+        if row.summary_status == summary_status
     )
 
 

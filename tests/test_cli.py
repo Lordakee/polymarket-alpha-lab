@@ -33,15 +33,36 @@ from polymarket_alpha_lab.positions import PaperNavLog, PaperNavSnapshot
 from polymarket_alpha_lab.runner import RunLoopSummary
 from polymarket_alpha_lab.strategy_cycle import PaperStrategyCycleReport
 from polymarket_alpha_lab.strategy_cycle import PaperStrategyCycleLog
+from polymarket_alpha_lab.strategy_candidate_recommendation import (
+    PaperStrategyCandidateRecommendationReport,
+    PaperStrategyCandidateRecommendationRow,
+)
 from polymarket_alpha_lab.strategy_audit_history import (
     PaperStrategyRiskAuditHistoryConfig,
     build_paper_strategy_risk_audit_history_report,
+)
+from polymarket_alpha_lab.strategy_recommendation_bundle import (
+    PaperStrategyRecommendationBundleReport,
+)
+from polymarket_alpha_lab.strategy_recommendation_explain import (
+    PaperStrategyRecommendationExplanationReport,
+    PaperStrategyRecommendationExplanationRow,
+)
+from polymarket_alpha_lab.strategy_recommendation_history import (
+    build_paper_strategy_recommendation_history_report,
+)
+from polymarket_alpha_lab.strategy_recommendation_log import (
+    append_paper_strategy_recommendation_bundle_log,
 )
 from polymarket_alpha_lab.strategy_risk_audit import (
     PaperStrategyRiskAuditGateResult,
     PaperStrategyRiskAuditReport,
 )
 from polymarket_alpha_lab.strategy_risk_audit_log import PaperStrategyRiskAuditLog
+from polymarket_alpha_lab.paper_strategy_selection_policy import (
+    PaperStrategySelectionPolicyReport,
+    PaperStrategySelectionPolicyRow,
+)
 
 
 def test_scan_cli_builds_read_only_scan_config(tmp_path):
@@ -1081,6 +1102,381 @@ def test_strategy_audit_history_cli_missing_log_returns_one_without_client(
     captured = capsys.readouterr()
     assert "strategy-audit-history failed:" in captured.err
     assert "missing-strategy-audits.jsonl" in captured.err
+
+
+def _recommendation_bundle_report(
+    *,
+    generated_at: datetime = datetime(2026, 6, 18, 16, 0, tzinfo=UTC),
+    market_slug: str = "market-alpha",
+    notional: Decimal = Decimal("7.500000"),
+) -> PaperStrategyRecommendationBundleReport:
+    score = Decimal("0.750000")
+    recommendation_report = PaperStrategyCandidateRecommendationReport(
+        generated_at=generated_at,
+        config_version="strategy-candidate-recommendation-v1",
+        readiness_overall_status="pass",
+        candidate_count=1,
+        recommend_count=1,
+        watch_count=0,
+        reject_count=0,
+        recommendation_rows=(
+            PaperStrategyCandidateRecommendationRow(
+                market_slug=market_slug,
+                question=f"Will {market_slug} resolve yes?",
+                action="recommend",
+                assessment_status="ready",
+                readiness_status="pass",
+                selected_side="yes",
+                scoring_side="yes",
+                recommendation_score=score,
+                reason_codes=("assessment_ready", "readiness_passed"),
+            ),
+        ),
+    )
+    selection_policy_report = PaperStrategySelectionPolicyReport(
+        generated_at=generated_at,
+        config_version="paper-strategy-selection-policy-v1",
+        row_count=1,
+        selected_count=1,
+        skipped_count=0,
+        not_selected_count=0,
+        total_selected_notional=notional,
+        selection_rows=(
+            PaperStrategySelectionPolicyRow(
+                market_slug=market_slug,
+                question=f"Will {market_slug} resolve yes?",
+                source_action="recommend",
+                selected_side="yes",
+                recommendation_score=score,
+                decision="selected",
+                suggested_position_notional=notional,
+                selected_position_notional=notional,
+                reason_codes=(
+                    "selected_by_policy",
+                    "assessment_ready",
+                    "readiness_passed",
+                ),
+            ),
+        ),
+    )
+    explanation_report = PaperStrategyRecommendationExplanationReport(
+        generated_at=generated_at,
+        source_config_version="strategy-candidate-recommendation-v1",
+        recommendation_count=1,
+        recommend_count=1,
+        watch_count=0,
+        reject_count=0,
+        explanation_rows=(
+            PaperStrategyRecommendationExplanationRow(
+                market_slug=market_slug,
+                action="recommend",
+                selected_side="yes",
+                recommendation_score=score,
+                primary_reason_code="assessment_ready",
+                reason_codes=("assessment_ready", "readiness_passed"),
+                explanation=f"recommend yes because assessment_ready (score {score})",
+            ),
+        ),
+    )
+    return PaperStrategyRecommendationBundleReport(
+        generated_at=generated_at,
+        config_version="strategy-recommendation-bundle-v1",
+        candidate_count=1,
+        recommend_count=1,
+        selected_count=1,
+        total_selected_notional=notional,
+        recommendation_report=recommendation_report,
+        selection_policy_report=selection_policy_report,
+        explanation_report=explanation_report,
+    )
+
+
+def test_strategy_recommendation_history_cli_reads_log_and_prints_summary_without_client(
+    tmp_path,
+    capsys,
+):
+    recommendation_log = tmp_path / "strategy-recommendations.jsonl"
+    append_paper_strategy_recommendation_bundle_log(
+        recommendation_log,
+        _recommendation_bundle_report(
+            generated_at=datetime(2026, 6, 18, 16, 0, tzinfo=UTC),
+            market_slug="market-alpha",
+            notional=Decimal("7.500000"),
+        ),
+    )
+    append_paper_strategy_recommendation_bundle_log(
+        recommendation_log,
+        _recommendation_bundle_report(
+            generated_at=datetime(2026, 6, 18, 16, 5, tzinfo=UTC),
+            market_slug="market-beta",
+            notional=Decimal("12.500000"),
+        ),
+    )
+    before = recommendation_log.read_bytes()
+    client_factory_calls = 0
+
+    def forbidden_client_factory():
+        nonlocal client_factory_calls
+        client_factory_calls += 1
+        raise AssertionError("client should not be constructed")
+
+    exit_code = main(
+        [
+            "strategy-recommendation-history",
+            "--recommendation-log",
+            str(recommendation_log),
+        ],
+        client_factory=forbidden_client_factory,
+    )
+
+    assert exit_code == 0
+    assert client_factory_calls == 0
+    assert recommendation_log.read_bytes() == before
+    captured = capsys.readouterr()
+    assert "strategy-recommendation-history:" in captured.out
+    assert "source_reports=2" in captured.out
+    assert "total_candidates=2" in captured.out
+    assert "total_recommend=2" in captured.out
+    assert "latest_selected=1" in captured.out
+    assert "latest_selected_notional=12.500000" in captured.out
+
+
+def test_strategy_recommendation_history_cli_aligns_latest_selection_with_history_order(
+    tmp_path,
+    capsys,
+):
+    recommendation_log = tmp_path / "strategy-recommendations.jsonl"
+    append_paper_strategy_recommendation_bundle_log(
+        recommendation_log,
+        _recommendation_bundle_report(
+            generated_at=datetime(2026, 6, 18, 16, 5, tzinfo=UTC),
+            market_slug="market-newer",
+            notional=Decimal("12.500000"),
+        ),
+    )
+    append_paper_strategy_recommendation_bundle_log(
+        recommendation_log,
+        _recommendation_bundle_report(
+            generated_at=datetime(2026, 6, 18, 16, 0, tzinfo=UTC),
+            market_slug="market-older",
+            notional=Decimal("7.500000"),
+        ),
+    )
+
+    exit_code = main(
+        [
+            "strategy-recommendation-history",
+            "--recommendation-log",
+            str(recommendation_log),
+        ],
+        client_factory=lambda: (_ for _ in ()).throw(
+            AssertionError("client should not be constructed"),
+        ),
+    )
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    assert "latest=2026-06-18T16:05:00+00:00" in captured.out
+    assert "latest_selected=1" in captured.out
+    assert "latest_selected_notional=12.500000" in captured.out
+
+
+def test_strategy_recommendation_history_cli_uses_last_stable_tie_for_latest_selection(
+    tmp_path,
+    capsys,
+):
+    recommendation_log = tmp_path / "strategy-recommendations.jsonl"
+    tied_generated_at = datetime(2026, 6, 18, 16, 5, tzinfo=UTC)
+    append_paper_strategy_recommendation_bundle_log(
+        recommendation_log,
+        _recommendation_bundle_report(
+            generated_at=tied_generated_at,
+            market_slug="market-first-tie",
+            notional=Decimal("4.000000"),
+        ),
+    )
+    append_paper_strategy_recommendation_bundle_log(
+        recommendation_log,
+        _recommendation_bundle_report(
+            generated_at=tied_generated_at,
+            market_slug="market-last-tie",
+            notional=Decimal("9.000000"),
+        ),
+    )
+
+    exit_code = main(
+        [
+            "strategy-recommendation-history",
+            "--recommendation-log",
+            str(recommendation_log),
+        ],
+        client_factory=lambda: (_ for _ in ()).throw(
+            AssertionError("client should not be constructed"),
+        ),
+    )
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    assert "latest=2026-06-18T16:05:00+00:00" in captured.out
+    assert "latest_selected=1" in captured.out
+    assert "latest_selected_notional=9.000000" in captured.out
+
+
+def test_strategy_recommendation_history_cli_passes_nested_reports_to_runner(
+    tmp_path,
+):
+    recommendation_log = tmp_path / "strategy-recommendations.jsonl"
+    first = _recommendation_bundle_report(
+        generated_at=datetime(2026, 6, 18, 16, 0, tzinfo=UTC),
+        market_slug="market-alpha",
+    )
+    second = _recommendation_bundle_report(
+        generated_at=datetime(2026, 6, 18, 16, 5, tzinfo=UTC),
+        market_slug="market-beta",
+    )
+    append_paper_strategy_recommendation_bundle_log(recommendation_log, first)
+    append_paper_strategy_recommendation_bundle_log(recommendation_log, second)
+    calls = []
+
+    def fake_strategy_recommendation_history_runner(
+        *,
+        recommendation_reports,
+        config_version,
+        generated_at,
+    ):
+        calls.append(
+            {
+                "recommendation_reports": recommendation_reports,
+                "config_version": config_version,
+                "generated_at": generated_at,
+            },
+        )
+        return build_paper_strategy_recommendation_history_report(
+            recommendation_reports,
+            config_version=config_version,
+            generated_at=generated_at,
+        )
+
+    exit_code = main(
+        [
+            "strategy-recommendation-history",
+            "--recommendation-log",
+            str(recommendation_log),
+        ],
+        strategy_recommendation_history_runner=(
+            fake_strategy_recommendation_history_runner
+        ),
+        client_factory=lambda: (_ for _ in ()).throw(
+            AssertionError("client should not be constructed"),
+        ),
+    )
+
+    assert exit_code == 0
+    assert len(calls) == 1
+    assert calls[0]["recommendation_reports"] == (
+        first.recommendation_report,
+        second.recommendation_report,
+    )
+    assert calls[0]["config_version"] == "strategy-recommendation-history-v0"
+    assert isinstance(calls[0]["generated_at"], datetime)
+
+
+def test_strategy_recommendation_history_cli_empty_log_prints_zero_summary_without_mutation(
+    tmp_path,
+    capsys,
+):
+    recommendation_log = tmp_path / "strategy-recommendations.jsonl"
+    recommendation_log.write_text("", encoding="utf-8")
+    before = recommendation_log.read_bytes()
+
+    exit_code = main(
+        [
+            "strategy-recommendation-history",
+            "--recommendation-log",
+            str(recommendation_log),
+        ],
+        client_factory=lambda: (_ for _ in ()).throw(
+            AssertionError("client should not be constructed"),
+        ),
+    )
+
+    assert exit_code == 0
+    assert recommendation_log.read_bytes() == before
+    captured = capsys.readouterr()
+    assert "strategy-recommendation-history:" in captured.out
+    assert "source_reports=0" in captured.out
+    assert "total_candidates=0" in captured.out
+    assert "latest_selected=0" in captured.out
+    assert "latest_selected_notional=0" in captured.out
+    assert "first=none" in captured.out
+    assert "latest=none" in captured.out
+
+
+def test_strategy_recommendation_history_cli_missing_log_returns_one_without_client(
+    tmp_path,
+    capsys,
+):
+    recommendation_log = tmp_path / "missing-strategy-recommendations.jsonl"
+    assert not recommendation_log.exists()
+    client_factory_calls = 0
+
+    def forbidden_client_factory():
+        nonlocal client_factory_calls
+        client_factory_calls += 1
+        raise AssertionError("client should not be constructed")
+
+    exit_code = main(
+        [
+            "strategy-recommendation-history",
+            "--recommendation-log",
+            str(recommendation_log),
+        ],
+        client_factory=forbidden_client_factory,
+    )
+
+    assert exit_code == 1
+    assert client_factory_calls == 0
+    assert not recommendation_log.exists()
+    captured = capsys.readouterr()
+    assert "strategy-recommendation-history failed:" in captured.err
+    assert "missing-strategy-recommendations.jsonl" in captured.err
+
+
+def test_strategy_recommendation_history_cli_returns_one_when_runner_fails(
+    tmp_path,
+    capsys,
+):
+    recommendation_log = tmp_path / "strategy-recommendations.jsonl"
+    append_paper_strategy_recommendation_bundle_log(
+        recommendation_log,
+        _recommendation_bundle_report(),
+    )
+    before = recommendation_log.read_bytes()
+
+    def broken_strategy_recommendation_history_runner(**kwargs):
+        raise RuntimeError("recommendation history failed")
+
+    exit_code = main(
+        [
+            "strategy-recommendation-history",
+            "--recommendation-log",
+            str(recommendation_log),
+        ],
+        strategy_recommendation_history_runner=(
+            broken_strategy_recommendation_history_runner
+        ),
+        client_factory=lambda: (_ for _ in ()).throw(
+            AssertionError("client should not be constructed"),
+        ),
+    )
+
+    assert exit_code == 1
+    assert recommendation_log.read_bytes() == before
+    captured = capsys.readouterr()
+    assert (
+        "strategy-recommendation-history failed: recommendation history failed"
+        in captured.err
+    )
 
 
 def _strategy_evidence_stub_report(

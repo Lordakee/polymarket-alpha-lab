@@ -106,6 +106,20 @@ the log should append paper reports only. To build the existing readonly
 recommendation history summary, pass each recovered bundle's
 `recommendation_report` to the history reducer.
 
+The CLI exposes this as a read-only slice with:
+
+```bash
+polymarket-alpha-lab strategy-recommendation-history --recommendation-log <path>
+```
+
+The command reads the supplied bundle log with
+`read_paper_strategy_recommendation_bundle_log(...)`, summarizes the nested
+`recommendation_report` values with config version
+`strategy-recommendation-history-v0`, and prints source recommendation counts
+plus the latest bundle's selected count and selected notional. It does not
+construct clients, fetch data, execute paper trades, append logs, or write
+artifacts.
+
 Selected rows and selected notional values are paper sizing suggestions for
 journal analysis. They are not executable instructions, exchange orders, live
 orders, wallet actions, or private-key-backed actions.
@@ -146,4 +160,7 @@ The recommendation-layer work is expected to use module-level reducers named:
 
 Those modules should preserve the existing reducer style: frozen dataclasses,
 validated paper/report/readonly flags, deterministic ordering, Decimal-only
-numeric fields, and no package-root exports.
+numeric fields, and module-local public APIs. Package-root exports remain out of
+scope for recommendation-layer modules; callers should import bundle/log helpers
+from their defining modules when they need to append, recover, and inspect paper
+artifacts.

@@ -278,35 +278,92 @@ def test_bundle_report_direct_constructor_rejects_count_inconsistency():
         report.selected_count = 0
 
 
-def test_bundle_report_direct_constructor_rejects_cross_wired_nested_reports():
+@pytest.mark.parametrize(
+    ("field_name", "row_index", "row_updates"),
+    (
+        ("market_slug", 0, {"market_slug": "other-market"}),
+        ("question", 0, {"question": "Will other-market resolve yes?"}),
+        ("source_action", 1, {"source_action": "reject"}),
+        ("selected_side", 0, {"selected_side": "no"}),
+        ("recommendation_score", 0, {"recommendation_score": Decimal("0.500000")}),
+    ),
+)
+def test_bundle_report_direct_constructor_rejects_selection_row_mismatches(
+    field_name,
+    row_index,
+    row_updates,
+):
     report = _bundle_report()
-    other = _bundle_report()
-    other_selection_rows = list(other.selection_policy_report.selection_rows)
-    other_selection_rows[0] = replace(
-        other_selection_rows[0],
-        market_slug="other-market",
-        question="Will other-market resolve yes?",
-    )
-    other_selection_report = replace(
-        other.selection_policy_report,
-        selection_rows=tuple(other_selection_rows),
+    assert field_name in row_updates
+    selection_rows = list(report.selection_policy_report.selection_rows)
+    selection_rows[row_index] = replace(selection_rows[row_index], **row_updates)
+    selection_policy_report = replace(
+        report.selection_policy_report,
+        selection_rows=tuple(selection_rows),
     )
 
-    with pytest.raises(ValueError, match="selection_policy_report rows"):
-        replace(report, selection_policy_report=other_selection_report)
+    with pytest.raises(
+        ValueError,
+        match="selection_policy_report rows must match recommendation rows",
+    ):
+        replace(report, selection_policy_report=selection_policy_report)
 
-    other_explanation_rows = list(other.explanation_report.explanation_rows)
-    other_explanation_rows[0] = replace(
-        other_explanation_rows[0],
-        market_slug="other-market",
+
+@pytest.mark.parametrize(
+    ("field_name", "row_updates_by_index"),
+    (
+        ("market_slug", {0: {"market_slug": "other-market"}}),
+        ("action", {0: {"action": "watch"}, 1: {"action": "recommend"}}),
+        ("selected_side", {0: {"selected_side": "no"}}),
+        ("recommendation_score", {0: {"recommendation_score": Decimal("0.500000")}}),
+        ("reason_codes", {0: {"reason_codes": ("other_reason",)}}),
+    ),
+)
+def test_bundle_report_direct_constructor_rejects_explanation_row_mismatches(
+    field_name,
+    row_updates_by_index,
+):
+    report = _bundle_report()
+    assert any(
+        field_name in row_updates
+        for row_updates in row_updates_by_index.values()
     )
-    other_explanation_report = replace(
-        other.explanation_report,
-        explanation_rows=tuple(other_explanation_rows),
+    explanation_rows = list(report.explanation_report.explanation_rows)
+    for row_index, row_updates in row_updates_by_index.items():
+        explanation_rows[row_index] = _replace_explanation_row(
+            explanation_rows[row_index],
+            **row_updates,
+        )
+    explanation_report = replace(
+        report.explanation_report,
+        explanation_rows=tuple(explanation_rows),
     )
 
-    with pytest.raises(ValueError, match="explanation_report rows"):
-        replace(report, explanation_report=other_explanation_report)
+    with pytest.raises(
+        ValueError,
+        match="explanation_report rows must match recommendation rows",
+    ):
+        replace(report, explanation_report=explanation_report)
+
+
+def _replace_explanation_row(row, **row_updates):
+    action = row_updates.get("action", row.action)
+    selected_side = row_updates.get("selected_side", row.selected_side)
+    recommendation_score = row_updates.get(
+        "recommendation_score",
+        row.recommendation_score,
+    )
+    reason_codes = row_updates.get("reason_codes", row.reason_codes)
+    primary_reason_code = reason_codes[0]
+    return replace(
+        row,
+        **row_updates,
+        primary_reason_code=primary_reason_code,
+        explanation=(
+            f"{action} {selected_side} because {primary_reason_code} "
+            f"(score {recommendation_score})"
+        ),
+    )
 
 
 def test_bundle_report_normalizes_generated_at_to_utc():

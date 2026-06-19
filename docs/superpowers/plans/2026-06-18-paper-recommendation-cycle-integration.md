@@ -1,136 +1,161 @@
-# Paper Recommendation Cycle Integration Implementation Plan
+# Paper Recommendation Cycle Integration As-Built Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** this file is now an as-built reference plus future-only integration checklist. The bundle and JSONL log modules exist; do not use this document as a module-creation plan.
 
-**Goal:** Add a paper-only recommendation orchestration layer that can bundle candidate recommendations, selection policy output, and human-readable explanations before direct cycle/runner integration.
+**Goal:** Keep the paper-only recommendation orchestration layer aligned with the current reducer API and prepare the next cycle/runner integration stage.
 
-**Architecture:** Keep the first integration step as pure reducers and append-only JSONL storage, with no live trading, auth, wallet, private-key handling, or exchange writes. The bundle consumes already-built paper-only assessment/readiness reports and produces recommendation, selection, and explanation reports with strict readonly/report-only flags.
+**Architecture:** The implemented integration step is pure reducers plus append-only JSONL storage. It consumes already-built paper-only assessment/readiness reports and produces recommendation, selection-policy, and explanation reports with strict readonly/report-only flags. It still performs no live trading, auth, wallet, private-key handling, exchange writes, or executable order placement.
 
-**Tech Stack:** Python dataclasses, Decimal-only math, pytest, existing JSON recovery patterns, CodeGraph for code navigation.
+**Tech Stack:** Python dataclasses, `Decimal` math, pytest, existing JSON recovery patterns, CodeGraph for code navigation.
 
 ---
 
-### File Structure
+## As-Built File Structure
 
-- Create: `src/polymarket_alpha_lab/strategy_recommendation_bundle.py`
-  - Owns a frozen report bundling recommendation, selection policy, and explanation outputs.
-  - Exposes `PaperStrategyRecommendationBundleConfig`, `PaperStrategyRecommendationBundleReport`, and `build_paper_strategy_recommendation_bundle_report`.
-- Create: `tests/test_strategy_recommendation_bundle.py`
-  - Focused tests for bundle construction, strict types, hard flags, timestamp normalization, and consistency.
-- Create: `src/polymarket_alpha_lab/strategy_recommendation_log.py`
+- `src/polymarket_alpha_lab/strategy_recommendation_bundle.py`
+  - Owns `PaperStrategyRecommendationBundleConfig`, `PaperStrategyRecommendationBundleReport`, and `build_paper_strategy_recommendation_bundle_report`.
+  - Bundles recommendation, selection policy, and explanation outputs.
+- `tests/test_strategy_recommendation_bundle.py`
+  - Covers bundle construction, strict types, hard flags, timestamp normalization, and nested consistency.
+- `src/polymarket_alpha_lab/strategy_recommendation_log.py`
   - Owns append/read helpers for recommendation bundle JSONL logs.
-  - Uses existing JSON recovery/from-jsonable patterns and preserves Decimal/datetime values.
-- Create: `tests/test_strategy_recommendation_log.py`
-  - Focused tests for append/read, missing log, corrupt lines recovery, strict bundle type checks, and hard flags.
-- Modify: `docs/strategy-recommendation-layer.md`
-  - Documents the new bundle/log step and states it remains paper-only/report-only/readonly.
-- Modify: `tests/test_strategy_recommendation_layer_scope.py`
-  - Extends boundary checks so new modules do not introduce live trading, auth, wallet, private-key, or order placement language.
+  - Uses JSON recovery/from-jsonable patterns and preserves `Decimal` and `datetime` values.
+- `tests/test_strategy_recommendation_log.py`
+  - Covers append/read, empty logs, missing log behavior, corrupt row recovery, strict bundle type checks, and hard flags.
+- `src/polymarket_alpha_lab/strategy_recommendation_history.py`
+  - Owns readonly history summaries across recommendation reports.
+- `tests/test_strategy_recommendation_history.py`
+  - Covers empty/nonempty history summaries, ordering, strict source types, flags, and direct-constructor consistency.
+- `docs/strategy-recommendation-layer.md`
+  - Documents the bundle/log/history flow as paper-only/report-only/readonly.
+- `tests/test_strategy_recommendation_layer_scope.py`
+  - Keeps recommendation-layer modules inside no-live-trading boundary checks.
 
-### Task 1: Recommendation Bundle Reducer
+## As-Built API
 
-**Files:**
-- Create: `src/polymarket_alpha_lab/strategy_recommendation_bundle.py`
-- Test: `tests/test_strategy_recommendation_bundle.py`
+### Bundle Reducer
 
-- [ ] **Step 1: Write failing tests**
-  - Add a test that builds a `PaperStrategyRecommendationBundleReport` from fixture assessment/readiness reports and asserts the nested recommendation, selection, and explanation reports are present.
-  - Add a test that invalid non-paper-only/read-only source reports are rejected.
-  - Add a test that selection report counts and explanation rows match the recommendation report.
+`PaperStrategyRecommendationBundleConfig` fields:
 
-- [ ] **Step 2: Run focused test to verify RED**
-  - Run: `.venv/bin/python -m pytest tests/test_strategy_recommendation_bundle.py -q`
-  - Expected: fail because `polymarket_alpha_lab.strategy_recommendation_bundle` is missing.
+- `config_version`
+- `recommendation_config`
+- `selection_policy_config`
 
-- [ ] **Step 3: Implement minimal reducer**
-  - Add frozen config/report dataclasses.
-  - Validate exact source report/config types.
-  - Call `build_paper_strategy_candidate_recommendation_report`, `build_paper_strategy_selection_policy_report`, and `build_paper_strategy_recommendation_explanation_report`.
-  - Enforce `paper_only is True`, `report_only is True`, and `readonly is True`.
+`PaperStrategyRecommendationBundleReport` fields:
 
-- [ ] **Step 4: Run focused test to verify GREEN**
-  - Run: `.venv/bin/python -m pytest tests/test_strategy_recommendation_bundle.py -q`
-  - Expected: pass.
+- `generated_at`
+- `config_version`
+- `candidate_count`
+- `recommend_count`
+- `selected_count`
+- the aggregate selected-position notional field
+- `recommendation_report`
+- `selection_policy_report`
+- `explanation_report`
+- `paper_only`
+- `report_only`
+- `readonly`
 
-### Task 2: Recommendation Bundle JSONL Log
+Public builder:
 
-**Files:**
-- Create: `src/polymarket_alpha_lab/strategy_recommendation_log.py`
-- Test: `tests/test_strategy_recommendation_log.py`
+```python
+build_paper_strategy_recommendation_bundle_report(
+    assessment_report,
+    readiness_report,
+    *,
+    config,
+    generated_at,
+)
+```
 
-- [ ] **Step 1: Write failing tests**
-  - Add append/read tests using `tmp_path`.
-  - Add empty existing file behavior test returning an empty tuple.
-  - Add missing file behavior test that propagates `FileNotFoundError`.
-  - Add invalid JSON, invalid report row, and malformed Decimal tests that fail fast with line-numbered `ValueError` messages.
-  - Add strict type and hard flag rejection tests.
+Current behavior:
 
-- [ ] **Step 2: Run focused test to verify RED**
-  - Run: `.venv/bin/python -m pytest tests/test_strategy_recommendation_log.py -q`
-  - Expected: fail because `polymarket_alpha_lab.strategy_recommendation_log` is missing.
+- Validates exact bundle config type and `datetime`.
+- Calls the recommendation, selection policy, and explanation builders.
+- Requires nested report timestamps to match the bundle timestamp.
+- Requires bundle `candidate_count` to match recommendation `candidate_count`, selection `row_count`, and explanation `recommendation_count`.
+- Requires selection rows and explanation rows to align position-by-position with recommendation rows.
+- Enforces `paper_only`, `report_only`, and `readonly` on the bundle and nested reports.
 
-- [ ] **Step 3: Implement minimal append/read helpers**
-  - Reuse existing JSON conversion/recovery patterns from other append-only logs.
-  - Preserve the local JSONL reader convention: skip blank lines, return `()` for empty existing files, and fail fast on corrupt rows.
-  - Preserve dataclass field names and exact nested report types.
-  - Do not add package-root exports.
+### Bundle JSONL Log
 
-- [ ] **Step 4: Run focused test to verify GREEN**
-  - Run: `.venv/bin/python -m pytest tests/test_strategy_recommendation_log.py -q`
-  - Expected: pass.
+Public helpers:
 
-### Task 3: Documentation and Boundary Tests
+```python
+append_paper_strategy_recommendation_bundle_log(path, report)
+read_paper_strategy_recommendation_bundle_log(path)
+```
 
-**Files:**
-- Modify: `docs/strategy-recommendation-layer.md`
-- Modify: `tests/test_strategy_recommendation_layer_scope.py`
+Current behavior:
 
-- [ ] **Step 1: Write/update boundary tests**
-  - Add the new bundle/log module paths to existing no-live-trading scope tests.
-  - Expected forbidden terms remain live execution/auth/key/wallet/order placement related.
+- Appends one `PaperStrategyRecommendationBundleReport` per JSONL row.
+- Serializes `Decimal` values as strings and normalizes datetimes to UTC ISO strings.
+- Rejects floats and non-finite Decimal values.
+- Reconstructs typed nested dataclasses with `from_jsonable`.
+- Skips blank lines when reading.
+- Returns an empty tuple for an empty existing file.
+- Propagates `FileNotFoundError` when the requested log path does not exist.
+- Fails fast on invalid JSON or malformed report rows with line-numbered `ValueError` messages.
 
-- [ ] **Step 2: Run focused test to verify RED or existing coverage gap**
-  - Run: `.venv/bin/python -m pytest tests/test_strategy_recommendation_layer_scope.py -q`
-  - Expected: fail before the new module files exist, or pass if written after module creation.
+### Recommendation History Reducer
 
-- [ ] **Step 3: Update docs**
-  - Describe the flow: assessment/readiness -> recommendation bundle -> JSONL history -> future cycle/runner integration.
-  - State that selected rows are paper sizing suggestions only and never exchange orders.
+`PaperStrategyRecommendationHistorySourceSummary` fields:
 
-- [ ] **Step 4: Run focused test**
-  - Run: `.venv/bin/python -m pytest tests/test_strategy_recommendation_layer_scope.py -q`
-  - Expected: pass.
+- `generated_at`
+- `config_version`
+- `candidate_count`
+- `recommend_count`
+- `watch_count`
+- `reject_count`
 
-### Task 4: Cycle/CLI Integration Exploration
+`PaperStrategyRecommendationHistoryReport` fields:
 
-**Files:**
-- Read-only: `src/polymarket_alpha_lab/strategy_cycle.py`, `src/polymarket_alpha_lab/runner.py`, `src/polymarket_alpha_lab/cli.py`, related tests.
+- `generated_at`
+- `config_version`
+- `source_report_count`
+- `total_candidate_count`
+- `total_recommend_count`
+- `total_watch_count`
+- `total_reject_count`
+- `first_generated_at`
+- `latest_generated_at`
+- `latest_config_version`
+- `latest_candidate_count`
+- `latest_recommend_count`
+- `latest_watch_count`
+- `latest_reject_count`
+- `source_summaries`
+- `paper_only`
+- `report_only`
+- `readonly`
 
-- [ ] **Step 1: Map exact integration point**
-  - Identify whether the recommendation bundle should be built inside `run_strategy_cycle` while cost-aware reports are still available, or in a new wrapper.
+Public builder:
 
-- [ ] **Step 2: Report next patch plan**
-  - Output exact files, fields, tests, and risks for a later integration stage.
+```python
+build_paper_strategy_recommendation_history_report(
+    recommendation_reports,
+    *,
+    config_version,
+    generated_at,
+)
+```
 
-### Task 5: Verification and Review
+Current behavior:
 
-**Files:**
-- All changed files.
+- Reduces paper-only recommendation reports into deterministic readonly history summaries.
+- Sorts source summaries by generated timestamp and config version.
+- Tracks total and latest action counts.
+- Validates empty-history and nonempty-history consistency through direct constructors.
 
-- [ ] **Step 1: Run focused tests**
-  - Run bundle/log/scope tests.
+## Historical Implementation Notes
 
-- [ ] **Step 2: Run full verification**
-  - Run: `.venv/bin/python -m compileall -q src/polymarket_alpha_lab tests`
-  - Run: `.venv/bin/python -m pytest -q`
-  - Run: `git diff --check`
-  - Run a tracked-content secret scan.
-  - Run: `codegraph sync`
+The original cycle integration plan described failing tests for modules that had not been created yet. That was valid only before `strategy_recommendation_bundle.py` and `strategy_recommendation_log.py` existed. Both modules now exist, and the remaining work is integration, documentation, and hardening.
 
-- [ ] **Step 3: External review**
-  - Run Claude Code review with `claude-opus-4-8`, effort `max`.
-  - Fix any blocking findings and re-run focused/full verification.
+## Future Tasks Only
 
-- [ ] **Step 4: Commit and push**
-  - Create one focused commit.
-  - Push to `origin/main` only after all required gates pass.
+- [ ] **Cycle/runner integration:** decide whether bundle creation belongs inside `run_strategy_cycle` while assessment/readiness reports are in scope, or in a wrapper that receives those reports explicitly.
+- [ ] **CLI integration:** wire any future command surface to existing bundle/log/history builders without package-root exports or live execution terminology.
+- [ ] **Documentation hardening:** keep `docs/strategy-recommendation-layer.md` synchronized with the current bundle, log, history, recommendation, selection, and explanation field names.
+- [ ] **Test hardening:** add regression tests for cycle/runner handoff once recommendation reports are produced as part of a broader run.
+- [ ] **Boundary hardening:** extend `tests/test_strategy_recommendation_layer_scope.py` when new integration files are added so forbidden live-trading/auth/key/wallet/order-placement language stays out.
+- [ ] **Verification:** for future patches, run focused bundle/log/history/scope tests, relevant CLI/cycle tests, `compileall`, full pytest, `git diff --check`, and `codegraph sync`.

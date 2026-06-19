@@ -62,6 +62,13 @@ from polymarket_alpha_lab.strategy_audit_history import (
     PaperStrategyRiskAuditHistoryReport,
     build_paper_strategy_risk_audit_history_report,
 )
+from polymarket_alpha_lab.strategy_recommendation_history import (
+    PaperStrategyRecommendationHistoryReport,
+    build_paper_strategy_recommendation_history_report,
+)
+from polymarket_alpha_lab.strategy_recommendation_log import (
+    read_paper_strategy_recommendation_bundle_log,
+)
 from polymarket_alpha_lab.strategy_risk_audit import (
     PaperStrategyRiskAuditConfig,
     PaperStrategyRiskAuditReport,
@@ -86,6 +93,10 @@ OutcomeRunner = Callable[..., OutcomeTrackingReport]
 NavRiskRunner = Callable[..., "PaperNavRiskMetricsReport"]
 StrategyAuditRunner = Callable[..., PaperStrategyRiskAuditReport]
 StrategyAuditHistoryRunner = Callable[..., PaperStrategyRiskAuditHistoryReport]
+StrategyRecommendationHistoryRunner = Callable[
+    ...,
+    PaperStrategyRecommendationHistoryReport,
+]
 CostAuditRunner = Callable[..., PaperTradeCostAuditReport]
 StrategyEvidenceRunner = Callable[..., "PaperStrategyEvidenceSnapshotReport"]
 ObservabilityTrendsRunner = Callable[..., LocalObservabilityTrendsReport]
@@ -156,6 +167,9 @@ def main(
     outcome_runner: OutcomeRunner = check_outcomes,
     strategy_audit_runner: StrategyAuditRunner | None = None,
     strategy_audit_history_runner: StrategyAuditHistoryRunner | None = None,
+    strategy_recommendation_history_runner: (
+        StrategyRecommendationHistoryRunner | None
+    ) = None,
     cost_audit_runner: CostAuditRunner | None = None,
     strategy_evidence_runner: StrategyEvidenceRunner | None = None,
     observability_trends_runner: ObservabilityTrendsRunner = (
@@ -309,6 +323,16 @@ def main(
         type=Path,
         required=True,
         dest="strategy_audit_log",
+    )
+
+    strategy_recommendation_history = subparsers.add_parser(
+        "strategy-recommendation-history",
+    )
+    strategy_recommendation_history.add_argument(
+        "--recommendation-log",
+        type=Path,
+        required=True,
+        dest="recommendation_log",
     )
 
     strategy_evidence = subparsers.add_parser("strategy-evidence")
@@ -632,6 +656,26 @@ def main(
             return 0
         except Exception as exc:
             print(f"strategy-audit-history failed: {exc}", file=sys.stderr)
+            return 1
+
+    if args.command == "strategy-recommendation-history":
+        try:
+            (
+                report,
+                latest_selected_count,
+                latest_selected_notional,
+            ) = _run_strategy_recommendation_history(
+                recommendation_log=args.recommendation_log,
+                runner=strategy_recommendation_history_runner,
+            )
+            _print_strategy_recommendation_history_summary(
+                report,
+                latest_selected_count=latest_selected_count,
+                latest_selected_notional=latest_selected_notional,
+            )
+            return 0
+        except Exception as exc:
+            print(f"strategy-recommendation-history failed: {exc}", file=sys.stderr)
             return 1
 
     if args.command == "strategy-evidence":
@@ -1052,6 +1096,49 @@ def _run_strategy_audit_history(
     )
 
 
+def _run_strategy_recommendation_history(
+    *,
+    recommendation_log: Path,
+    runner: StrategyRecommendationHistoryRunner | None,
+) -> tuple[PaperStrategyRecommendationHistoryReport, int, Decimal]:
+    bundles = read_paper_strategy_recommendation_bundle_log(recommendation_log)
+    recommendation_reports = tuple(bundle.recommendation_report for bundle in bundles)
+    config_version = "strategy-recommendation-history-v0"
+    generated_at = datetime.now(UTC)
+    if runner is not None:
+        report = runner(
+            recommendation_reports=recommendation_reports,
+            config_version=config_version,
+            generated_at=generated_at,
+        )
+    else:
+        report = build_paper_strategy_recommendation_history_report(
+            recommendation_reports,
+            config_version=config_version,
+            generated_at=generated_at,
+        )
+    latest_bundle = _latest_strategy_recommendation_bundle(bundles)
+    latest_selected_count = 0 if latest_bundle is None else latest_bundle.selected_count
+    latest_selected_notional = (
+        Decimal("0")
+        if latest_bundle is None
+        else latest_bundle.total_selected_notional
+    )
+    return report, latest_selected_count, latest_selected_notional
+
+
+def _latest_strategy_recommendation_bundle(bundles):
+    if not bundles:
+        return None
+    return sorted(
+        bundles,
+        key=lambda bundle: (
+            bundle.recommendation_report.generated_at,
+            bundle.recommendation_report.config_version,
+        ),
+    )[-1]
+
+
 def _run_strategy_evidence(
     *,
     cycle_log: Path,
@@ -1238,6 +1325,28 @@ def _print_strategy_audit_history_summary(
             f"fail={gate_counts[(gate_name, 'fail')]} "
             f"incomplete={gate_counts[(gate_name, 'incomplete')]}",
         )
+
+
+def _print_strategy_recommendation_history_summary(
+    report: PaperStrategyRecommendationHistoryReport,
+    *,
+    latest_selected_count: int,
+    latest_selected_notional: Decimal,
+) -> None:
+    print(
+        "strategy-recommendation-history: "
+        f"source_reports={report.source_report_count} "
+        f"total_candidates={report.total_candidate_count} "
+        f"total_recommend={report.total_recommend_count} "
+        f"total_watch={report.total_watch_count} "
+        f"total_reject={report.total_reject_count} "
+        f"latest_candidates={report.latest_candidate_count} "
+        f"latest_recommend={report.latest_recommend_count} "
+        f"latest_selected={latest_selected_count} "
+        f"latest_selected_notional={latest_selected_notional} "
+        f"first={_iso_or_none(report.first_generated_at)} "
+        f"latest={_iso_or_none(report.latest_generated_at)}",
+    )
 
 
 def _print_strategy_evidence_summary(
