@@ -21,6 +21,7 @@ TARGET_MODULE_NAMES = (
     "paper_recommendation_cycle_snapshot_log",
     "paper_recommendation_cycle_snapshot_store",
     "paper_recommendation_cycle_snapshot_trend",
+    "strategy_cycle_snapshot_source",
 )
 NON_LOG_MODULE_NAMES = (
     "paper_recommendation_cycle_snapshot",
