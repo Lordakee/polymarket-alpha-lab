@@ -82,6 +82,9 @@ from polymarket_alpha_lab.strategy_risk_audit import (
     build_paper_strategy_risk_audit_report,
 )
 from polymarket_alpha_lab.strategy_risk_audit_log import PaperStrategyRiskAuditLog
+from polymarket_alpha_lab.strategy_cycle_snapshot_source import (
+    build_strategy_cycle_snapshot_source_report,
+)
 from polymarket_alpha_lab.supabase_cycle_snapshot_config import (
     from_cycle_snapshot_db_env,
 )
@@ -762,10 +765,6 @@ def main(
             run_cycle_snapshot_source = None
             run_cycle_snapshot_sink = None
             if cycle_snapshot_db_config.enabled:
-                if cycle_snapshot_source is None:
-                    raise ValueError(
-                        "cycle snapshot DB persistence requires a cycle snapshot source",
-                    )
                 dsn = cycle_snapshot_db_config.dsn
                 if dsn is None:
                     raise ValueError(
@@ -779,7 +778,11 @@ def main(
                         table_name=cycle_snapshot_db_config.table_name,
                     )
 
-                run_cycle_snapshot_source = cycle_snapshot_source
+                run_cycle_snapshot_source = (
+                    cycle_snapshot_source
+                    if cycle_snapshot_source is not None
+                    else build_strategy_cycle_snapshot_source_report
+                )
             scan_config = MarketScanConfig(
                 limit=args.limit,
                 archive_root=args.archive_root,

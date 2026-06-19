@@ -63,6 +63,9 @@ from polymarket_alpha_lab.paper_strategy_selection_policy import (
     PaperStrategySelectionPolicyReport,
     PaperStrategySelectionPolicyRow,
 )
+from polymarket_alpha_lab.strategy_cycle_snapshot_source import (
+    build_strategy_cycle_snapshot_source_report,
+)
 
 
 def test_scan_cli_builds_read_only_scan_config(tmp_path):
@@ -3014,6 +3017,7 @@ def test_run_cli_wires_cycle_snapshot_db_sink_when_env_enabled(
 
     def fake_loop_runner(**kwargs):
         calls.append(kwargs)
+        assert kwargs["cycle_snapshot_source"] is fake_cycle_snapshot_source
         assert kwargs["cycle_snapshot_source"] is not None
         snapshot = kwargs["cycle_snapshot_source"](
             cycle_report=object(),
@@ -3062,13 +3066,49 @@ def test_run_cli_wires_cycle_snapshot_db_sink_when_env_enabled(
     ]
 
 
-def test_run_cli_rejects_enabled_cycle_snapshot_db_without_source(
+def test_run_cli_uses_default_cycle_snapshot_source_when_db_enabled_without_injection(
     tmp_path,
     monkeypatch,
     capsys,
 ):
     monkeypatch.setenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_ENABLED", "true")
     monkeypatch.setenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_DSN", "test-dsn-value")
+    monkeypatch.setenv(
+        "POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_TABLE",
+        "cycle_snapshot_archive",
+    )
+    calls = []
+    sink_calls = []
+    cycle_report = PaperStrategyCycleReport(
+        generated_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
+        config_version="strategy-cycle-v1",
+        scan_market_count=4,
+        considered_count=3,
+        snapshot_ready_count=0,
+        cost_aware_report_count=0,
+        blocked_counts=(("blocked_fetch_error", 3),),
+        screening_report=None,
+    )
+
+    def fake_loop_runner(**kwargs):
+        calls.append(kwargs)
+        assert kwargs["cycle_snapshot_source"] is build_strategy_cycle_snapshot_source_report
+        snapshot = kwargs["cycle_snapshot_source"](
+            cycle_report=cycle_report,
+            iteration_started_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
+        )
+        kwargs["cycle_snapshot_sink"](snapshot)
+        return RunLoopSummary(
+            iterations_completed=1,
+            iterations_failed=0,
+            first_iteration_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
+            last_iteration_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
+            last_error=None,
+            cycle_snapshots_persisted=1,
+        )
+
+    def fake_cycle_snapshot_sink(*, dsn, report, table_name):
+        sink_calls.append((dsn, report, table_name))
 
     exit_code = main(
         [
@@ -3080,13 +3120,24 @@ def test_run_cli_rejects_enabled_cycle_snapshot_db_without_source(
             "--cycle-log",
             str(tmp_path / "cycle.jsonl"),
         ],
-        loop_runner=lambda **kwargs: _empty_run_summary(),
+        loop_runner=fake_loop_runner,
         client_factory=lambda: "fake-client",
+        cycle_snapshot_db_sink=fake_cycle_snapshot_sink,
     )
 
-    assert exit_code == 1
+    assert exit_code == 0
+    assert len(calls) == 1
+    assert len(sink_calls) == 1
+    dsn, report, table_name = sink_calls[0]
+    assert dsn == "test-dsn-value"
+    assert table_name == "cycle_snapshot_archive"
+    assert report.paper_only is True
+    assert report.report_only is True
+    assert report.readonly is True
+    assert report.final_status == "blocked"
     captured = capsys.readouterr()
-    assert "cycle snapshot DB persistence requires a cycle snapshot source" in captured.err
+    assert "cycle_snapshots_persisted=1" in captured.out
+    assert "test-dsn-value" not in captured.out
     assert "test-dsn-value" not in captured.err
 
 
