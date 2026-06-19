@@ -13,6 +13,21 @@ from polymarket_alpha_lab.supabase_cycle_snapshot_config import (
     SupabaseCycleSnapshotConfig,
     from_cycle_snapshot_db_env,
 )
+from polymarket_alpha_lab.supabase_outcome_tracking_config import (
+    OUTCOME_TRACKING_DB_DSN_ENV_VAR,
+    OUTCOME_TRACKING_DB_ENABLED_ENV_VAR,
+    OUTCOME_TRACKING_DB_TABLE_ENV_VAR,
+)
+from polymarket_alpha_lab.supabase_paper_nav_snapshot_config import (
+    PAPER_NAV_SNAPSHOT_DB_DSN_ENV_VAR,
+    PAPER_NAV_SNAPSHOT_DB_ENABLED_ENV_VAR,
+    PAPER_NAV_SNAPSHOT_DB_TABLE_ENV_VAR,
+)
+from polymarket_alpha_lab.supabase_paper_trade_journal_config import (
+    PAPER_TRADE_JOURNAL_DB_DSN_ENV_VAR,
+    PAPER_TRADE_JOURNAL_DB_ENABLED_ENV_VAR,
+    PAPER_TRADE_JOURNAL_DB_TABLE_ENV_VAR,
+)
 
 
 ENV_EXAMPLE_PATH = Path(".env.example")
@@ -29,7 +44,7 @@ def test_disabled_env_config_accepts_missing_dsn() -> None:
 
 
 def test_enabled_env_config_requires_dsn_without_echoing_secret() -> None:
-    secret_dsn = "postgresql://user:secret@example.test/postgres"
+    secret_dsn = "postgresql://sensitive-token.example.invalid/postgres"
 
     with pytest.raises(ValueError) as exc_info:
         from_cycle_snapshot_db_env(
@@ -46,7 +61,7 @@ def test_enabled_env_config_requires_dsn_without_echoing_secret() -> None:
 
 
 def test_enabled_config_requires_dsn_without_echoing_secret() -> None:
-    secret_dsn = "postgresql://user:secret@example.test/postgres"
+    secret_dsn = "postgresql://sensitive-token.example.invalid/postgres"
 
     with pytest.raises(ValueError) as exc_info:
         SupabaseCycleSnapshotConfig(
@@ -61,7 +76,7 @@ def test_enabled_config_requires_dsn_without_echoing_secret() -> None:
 
 
 def test_enabled_env_config_reads_explicit_dsn_at_process_edge() -> None:
-    dsn = "postgresql://user:secret@example.test/postgres"
+    dsn = "postgresql://example.invalid/postgres"
 
     config = from_cycle_snapshot_db_env(
         {
@@ -77,7 +92,7 @@ def test_enabled_env_config_reads_explicit_dsn_at_process_edge() -> None:
 
 
 def test_padded_enabled_dsn_is_rejected_without_echoing_secret() -> None:
-    secret_dsn = "postgresql://user:secret@example.test/postgres"
+    secret_dsn = "postgresql://sensitive-token.example.invalid/postgres"
 
     with pytest.raises(ValueError) as exc_info:
         from_cycle_snapshot_db_env(
@@ -96,7 +111,7 @@ def test_padded_enabled_dsn_is_rejected_without_echoing_secret() -> None:
 def test_config_is_frozen_and_masks_dsn_in_repr() -> None:
     config = SupabaseCycleSnapshotConfig(
         enabled=True,
-        dsn="postgresql://user:secret@example.test/postgres",
+        dsn="postgresql://sensitive-token.example.invalid/postgres",
         table_name=DEFAULT_CYCLE_SNAPSHOT_DB_TABLE,
     )
 
@@ -104,8 +119,8 @@ def test_config_is_frozen_and_masks_dsn_in_repr() -> None:
         config.enabled = False  # type: ignore[misc]
 
     rendered = repr(config)
-    assert "secret" not in rendered
-    assert "postgresql://user" not in rendered
+    assert "sensitive-token" not in rendered
+    assert "postgresql://sensitive-token" not in rendered
     assert "dsn=<redacted>" in rendered
 
 
@@ -208,18 +223,36 @@ def test_direct_config_rejects_non_bool_enabled_flag() -> None:
         )
 
 
-def test_env_example_documents_only_cycle_snapshot_db_variable_names() -> None:
+def test_env_example_documents_supported_db_variable_names_only() -> None:
     text = ENV_EXAMPLE_PATH.read_text(encoding="utf-8")
     lines = text.splitlines()
     expected_lines = [
         f"{CYCLE_SNAPSHOT_DB_ENABLED_ENV_VAR}=",
         f"{CYCLE_SNAPSHOT_DB_DSN_ENV_VAR}=",
         f"{CYCLE_SNAPSHOT_DB_TABLE_ENV_VAR}=",
+        f"{PAPER_TRADE_JOURNAL_DB_ENABLED_ENV_VAR}=",
+        f"{PAPER_TRADE_JOURNAL_DB_DSN_ENV_VAR}=",
+        f"{PAPER_TRADE_JOURNAL_DB_TABLE_ENV_VAR}=",
+        f"{PAPER_NAV_SNAPSHOT_DB_ENABLED_ENV_VAR}=",
+        f"{PAPER_NAV_SNAPSHOT_DB_DSN_ENV_VAR}=",
+        f"{PAPER_NAV_SNAPSHOT_DB_TABLE_ENV_VAR}=",
+        f"{OUTCOME_TRACKING_DB_ENABLED_ENV_VAR}=",
+        f"{OUTCOME_TRACKING_DB_DSN_ENV_VAR}=",
+        f"{OUTCOME_TRACKING_DB_TABLE_ENV_VAR}=",
     ]
 
     assert CYCLE_SNAPSHOT_DB_ENABLED_ENV_VAR in text
     assert CYCLE_SNAPSHOT_DB_DSN_ENV_VAR in text
     assert CYCLE_SNAPSHOT_DB_TABLE_ENV_VAR in text
+    assert PAPER_TRADE_JOURNAL_DB_ENABLED_ENV_VAR in text
+    assert PAPER_TRADE_JOURNAL_DB_DSN_ENV_VAR in text
+    assert PAPER_TRADE_JOURNAL_DB_TABLE_ENV_VAR in text
+    assert PAPER_NAV_SNAPSHOT_DB_ENABLED_ENV_VAR in text
+    assert PAPER_NAV_SNAPSHOT_DB_DSN_ENV_VAR in text
+    assert PAPER_NAV_SNAPSHOT_DB_TABLE_ENV_VAR in text
+    assert OUTCOME_TRACKING_DB_ENABLED_ENV_VAR in text
+    assert OUTCOME_TRACKING_DB_DSN_ENV_VAR in text
+    assert OUTCOME_TRACKING_DB_TABLE_ENV_VAR in text
     assert lines == expected_lines
     assert all(line.endswith("=") for line in lines)
     assert "POLYMARKET_ALPHA_DATABASE_URL" not in text
