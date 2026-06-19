@@ -12,6 +12,9 @@ PHASE_2_MODULE_PATHS = tuple(
 )
 
 FORBIDDEN_RECOMMENDATION_IMPORT_PREFIXES = (
+    "polymarket_alpha_lab.paper_capital_cost_model",
+    "polymarket_alpha_lab.paper_probability_side_edge",
+    "polymarket_alpha_lab.paper_recommendation_risk_budget",
     "polymarket_alpha_lab.paper_strategy_selection_policy",
     "polymarket_alpha_lab.strategy_candidate_recommendation",
     "polymarket_alpha_lab.strategy_signal_adapter",
@@ -19,6 +22,8 @@ FORBIDDEN_RECOMMENDATION_IMPORT_PREFIXES = (
     "polymarket_alpha_lab.strategy_recommendation_explain",
     "polymarket_alpha_lab.strategy_recommendation_history",
     "polymarket_alpha_lab.strategy_recommendation_log",
+    "polymarket_alpha_lab.strategy_recommendation_queue",
+    "polymarket_alpha_lab.strategy_recommendation_reason_trend",
 )
 
 FORBIDDEN_PACKAGE_ROOT_RECOMMENDATION_EXPORTS = (
@@ -87,6 +92,9 @@ def test_phase_2_modules_exist_for_recommendation_boundary_regression() -> None:
 
 def test_phase_2_boundary_blocks_current_recommendation_modules() -> None:
     assert set(FORBIDDEN_RECOMMENDATION_IMPORT_PREFIXES) == {
+        "polymarket_alpha_lab.paper_capital_cost_model",
+        "polymarket_alpha_lab.paper_probability_side_edge",
+        "polymarket_alpha_lab.paper_recommendation_risk_budget",
         "polymarket_alpha_lab.paper_strategy_selection_policy",
         "polymarket_alpha_lab.strategy_candidate_recommendation",
         "polymarket_alpha_lab.strategy_signal_adapter",
@@ -94,6 +102,8 @@ def test_phase_2_boundary_blocks_current_recommendation_modules() -> None:
         "polymarket_alpha_lab.strategy_recommendation_explain",
         "polymarket_alpha_lab.strategy_recommendation_history",
         "polymarket_alpha_lab.strategy_recommendation_log",
+        "polymarket_alpha_lab.strategy_recommendation_queue",
+        "polymarket_alpha_lab.strategy_recommendation_reason_trend",
     }
 
 

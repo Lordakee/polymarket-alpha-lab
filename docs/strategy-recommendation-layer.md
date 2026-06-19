@@ -131,6 +131,110 @@ ranking report should preserve rejected and watched rows so later reviewers can
 see whether high raw-edge ideas were filtered by costs, readiness, or
 insufficient evidence.
 
+## Next Stage Modules
+
+The next stage should split the paper recommendation loop into small reducer
+modules that can be developed in parallel. Each module consumes local paper
+inputs or prior paper reports, emits deterministic report rows, and keeps hard
+`paper_only`, `report_only`, and `readonly` flags.
+
+### Probability Side Edge
+
+Probability-event recommendations should be scored at the side level, not only
+at the market level. The side edge report should produce one paper row for each
+eligible YES or NO side:
+
+- YES side probability is the forecast probability for the event resolving YES.
+- NO side probability is `1 - forecast_probability`.
+- Side price is the conservative executable entry price for that side, not an
+  optimistic midpoint.
+- Gross probability edge is `side_probability - side_price`.
+- Total cost per share includes fee, spread, slippage, funding, finalization,
+  time, risk, and paper capital cost.
+- Net probability edge is gross probability edge minus total cost per share.
+- Recommendation score can be positive only when net probability edge is
+  positive and all required readiness evidence allows selection.
+
+Liquidity and settlement/finalization timing should be first-class inputs. A
+candidate side with high raw edge but weak liquidity, stale market context,
+stale settlement context, uncertain finalization timing, or high capital lockup
+should become watch/reject or rank below a cleaner lower-edge side.
+
+### Paper Capital Cost
+
+Paper sizing should include an explicit capital cost estimate for notional that
+would be tied up until exit, settlement, or finalization. This is paper
+accounting only. The module should receive paper notional, paper share quantity,
+days locked, and an annual paper capital cost rate as inputs; it must not read
+balances, NAV, wallets, accounts, or exchange state.
+
+The capital-cost output should include total paper capital cost and per-share
+paper capital cost so the side edge reducer can subtract it from gross
+probability edge. Zero or negative evidence should never be hidden by sizing;
+blocked, stale, missing-liquidity, or cost-negative rows keep zero selected
+notional.
+
+### Queue, Risk Budget, and Reason Trends
+
+The queue module is a review queue, not an execution queue. It should admit
+ranked paper recommendations under local limits such as maximum queue size,
+minimum net edge, liquidity threshold, market-context freshness, settlement
+freshness, and finalization buffer. Queue statuses should be deterministic,
+for example `queued`, `deferred`, and `blocked`, with reason codes explaining
+capacity, stale inputs, liquidity failures, settlement timing, or net-edge
+threshold failures.
+
+The risk budget module should allocate paper notional under local caps:
+
+- per-selection notional cap
+- per-market cap across YES and NO sides
+- event or theme exposure cap for correlated outcomes
+- cycle-level total paper notional cap
+- minimum net probability edge
+- zero allocation for blocked, stale, liquidity-failed, or cost-negative rows
+
+Risk budget rows are paper allocations for journal analysis only. They are not
+order sizes, order tickets, exchange intents, or approval to trade.
+
+The reason-trend module should summarize why recommendations change across
+paper runs. It should group by canonical reason codes, not free-form
+explanation text, and report counts and transitions such as
+watch-to-recommend, recommend-to-watch, recommend-to-reject, queued-to-blocked,
+and allocated-to-zero. Trend reports should remain readonly summaries over
+recovered local paper logs.
+
+### CLI Report Workflow
+
+Any CLI added for these modules should be report-only. Commands may read local
+paper artifacts, recover append-only JSONL bundle entries, build readonly
+reducers, and print deterministic summaries. Useful commands would print side
+edge counts, queue counts, risk-budget allocations, top reason codes, and
+latest-run deltas.
+
+CLI commands in this phase must not create live clients, fetch live exchange
+state, authenticate, read wallet or private-key material, sign payloads,
+construct real order payloads, submit orders, cancel orders, or mutate exchange
+or network state.
+
+### Parallel Development Boundaries
+
+The modules can be built by separate workers if their report contracts stay
+explicit:
+
+- Node A: probability side edge report.
+- Node B: paper capital cost report.
+- Node C: paper recommendation queue report.
+- Node D: paper risk budget report.
+- Node E: reason-code trend report.
+- Node F: CLI/report-only workflow and documentation after report shapes are
+  stable.
+
+Each node should use CodeGraph before locating code, stay within assigned file
+ownership, extend scope tests for any new module or command, and preserve the
+strict phase boundary. No node should add package-root exports, live trading
+adapters, auth, wallet access, signing, real order construction, submission,
+cancellation, relayer mutation, or exchange/network mutation.
+
 ## Paper-Only Sizing
 
 Sizing in this layer is a journal suggestion only. It exists to make paper

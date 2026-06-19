@@ -19,11 +19,16 @@ PACKAGE_ROOT_PATH = REPO_ROOT / "src" / "polymarket_alpha_lab" / "__init__.py"
 RECOMMENDATION_MODULE_NAMES = (
     "strategy_candidate_recommendation",
     "strategy_signal_adapter",
+    "paper_capital_cost_model",
+    "paper_probability_side_edge",
+    "paper_recommendation_risk_budget",
     "paper_strategy_selection_policy",
     "strategy_recommendation_explain",
     "strategy_recommendation_history",
     "strategy_recommendation_bundle",
     "strategy_recommendation_log",
+    "strategy_recommendation_queue",
+    "strategy_recommendation_reason_trend",
 )
 
 SAFETY_DATACLASS_FIELDS = ("paper_only", "report_only", "readonly")
@@ -81,6 +86,25 @@ RECOMMENDATION_IMPORT_ALLOWLIST: dict[
             {"PaperStrategyReadinessSignal"},
         ),
     },
+    "paper_capital_cost_model": {
+        "__future__": frozenset({"annotations"}),
+        "dataclasses": frozenset({"dataclass"}),
+        "datetime": frozenset({"UTC", "datetime"}),
+        "decimal": frozenset({"Decimal"}),
+    },
+    "paper_probability_side_edge": {
+        "__future__": frozenset({"annotations"}),
+        "collections.abc": frozenset({"Iterable"}),
+        "dataclasses": frozenset({"dataclass"}),
+        "datetime": frozenset({"UTC", "datetime"}),
+        "decimal": frozenset({"Context", "Decimal", "localcontext"}),
+    },
+    "paper_recommendation_risk_budget": {
+        "__future__": frozenset({"annotations"}),
+        "dataclasses": frozenset({"dataclass"}),
+        "datetime": frozenset({"UTC", "datetime"}),
+        "decimal": frozenset({"Decimal"}),
+    },
     "paper_strategy_selection_policy": {
         "__future__": frozenset({"annotations"}),
         "dataclasses": frozenset({"dataclass"}),
@@ -134,6 +158,35 @@ RECOMMENDATION_IMPORT_ALLOWLIST: dict[
                 "PaperStrategyRecommendationExplanationReport",
                 "build_paper_strategy_recommendation_explanation_report",
             },
+        ),
+    },
+    "strategy_recommendation_queue": {
+        "__future__": frozenset({"annotations"}),
+        "dataclasses": frozenset({"dataclass"}),
+        "datetime": frozenset({"UTC", "datetime"}),
+        "decimal": frozenset({"Decimal"}),
+        "typing": frozenset({"Any", "Iterable"}),
+        "polymarket_alpha_lab.strategy_recommendation_bundle": frozenset(
+            {"PaperStrategyRecommendationBundleReport"},
+        ),
+    },
+    "strategy_recommendation_reason_trend": {
+        "__future__": frozenset({"annotations"}),
+        "dataclasses": frozenset({"dataclass"}),
+        "datetime": frozenset({"UTC", "datetime"}),
+        "decimal": frozenset({"Decimal", "ROUND_HALF_EVEN"}),
+        "typing": frozenset({"Any"}),
+        "polymarket_alpha_lab.strategy_recommendation_bundle": frozenset(
+            {"PaperStrategyRecommendationBundleReport"},
+        ),
+        "polymarket_alpha_lab.strategy_recommendation_explain": frozenset(
+            {
+                "NO_REASON_CODE",
+                "PaperStrategyRecommendationExplanationReport",
+            },
+        ),
+        "polymarket_alpha_lab.strategy_recommendation_history": frozenset(
+            {"PaperStrategyRecommendationHistoryReport"},
         ),
     },
     "strategy_recommendation_log": {
@@ -271,11 +324,16 @@ def test_recommendation_layer_scope_includes_current_recommendation_modules() ->
     assert set(RECOMMENDATION_MODULE_NAMES) == {
         "strategy_candidate_recommendation",
         "strategy_signal_adapter",
+        "paper_capital_cost_model",
+        "paper_probability_side_edge",
+        "paper_recommendation_risk_budget",
         "paper_strategy_selection_policy",
         "strategy_recommendation_explain",
         "strategy_recommendation_history",
         "strategy_recommendation_bundle",
         "strategy_recommendation_log",
+        "strategy_recommendation_queue",
+        "strategy_recommendation_reason_trend",
     }
 
 
