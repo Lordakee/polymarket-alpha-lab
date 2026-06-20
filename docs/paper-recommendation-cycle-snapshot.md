@@ -61,7 +61,8 @@ strategy cycle
 -> Supabase/Postgres persistence
 -> DB-backed cycle review
 -> paper cycle action gate
--> candidate research/recommendation queue
+-> action-gated candidate research/recommendation queue reducer
+-> candidate research/recommendation queue review
 ```
 
 The strategy cycle answers: "Which local paper reports were produced for this
@@ -118,6 +119,21 @@ account inspection, not wallet/private-key access, and not capital deployment.
 Its output may allow building a candidate research/recommendation queue for
 paper review, but it must not create order intent, allocate real capital,
 inspect account state, touch wallet material, or bridge into live execution.
+
+The action-gated candidate research/recommendation queue reducer consumes the
+gate report before any downstream candidate assessment, strategy bundle, or
+strategy queue construction. The gate must recommend
+`build_candidate_research_queue` before those downstream reducers run. If the
+gate recommends waiting or repair instead, the reducer returns an empty
+paper-only/report-only/readonly watch or blocked artifact with the gate's reason
+codes and counts. It does not refresh evidence, repair malformed data, infer
+missing artifacts, or change the persisted cycle review.
+
+Operator outcomes are:
+
+- `research_ready`: review the candidate research/recommendation queue.
+- `watch`: await fresh paper-cycle evidence.
+- `blocked`: repair cycle evidence before queue construction.
 
 The DB-backed trend CLI remains separate readonly observability over persisted
 cycle state. It can summarize blocker/watch movement across stored snapshots,
@@ -310,6 +326,11 @@ verify:
   paper evidence into review status and one of
   `build_candidate_research_queue`, `await_fresh_cycle_evidence`, or
   `repair_cycle_evidence` only;
+- downstream candidate assessment, strategy bundle, and strategy queue
+  construction run only after the action gate recommends
+  `build_candidate_research_queue`;
+- a non-ready gate result produces a paper-only/report-only/readonly watch or
+  blocked artifact, not a repaired queue;
 - the paper cycle action gate is not live approval, not order management, not
   account inspection, not wallet/private-key access, and not capital
   deployment;

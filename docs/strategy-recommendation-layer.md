@@ -53,7 +53,8 @@ strategy cycle
 -> Supabase/Postgres persistence
 -> DB-backed cycle review
 -> paper cycle action gate
--> candidate research/recommendation queue
+-> action-gated candidate research/recommendation queue reducer
+-> candidate research/recommendation queue review
 ```
 
 The strategy cycle consumes prior paper reports and exposes already-built local
@@ -95,6 +96,14 @@ construction may proceed." It does not approve a live trade, create order
 intent, manage orders, inspect accounts, read wallets or private keys, sign
 payloads, or deploy capital. A candidate research/recommendation queue remains a
 paper-only/report-only/readonly review queue.
+
+The action-gated candidate research/recommendation queue reducer is the only
+handoff from the paper cycle action gate into downstream candidate assessment,
+strategy bundle, and strategy queue construction. It may build the downstream
+queue only when the gate recommends `build_candidate_research_queue`. Otherwise
+it returns a paper-only/report-only/readonly watch or blocked artifact copied
+from the gate evidence, and it does not repair missing, stale, malformed, or
+blocked cycle data itself.
 
 DB-backed trend reporting remains separate readonly observability over
 persisted cycle state. It can summarize blocker/watch movement across stored
@@ -392,6 +401,13 @@ review status and evidence pressure to `build_candidate_research_queue`,
 `await_fresh_cycle_evidence`, or `repair_cycle_evidence`, and nothing beyond
 those paper next steps.
 
+The action-gated queue reducer then converts those next steps into operator
+outcomes:
+
+- `research_ready` means review the candidate research/recommendation queue.
+- `watch` means await fresh paper-cycle evidence before queue construction.
+- `blocked` means repair cycle evidence before queue construction.
+
 ## Phase Boundary
 
 This stage ends at append-only paper bundle history and readonly trend reports.
@@ -498,6 +514,9 @@ The recommendation-layer work is expected to use module-level reducers named:
   status
 - `paper_recommendation_reason_trend` for readonly reason-code and transition
   trend summaries
+- `action_gated_strategy_recommendation_queue` for the paper-only reducer that
+  requires `build_candidate_research_queue` before building downstream
+  candidate assessment, bundle, and strategy queue artifacts
 
 Those modules should preserve the existing reducer style: frozen dataclasses,
 validated paper/report/readonly flags, deterministic ordering, Decimal-only

@@ -29,6 +29,7 @@ IMPLEMENTED_RECOMMENDATION_MODULE_NAMES = (
     "strategy_recommendation_log",
     "strategy_recommendation_queue",
     "strategy_recommendation_reason_trend",
+    "action_gated_strategy_recommendation_queue",
 )
 
 PLANNED_RECOMMENDATION_MODULE_NAMES = (
@@ -419,6 +420,50 @@ RECOMMENDATION_IMPORT_ALLOWLIST: dict[
             {"PaperStrategyRecommendationExplanationReport"},
         ),
     },
+    "action_gated_strategy_recommendation_queue": {
+        "__future__": frozenset({"annotations"}),
+        "collections.abc": frozenset({"Iterable"}),
+        "dataclasses": frozenset({"dataclass"}),
+        "datetime": frozenset({"UTC", "datetime"}),
+        "decimal": frozenset({"Decimal"}),
+        "typing": frozenset({"Any"}),
+        "polymarket_alpha_lab.candidate_assessment": frozenset(
+            {
+                "PaperCandidateAssessmentConfig",
+                "PaperCandidateAssessmentReport",
+                "build_paper_candidate_assessment_report",
+            },
+        ),
+        "polymarket_alpha_lab.paper_recommendation_cycle_action_gate": frozenset(
+            {
+                "PaperRecommendationCycleActionGateReasonCodeCount",
+                "PaperRecommendationCycleActionGateReport",
+            },
+        ),
+        "polymarket_alpha_lab.project_screening": frozenset(
+            {"PaperProjectScreeningReport"},
+        ),
+        "polymarket_alpha_lab.strategy_readiness_state": frozenset(
+            {
+                "PaperStrategyReadinessSignal",
+                "PaperStrategyReadinessStateReport",
+                "build_paper_strategy_readiness_state_report",
+            },
+        ),
+        "polymarket_alpha_lab.strategy_recommendation_bundle": frozenset(
+            {
+                "PaperStrategyRecommendationBundleConfig",
+                "PaperStrategyRecommendationBundleReport",
+                "build_paper_strategy_recommendation_bundle_report",
+            },
+        ),
+        "polymarket_alpha_lab.strategy_recommendation_queue": frozenset(
+            {
+                "PaperStrategyRecommendationQueueSummaryReport",
+                "build_paper_strategy_recommendation_queue_summary_report",
+            },
+        ),
+    },
 }
 
 FORBIDDEN_IMPORT_PREFIXES = (
@@ -542,6 +587,7 @@ def test_recommendation_layer_scope_includes_current_recommendation_modules() ->
         "strategy_recommendation_log",
         "strategy_recommendation_queue",
         "strategy_recommendation_reason_trend",
+        "action_gated_strategy_recommendation_queue",
     }
 
 
