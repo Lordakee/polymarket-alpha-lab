@@ -34,6 +34,11 @@ from polymarket_alpha_lab.supabase_action_gated_strategy_recommendation_queue_de
     ACTION_GATED_QUEUE_DECISION_SUPPORT_TREND_DB_REPORTS_TABLE_ENV_VAR,
     ACTION_GATED_QUEUE_DECISION_SUPPORT_TREND_DB_SOURCES_TABLE_ENV_VAR,
 )
+from polymarket_alpha_lab.supabase_local_observability_trends_config import (
+    LOCAL_OBSERVABILITY_TRENDS_DB_DSN_ENV_VAR,
+    LOCAL_OBSERVABILITY_TRENDS_DB_ENABLED_ENV_VAR,
+    LOCAL_OBSERVABILITY_TRENDS_DB_TABLE_ENV_VAR,
+)
 from polymarket_alpha_lab.supabase_outcome_tracking_config import (
     OUTCOME_TRACKING_DB_DSN_ENV_VAR,
     OUTCOME_TRACKING_DB_ENABLED_ENV_VAR,
@@ -273,6 +278,9 @@ def test_env_example_documents_supported_db_variable_names_only() -> None:
         f"{ACTION_GATED_QUEUE_DECISION_SUPPORT_TREND_DB_DSN_ENV_VAR}=",
         f"{ACTION_GATED_QUEUE_DECISION_SUPPORT_TREND_DB_REPORTS_TABLE_ENV_VAR}=",
         f"{ACTION_GATED_QUEUE_DECISION_SUPPORT_TREND_DB_SOURCES_TABLE_ENV_VAR}=",
+        f"{LOCAL_OBSERVABILITY_TRENDS_DB_ENABLED_ENV_VAR}=",
+        f"{LOCAL_OBSERVABILITY_TRENDS_DB_DSN_ENV_VAR}=",
+        f"{LOCAL_OBSERVABILITY_TRENDS_DB_TABLE_ENV_VAR}=",
     ]
 
     assert CYCLE_SNAPSHOT_DB_ENABLED_ENV_VAR in text
@@ -300,6 +308,9 @@ def test_env_example_documents_supported_db_variable_names_only() -> None:
     assert ACTION_GATED_QUEUE_DECISION_SUPPORT_TREND_DB_DSN_ENV_VAR in text
     assert ACTION_GATED_QUEUE_DECISION_SUPPORT_TREND_DB_REPORTS_TABLE_ENV_VAR in text
     assert ACTION_GATED_QUEUE_DECISION_SUPPORT_TREND_DB_SOURCES_TABLE_ENV_VAR in text
+    assert LOCAL_OBSERVABILITY_TRENDS_DB_ENABLED_ENV_VAR in text
+    assert LOCAL_OBSERVABILITY_TRENDS_DB_DSN_ENV_VAR in text
+    assert LOCAL_OBSERVABILITY_TRENDS_DB_TABLE_ENV_VAR in text
     assert lines == expected_lines
     assert all(line.endswith("=") for line in lines)
     assert "POLYMARKET_ALPHA_DATABASE_URL" not in text
