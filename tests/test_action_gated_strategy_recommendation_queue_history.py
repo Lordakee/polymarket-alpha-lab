@@ -278,6 +278,152 @@ def test_history_report_orders_sources_and_summarizes_latest_trends():
     assert report.readonly is True
 
 
+def test_history_sorts_out_of_order_sources_before_selecting_latest_snapshot():
+    older_blocked = _non_ready_report(
+        "action-gated-queue-older-blocked",
+        datetime(2026, 6, 20, 9, 0, tzinfo=UTC),
+        action_status="blocked",
+        recommended_next_step="repair_cycle_evidence",
+        reason_code_counts=(_reason_count("cycle_review_blocked", 3),),
+    )
+    middle_watch = _non_ready_report(
+        "action-gated-queue-middle-watch",
+        datetime(2026, 6, 20, 10, 0, tzinfo=UTC),
+        action_status="watch",
+        recommended_next_step="await_fresh_cycle_evidence",
+        reason_code_counts=(_reason_count("cycle_review_watch", 2),),
+    )
+    latest_ready = _ready_report(
+        "action-gated-queue-latest-ready",
+        datetime(2026, 6, 20, 11, 0, tzinfo=UTC),
+        rows=(
+            _queue_row(
+                1,
+                "latest-ready",
+                recommendation_score=d("0.870000"),
+                suggested_notional=d("18.000000"),
+            ),
+        ),
+        reason_code_counts=(_reason_count("cycle_review_passed", 1),),
+    )
+
+    report = _build_history_report((latest_ready, older_blocked, middle_watch))
+
+    assert report.first_source_generated_at == datetime(2026, 6, 20, 9, 0, tzinfo=UTC)
+    assert report.last_source_generated_at == datetime(2026, 6, 20, 11, 0, tzinfo=UTC)
+    assert report.latest_action_status == "research_ready"
+    assert report.latest_recommended_next_step == "review_candidate_research_queue"
+    assert tuple(
+        (row.reason_code, row.count) for row in report.latest_reason_code_counts
+    ) == (("cycle_review_passed", 1),)
+
+
+def test_history_counts_status_transitions_after_sorting_sources():
+    oldest_ready = _ready_report(
+        "action-gated-queue-oldest-ready",
+        datetime(2026, 6, 20, 9, 0, tzinfo=UTC),
+        rows=(
+            _queue_row(
+                1,
+                "oldest-ready",
+                recommendation_score=d("0.710000"),
+                suggested_notional=d("6.000000"),
+            ),
+        ),
+        reason_code_counts=(_reason_count("cycle_review_passed", 1),),
+    )
+    middle_ready = _ready_report(
+        "action-gated-queue-middle-ready",
+        datetime(2026, 6, 20, 10, 0, tzinfo=UTC),
+        rows=(
+            _queue_row(
+                1,
+                "middle-ready",
+                recommendation_score=d("0.730000"),
+                suggested_notional=d("7.000000"),
+            ),
+        ),
+        reason_code_counts=(_reason_count("cycle_review_passed", 1),),
+    )
+    latest_blocked = _non_ready_report(
+        "action-gated-queue-latest-blocked",
+        datetime(2026, 6, 20, 11, 0, tzinfo=UTC),
+        action_status="blocked",
+        recommended_next_step="repair_cycle_evidence",
+        reason_code_counts=(_reason_count("cycle_review_blocked", 1),),
+    )
+
+    report = _build_history_report((middle_ready, latest_blocked, oldest_ready))
+
+    assert report.status_transition_count == 1
+    assert report.latest_action_status == "blocked"
+
+
+def test_history_computes_ready_notional_delta_from_sorted_first_to_last():
+    oldest_ready = _ready_report(
+        "action-gated-queue-oldest-ready",
+        datetime(2026, 6, 20, 9, 0, tzinfo=UTC),
+        rows=(
+            _queue_row(
+                1,
+                "oldest-ready",
+                recommendation_score=d("0.610000"),
+                suggested_notional=d("4.000000"),
+            ),
+        ),
+        reason_code_counts=(_reason_count("cycle_review_passed", 1),),
+    )
+    middle_ready = _ready_report(
+        "action-gated-queue-middle-ready",
+        datetime(2026, 6, 20, 10, 0, tzinfo=UTC),
+        rows=(
+            _queue_row(
+                1,
+                "middle-ready",
+                recommendation_score=d("0.630000"),
+                suggested_notional=d("13.000000"),
+            ),
+        ),
+        reason_code_counts=(_reason_count("cycle_review_passed", 1),),
+    )
+    latest_ready = _ready_report(
+        "action-gated-queue-latest-ready",
+        datetime(2026, 6, 20, 11, 0, tzinfo=UTC),
+        rows=(
+            _queue_row(
+                1,
+                "latest-ready",
+                recommendation_score=d("0.650000"),
+                suggested_notional=d("25.000000"),
+            ),
+        ),
+        reason_code_counts=(_reason_count("cycle_review_passed", 1),),
+    )
+
+    report = _build_history_report((latest_ready, oldest_ready, middle_ready))
+
+    assert report.ready_notional_delta == d("21.000000")
+    assert report.total_ready_notional == d("42.000000")
+    assert report.status_transition_count == 0
+
+
+def test_empty_history_has_no_source_bounds_or_latest_snapshot_from_iterator():
+    report = _build_history_report(iter(()))
+
+    assert report.source_report_count == 0
+    assert report.first_source_generated_at is None
+    assert report.last_source_generated_at is None
+    assert report.latest_action_status is None
+    assert report.latest_recommended_next_step is None
+    assert report.latest_reason_code_counts == ()
+    assert report.total_ready_notional == ZERO
+    assert report.ready_notional_delta == ZERO
+    assert report.status_transition_count == 0
+    assert report.paper_only is True
+    assert report.report_only is True
+    assert report.readonly is True
+
+
 def test_history_report_accepts_empty_input_and_normalizes_report_generated_at():
     eastern = timezone(timedelta(hours=-4))
 
@@ -346,6 +492,21 @@ def test_history_rejects_wrong_types_subclasses_flags_and_invalid_replacements()
         replace(report, ready_notional_delta=object())
     with pytest.raises(ValueError, match="paper_only"):
         replace(report, paper_only=False)
+
+
+@pytest.mark.parametrize("flag_name", ("paper_only", "report_only", "readonly"))
+def test_history_rejects_source_reports_with_disabled_hard_flags(flag_name: str):
+    source = _non_ready_report(
+        "action-gated-queue-watch",
+        SOURCE_GENERATED_AT,
+        action_status="watch",
+        recommended_next_step="await_fresh_cycle_evidence",
+        reason_code_counts=(_reason_count("cycle_review_watch", 1),),
+    )
+    object.__setattr__(source, flag_name, False)
+
+    with pytest.raises(ValueError, match=flag_name):
+        _build_history_report((source,))
 
 
 def test_history_module_stays_pure_readonly_and_decimal_only_by_import_boundary():

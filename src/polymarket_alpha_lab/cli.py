@@ -158,6 +158,7 @@ ActionGatedQueueDbSink = Callable[..., object]
 ActionGatedQueueLoader = Callable[..., object]
 ActionGatedQueuePriorityBuilder = Callable[..., object]
 ActionGatedQueueRiskBuilder = Callable[..., object]
+ActionGatedQueueHistoryBuilder = Callable[..., object]
 CycleSnapshotDbTrendRunner = Callable[..., object]
 CycleSnapshotDbReviewRunner = Callable[..., object]
 CycleSnapshotDbActionGateRunner = Callable[..., object]
@@ -277,6 +278,9 @@ def main(
         ActionGatedQueuePriorityBuilder | None
     ) = None,
     action_gated_queue_risk_builder: ActionGatedQueueRiskBuilder | None = None,
+    action_gated_queue_history_builder: (
+        ActionGatedQueueHistoryBuilder | None
+    ) = None,
     cycle_snapshot_db_trend_runner: CycleSnapshotDbTrendRunner | None = None,
     cycle_snapshot_db_review_runner: CycleSnapshotDbReviewRunner | None = None,
     cycle_snapshot_db_action_gate_runner: CycleSnapshotDbActionGateRunner | None = None,
@@ -598,6 +602,26 @@ def main(
         type=Decimal,
         default=Decimal("0.800000"),
         dest="throttle_utilization_threshold",
+    )
+
+    action_gated_queue_history = subparsers.add_parser(
+        "action-gated-queue-history",
+    )
+    action_gated_queue_history.add_argument(
+        "--source-config-version",
+        default=None,
+        dest="source_config_version",
+    )
+    action_gated_queue_history.add_argument(
+        "--action-status",
+        choices=("research_ready", "watch", "blocked"),
+        default=None,
+        dest="action_status",
+    )
+    action_gated_queue_history.add_argument(
+        "--limit",
+        type=int,
+        default=100,
     )
 
     # Stage 17 market search: search Polymarket markets by keyword.
@@ -1041,6 +1065,24 @@ def main(
         except Exception as exc:
             print(
                 f"action-gated-queue-decision-support failed: {exc}",
+                file=sys.stderr,
+            )
+            return 1
+
+    if args.command == "action-gated-queue-history":
+        try:
+            report = _run_action_gated_queue_history(
+                source_config_version=args.source_config_version,
+                action_status=args.action_status,
+                limit=args.limit,
+                loader=action_gated_queue_loader,
+                history_builder=action_gated_queue_history_builder,
+            )
+            _print_action_gated_queue_history_summary(report)
+            return 0
+        except Exception as exc:
+            print(
+                f"action-gated-queue-history failed: {exc}",
                 file=sys.stderr,
             )
             return 1
@@ -1693,6 +1735,60 @@ def _run_action_gated_queue_decision_support(
         generated_at=generated_at,
     )
     return priority_report, risk_report
+
+
+def _run_action_gated_queue_history(
+    *,
+    source_config_version: str | None,
+    action_status: str | None,
+    limit: int,
+    loader: ActionGatedQueueLoader | None,
+    history_builder: ActionGatedQueueHistoryBuilder | None,
+) -> object:
+    from polymarket_alpha_lab.action_gated_strategy_recommendation_queue_history import (
+        build_paper_action_gated_strategy_recommendation_queue_history_report,
+    )
+    from polymarket_alpha_lab.action_gated_strategy_recommendation_queue_psycopg_read import (
+        PaperActionGatedStrategyRecommendationQueueReadOptions,
+        load_paper_action_gated_strategy_recommendation_queue_reports_with_psycopg,
+    )
+
+    db_config = from_action_gated_strategy_recommendation_queue_db_env()
+    if not db_config.enabled:
+        raise ValueError(
+            "action-gated-queue-history requires action-gated queue "
+            "read-only DB config to be enabled",
+        )
+    if db_config.dsn is None:
+        raise ValueError("action-gated-queue-history requires a DB DSN")
+
+    read_options = PaperActionGatedStrategyRecommendationQueueReadOptions(
+        source_config_version=source_config_version,
+        action_status=action_status,
+        limit=limit,
+        table_name=db_config.table_name,
+    )
+    generated_at = datetime.now(UTC)
+    resolved_loader = (
+        loader
+        if loader is not None
+        else load_paper_action_gated_strategy_recommendation_queue_reports_with_psycopg
+    )
+    resolved_history_builder = (
+        history_builder
+        if history_builder is not None
+        else build_paper_action_gated_strategy_recommendation_queue_history_report
+    )
+
+    try:
+        queue_reports = resolved_loader(db_config.dsn, options=read_options)
+    except Exception as exc:
+        _raise_redacted_db_read_error(exc, dsn=db_config.dsn)
+
+    return resolved_history_builder(
+        queue_reports,
+        generated_at=generated_at,
+    )
 
 
 def _run_cost_audit(
@@ -2458,6 +2554,28 @@ def _print_action_gated_queue_decision_support_summary(
         f"ready={top_row.ready_count} "
         f"ready_notional={top_row.total_ready_notional} "
         f"priority_score={top_row.research_priority_score}",
+    )
+
+
+def _print_action_gated_queue_history_summary(report: object) -> None:
+    latest_reason_code_counts = ",".join(
+        f"{row.reason_code}={row.count}" for row in report.latest_reason_code_counts
+    )
+    print(
+        "action-gated-queue-history: "
+        f"source_report_count={report.source_report_count} "
+        f"first_source_generated_at={_iso_or_none(report.first_source_generated_at)} "
+        f"last_source_generated_at={_iso_or_none(report.last_source_generated_at)} "
+        f"research_ready_count={report.research_ready_count} "
+        f"watch_count={report.watch_count} "
+        f"blocked_count={report.blocked_count} "
+        f"total_ready_notional={report.total_ready_notional} "
+        f"latest_action_status={_none_or_value(report.latest_action_status)} "
+        "latest_recommended_next_step="
+        f"{_none_or_value(report.latest_recommended_next_step)} "
+        f"status_transition_count={report.status_transition_count} "
+        f"ready_notional_delta={report.ready_notional_delta} "
+        f"latest_reason_code_counts={latest_reason_code_counts or 'none'}",
     )
 
 
