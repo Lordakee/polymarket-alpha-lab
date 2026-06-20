@@ -117,6 +117,9 @@ from polymarket_alpha_lab.supabase_action_gated_strategy_recommendation_queue_de
 from polymarket_alpha_lab.supabase_action_gated_strategy_recommendation_queue_decision_support_trend_config import (
     from_action_gated_strategy_recommendation_queue_decision_support_trend_db_env,
 )
+from polymarket_alpha_lab.supabase_action_gated_strategy_recommendation_queue_history_config import (
+    from_action_gated_strategy_recommendation_queue_history_db_env,
+)
 from polymarket_alpha_lab.supabase_cycle_snapshot_config import (
     from_cycle_snapshot_db_env,
 )
@@ -165,6 +168,7 @@ ActionGatedQueueLoader = Callable[..., object]
 ActionGatedQueuePriorityBuilder = Callable[..., object]
 ActionGatedQueueRiskBuilder = Callable[..., object]
 ActionGatedQueueHistoryBuilder = Callable[..., object]
+ActionGatedQueueHistoryDbSink = Callable[..., object]
 CycleSnapshotDbTrendRunner = Callable[..., object]
 CycleSnapshotDbReviewRunner = Callable[..., object]
 CycleSnapshotDbActionGateRunner = Callable[..., object]
@@ -280,6 +284,7 @@ def main(
     action_gated_queue_db_sink: ActionGatedQueueDbSink = (
         insert_paper_action_gated_strategy_recommendation_queue_report_with_psycopg
     ),
+    action_gated_queue_history_db_sink: ActionGatedQueueHistoryDbSink | None = None,
     action_gated_queue_loader: ActionGatedQueueLoader | None = None,
     action_gated_queue_priority_builder: (
         ActionGatedQueuePriorityBuilder | None
@@ -654,6 +659,12 @@ def main(
         "--limit",
         type=int,
         default=100,
+    )
+    action_gated_queue_history.add_argument(
+        "--persist",
+        action="store_true",
+        default=False,
+        dest="persist",
     )
 
     # Stage 17 market search: search Polymarket markets by keyword.
@@ -1123,14 +1134,16 @@ def main(
 
     if args.command == "action-gated-queue-history":
         try:
-            report = _run_action_gated_queue_history(
+            report, persisted = _run_action_gated_queue_history(
                 source_config_version=args.source_config_version,
                 action_status=args.action_status,
                 limit=args.limit,
+                persist=args.persist,
                 loader=action_gated_queue_loader,
                 history_builder=action_gated_queue_history_builder,
+                history_db_sink=action_gated_queue_history_db_sink,
             )
-            _print_action_gated_queue_history_summary(report)
+            _print_action_gated_queue_history_summary(report, persisted=persisted)
             return 0
         except Exception as exc:
             print(
@@ -1794,9 +1807,11 @@ def _run_action_gated_queue_history(
     source_config_version: str | None,
     action_status: str | None,
     limit: int,
+    persist: bool,
     loader: ActionGatedQueueLoader | None,
     history_builder: ActionGatedQueueHistoryBuilder | None,
-) -> object:
+    history_db_sink: ActionGatedQueueHistoryDbSink | None,
+) -> tuple[object, bool]:
     from polymarket_alpha_lab.action_gated_strategy_recommendation_queue_history import (
         build_paper_action_gated_strategy_recommendation_queue_history_report,
     )
@@ -1813,6 +1828,24 @@ def _run_action_gated_queue_history(
         )
     if db_config.dsn is None:
         raise ValueError("action-gated-queue-history requires a DB DSN")
+    history_db_config = (
+        from_action_gated_strategy_recommendation_queue_history_db_env()
+        if persist
+        else None
+    )
+    if persist:
+        if history_db_config is None:
+            raise ValueError(
+                "action-gated-queue-history persistence requires history DB config",
+            )
+        if not history_db_config.enabled:
+            raise ValueError(
+                "action-gated-queue-history persistence requires history DB to be enabled",
+            )
+        if history_db_config.dsn is None:
+            raise ValueError(
+                "action-gated-queue-history persistence requires a history DB DSN",
+            )
 
     read_options = PaperActionGatedStrategyRecommendationQueueReadOptions(
         source_config_version=source_config_version,
@@ -1837,10 +1870,35 @@ def _run_action_gated_queue_history(
     except Exception as exc:
         _raise_redacted_db_read_error(exc, dsn=db_config.dsn)
 
-    return resolved_history_builder(
+    report = resolved_history_builder(
         queue_reports,
         generated_at=generated_at,
     )
+    if not persist:
+        return report, False
+    if history_db_sink is None:
+        from polymarket_alpha_lab.action_gated_strategy_recommendation_queue_history_psycopg import (
+            insert_paper_action_gated_strategy_recommendation_queue_history_report_with_psycopg,
+        )
+
+        resolved_history_db_sink = (
+            insert_paper_action_gated_strategy_recommendation_queue_history_report_with_psycopg
+        )
+    else:
+        resolved_history_db_sink = history_db_sink
+    try:
+        resolved_history_db_sink(
+            dsn=history_db_config.dsn,
+            report=report,
+            table_name=history_db_config.table_name,
+        )
+    except Exception as exc:
+        message = _redact_db_dsn(str(exc), dsn=history_db_config.dsn)
+        message = _redact_db_dsn(message, dsn=db_config.dsn)
+        if not message.strip():
+            message = exc.__class__.__name__
+        raise RuntimeError(message) from None
+    return report, True
 
 
 def _run_action_gated_queue_decision_support_trend(
@@ -2766,7 +2824,11 @@ def _print_action_gated_queue_decision_support_trend_summary(
     print(f"trend_reason_codes: {reason_code_counts or 'none'}")
 
 
-def _print_action_gated_queue_history_summary(report: object) -> None:
+def _print_action_gated_queue_history_summary(
+    report: object,
+    *,
+    persisted: bool = False,
+) -> None:
     latest_reason_code_counts = ",".join(
         f"{row.reason_code}={row.count}" for row in report.latest_reason_code_counts
     )
@@ -2784,6 +2846,7 @@ def _print_action_gated_queue_history_summary(report: object) -> None:
         f"{_none_or_value(report.latest_recommended_next_step)} "
         f"status_transition_count={report.status_transition_count} "
         f"ready_notional_delta={report.ready_notional_delta} "
+        f"persisted={persisted} "
         f"latest_reason_code_counts={latest_reason_code_counts or 'none'}",
     )
 

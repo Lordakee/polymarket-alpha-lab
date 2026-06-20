@@ -15,6 +15,8 @@ EXPECTED_PARSER_ARGUMENT_SURFACE = {
     "action_status",
     "--limit",
     "limit",
+    "--persist",
+    "persist",
 }
 
 FORBIDDEN_LIVE_SURFACE_FRAGMENTS = {
@@ -24,12 +26,10 @@ FORBIDDEN_LIVE_SURFACE_FRAGMENTS = {
     "client",
     "clientfactory",
     "exchange",
-    "insert",
     "live",
     "order",
     "privatekey",
     "sign",
-    "sink",
     "submit",
     "wallet",
 }
@@ -41,12 +41,14 @@ EXPECTED_BRANCH_CALLS = {
 
 EXPECTED_RUN_HELPER_CALLS = {
     "from_action_gated_strategy_recommendation_queue_db_env",
+    "from_action_gated_strategy_recommendation_queue_history_db_env",
     "PaperActionGatedStrategyRecommendationQueueReadOptions",
 }
 
 EXPECTED_DEFAULT_WIRING_NAMES = {
     "load_paper_action_gated_strategy_recommendation_queue_reports_with_psycopg",
     "build_paper_action_gated_strategy_recommendation_queue_history_report",
+    "insert_paper_action_gated_strategy_recommendation_queue_history_report_with_psycopg",
 }
 
 

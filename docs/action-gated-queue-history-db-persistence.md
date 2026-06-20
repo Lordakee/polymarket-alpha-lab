@@ -25,6 +25,12 @@ optional lowercase schema prefix, such as
 `.env.example` intentionally contains blank variables only. Do not add a sample
 DSN, credential, wallet value, private key, or account identifier to that file.
 
+The `action-gated-queue-history --persist` CLI path uses this environment
+boundary only after it has loaded source paper queue reports and built the
+aggregate history report. Without `--persist`, the CLI does not write history
+rows. With `--persist`, it stores only the aggregate history report and keeps
+CLI output redacted and aggregate-only.
+
 ## Migration
 
 The Supabase migration creates only

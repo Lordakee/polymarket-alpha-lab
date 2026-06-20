@@ -34,6 +34,11 @@ The pure history reducer summarizes trend/history metrics from typed reports. It
 3. The pure history reducer summarizes trend/history metrics across those typed reports without side effects.
 4. The CLI prints an aggregate-only summary for operator review.
 
+Optional `--persist` stores only the built aggregate
+`PaperActionGatedStrategyRecommendationQueueHistoryReport` through the separate
+history DB environment boundary. It does not change the source loader, does not
+write source queue rows, and does not persist payload details to CLI output.
+
 ## CLI Output Safety
 
 The CLI output must stay redacted and aggregate-only. CLI output must not include DSNs, table names, payload JSON, raw DB records, secrets, or env contents.

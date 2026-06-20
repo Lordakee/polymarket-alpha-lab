@@ -126,6 +126,11 @@ from polymarket_alpha_lab.supabase_action_gated_strategy_recommendation_queue_co
     ACTION_GATED_QUEUE_DB_ENABLED_ENV_VAR,
     ACTION_GATED_QUEUE_DB_TABLE_ENV_VAR,
 )
+from polymarket_alpha_lab.supabase_action_gated_strategy_recommendation_queue_history_config import (
+    ACTION_GATED_QUEUE_HISTORY_DB_DSN_ENV_VAR,
+    ACTION_GATED_QUEUE_HISTORY_DB_ENABLED_ENV_VAR,
+    ACTION_GATED_QUEUE_HISTORY_DB_TABLE_ENV_VAR,
+)
 from polymarket_alpha_lab.supabase_outcome_tracking_config import (
     OUTCOME_TRACKING_DB_DSN_ENV_VAR,
     OUTCOME_TRACKING_DB_ENABLED_ENV_VAR,
@@ -5705,6 +5710,371 @@ def test_action_gated_queue_history_cli_default_builder_wiring(
     assert "latest_reason_code_counts=cycle_review_watch=1" in captured.out
     assert action_gated_dsn not in captured.out
     assert action_gated_dsn not in captured.err
+
+
+def test_action_gated_queue_history_cli_persists_built_history_report_when_requested(
+    monkeypatch,
+    capsys,
+):
+    source_dsn = "postgresql://action-gated-history.example.invalid/source"
+    history_dsn = "postgresql://action-gated-history.example.invalid/history"
+    monkeypatch.setenv(ACTION_GATED_QUEUE_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(ACTION_GATED_QUEUE_DB_DSN_ENV_VAR, source_dsn)
+    monkeypatch.setenv(
+        ACTION_GATED_QUEUE_DB_TABLE_ENV_VAR,
+        "action_gated_queue_archive",
+    )
+    monkeypatch.setenv(ACTION_GATED_QUEUE_HISTORY_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(ACTION_GATED_QUEUE_HISTORY_DB_DSN_ENV_VAR, history_dsn)
+    monkeypatch.setenv(
+        ACTION_GATED_QUEUE_HISTORY_DB_TABLE_ENV_VAR,
+        "action_gated_queue_history_archive",
+    )
+
+    source_reports = (SimpleNamespace(payload_json={"raw": "secret"}),)
+    history_report = SimpleNamespace(
+        source_report_count=1,
+        first_source_generated_at=datetime(2026, 6, 20, 10, 0, tzinfo=UTC),
+        last_source_generated_at=datetime(2026, 6, 20, 10, 0, tzinfo=UTC),
+        research_ready_count=1,
+        watch_count=0,
+        blocked_count=0,
+        total_ready_notional=Decimal("42.000000"),
+        latest_action_status="research_ready",
+        latest_recommended_next_step="review_candidate_research_queue",
+        status_transition_count=0,
+        ready_notional_delta=Decimal("0.000000"),
+        latest_reason_code_counts=(
+            PaperRecommendationCycleActionGateReasonCodeCount(
+                reason_code="cycle_review_pass",
+                count=1,
+            ),
+        ),
+        paper_only=True,
+        report_only=True,
+        readonly=True,
+    )
+    loader_calls = []
+    builder_calls = []
+    sink_calls = []
+
+    def fake_loader(dsn, *, options):
+        loader_calls.append((dsn, options))
+        return source_reports
+
+    def fake_history_builder(reports, *, generated_at):
+        builder_calls.append((reports, generated_at))
+        return history_report
+
+    def fake_history_sink(*, dsn, report, table_name):
+        sink_calls.append((dsn, report, table_name))
+        return SimpleNamespace(report_sha256="a" * 64)
+
+    exit_code = main(
+        [
+            "action-gated-queue-history",
+            "--source-config-version",
+            "paper-recommendation-cycle-action-gate-v0",
+            "--action-status",
+            "research_ready",
+            "--limit",
+            "5",
+            "--persist",
+        ],
+        action_gated_queue_loader=fake_loader,
+        action_gated_queue_history_builder=fake_history_builder,
+        action_gated_queue_history_db_sink=fake_history_sink,
+        client_factory=lambda: (_ for _ in ()).throw(
+            AssertionError("client should not be constructed"),
+        ),
+    )
+
+    assert exit_code == 0
+    assert loader_calls[0][0] == source_dsn
+    assert builder_calls == [(source_reports, builder_calls[0][1])]
+    assert sink_calls == [
+        (
+            history_dsn,
+            history_report,
+            "action_gated_queue_history_archive",
+        ),
+    ]
+    captured = capsys.readouterr()
+    assert "action-gated-queue-history:" in captured.out
+    assert "persisted=True" in captured.out
+    assert source_dsn not in captured.out
+    assert source_dsn not in captured.err
+    assert history_dsn not in captured.out
+    assert history_dsn not in captured.err
+    assert "action_gated_queue_history_archive" not in captured.out
+
+
+def test_action_gated_queue_history_cli_requires_history_db_when_persisting(
+    monkeypatch,
+    capsys,
+):
+    source_dsn = "postgresql://action-gated-history.example.invalid/source"
+    monkeypatch.setenv(ACTION_GATED_QUEUE_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(ACTION_GATED_QUEUE_DB_DSN_ENV_VAR, source_dsn)
+    monkeypatch.delenv(ACTION_GATED_QUEUE_HISTORY_DB_ENABLED_ENV_VAR, raising=False)
+    monkeypatch.delenv(ACTION_GATED_QUEUE_HISTORY_DB_DSN_ENV_VAR, raising=False)
+    monkeypatch.delenv(ACTION_GATED_QUEUE_HISTORY_DB_TABLE_ENV_VAR, raising=False)
+    calls = []
+
+    def forbidden_loader(*args, **kwargs):
+        calls.append(("loader", args, kwargs))
+        raise AssertionError("source loader should not run")
+
+    def forbidden_builder(*args, **kwargs):
+        calls.append(("builder", args, kwargs))
+        raise AssertionError("history builder should not run")
+
+    def forbidden_sink(*args, **kwargs):
+        calls.append(("sink", args, kwargs))
+        raise AssertionError("history sink should not run")
+
+    exit_code = main(
+        ["action-gated-queue-history", "--persist"],
+        action_gated_queue_loader=forbidden_loader,
+        action_gated_queue_history_builder=forbidden_builder,
+        action_gated_queue_history_db_sink=forbidden_sink,
+    )
+
+    assert exit_code == 1
+    assert calls == []
+    captured = capsys.readouterr()
+    assert "action-gated-queue-history failed:" in captured.err
+    assert "history DB to be enabled" in captured.err
+    assert source_dsn not in captured.out
+    assert source_dsn not in captured.err
+
+
+def test_action_gated_queue_history_cli_redacts_dsns_on_history_sink_failure(
+    monkeypatch,
+    capsys,
+):
+    source_dsn = "postgresql://action-gated-history.example.invalid/source"
+    history_dsn = "postgresql://action-gated-history.example.invalid/history"
+    monkeypatch.setenv(ACTION_GATED_QUEUE_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(ACTION_GATED_QUEUE_DB_DSN_ENV_VAR, source_dsn)
+    monkeypatch.setenv(ACTION_GATED_QUEUE_HISTORY_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(ACTION_GATED_QUEUE_HISTORY_DB_DSN_ENV_VAR, history_dsn)
+
+    source_reports = (SimpleNamespace(payload_json={"raw": "secret"}),)
+    history_report = SimpleNamespace(
+        source_report_count=1,
+        first_source_generated_at=datetime(2026, 6, 20, 10, 0, tzinfo=UTC),
+        last_source_generated_at=datetime(2026, 6, 20, 10, 0, tzinfo=UTC),
+        research_ready_count=1,
+        watch_count=0,
+        blocked_count=0,
+        total_ready_notional=Decimal("42.000000"),
+        latest_action_status="research_ready",
+        latest_recommended_next_step="review_candidate_research_queue",
+        status_transition_count=0,
+        ready_notional_delta=Decimal("0.000000"),
+        latest_reason_code_counts=(),
+        paper_only=True,
+        report_only=True,
+        readonly=True,
+    )
+
+    def fake_loader(dsn, *, options):
+        return source_reports
+
+    def fake_history_builder(reports, *, generated_at):
+        return history_report
+
+    def broken_history_sink(*, dsn, report, table_name):
+        raise RuntimeError(f"source={source_dsn} history={history_dsn}")
+
+    exit_code = main(
+        ["action-gated-queue-history", "--persist"],
+        action_gated_queue_loader=fake_loader,
+        action_gated_queue_history_builder=fake_history_builder,
+        action_gated_queue_history_db_sink=broken_history_sink,
+    )
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert (
+        "action-gated-queue-history failed: "
+        "source=<redacted-dsn> history=<redacted-dsn>"
+    ) in captured.err
+    assert source_dsn not in captured.out
+    assert source_dsn not in captured.err
+    assert history_dsn not in captured.out
+    assert history_dsn not in captured.err
+
+
+def test_action_gated_queue_history_cli_default_psycopg_persist_path_no_network(
+    monkeypatch,
+    capsys,
+):
+    from polymarket_alpha_lab.action_gated_strategy_recommendation_queue_db_row import (
+        paper_action_gated_strategy_recommendation_queue_report_to_db_row,
+    )
+
+    source_dsn = "postgresql://action-gated-history.example.invalid/source"
+    history_dsn = "postgresql://action-gated-history.example.invalid/history"
+    monkeypatch.setenv(ACTION_GATED_QUEUE_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(ACTION_GATED_QUEUE_DB_DSN_ENV_VAR, source_dsn)
+    monkeypatch.setenv(
+        ACTION_GATED_QUEUE_DB_TABLE_ENV_VAR,
+        "action_gated_queue_archive",
+    )
+    monkeypatch.setenv(ACTION_GATED_QUEUE_HISTORY_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(ACTION_GATED_QUEUE_HISTORY_DB_DSN_ENV_VAR, history_dsn)
+    monkeypatch.setenv(
+        ACTION_GATED_QUEUE_HISTORY_DB_TABLE_ENV_VAR,
+        "action_gated_queue_history_archive",
+    )
+
+    first_at = datetime(2026, 6, 20, 10, 0, tzinfo=UTC)
+    latest_at = datetime(2026, 6, 20, 12, 0, tzinfo=UTC)
+
+    def source_record(report):
+        row = paper_action_gated_strategy_recommendation_queue_report_to_db_row(
+            report,
+        )
+        return (
+            row.report_sha256,
+            row.generated_at,
+            row.config_version,
+            row.source_config_version,
+            row.action_status,
+            row.recommended_next_step,
+            row.candidate_count,
+            row.ready_count,
+            row.watch_count,
+            row.blocked_count,
+            row.total_ready_notional,
+            row.reason_code_counts_json,
+            row.payload_json,
+            row.paper_only,
+            row.report_only,
+            row.readonly,
+        )
+
+    source_records = (
+        source_record(_watch_action_gated_queue_report(latest_at)),
+        source_record(_blocked_action_gated_queue_report(first_at)),
+    )
+
+    class FakeCursor:
+        def __init__(self, rows=()):
+            self.rows = rows
+            self.calls = []
+            self.closed = False
+
+        def execute(self, sql, params=()):
+            self.calls.append((" ".join(sql.split()), params))
+
+        def fetchall(self):
+            return self.rows
+
+        def close(self):
+            self.closed = True
+
+    class FakeConnection:
+        def __init__(self, rows=()):
+            self.cursor_instance = FakeCursor(rows)
+            self.cursor_count = 0
+            self.commit_count = 0
+            self.rollback_count = 0
+            self.close_count = 0
+
+        def cursor(self):
+            self.cursor_count += 1
+            return self.cursor_instance
+
+        def commit(self):
+            self.commit_count += 1
+
+        def rollback(self):
+            self.rollback_count += 1
+
+        def close(self):
+            self.close_count += 1
+
+    class FakeJsonb:
+        def __init__(self, value):
+            self.value = value
+
+    source_connection = FakeConnection(source_records)
+    history_connection = FakeConnection()
+    connect_calls = []
+
+    def fake_connect(dsn, **kwargs):
+        connect_calls.append((dsn, kwargs))
+        if dsn == source_dsn:
+            assert kwargs == {"autocommit": True}
+            return source_connection
+        if dsn == history_dsn:
+            assert kwargs == {}
+            return history_connection
+        raise AssertionError(f"unexpected dsn: {dsn}")
+
+    monkeypatch.setitem(sys.modules, "psycopg", SimpleNamespace(connect=fake_connect))
+    monkeypatch.setitem(
+        sys.modules,
+        "psycopg.types.json",
+        SimpleNamespace(Jsonb=FakeJsonb),
+    )
+    sys.modules.pop(
+        "polymarket_alpha_lab.action_gated_strategy_recommendation_queue_history_store",
+        None,
+    )
+    sys.modules.pop(
+        "polymarket_alpha_lab.action_gated_strategy_recommendation_queue_history_psycopg",
+        None,
+    )
+
+    exit_code = main(
+        [
+            "action-gated-queue-history",
+            "--source-config-version",
+            "paper-recommendation-cycle-action-gate-v0",
+            "--limit",
+            "2",
+            "--persist",
+        ],
+        client_factory=lambda: (_ for _ in ()).throw(
+            AssertionError("client should not be constructed"),
+        ),
+    )
+
+    assert exit_code == 0
+    assert connect_calls == [
+        (source_dsn, {"autocommit": True}),
+        (history_dsn, {}),
+    ]
+    assert source_connection.close_count == 1
+    assert source_connection.commit_count == 0
+    assert source_connection.rollback_count == 0
+    assert history_connection.close_count == 1
+    assert history_connection.commit_count == 1
+    assert history_connection.rollback_count == 0
+    source_sql, source_params = source_connection.cursor_instance.calls[0]
+    assert "FROM action_gated_queue_archive" in source_sql
+    assert "ORDER BY generated_at DESC, report_sha256 DESC" in source_sql
+    assert source_params == ("paper-recommendation-cycle-action-gate-v0", 2)
+    history_sql, history_params = history_connection.cursor_instance.calls[0]
+    assert "INSERT INTO action_gated_queue_history_archive" in history_sql
+    assert len(history_params) == 18
+    assert isinstance(history_params[13], FakeJsonb)
+    assert isinstance(history_params[14], FakeJsonb)
+
+    captured = capsys.readouterr()
+    assert "action-gated-queue-history:" in captured.out
+    assert "source_report_count=2" in captured.out
+    assert "latest_action_status=watch" in captured.out
+    assert "persisted=True" in captured.out
+    assert source_dsn not in captured.out
+    assert source_dsn not in captured.err
+    assert history_dsn not in captured.out
+    assert history_dsn not in captured.err
+    assert "action_gated_queue_history_archive" not in captured.out
 
 
 def test_action_gated_queue_history_cli_redacts_dsn_on_loader_failure(
