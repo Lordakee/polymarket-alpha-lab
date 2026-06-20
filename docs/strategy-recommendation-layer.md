@@ -105,6 +105,15 @@ it returns a paper-only/report-only/readonly watch or blocked artifact copied
 from the gate evidence, and it does not repair missing, stale, malformed, or
 blocked cycle data itself.
 
+Action-gated queue reports can also be persisted as local Supabase/Postgres
+audit artifacts. That persistence path stores the exact paper queue report plus
+denormalized status/count fields for readonly review, replay, and later
+automation research. The reducer remains DB-free, and persistence stays at the
+process boundary behind default-off environment configuration. Persisted
+`research_ready`, `watch`, and `blocked` rows are evidence records only; they
+are not live trade approvals, order intents, signed payloads, account reads,
+wallet interactions, or exchange mutations.
+
 DB-backed trend reporting remains separate readonly observability over
 persisted cycle state. It can summarize blocker/watch movement across stored
 snapshots, but it must not become an approval workflow, execution workflow,
