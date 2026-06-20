@@ -120,6 +120,15 @@ persists the resulting queue report as an audit artifact. A persisted queue row
 does not approve trading, elevate a paper recommendation into an order, or
 authorize any live execution step.
 
+Decision-support modules over action-gated queue reports remain module-local
+paper-only/report-only/readonly APIs. The priority reducer ranks queue reports
+for human research attention, the read adapter loads already-persisted
+Supabase/Postgres queue reports for readonly review, and the risk reducer
+summarizes ready-notional and candidate-count pressure. These outputs are
+evidence and operator-review aids only; they are not package-root exports, live
+approvals, order intents, account reads, wallet/private-key access, signing, or
+exchange mutations.
+
 DB-backed trend reporting remains separate readonly observability over
 persisted cycle state. It can summarize blocker/watch movement across stored
 snapshots, but it must not become an approval workflow, execution workflow,
@@ -532,6 +541,12 @@ The recommendation-layer work is expected to use module-level reducers named:
 - `action_gated_strategy_recommendation_queue` for the paper-only reducer that
   requires `build_candidate_research_queue` before building downstream
   candidate assessment, bundle, and strategy queue artifacts
+- `action_gated_strategy_recommendation_queue_priority` for readonly
+  research-attention ranking across action-gated queue reports
+- `action_gated_strategy_recommendation_queue_psycopg_read` for readonly
+  loading of already-persisted action-gated queue reports
+- `action_gated_strategy_recommendation_queue_risk` for paper-only
+  ready-notional and candidate-count risk pressure summaries
 
 Those modules should preserve the existing reducer style: frozen dataclasses,
 validated paper/report/readonly flags, deterministic ordering, Decimal-only
