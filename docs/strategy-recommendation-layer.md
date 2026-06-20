@@ -32,7 +32,11 @@ rank, select, and explain candidates for a paper journal. It may produce
 recommendation reports, paper selection decisions, and deterministic
 explanations, but those reports are not order instructions. Selection policy
 output is a paper sizing suggestion only. It is not an exchange order, order
-ticket, order intent, or approval to place an order.
+ticket, order intent, or approval to place an order. The current phase boundary
+is paper-only/report-only/read-only: no live trading, authentication, wallet or
+private-key access, signing, order construction, order submission, order
+cancellation, account mutation, account reads, relayer mutation, or exchange/network
+mutation.
 
 Package-root exports are not part of this surface. Import any layer API directly
 from the module that defines it.
@@ -42,32 +46,41 @@ from the module that defines it.
 The intended flow is:
 
 ```text
-scan
--> forecast
--> cost-aware snapshot
--> candidate assessment
--> readiness gates
--> recommendation bundle
-   -> recommendation ranking
-   -> paper selection policy
-   -> deterministic explanation report
--> append-only JSONL recommendation log
--> readonly recommendation history
--> strategy_cycle/runner integration later
+strategy cycle
+-> rich paper recommendation artifacts
+-> artifact index + pipeline report
+-> cycle snapshot
+-> Supabase/Postgres persistence
+-> DB-backed review/trend CLI
 ```
 
-The recommendation layer consumes prior paper reports. Assessment and readiness
-reports remain the gate into the recommendation bundle. The bundle combines the
-candidate recommendation report, the paper selection policy report, and the
-deterministic explanation report for the same generated-at cycle. The JSONL log
-then records bundle reports as append-only paper history. Existing
-recommendation history summaries are built from the `recommendation_report`
-inside each recovered bundle entry.
+The strategy cycle consumes prior paper reports and exposes already-built local
+evidence, including cost-aware reports and screening/readiness summaries. That
+evidence can be converted into rich paper recommendation artifacts:
+recommendation ranking, paper selection policy, deterministic explanation,
+side-edge, queue, allocation, research, manifest, consistency, health, and
+bundle reports. Assessment and readiness reports remain the gate into those
+artifacts.
 
-Later `strategy_cycle` and `runner` integration should call this bundle/log
-stage after assessment and readiness reports are available. That later
-integration is still report generation and paper journaling; it should not fetch
-live market data or mutate external state by itself.
+The artifact index and pipeline report normalize the heterogeneous artifact set
+for one generated-at cycle. The cycle snapshot combines that index and pipeline
+rollup into a stable `pass`/`watch`/`blocked` paper cycle result. Local
+Supabase/Postgres persistence stores validated snapshots for durable report
+history and later read-only review. Documentation should mention this
+persistence only at a high level and should never include real DSNs, passwords,
+tokens, service keys, wallet material, or other secrets.
+
+The DB-backed review/trend CLI reads persisted snapshot history and prints
+concise observability summaries: latest status, pass/watch/blocked counts,
+blocked or watch artifact pressure, missing required artifacts, and reason-code
+counts or movement. It is not an approval workflow, execution workflow, order
+manager, account inspection tool, or bridge from paper reports into live
+trading.
+
+JSONL bundle logs may remain as append-only debug/export artifacts for local
+paper review, regression fixtures, or portability, but DB-backed snapshot
+persistence is the primary normal history surface for cycle-level review and
+trend reporting.
 
 ## Cost-Aware Recommendation
 

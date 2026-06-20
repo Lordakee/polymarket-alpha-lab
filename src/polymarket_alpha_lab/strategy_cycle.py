@@ -256,6 +256,7 @@ class PaperStrategyCycleReport:
     cost_aware_report_count: int
     blocked_counts: tuple[tuple[str, int], ...]
     screening_report: PaperProjectScreeningReport | None
+    cost_aware_reports: tuple[PaperCostAwareEventStrategyReport, ...] = ()
     paper_only: bool = True
     report_only: bool = True
 
@@ -273,6 +274,11 @@ class PaperStrategyCycleReport:
             self,
             "blocked_counts",
             _normalize_blocked_counts(self.blocked_counts),
+        )
+        object.__setattr__(
+            self,
+            "cost_aware_reports",
+            _normalize_cost_aware_reports(self.cost_aware_reports),
         )
         if self.screening_report is not None and not isinstance(
             self.screening_report,
@@ -293,6 +299,13 @@ class PaperStrategyCycleReport:
         if self.cost_aware_report_count != self.snapshot_ready_count:
             raise ValueError(
                 "cost_aware_report_count must equal snapshot_ready_count",
+            )
+        if (
+            self.cost_aware_reports
+            and self.cost_aware_report_count != len(self.cost_aware_reports)
+        ):
+            raise ValueError(
+                "cost_aware_report_count must equal len(cost_aware_reports)",
             )
         if (self.screening_report is None) != (self.cost_aware_report_count == 0):
             raise ValueError(
@@ -680,6 +693,7 @@ def run_strategy_cycle(
         cost_aware_report_count=len(collected_reports),
         blocked_counts=_deterministic_blocked_counts(statuses),
         screening_report=screening,
+        cost_aware_reports=tuple(collected_reports),
     )
 
 
@@ -837,6 +851,28 @@ def _normalize_blocked_counts(
     return tuple(normalized)
 
 
+def _normalize_cost_aware_reports(
+    value: tuple[PaperCostAwareEventStrategyReport, ...],
+) -> tuple[PaperCostAwareEventStrategyReport, ...]:
+    if isinstance(value, (str, bytes)):
+        raise ValueError("cost_aware_reports must be an iterable")
+    try:
+        reports = tuple(value)
+    except TypeError as exc:
+        raise ValueError("cost_aware_reports must be an iterable") from exc
+    for report in reports:
+        if type(report) is not PaperCostAwareEventStrategyReport:
+            raise ValueError(
+                "cost_aware_reports entries must be "
+                "PaperCostAwareEventStrategyReport",
+            )
+        if report.paper_only is not True:
+            raise ValueError("cost_aware_reports paper_only must be True")
+        if report.report_only is not True:
+            raise ValueError("cost_aware_reports report_only must be True")
+    return reports
+
+
 def _validate_report_tree(report: PaperStrategyCycleReport) -> None:
     # Reconstruct the cycle report, passing the nested screening_report through
     # by reference (it is a validated frozen PaperProjectScreeningReport). This
@@ -851,6 +887,7 @@ def _validate_report_tree(report: PaperStrategyCycleReport) -> None:
         cost_aware_report_count=report.cost_aware_report_count,
         blocked_counts=report.blocked_counts,
         screening_report=report.screening_report,
+        cost_aware_reports=report.cost_aware_reports,
         paper_only=report.paper_only,
         report_only=report.report_only,
     )

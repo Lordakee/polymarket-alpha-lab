@@ -16,6 +16,9 @@ from polymarket_alpha_lab.paper_recommendation_pipeline import (
     PaperRecommendationPipelineStage,
     build_paper_recommendation_pipeline_report,
 )
+from polymarket_alpha_lab.strategy_cycle_recommendation_artifact_source import (
+    build_strategy_cycle_recommendation_artifacts,
+)
 
 
 SAFETY_FLAGS = ("paper_only", "report_only", "readonly")
@@ -78,6 +81,7 @@ def build_strategy_cycle_snapshot_source_report(
         generated_at=generated_at,
         config_version=config_version,
         artifacts=_build_artifacts(
+            cycle_report=cycle_report,
             generated_at=generated_at,
             config_version=config_version,
             blocked_counts=blocked_counts,
@@ -135,12 +139,20 @@ def _build_pipeline_stages(
 
 def _build_artifacts(
     *,
+    cycle_report: object,
     generated_at: datetime,
     config_version: str,
     blocked_counts: tuple[tuple[str, int], ...],
     considered_count: int,
     screening_report: object | None,
-) -> tuple[_StrategyCycleSnapshotArtifact, ...]:
+) -> tuple[object, ...]:
+    cost_aware_reports = getattr(cycle_report, "cost_aware_reports", ())
+    if cost_aware_reports:
+        return build_strategy_cycle_recommendation_artifacts(
+            cycle_report,
+            generated_at=generated_at,
+        )
+
     artifacts = [
         _StrategyCycleSnapshotArtifact(
             artifact_name="strategy_cycle_blocked_counts",

@@ -6,6 +6,11 @@ from decimal import Decimal
 
 import pytest
 
+from polymarket_alpha_lab.cost_aware_event_strategy import (
+    PaperCostAwareEventSideResult,
+    PaperCostAwareEventStrategyGateResult,
+    PaperCostAwareEventStrategyReport,
+)
 from polymarket_alpha_lab.paper_recommendation_cycle_snapshot import (
     PaperRecommendationCycleSnapshotReport,
 )
@@ -27,6 +32,15 @@ PIPELINE_STAGE_NAMES = (
     "cost_aware_snapshot",
     "project_screening",
 )
+GATE_NAMES = (
+    "data_integrity",
+    "confidence",
+    "spread",
+    "resolution_risk",
+    "yes_depth",
+    "no_depth",
+    "edge_threshold",
+)
 
 
 def _build_strategy_cycle_snapshot_source_report(
@@ -47,6 +61,7 @@ def _cycle_report(
     cost_aware_report_count: int,
     blocked_counts: tuple[tuple[str, int], ...],
     screening_report: PaperProjectScreeningReport | None,
+    cost_aware_reports: tuple[PaperCostAwareEventStrategyReport, ...] = (),
 ) -> PaperStrategyCycleReport:
     return PaperStrategyCycleReport(
         generated_at=GENERATED_AT,
@@ -57,6 +72,7 @@ def _cycle_report(
         cost_aware_report_count=cost_aware_report_count,
         blocked_counts=blocked_counts,
         screening_report=screening_report,
+        cost_aware_reports=cost_aware_reports,
     )
 
 
@@ -141,6 +157,55 @@ def _screening_report() -> PaperProjectScreeningReport:
     )
 
 
+def _cost_aware_gate_results() -> tuple[PaperCostAwareEventStrategyGateResult, ...]:
+    return tuple(
+        PaperCostAwareEventStrategyGateResult(
+            gate_name=gate_name,
+            status="pass",
+            reason_code=f"{gate_name}_ready",
+            message=f"{gate_name} ready.",
+            observed_value=Decimal("1"),
+            threshold=Decimal("0"),
+        )
+        for gate_name in GATE_NAMES
+    )
+
+
+def _cost_aware_side_result(side: str) -> PaperCostAwareEventSideResult:
+    return PaperCostAwareEventSideResult(
+        side=side,
+        fair_probability=Decimal("0.6200"),
+        executable_price=Decimal("0.5000"),
+        ask_size=Decimal("10.0000"),
+        gross_edge_per_share=Decimal("0.030000"),
+        fee_cost_per_share=Decimal("0.000000"),
+        non_fee_cost_per_share=Decimal("0.000000"),
+        total_cost_per_share=Decimal("0.000000"),
+        net_edge_per_share=Decimal("0.030000"),
+        reason_codes=("paper_edge_complete",),
+    )
+
+
+def _cost_aware_report(market_slug: str) -> PaperCostAwareEventStrategyReport:
+    return PaperCostAwareEventStrategyReport(
+        generated_at=GENERATED_AT,
+        config_version="cost-aware-event-v0",
+        market_slug=market_slug,
+        question=f"{market_slug}?",
+        fair_probability_yes=Decimal("0.6200"),
+        confidence=Decimal("0.8000"),
+        yes_bid=Decimal("0.4900"),
+        no_bid=Decimal("0.4800"),
+        spread=Decimal("0.0200"),
+        resolution_risk=Decimal("0.0500"),
+        selected_side="yes",
+        status="paper_review_ready",
+        yes_result=_cost_aware_side_result("yes"),
+        no_result=_cost_aware_side_result("no"),
+        gate_results=_cost_aware_gate_results(),
+    )
+
+
 def _stage_by_name(report: PaperRecommendationCycleSnapshotReport):
     return {stage.stage_name: stage for stage in report.pipeline_report.stages}
 
@@ -199,6 +264,7 @@ def test_strategy_cycle_snapshot_source_converts_blocked_cycle_without_screening
     rows = _row_by_name(snapshot)
     assert "paper_strategy_cycle_report" not in rows
     assert "strategy_cycle_blocked_counts" in rows
+    assert "strategy_cycle_cost_aware_reports" not in rows
     assert "strategy_cycle_screening_report" in rows
     assert rows["strategy_cycle_blocked_counts"].status == "blocked"
     assert rows["strategy_cycle_blocked_counts"].item_count == 3
@@ -259,12 +325,46 @@ def test_strategy_cycle_snapshot_source_converts_cycle_with_screening_report():
     rows = _row_by_name(snapshot)
     assert "paper_strategy_cycle_report" not in rows
     assert "paper_project_screening_report" not in rows
+    assert "strategy_cycle_cost_aware_reports" not in rows
     assert "strategy_cycle_screening_report" in rows
     assert rows["strategy_cycle_screening_report"].status == "pass"
     assert rows["strategy_cycle_screening_report"].item_count == 1
     assert rows["strategy_cycle_screening_report"].reason_codes == (
         "screening_ready_candidates",
     )
+    assert all(row.flags[:3] == SAFETY_FLAGS for row in rows.values())
+
+
+def test_strategy_cycle_snapshot_source_uses_rich_cost_aware_artifacts_when_available():
+    screening_report = _screening_report()
+    cycle_report = _cycle_report(
+        scan_market_count=2,
+        considered_count=1,
+        snapshot_ready_count=1,
+        cost_aware_report_count=1,
+        blocked_counts=(),
+        screening_report=screening_report,
+        cost_aware_reports=(_cost_aware_report("alpha-market"),),
+    )
+
+    snapshot = _build_strategy_cycle_snapshot_source_report(cycle_report)
+
+    assert (
+        tuple(stage.stage_name for stage in snapshot.pipeline_report.stages)
+        == PIPELINE_STAGE_NAMES
+    )
+    rows = _row_by_name(snapshot)
+    assert tuple(rows) == (
+        "strategy_cycle_blocked_counts",
+        "strategy_cycle_cost_aware_reports",
+        "strategy_cycle_screening_report",
+    )
+    cost_aware_row = rows["strategy_cycle_cost_aware_reports"]
+    assert cost_aware_row.status == "pass"
+    assert cost_aware_row.item_count == 1
+    assert cost_aware_row.reason_codes == ("cost_aware_paper_review_ready",)
+    assert snapshot.artifact_count == 3
+    assert snapshot.final_status == "pass"
     assert all(row.flags[:3] == SAFETY_FLAGS for row in rows.values())
 
 

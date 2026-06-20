@@ -46,6 +46,7 @@ ALLOWED_IMPORT_MODULES = {
     "polymarket_alpha_lab.paper_recommendation_cycle_snapshot",
     "polymarket_alpha_lab.paper_recommendation_cycle_snapshot_db_row",
     "polymarket_alpha_lab.paper_recommendation_pipeline",
+    "polymarket_alpha_lab.strategy_cycle_recommendation_artifact_source",
 }
 
 FORBIDDEN_IMPORT_PREFIXES = {

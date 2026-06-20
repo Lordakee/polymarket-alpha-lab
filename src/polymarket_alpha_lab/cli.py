@@ -60,6 +60,10 @@ from polymarket_alpha_lab.paper_recommendation_cycle_snapshot_psycopg import (
 from polymarket_alpha_lab.paper_recommendation_cycle_snapshot_trend import (
     build_paper_recommendation_cycle_snapshot_trend_report,
 )
+from polymarket_alpha_lab.paper_recommendation_cycle_review import (
+    PaperRecommendationCycleReviewConfig,
+    build_paper_recommendation_cycle_review_report,
+)
 from polymarket_alpha_lab.performance_summary import (
     PerformanceSummary,
     PerformanceSummaryConfig,
@@ -137,6 +141,7 @@ ObservabilityTrendsRunner = Callable[..., LocalObservabilityTrendsReport]
 CycleSnapshotSource = Callable[..., object]
 CycleSnapshotDbSink = Callable[..., object]
 CycleSnapshotDbTrendRunner = Callable[..., object]
+CycleSnapshotDbReviewRunner = Callable[..., object]
 _MISSING = object()
 
 
@@ -238,6 +243,7 @@ def main(
         insert_paper_recommendation_cycle_snapshot_with_psycopg
     ),
     cycle_snapshot_db_trend_runner: CycleSnapshotDbTrendRunner | None = None,
+    cycle_snapshot_db_review_runner: CycleSnapshotDbReviewRunner | None = None,
 ) -> int:
     parser = argparse.ArgumentParser(prog="polymarket-alpha-lab")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -475,6 +481,22 @@ def main(
         dest="source_config_version",
     )
     cycle_snapshot_db_trend.add_argument("--limit", type=int, default=50)
+
+    cycle_snapshot_review = subparsers.add_parser(
+        "paper-recommendation-cycle-review",
+    )
+    cycle_snapshot_review.add_argument(
+        "--source-config-version",
+        default=None,
+        dest="source_config_version",
+    )
+    cycle_snapshot_review.add_argument("--limit", type=int, default=50)
+    cycle_snapshot_review.add_argument(
+        "--stale-after-hours",
+        type=Decimal,
+        default=Decimal("6.000000"),
+        dest="stale_after_hours",
+    )
 
     # Stage 17 market search: search Polymarket markets by keyword.
     search_parser = subparsers.add_parser("search")
@@ -854,6 +876,23 @@ def main(
             return 0
         except Exception as exc:
             print(f"cycle-snapshot-db-trend failed: {exc}", file=sys.stderr)
+            return 1
+
+    if args.command == "paper-recommendation-cycle-review":
+        try:
+            report = _run_cycle_snapshot_db_review(
+                source_config_version=args.source_config_version,
+                limit=args.limit,
+                stale_after_hours=args.stale_after_hours,
+                runner=cycle_snapshot_db_review_runner,
+            )
+            _print_cycle_snapshot_db_review_summary(report)
+            return 0
+        except Exception as exc:
+            print(
+                f"paper-recommendation-cycle-review failed: {exc}",
+                file=sys.stderr,
+            )
             return 1
 
     if args.command == "run":
@@ -1272,6 +1311,55 @@ def _run_cycle_snapshot_db_trend(
         generated_at=generated_at,
         config_version=config_version,
         snapshots=tuple(reversed(snapshots)),
+    )
+
+
+def _run_cycle_snapshot_db_review(
+    *,
+    source_config_version: str | None,
+    limit: int,
+    stale_after_hours: Decimal,
+    runner: CycleSnapshotDbReviewRunner | None,
+) -> object:
+    if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+        raise ValueError("limit must be a positive integer")
+    db_config = from_cycle_snapshot_db_env()
+    if not db_config.enabled:
+        raise ValueError(
+            "paper-recommendation-cycle-review requires cycle snapshot DB to be enabled",
+        )
+    if db_config.dsn is None:
+        raise ValueError("paper-recommendation-cycle-review requires a DB DSN")
+    generated_at = datetime.now(UTC)
+    config = PaperRecommendationCycleReviewConfig(
+        config_version="paper-recommendation-cycle-review-v0",
+        stale_after_hours=stale_after_hours.quantize(Decimal("0.000001")),
+    )
+    if runner is not None:
+        try:
+            return runner(
+                dsn=db_config.dsn,
+                generated_at=generated_at,
+                config=config,
+                source_config_version=source_config_version,
+                limit=limit,
+                table_name=db_config.table_name,
+            )
+        except Exception as exc:
+            _raise_redacted_db_sink_error(exc, dsn=db_config.dsn)
+    try:
+        snapshots = load_paper_recommendation_cycle_snapshots_with_psycopg(
+            db_config.dsn,
+            config_version=source_config_version,
+            limit=limit,
+            table_name=db_config.table_name,
+        )
+    except Exception as exc:
+        _raise_redacted_db_sink_error(exc, dsn=db_config.dsn)
+    return build_paper_recommendation_cycle_review_report(
+        tuple(reversed(snapshots)),
+        config=config,
+        generated_at=generated_at,
     )
 
 
@@ -1943,6 +2031,28 @@ def _print_cycle_snapshot_db_trend_summary(report: object) -> None:
         f"watch_share={report.watch_share} "
         f"avg_stage_count={report.average_stage_count} "
         f"avg_artifact_count={report.average_artifact_count}",
+    )
+
+
+def _print_cycle_snapshot_db_review_summary(report: object) -> None:
+    reason_code_counts = ",".join(
+        f"{row.reason_code}:{row.count}" for row in report.reason_code_counts
+    )
+    print(
+        "paper-recommendation-cycle-review: "
+        f"snapshots={report.snapshot_count} "
+        f"pass={report.pass_snapshot_count} "
+        f"watch={report.watch_snapshot_count} "
+        f"blocked={report.blocked_snapshot_count} "
+        f"latest_status={_none_or_value(report.latest_final_status)} "
+        f"latest_generated_at={_iso_or_none(report.latest_generated_at)} "
+        f"blocked_artifacts={report.blocked_artifact_count} "
+        f"watch_artifacts={report.watch_artifact_count} "
+        f"missing_required_artifacts="
+        f"{_csv_or_none(report.missing_required_artifact_names)} "
+        f"reason_codes={reason_code_counts or 'none'} "
+        f"review_status={report.review_status} "
+        f"stale_history={report.stale_history}",
     )
 
 

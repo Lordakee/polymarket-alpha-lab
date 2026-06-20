@@ -2,11 +2,12 @@
 
 This page documents the paper recommendation cycle snapshot,
 Supabase/Postgres-first persistence, and trend layer. The layer is paper-only,
-report-only, and readonly. It
-summarizes already-built local paper reports; it does not fetch market data,
-read accounts, read wallets or private keys, authenticate, sign payloads,
-construct exchange orders, place orders, cancel orders, mutate clients, mutate
-networks, or provide trade instructions or financial advice.
+report-only, and read-only/readonly. The phase boundary is explicit:
+paper-only/report-only/read-only. It summarizes already-built local paper
+reports; it does not fetch market data, perform live trading, authenticate,
+read accounts, mutate accounts, read wallets or private keys, sign payloads,
+construct exchange orders, submit orders, place orders, cancel orders, mutate
+clients, mutate networks, or provide trade instructions or financial advice.
 
 A snapshot, persisted snapshot row, optional JSONL debug row, trend status,
 reason code, artifact status, or blocked/watch/pass result is a local report
@@ -14,6 +15,10 @@ artifact only. It may help future paper-review workflows understand whether a
 paper cycle was complete, consistent, cost-aware, and ready for human
 inspection, but it is not an approval workflow, live execution signal, or
 exchange-facing payload.
+
+A DB-backed review or trend CLI is observability over persisted paper evidence.
+It is not approval, execution, order management, live account review, or
+permission to move from paper reports into exchange-facing behavior.
 
 ## Purpose
 
@@ -43,18 +48,25 @@ status rules.
 
 ## Placement
 
-The snapshot layer fits after the paper recommendation pipeline and artifact
-index:
+The DB-backed review path starts with the strategy cycle and keeps each later
+step inside the paper-report boundary:
 
 ```text
-paper recommendation reducers
--> pipeline report
--> artifact index report
--> cycle snapshot report
--> DB-first Supabase/Postgres snapshot persistence
--> optional non-primary JSONL export/debug artifact
--> readonly snapshot trend report
+strategy cycle
+-> rich paper recommendation artifacts
+-> artifact index + pipeline report
+-> cycle snapshot
+-> Supabase/Postgres persistence
+-> DB-backed review/trend CLI
 ```
+
+The strategy cycle answers: "Which local paper reports were produced for this
+cycle, including cost-aware and screening evidence that was already available
+in memory?"
+
+The rich paper recommendation artifacts answer: "Which paper-only/report-only
+recommendation, cost, readiness, queue, allocation, research, manifest,
+consistency, health, and bundle reports should be indexed for this cycle?"
 
 The pipeline report answers: "Did each supplied reducer stage finish as
 `pass`, `watch`, or `blocked`?"
@@ -69,15 +81,21 @@ rollup with the artifact index?"
 
 The persistence layer answers: "Which already-built snapshots were durably
 recorded in the local Supabase/Postgres store for later readonly inspection?"
+This is local Supabase/Postgres persistence at a high level only; documents,
+logs, and CLI output should not include real DSNs, passwords, tokens, service
+keys, wallet material, or other secrets.
 
-The optional JSONL export/debug artifact answers: "Which already-built
-snapshots were copied to a local text format for diagnostics or portability?"
-It is not the primary store and should not become the source of truth for normal
-trend or history reads.
+The DB-backed review/trend CLI answers: "Across persisted local paper
+snapshots, how often did the paper cycle pass, watch, or block, what is the
+latest status, whether blocker pressure is increasing, and which reason codes
+or required artifacts explain the trend?" It must load persisted snapshot
+history only for read-only observability and must not approve, submit, cancel,
+sign, allocate real capital, read accounts, mutate accounts, or construct order
+payloads.
 
-The trend answers: "Across supplied historical snapshots or compatible cycle
-reports, how often did the paper cycle pass, watch, or block, what is the
-latest status, and whether blocker pressure is increasing."
+Optional JSONL export/debug may still exist after persistence as a non-primary
+diagnostic copy, but it is outside the required DB-backed review path and
+should not become the source of truth for normal trend or history reads.
 
 ## Snapshot Contract
 

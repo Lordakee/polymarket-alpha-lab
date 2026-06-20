@@ -12,6 +12,7 @@ from polymarket_alpha_lab.book_imbalance_forecast import (
 from polymarket_alpha_lab.cost_aware_event_strategy import (
     PaperCostAwareEventCostAssumptions,
     PaperCostAwareEventStrategyConfig,
+    PaperCostAwareEventStrategyReport,
 )
 from polymarket_alpha_lab.cost_aware_snapshot_builder import PaperCostAwareSnapshotConfig
 from polymarket_alpha_lab.forecast_provider import PaperForecastConfig
@@ -419,6 +420,38 @@ def test_strategy_cycle_report_is_frozen_and_revalidates_report_flags(tmp_path):
         replace(report, paper_only=False)
     with pytest.raises(ValueError, match="report_only"):
         replace(report, report_only=False)
+
+
+def test_strategy_cycle_report_exposes_cost_aware_evidence_for_snapshot_adapters(tmp_path):
+    market, books = _screening_ready_market_and_books()
+    client = FakeMarketDataClient([market], books)
+
+    report = run_cycle(client, tmp_path)
+
+    assert isinstance(report.cost_aware_reports, tuple)
+    assert len(report.cost_aware_reports) == report.cost_aware_report_count
+    assert report.cost_aware_report_count > 0
+    assert report.screening_report is not None
+    assert report.screening_report.paper_only is True
+    assert report.screening_report.report_only is True
+    for cost_aware_report in report.cost_aware_reports:
+        assert type(cost_aware_report) is PaperCostAwareEventStrategyReport
+        assert cost_aware_report.paper_only is True
+        assert cost_aware_report.report_only is True
+
+    tampered_paper_report = report.cost_aware_reports[0]
+    object.__setattr__(tampered_paper_report, "paper_only", False)
+    with pytest.raises(ValueError, match="cost_aware_reports"):
+        replace(report, cost_aware_reports=(object(),))
+    with pytest.raises(ValueError, match="paper_only"):
+        replace(report, cost_aware_reports=(tampered_paper_report,))
+    object.__setattr__(tampered_paper_report, "paper_only", True)
+
+    tampered_report_only_report = report.cost_aware_reports[0]
+    object.__setattr__(tampered_report_only_report, "report_only", False)
+    with pytest.raises(ValueError, match="report_only"):
+        replace(report, cost_aware_reports=(tampered_report_only_report,))
+    object.__setattr__(tampered_report_only_report, "report_only", True)
 
 
 def test_strategy_cycle_log_appends_jsonl_decimal_strings_and_preserves_file(tmp_path):
