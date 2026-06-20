@@ -85,6 +85,14 @@ from polymarket_alpha_lab.paper_strategy_selection_policy import (
 from polymarket_alpha_lab.strategy_cycle_snapshot_source import (
     build_strategy_cycle_snapshot_source_report,
 )
+from polymarket_alpha_lab.strategy_cycle_action_gated_queue_source import (
+    build_strategy_cycle_action_gated_queue_source_report,
+)
+from polymarket_alpha_lab.supabase_action_gated_strategy_recommendation_queue_config import (
+    ACTION_GATED_QUEUE_DB_DSN_ENV_VAR,
+    ACTION_GATED_QUEUE_DB_ENABLED_ENV_VAR,
+    ACTION_GATED_QUEUE_DB_TABLE_ENV_VAR,
+)
 from polymarket_alpha_lab.supabase_outcome_tracking_config import (
     OUTCOME_TRACKING_DB_DSN_ENV_VAR,
     OUTCOME_TRACKING_DB_ENABLED_ENV_VAR,
@@ -3960,6 +3968,8 @@ def test_run_cli_builds_loop_call_single_shot(tmp_path, capsys):
                          nav_log_path, cycle_report_log_path, repeat_mode,
                          interval_seconds, max_iterations,
                          cycle_snapshot_source=None, cycle_snapshot_sink=None,
+                         action_gated_queue_source=None,
+                         action_gated_queue_sink=None,
                          paper_trade_record_sink=None, nav_snapshot_sink=None):
         calls.append(
             {
@@ -3974,6 +3984,8 @@ def test_run_cli_builds_loop_call_single_shot(tmp_path, capsys):
                 "max_iterations": max_iterations,
                 "cycle_snapshot_source": cycle_snapshot_source,
                 "cycle_snapshot_sink": cycle_snapshot_sink,
+                "action_gated_queue_source": action_gated_queue_source,
+                "action_gated_queue_sink": action_gated_queue_sink,
                 "paper_trade_record_sink": paper_trade_record_sink,
                 "nav_snapshot_sink": nav_snapshot_sink,
             }
@@ -4024,6 +4036,8 @@ def test_run_cli_builds_loop_call_single_shot(tmp_path, capsys):
     assert call["max_iterations"] == 1
     assert call["cycle_snapshot_source"] is None
     assert call["cycle_snapshot_sink"] is None
+    assert call["action_gated_queue_source"] is None
+    assert call["action_gated_queue_sink"] is None
     assert call["paper_trade_record_sink"] is None
     assert call["nav_snapshot_sink"] is None
 
@@ -4040,6 +4054,8 @@ def test_run_cli_maps_positive_repeat_interval_to_interval_mode(tmp_path):
                          nav_log_path, cycle_report_log_path, repeat_mode,
                          interval_seconds, max_iterations,
                          cycle_snapshot_source=None, cycle_snapshot_sink=None,
+                         action_gated_queue_source=None,
+                         action_gated_queue_sink=None,
                          paper_trade_record_sink=None, nav_snapshot_sink=None):
         calls.append(
             {
@@ -4048,6 +4064,8 @@ def test_run_cli_maps_positive_repeat_interval_to_interval_mode(tmp_path):
                 "max_iterations": max_iterations,
                 "cycle_snapshot_source": cycle_snapshot_source,
                 "cycle_snapshot_sink": cycle_snapshot_sink,
+                "action_gated_queue_source": action_gated_queue_source,
+                "action_gated_queue_sink": action_gated_queue_sink,
                 "paper_trade_record_sink": paper_trade_record_sink,
                 "nav_snapshot_sink": nav_snapshot_sink,
             }
@@ -4080,6 +4098,8 @@ def test_run_cli_maps_positive_repeat_interval_to_interval_mode(tmp_path):
             "max_iterations": 10,
             "cycle_snapshot_source": None,
             "cycle_snapshot_sink": None,
+            "action_gated_queue_source": None,
+            "action_gated_queue_sink": None,
             "paper_trade_record_sink": None,
             "nav_snapshot_sink": None,
         },
@@ -4093,6 +4113,8 @@ def test_run_cli_paper_execute_flag_enables_inline_paper_pass(tmp_path):
                          nav_log_path, cycle_report_log_path, repeat_mode,
                          interval_seconds, max_iterations,
                          cycle_snapshot_source=None, cycle_snapshot_sink=None,
+                         action_gated_queue_source=None,
+                         action_gated_queue_sink=None,
                          paper_trade_record_sink=None, nav_snapshot_sink=None):
         calls.append(cycle_config)
         return _empty_run_summary()
@@ -4134,6 +4156,9 @@ def test_run_cli_leaves_cycle_snapshot_db_disabled_by_default(
     monkeypatch.delenv(PAPER_TRADE_JOURNAL_DB_DSN_ENV_VAR, raising=False)
     monkeypatch.delenv(PAPER_NAV_SNAPSHOT_DB_ENABLED_ENV_VAR, raising=False)
     monkeypatch.delenv(PAPER_NAV_SNAPSHOT_DB_DSN_ENV_VAR, raising=False)
+    monkeypatch.delenv(ACTION_GATED_QUEUE_DB_ENABLED_ENV_VAR, raising=False)
+    monkeypatch.delenv(ACTION_GATED_QUEUE_DB_DSN_ENV_VAR, raising=False)
+    monkeypatch.delenv(ACTION_GATED_QUEUE_DB_TABLE_ENV_VAR, raising=False)
     calls = []
 
     def fake_loop_runner(**kwargs):
@@ -4158,8 +4183,43 @@ def test_run_cli_leaves_cycle_snapshot_db_disabled_by_default(
     assert len(calls) == 1
     assert calls[0]["cycle_snapshot_source"] is None
     assert calls[0]["cycle_snapshot_sink"] is None
+    assert "action_gated_queue_source" not in calls[0]
+    assert "action_gated_queue_sink" not in calls[0]
     assert calls[0]["paper_trade_record_sink"] is None
     assert calls[0]["nav_snapshot_sink"] is None
+
+
+def test_run_cli_leaves_action_gated_queue_db_disabled_by_default(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.delenv(ACTION_GATED_QUEUE_DB_ENABLED_ENV_VAR, raising=False)
+    monkeypatch.delenv(ACTION_GATED_QUEUE_DB_DSN_ENV_VAR, raising=False)
+    monkeypatch.delenv(ACTION_GATED_QUEUE_DB_TABLE_ENV_VAR, raising=False)
+    calls = []
+
+    def fake_loop_runner(**kwargs):
+        calls.append(kwargs)
+        return _empty_run_summary()
+
+    exit_code = main(
+        [
+            "run",
+            "--archive-root",
+            str(tmp_path / "raw"),
+            "--starting-cash",
+            "10000",
+            "--cycle-log",
+            str(tmp_path / "cycle.jsonl"),
+        ],
+        loop_runner=fake_loop_runner,
+        client_factory=lambda: "fake-client",
+    )
+
+    assert exit_code == 0
+    assert len(calls) == 1
+    assert "action_gated_queue_source" not in calls[0]
+    assert "action_gated_queue_sink" not in calls[0]
 
 
 def test_run_cli_wires_paper_trade_and_nav_db_sinks_when_env_enabled(
@@ -4239,6 +4299,219 @@ def test_run_cli_wires_paper_trade_and_nav_db_sinks_when_env_enabled(
     assert trade_dsn not in captured.err
     assert nav_dsn not in captured.out
     assert nav_dsn not in captured.err
+
+
+def test_run_cli_wires_action_gated_queue_db_sink_when_env_enabled(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    action_gated_dsn = "postgresql://action-gated.example.invalid/db"
+    monkeypatch.setenv(ACTION_GATED_QUEUE_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(ACTION_GATED_QUEUE_DB_DSN_ENV_VAR, action_gated_dsn)
+    monkeypatch.setenv(
+        ACTION_GATED_QUEUE_DB_TABLE_ENV_VAR,
+        "action_gated_queue_archive",
+    )
+    queue_report = SimpleNamespace(paper_only=True, report_only=True, readonly=True)
+    sink_calls = []
+    loop_calls = []
+
+    def fake_loop_runner(**kwargs):
+        loop_calls.append(kwargs)
+        assert kwargs["action_gated_queue_source"] is fake_action_gated_queue_source
+        assert kwargs["action_gated_queue_sink"] is not None
+        report = kwargs["action_gated_queue_source"](
+            cycle_report=object(),
+            iteration_started_at=datetime(2026, 6, 20, 12, 0, tzinfo=UTC),
+        )
+        kwargs["action_gated_queue_sink"](report)
+        return RunLoopSummary(
+            iterations_completed=1,
+            iterations_failed=0,
+            first_iteration_at=datetime(2026, 6, 20, 12, 0, tzinfo=UTC),
+            last_iteration_at=datetime(2026, 6, 20, 12, 0, tzinfo=UTC),
+            last_error=None,
+            action_gated_queues_persisted=1,
+        )
+
+    def fake_action_gated_queue_source(*, cycle_report, iteration_started_at):
+        return queue_report
+
+    def fake_action_gated_queue_db_sink(*, dsn, report, table_name):
+        sink_calls.append((dsn, report, table_name))
+
+    exit_code = main(
+        [
+            "run",
+            "--archive-root",
+            str(tmp_path / "raw"),
+            "--starting-cash",
+            "10000",
+            "--cycle-log",
+            str(tmp_path / "cycle.jsonl"),
+        ],
+        loop_runner=fake_loop_runner,
+        client_factory=lambda: "fake-client",
+        action_gated_queue_source=fake_action_gated_queue_source,
+        action_gated_queue_db_sink=fake_action_gated_queue_db_sink,
+    )
+
+    assert exit_code == 0
+    assert len(loop_calls) == 1
+    assert sink_calls == [
+        (
+            action_gated_dsn,
+            queue_report,
+            "action_gated_queue_archive",
+        ),
+    ]
+    captured = capsys.readouterr()
+    assert "action_gated_queues_persisted=1" in captured.out
+    assert action_gated_dsn not in captured.out
+    assert action_gated_dsn not in captured.err
+
+
+def test_run_cli_uses_default_action_gated_queue_source_when_db_enabled_without_injection(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv(ACTION_GATED_QUEUE_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(ACTION_GATED_QUEUE_DB_DSN_ENV_VAR, "test-action-gated-dsn")
+    monkeypatch.setenv(
+        ACTION_GATED_QUEUE_DB_TABLE_ENV_VAR,
+        "action_gated_queue_archive",
+    )
+    calls = []
+
+    def fake_loop_runner(**kwargs):
+        calls.append(kwargs)
+        assert (
+            kwargs["action_gated_queue_source"]
+            is build_strategy_cycle_action_gated_queue_source_report
+        )
+        assert kwargs["action_gated_queue_sink"] is not None
+        return _empty_run_summary()
+
+    exit_code = main(
+        [
+            "run",
+            "--archive-root",
+            str(tmp_path / "raw"),
+            "--starting-cash",
+            "10000",
+            "--cycle-log",
+            str(tmp_path / "cycle.jsonl"),
+        ],
+        loop_runner=fake_loop_runner,
+        client_factory=lambda: "fake-client",
+        action_gated_queue_db_sink=lambda **kwargs: None,
+    )
+
+    assert exit_code == 0
+    assert len(calls) == 1
+
+
+def test_run_cli_redacts_dsn_when_action_gated_queue_db_sink_failure_is_reported(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    action_gated_dsn = "postgresql://action-gated.example.invalid/db"
+    monkeypatch.setenv(ACTION_GATED_QUEUE_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(ACTION_GATED_QUEUE_DB_DSN_ENV_VAR, action_gated_dsn)
+    queue_report = SimpleNamespace(paper_only=True, report_only=True, readonly=True)
+
+    def fake_loop_runner(**kwargs):
+        assert kwargs["action_gated_queue_sink"] is not None
+        try:
+            kwargs["action_gated_queue_sink"](queue_report)
+        except Exception as exc:
+            return RunLoopSummary(
+                iterations_completed=0,
+                iterations_failed=1,
+                first_iteration_at=datetime(2026, 6, 20, 12, 0, tzinfo=UTC),
+                last_iteration_at=datetime(2026, 6, 20, 12, 0, tzinfo=UTC),
+                last_error=f"{type(exc).__name__}: {exc}",
+            )
+        raise AssertionError("sink should fail")
+
+    def broken_action_gated_queue_db_sink(*, dsn, report, table_name):
+        raise RuntimeError(f"could not connect to {dsn}")
+
+    exit_code = main(
+        [
+            "run",
+            "--archive-root",
+            str(tmp_path / "raw"),
+            "--starting-cash",
+            "10000",
+            "--cycle-log",
+            str(tmp_path / "cycle.jsonl"),
+        ],
+        loop_runner=fake_loop_runner,
+        client_factory=lambda: "fake-client",
+        action_gated_queue_db_sink=broken_action_gated_queue_db_sink,
+    )
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    assert action_gated_dsn not in captured.out
+    assert action_gated_dsn not in captured.err
+    assert "last_error=RuntimeError: could not connect to <redacted-dsn>" in (
+        captured.out
+    )
+
+
+def test_run_cli_prints_action_gated_queue_persisted_summary_when_present(
+    tmp_path,
+    capsys,
+):
+    def fake_loop_runner(**kwargs):
+        return RunLoopSummary(
+            iterations_completed=2,
+            iterations_failed=0,
+            first_iteration_at=datetime(2026, 6, 20, 12, 0, tzinfo=UTC),
+            last_iteration_at=datetime(2026, 6, 20, 13, 0, tzinfo=UTC),
+            last_error=None,
+            action_gated_queues_persisted=2,
+        )
+
+    exit_code = main(
+        [
+            "run",
+            "--archive-root",
+            str(tmp_path / "raw"),
+            "--starting-cash",
+            "10000",
+            "--cycle-log",
+            str(tmp_path / "cycle.jsonl"),
+        ],
+        loop_runner=fake_loop_runner,
+        client_factory=lambda: "fake-client",
+    )
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    assert "action_gated_queues_persisted=2" in captured.out
+
+
+def test_run_cli_rejects_action_gated_queue_dsn_flag(tmp_path):
+    with pytest.raises(SystemExit):
+        main(
+            [
+                "run",
+                "--archive-root",
+                str(tmp_path / "raw"),
+                "--starting-cash",
+                "10000",
+                "--cycle-log",
+                str(tmp_path / "cycle.jsonl"),
+                "--action-gated-queue-db-dsn",
+                "forbidden-value",
+            ],
+            client_factory=lambda: "fake-client",
+        )
 
 
 def test_run_cli_redacts_dsn_when_paper_trade_db_sink_failure_is_reported(
@@ -4757,6 +5030,8 @@ def test_run_cli_returns_one_when_loop_runner_fails(tmp_path, capsys):
                            nav_log_path, cycle_report_log_path, repeat_mode,
                            interval_seconds, max_iterations,
                            cycle_snapshot_source=None, cycle_snapshot_sink=None,
+                           action_gated_queue_source=None,
+                           action_gated_queue_sink=None,
                            paper_trade_record_sink=None, nav_snapshot_sink=None):
         raise RuntimeError("loop failed")
 
@@ -4784,6 +5059,8 @@ def test_run_cli_prints_last_error_when_iterations_failed(tmp_path, capsys):
                             nav_log_path, cycle_report_log_path, repeat_mode,
                             interval_seconds, max_iterations,
                             cycle_snapshot_source=None, cycle_snapshot_sink=None,
+                            action_gated_queue_source=None,
+                            action_gated_queue_sink=None,
                             paper_trade_record_sink=None, nav_snapshot_sink=None):
         return RunLoopSummary(
             iterations_completed=2,

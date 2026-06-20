@@ -122,6 +122,15 @@ class CycleSnapshotShape:
     readonly: bool = True
 
 
+@dataclass(frozen=True)
+class ActionGatedQueueShape:
+    generated_at: datetime
+    config_version: str = "action-gated-queue-test-v0"
+    paper_only: bool = True
+    report_only: bool = True
+    readonly: bool = True
+
+
 def _screening_ready_market_and_books():
     """Binary market whose NO side yields a screening_ready candidate.
 
@@ -863,6 +872,224 @@ def test_cycle_report_log_is_appended_before_cycle_snapshot_sink_failure(tmp_pat
     assert len(PaperStrategyCycleLog.read(cycle_log)) == 1
 
 
+def test_action_gated_queue_source_and_sink_run_once_per_completed_iteration(tmp_path):
+    market, books = _screening_ready_market_and_books()
+    source_calls = []
+    sink_calls = []
+
+    def action_gated_queue_source(*, cycle_report, iteration_started_at):
+        source_calls.append((cycle_report, iteration_started_at))
+        return ActionGatedQueueShape(generated_at=iteration_started_at)
+
+    def action_gated_queue_sink(report):
+        sink_calls.append(report)
+
+    with patch("polymarket_alpha_lab.runner.time.sleep"):
+        summary = run_strategy_loop(
+            client=FakeMarketDataClient([market], books),
+            scan_config=scan_config(tmp_path),
+            cycle_config=cycle_config(),
+            starting_cash=Decimal("10000"),
+            nav_log_path=tmp_path / "nav.jsonl",
+            cycle_report_log_path=tmp_path / "cycle.jsonl",
+            repeat_mode="interval",
+            interval_seconds=0,
+            max_iterations=2,
+            action_gated_queue_source=action_gated_queue_source,
+            action_gated_queue_sink=action_gated_queue_sink,
+        )
+
+    assert summary.iterations_completed == 2
+    assert summary.iterations_failed == 0
+    assert summary.action_gated_queues_persisted == 2
+    assert len(source_calls) == 2
+    assert len(sink_calls) == 2
+    assert all(report.paper_only is True for report in sink_calls)
+    assert all(report.report_only is True for report in sink_calls)
+    assert all(report.readonly is True for report in sink_calls)
+
+
+def test_action_gated_queue_sink_is_inert_without_source(tmp_path):
+    market, books = _screening_ready_market_and_books()
+    sink_calls = []
+
+    summary = run_strategy_loop(
+        client=FakeMarketDataClient([market], books),
+        scan_config=scan_config(tmp_path),
+        cycle_config=cycle_config(),
+        starting_cash=Decimal("10000"),
+        nav_log_path=tmp_path / "nav.jsonl",
+        cycle_report_log_path=tmp_path / "cycle.jsonl",
+        action_gated_queue_sink=lambda report: sink_calls.append(report),
+    )
+
+    assert summary.iterations_completed == 1
+    assert summary.action_gated_queues_persisted == 0
+    assert sink_calls == []
+
+
+def test_action_gated_queue_source_is_inert_without_sink(tmp_path):
+    market, books = _screening_ready_market_and_books()
+    source_calls = []
+
+    def action_gated_queue_source(*, cycle_report, iteration_started_at):
+        source_calls.append((cycle_report, iteration_started_at))
+        return ActionGatedQueueShape(generated_at=iteration_started_at)
+
+    summary = run_strategy_loop(
+        client=FakeMarketDataClient([market], books),
+        scan_config=scan_config(tmp_path),
+        cycle_config=cycle_config(),
+        starting_cash=Decimal("10000"),
+        nav_log_path=tmp_path / "nav.jsonl",
+        cycle_report_log_path=tmp_path / "cycle.jsonl",
+        action_gated_queue_source=action_gated_queue_source,
+    )
+
+    assert summary.iterations_completed == 1
+    assert summary.action_gated_queues_persisted == 0
+    assert source_calls == []
+
+
+def test_action_gated_queue_source_failure_counts_as_iteration_failure(tmp_path):
+    market, books = _screening_ready_market_and_books()
+    sink_calls = []
+
+    def broken_action_gated_queue_source(*, cycle_report, iteration_started_at):
+        raise RuntimeError("queue source unavailable")
+
+    summary = run_strategy_loop(
+        client=FakeMarketDataClient([market], books),
+        scan_config=scan_config(tmp_path),
+        cycle_config=cycle_config(),
+        starting_cash=Decimal("10000"),
+        nav_log_path=tmp_path / "nav.jsonl",
+        cycle_report_log_path=tmp_path / "cycle.jsonl",
+        action_gated_queue_source=broken_action_gated_queue_source,
+        action_gated_queue_sink=lambda report: sink_calls.append(report),
+        on_cycle_error="log_and_continue",
+    )
+
+    assert summary.iterations_completed == 0
+    assert summary.iterations_failed == 1
+    assert summary.action_gated_queues_persisted == 0
+    assert summary.last_error == "RuntimeError: queue source unavailable"
+    assert sink_calls == []
+
+
+def test_action_gated_queue_sink_failure_counts_as_iteration_failure(tmp_path):
+    market, books = _screening_ready_market_and_books()
+
+    def action_gated_queue_source(*, cycle_report, iteration_started_at):
+        return ActionGatedQueueShape(generated_at=iteration_started_at)
+
+    def broken_action_gated_queue_sink(report):
+        raise RuntimeError("queue db unavailable")
+
+    summary = run_strategy_loop(
+        client=FakeMarketDataClient([market], books),
+        scan_config=scan_config(tmp_path),
+        cycle_config=cycle_config(),
+        starting_cash=Decimal("10000"),
+        nav_log_path=tmp_path / "nav.jsonl",
+        cycle_report_log_path=tmp_path / "cycle.jsonl",
+        action_gated_queue_source=action_gated_queue_source,
+        action_gated_queue_sink=broken_action_gated_queue_sink,
+        on_cycle_error="log_and_continue",
+    )
+
+    assert summary.iterations_completed == 0
+    assert summary.iterations_failed == 1
+    assert summary.action_gated_queues_persisted == 0
+    assert summary.last_error == "RuntimeError: queue db unavailable"
+
+
+def test_cycle_report_log_is_appended_before_action_gated_queue_sink_failure(tmp_path):
+    market, books = _screening_ready_market_and_books()
+    cycle_log = tmp_path / "cycle.jsonl"
+
+    def action_gated_queue_source(*, cycle_report, iteration_started_at):
+        return ActionGatedQueueShape(generated_at=iteration_started_at)
+
+    def broken_action_gated_queue_sink(report):
+        assert len(PaperStrategyCycleLog.read(cycle_log)) == 1
+        raise RuntimeError("queue db unavailable")
+
+    summary = run_strategy_loop(
+        client=FakeMarketDataClient([market], books),
+        scan_config=scan_config(tmp_path),
+        cycle_config=cycle_config(),
+        starting_cash=Decimal("10000"),
+        nav_log_path=tmp_path / "nav.jsonl",
+        cycle_report_log_path=cycle_log,
+        action_gated_queue_source=action_gated_queue_source,
+        action_gated_queue_sink=broken_action_gated_queue_sink,
+        on_cycle_error="log_and_continue",
+    )
+
+    assert summary.iterations_completed == 0
+    assert summary.iterations_failed == 1
+    assert summary.action_gated_queues_persisted == 0
+    assert summary.last_error == "RuntimeError: queue db unavailable"
+    assert len(PaperStrategyCycleLog.read(cycle_log)) == 1
+
+
+@pytest.mark.parametrize(
+    ("unsafe_report", "message"),
+    (
+        (
+            ActionGatedQueueShape(
+                generated_at=datetime(2026, 6, 16, 12, 0, tzinfo=UTC),
+                paper_only=False,
+            ),
+            "action-gated queue report must be paper_only",
+        ),
+        (
+            ActionGatedQueueShape(
+                generated_at=datetime(2026, 6, 16, 12, 0, tzinfo=UTC),
+                report_only=False,
+            ),
+            "action-gated queue report must be report_only",
+        ),
+        (
+            ActionGatedQueueShape(
+                generated_at=datetime(2026, 6, 16, 12, 0, tzinfo=UTC),
+                readonly=False,
+            ),
+            "action-gated queue report must be readonly",
+        ),
+    ),
+)
+def test_action_gated_queue_rejects_unsafe_reports(
+    tmp_path,
+    unsafe_report,
+    message,
+):
+    market, books = _screening_ready_market_and_books()
+    sink_calls = []
+
+    def action_gated_queue_source(*, cycle_report, iteration_started_at):
+        return unsafe_report
+
+    summary = run_strategy_loop(
+        client=FakeMarketDataClient([market], books),
+        scan_config=scan_config(tmp_path),
+        cycle_config=cycle_config(),
+        starting_cash=Decimal("10000"),
+        nav_log_path=tmp_path / "nav.jsonl",
+        cycle_report_log_path=tmp_path / "cycle.jsonl",
+        action_gated_queue_source=action_gated_queue_source,
+        action_gated_queue_sink=lambda report: sink_calls.append(report),
+        on_cycle_error="log_and_continue",
+    )
+
+    assert summary.iterations_completed == 0
+    assert summary.iterations_failed == 1
+    assert summary.action_gated_queues_persisted == 0
+    assert summary.last_error == f"ValueError: {message}"
+    assert sink_calls == []
+
+
 @pytest.mark.parametrize(
     ("overrides", "message"),
     (
@@ -889,6 +1116,14 @@ def test_cycle_report_log_is_appended_before_cycle_snapshot_sink_failure(tmp_pat
         (
             {"nav_snapshot_sink": object()},
             "nav_snapshot_sink must be callable or None",
+        ),
+        (
+            {"action_gated_queue_source": object()},
+            "action_gated_queue_source must be callable or None",
+        ),
+        (
+            {"action_gated_queue_sink": object()},
+            "action_gated_queue_sink must be callable or None",
         ),
     ),
 )
@@ -932,6 +1167,25 @@ def test_run_loop_summary_is_frozen_and_enforces_paper_flags():
         summary.iterations_completed = 2  # type: ignore[misc]
     with pytest.raises(FrozenInstanceError):
         summary.last_error = "x"  # type: ignore[misc]
+    assert summary.action_gated_queues_persisted == 0
+
+
+def test_run_loop_summary_preserves_legacy_positional_constructor_shape():
+    summary = RunLoopSummary(
+        1,
+        0,
+        datetime(2026, 6, 16, 12, 0, tzinfo=UTC),
+        datetime(2026, 6, 16, 12, 5, tzinfo=UTC),
+        None,
+        0,
+        0,
+        True,
+        True,
+    )
+
+    assert summary.paper_only is True
+    assert summary.report_only is True
+    assert summary.action_gated_queues_persisted == 0
 
 
 @pytest.mark.parametrize(
@@ -940,6 +1194,10 @@ def test_run_loop_summary_is_frozen_and_enforces_paper_flags():
         ({"iterations_completed": -1}, "iterations_completed|nonnegative"),
         ({"iterations_failed": -1}, "iterations_failed|nonnegative"),
         ({"nav_marks_skipped": -1}, "nav_marks_skipped|nonnegative"),
+        (
+            {"action_gated_queues_persisted": -1},
+            "action_gated_queues_persisted|nonnegative",
+        ),
         (
             {
                 "first_iteration_at": datetime(2026, 6, 16, 12, 5, tzinfo=UTC),

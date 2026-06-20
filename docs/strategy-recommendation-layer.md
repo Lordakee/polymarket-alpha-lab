@@ -114,6 +114,12 @@ process boundary behind default-off environment configuration. Persisted
 are not live trade approvals, order intents, signed payloads, account reads,
 wallet interactions, or exchange mutations.
 
+Runtime action-gated queue persistence is opt-in and env-driven at the CLI
+process boundary. When enabled, it runs only after a paper cycle completes and
+persists the resulting queue report as an audit artifact. A persisted queue row
+does not approve trading, elevate a paper recommendation into an order, or
+authorize any live execution step.
+
 DB-backed trend reporting remains separate readonly observability over
 persisted cycle state. It can summarize blocker/watch movement across stored
 snapshots, but it must not become an approval workflow, execution workflow,

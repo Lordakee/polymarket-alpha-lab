@@ -34,8 +34,8 @@ only (async/scheduler/daemon is a later stage). The output ``RunLoopSummary``
 is paper-only/report-only (``paper_only is True`` / ``report_only is True`` are
 hard-enforced with ``is``).
 
-Optional recommendation cycle snapshot persistence is injected as a source/sink
-pair, so this module never fakes a recommendation snapshot from a
+Optional recommendation cycle snapshot and action-gated queue persistence are
+injected as source/sink pairs, so this module never fakes artifacts from a
 ``PaperStrategyCycleReport`` and never imports DB adapters.
 
 Paper trade record and NAV snapshot persistence use the same boundary: optional
@@ -92,6 +92,7 @@ class RunLoopSummary:
     cycle_snapshots_persisted: int = 0
     paper_only: bool = True
     report_only: bool = True
+    action_gated_queues_persisted: int = 0
 
     def __post_init__(self) -> None:
         _require_nonnegative_int("iterations_completed", self.iterations_completed)
@@ -100,6 +101,10 @@ class RunLoopSummary:
         _require_nonnegative_int(
             "cycle_snapshots_persisted",
             self.cycle_snapshots_persisted,
+        )
+        _require_nonnegative_int(
+            "action_gated_queues_persisted",
+            self.action_gated_queues_persisted,
         )
         if not isinstance(self.first_iteration_at, datetime):
             raise ValueError("first_iteration_at must be a datetime")
@@ -139,6 +144,8 @@ def run_strategy_loop(
     on_cycle_error: str = "log_and_continue",
     cycle_snapshot_source: object | None = None,
     cycle_snapshot_sink: object | None = None,
+    action_gated_queue_source: object | None = None,
+    action_gated_queue_sink: object | None = None,
     paper_trade_record_sink: object | None = None,
     nav_snapshot_sink: object | None = None,
 ) -> RunLoopSummary:
@@ -164,6 +171,7 @@ def run_strategy_loop(
     ``RunLoopSummary`` is paper-only/report-only.
 
     ``cycle_snapshot_source`` / ``cycle_snapshot_sink``,
+    ``action_gated_queue_source`` / ``action_gated_queue_sink``,
     ``paper_trade_record_sink``, and ``nav_snapshot_sink`` are optional injected
     persistence hooks. Sink failures are treated like any other iteration
     failure by the existing ``on_cycle_error`` policy.
@@ -181,6 +189,8 @@ def run_strategy_loop(
         on_cycle_error=on_cycle_error,
         cycle_snapshot_source=cycle_snapshot_source,
         cycle_snapshot_sink=cycle_snapshot_sink,
+        action_gated_queue_source=action_gated_queue_source,
+        action_gated_queue_sink=action_gated_queue_sink,
         paper_trade_record_sink=paper_trade_record_sink,
         nav_snapshot_sink=nav_snapshot_sink,
     )
@@ -189,6 +199,7 @@ def run_strategy_loop(
     iterations_failed = 0
     nav_marks_skipped = 0
     cycle_snapshots_persisted = 0
+    action_gated_queues_persisted = 0
     last_error: str | None = None
     first_iteration_at: datetime | None = None
     last_iteration_at: datetime | None = None
@@ -218,7 +229,19 @@ def run_strategy_loop(
                 _require_snapshot_safety_flags(cycle_snapshot)
                 cycle_snapshot_sink(cycle_snapshot)
                 cycle_snapshots_persisted += 1
-            # (d) Optional NAV mark.
+            # (d) Optional supplied action-gated queue persistence.
+            if (
+                action_gated_queue_source is not None
+                and action_gated_queue_sink is not None
+            ):
+                action_gated_queue = action_gated_queue_source(
+                    cycle_report=report,
+                    iteration_started_at=iteration_at,
+                )
+                _require_action_gated_queue_safety_flags(action_gated_queue)
+                action_gated_queue_sink(action_gated_queue)
+                action_gated_queues_persisted += 1
+            # (e) Optional NAV mark.
             nav_marks_skipped += _mark_nav_or_skip(
                 cycle_config=cycle_config,
                 client=client,
@@ -235,7 +258,7 @@ def run_strategy_loop(
             last_error = f"{type(exc).__name__}: {exc}"
             continue
 
-        # (d) Sleep between iterations (never after last).
+        # Sleep between iterations (never after last).
         if repeat_mode == "interval" and iteration + 1 < max_iterations:
             time.sleep(interval_seconds)
 
@@ -249,6 +272,7 @@ def run_strategy_loop(
         last_error=last_error,
         nav_marks_skipped=nav_marks_skipped,
         cycle_snapshots_persisted=cycle_snapshots_persisted,
+        action_gated_queues_persisted=action_gated_queues_persisted,
     )
 
 
@@ -307,6 +331,8 @@ def _validate_loop_params(
     on_cycle_error: str,
     cycle_snapshot_source: object,
     cycle_snapshot_sink: object,
+    action_gated_queue_source: object,
+    action_gated_queue_sink: object,
     paper_trade_record_sink: object,
     nav_snapshot_sink: object,
 ) -> None:
@@ -348,6 +374,13 @@ def _validate_loop_params(
         raise ValueError("cycle_snapshot_source must be callable or None")
     if cycle_snapshot_sink is not None and not callable(cycle_snapshot_sink):
         raise ValueError("cycle_snapshot_sink must be callable or None")
+    if (
+        action_gated_queue_source is not None
+        and not callable(action_gated_queue_source)
+    ):
+        raise ValueError("action_gated_queue_source must be callable or None")
+    if action_gated_queue_sink is not None and not callable(action_gated_queue_sink):
+        raise ValueError("action_gated_queue_sink must be callable or None")
     if paper_trade_record_sink is not None and not callable(paper_trade_record_sink):
         raise ValueError("paper_trade_record_sink must be callable or None")
     if nav_snapshot_sink is not None and not callable(nav_snapshot_sink):
@@ -376,3 +409,12 @@ def _require_snapshot_safety_flags(snapshot: object) -> None:
         raise ValueError("cycle snapshot must be report_only")
     if getattr(snapshot, "readonly", None) is not True:
         raise ValueError("cycle snapshot must be readonly")
+
+
+def _require_action_gated_queue_safety_flags(report: object) -> None:
+    if getattr(report, "paper_only", None) is not True:
+        raise ValueError("action-gated queue report must be paper_only")
+    if getattr(report, "report_only", None) is not True:
+        raise ValueError("action-gated queue report must be report_only")
+    if getattr(report, "readonly", None) is not True:
+        raise ValueError("action-gated queue report must be readonly")

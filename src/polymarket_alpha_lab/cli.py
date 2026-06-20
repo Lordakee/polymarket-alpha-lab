@@ -57,6 +57,9 @@ from polymarket_alpha_lab.paper_recommendation_cycle_snapshot_psycopg import (
     insert_paper_recommendation_cycle_snapshot_with_psycopg,
     load_paper_recommendation_cycle_snapshots_with_psycopg,
 )
+from polymarket_alpha_lab.action_gated_strategy_recommendation_queue_psycopg import (
+    insert_paper_action_gated_strategy_recommendation_queue_report_with_psycopg,
+)
 from polymarket_alpha_lab.paper_recommendation_cycle_snapshot_trend import (
     build_paper_recommendation_cycle_snapshot_trend_report,
 )
@@ -102,6 +105,12 @@ from polymarket_alpha_lab.strategy_risk_audit_log import PaperStrategyRiskAuditL
 from polymarket_alpha_lab.strategy_cycle_snapshot_source import (
     build_strategy_cycle_snapshot_source_report,
 )
+from polymarket_alpha_lab.strategy_cycle_action_gated_queue_source import (
+    build_strategy_cycle_action_gated_queue_source_report,
+)
+from polymarket_alpha_lab.supabase_action_gated_strategy_recommendation_queue_config import (
+    from_action_gated_strategy_recommendation_queue_db_env,
+)
 from polymarket_alpha_lab.supabase_cycle_snapshot_config import (
     from_cycle_snapshot_db_env,
 )
@@ -144,6 +153,8 @@ StrategyEvidenceRunner = Callable[..., "PaperStrategyEvidenceSnapshotReport"]
 ObservabilityTrendsRunner = Callable[..., LocalObservabilityTrendsReport]
 CycleSnapshotSource = Callable[..., object]
 CycleSnapshotDbSink = Callable[..., object]
+ActionGatedQueueSource = Callable[..., object]
+ActionGatedQueueDbSink = Callable[..., object]
 CycleSnapshotDbTrendRunner = Callable[..., object]
 CycleSnapshotDbReviewRunner = Callable[..., object]
 CycleSnapshotDbActionGateRunner = Callable[..., object]
@@ -246,6 +257,10 @@ def main(
     cycle_snapshot_source: CycleSnapshotSource | None = None,
     cycle_snapshot_db_sink: CycleSnapshotDbSink = (
         insert_paper_recommendation_cycle_snapshot_with_psycopg
+    ),
+    action_gated_queue_source: ActionGatedQueueSource | None = None,
+    action_gated_queue_db_sink: ActionGatedQueueDbSink = (
+        insert_paper_action_gated_strategy_recommendation_queue_report_with_psycopg
     ),
     cycle_snapshot_db_trend_runner: CycleSnapshotDbTrendRunner | None = None,
     cycle_snapshot_db_review_runner: CycleSnapshotDbReviewRunner | None = None,
@@ -937,10 +952,15 @@ def main(
     if args.command == "run":
         try:
             cycle_snapshot_db_config = from_cycle_snapshot_db_env()
+            action_gated_queue_db_config = (
+                from_action_gated_strategy_recommendation_queue_db_env()
+            )
             paper_trade_db_config = from_paper_trade_journal_db_env()
             paper_nav_db_config = from_paper_nav_snapshot_db_env()
             run_cycle_snapshot_source = None
             run_cycle_snapshot_sink = None
+            run_action_gated_queue_source = None
+            run_action_gated_queue_sink = None
             run_paper_trade_record_sink = None
             run_nav_snapshot_sink = None
             if cycle_snapshot_db_config.enabled:
@@ -969,6 +989,33 @@ def main(
                     cycle_snapshot_source
                     if cycle_snapshot_source is not None
                     else build_strategy_cycle_snapshot_source_report
+                )
+            if action_gated_queue_db_config.enabled:
+                dsn = action_gated_queue_db_config.dsn
+                if dsn is None:
+                    raise ValueError(
+                        "action-gated queue DB persistence requires a DB DSN",
+                    )
+
+                def run_action_gated_queue_sink(
+                    report: object,
+                    *,
+                    db_dsn: str = dsn,
+                    table_name: str = action_gated_queue_db_config.table_name,
+                ) -> object:
+                    try:
+                        return action_gated_queue_db_sink(
+                            dsn=db_dsn,
+                            report=report,
+                            table_name=table_name,
+                        )
+                    except Exception as exc:
+                        _raise_redacted_db_sink_error(exc, dsn=db_dsn)
+
+                run_action_gated_queue_source = (
+                    action_gated_queue_source
+                    if action_gated_queue_source is not None
+                    else build_strategy_cycle_action_gated_queue_source_report
                 )
             if paper_trade_db_config.enabled:
                 dsn = paper_trade_db_config.dsn
@@ -1050,21 +1097,29 @@ def main(
                         file=sys.stderr,
                     )
                     return 1
-            summary = loop_runner(
-                client=client_factory(),
-                scan_config=scan_config,
-                cycle_config=cycle_config,
-                starting_cash=args.starting_cash,
-                nav_log_path=args.nav_log,
-                cycle_report_log_path=args.cycle_log,
-                repeat_mode=repeat_mode,
-                interval_seconds=args.repeat_interval,
-                max_iterations=args.max_iterations,
-                cycle_snapshot_source=run_cycle_snapshot_source,
-                cycle_snapshot_sink=run_cycle_snapshot_sink,
-                paper_trade_record_sink=run_paper_trade_record_sink,
-                nav_snapshot_sink=run_nav_snapshot_sink,
-            )
+            loop_runner_kwargs = {
+                "client": client_factory(),
+                "scan_config": scan_config,
+                "cycle_config": cycle_config,
+                "starting_cash": args.starting_cash,
+                "nav_log_path": args.nav_log,
+                "cycle_report_log_path": args.cycle_log,
+                "repeat_mode": repeat_mode,
+                "interval_seconds": args.repeat_interval,
+                "max_iterations": args.max_iterations,
+                "cycle_snapshot_source": run_cycle_snapshot_source,
+                "cycle_snapshot_sink": run_cycle_snapshot_sink,
+                "paper_trade_record_sink": run_paper_trade_record_sink,
+                "nav_snapshot_sink": run_nav_snapshot_sink,
+            }
+            if action_gated_queue_db_config.enabled:
+                loop_runner_kwargs["action_gated_queue_source"] = (
+                    run_action_gated_queue_source
+                )
+                loop_runner_kwargs["action_gated_queue_sink"] = (
+                    run_action_gated_queue_sink
+                )
+            summary = loop_runner(**loop_runner_kwargs)
             _print_run_loop_summary(summary)
             return 0
         except Exception as exc:
@@ -2189,12 +2244,19 @@ def _print_run_loop_summary(summary: RunLoopSummary) -> None:
         cycle_snapshots_text = (
             f" cycle_snapshots_persisted={summary.cycle_snapshots_persisted}"
         )
+    action_gated_queues_text = ""
+    if hasattr(summary, "action_gated_queues_persisted"):
+        action_gated_queues_text = (
+            f" action_gated_queues_persisted="
+            f"{summary.action_gated_queues_persisted}"
+        )
     print(
         "run: "
         f"completed={summary.iterations_completed} "
         f"failed={summary.iterations_failed} "
         f"nav_skipped={summary.nav_marks_skipped}"
-        f"{cycle_snapshots_text} "
+        f"{cycle_snapshots_text}"
+        f"{action_gated_queues_text} "
         f"span={summary.first_iteration_at.isoformat()} "
         f"to {summary.last_iteration_at.isoformat()}",
     )
