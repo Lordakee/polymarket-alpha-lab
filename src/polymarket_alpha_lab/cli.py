@@ -111,6 +111,12 @@ from polymarket_alpha_lab.strategy_cycle_action_gated_queue_source import (
 from polymarket_alpha_lab.supabase_action_gated_strategy_recommendation_queue_config import (
     from_action_gated_strategy_recommendation_queue_db_env,
 )
+from polymarket_alpha_lab.supabase_action_gated_strategy_recommendation_queue_decision_support_config import (
+    from_action_gated_strategy_recommendation_queue_decision_support_db_env,
+)
+from polymarket_alpha_lab.supabase_action_gated_strategy_recommendation_queue_decision_support_trend_config import (
+    from_action_gated_strategy_recommendation_queue_decision_support_trend_db_env,
+)
 from polymarket_alpha_lab.supabase_cycle_snapshot_config import (
     from_cycle_snapshot_db_env,
 )
@@ -162,6 +168,7 @@ ActionGatedQueueHistoryBuilder = Callable[..., object]
 CycleSnapshotDbTrendRunner = Callable[..., object]
 CycleSnapshotDbReviewRunner = Callable[..., object]
 CycleSnapshotDbActionGateRunner = Callable[..., object]
+ActionGatedQueueDecisionSupportTrendRunner = Callable[..., object]
 _MISSING = object()
 
 
@@ -284,6 +291,9 @@ def main(
     cycle_snapshot_db_trend_runner: CycleSnapshotDbTrendRunner | None = None,
     cycle_snapshot_db_review_runner: CycleSnapshotDbReviewRunner | None = None,
     cycle_snapshot_db_action_gate_runner: CycleSnapshotDbActionGateRunner | None = None,
+    action_gated_queue_decision_support_trend_runner: (
+        ActionGatedQueueDecisionSupportTrendRunner | None
+    ) = None,
 ) -> int:
     parser = argparse.ArgumentParser(prog="polymarket-alpha-lab")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -602,6 +612,28 @@ def main(
         type=Decimal,
         default=Decimal("0.800000"),
         dest="throttle_utilization_threshold",
+    )
+
+    action_gated_queue_decision_support_trend = subparsers.add_parser(
+        "action-gated-queue-decision-support-trend",
+    )
+    action_gated_queue_decision_support_trend.add_argument(
+        "--source-limit",
+        type=int,
+        default=50,
+        dest="source_limit",
+    )
+    action_gated_queue_decision_support_trend.add_argument(
+        "--source-risk-status",
+        choices=("pass", "watch", "blocked"),
+        default=None,
+        dest="source_risk_status",
+    )
+    action_gated_queue_decision_support_trend.add_argument(
+        "--persist",
+        action="store_true",
+        default=False,
+        dest="persist",
     )
 
     action_gated_queue_history = subparsers.add_parser(
@@ -1065,6 +1097,26 @@ def main(
         except Exception as exc:
             print(
                 f"action-gated-queue-decision-support failed: {exc}",
+                file=sys.stderr,
+            )
+            return 1
+
+    if args.command == "action-gated-queue-decision-support-trend":
+        try:
+            report, persisted = _run_action_gated_queue_decision_support_trend(
+                source_limit=args.source_limit,
+                source_risk_status=args.source_risk_status,
+                persist=args.persist,
+                runner=action_gated_queue_decision_support_trend_runner,
+            )
+            _print_action_gated_queue_decision_support_trend_summary(
+                report,
+                persisted=persisted,
+            )
+            return 0
+        except Exception as exc:
+            print(
+                f"action-gated-queue-decision-support-trend failed: {exc}",
                 file=sys.stderr,
             )
             return 1
@@ -1789,6 +1841,134 @@ def _run_action_gated_queue_history(
         queue_reports,
         generated_at=generated_at,
     )
+
+
+def _run_action_gated_queue_decision_support_trend(
+    *,
+    source_limit: int,
+    source_risk_status: str | None,
+    persist: bool,
+    runner: ActionGatedQueueDecisionSupportTrendRunner | None,
+) -> tuple[object, bool]:
+    from polymarket_alpha_lab.action_gated_strategy_recommendation_queue_decision_support_trend_db_row import (
+        ACTION_GATED_QUEUE_DECISION_SUPPORT_TREND_SCHEMA_VERSION,
+    )
+    from polymarket_alpha_lab.action_gated_strategy_recommendation_queue_decision_support_psycopg import (
+        load_paper_action_gated_strategy_recommendation_queue_decision_support_reports_with_psycopg,
+    )
+    from polymarket_alpha_lab.action_gated_strategy_recommendation_queue_decision_support_trend import (
+        build_paper_action_gated_strategy_recommendation_queue_decision_support_trend_report,
+    )
+    from polymarket_alpha_lab.action_gated_strategy_recommendation_queue_decision_support_trend_psycopg import (
+        insert_paper_action_gated_strategy_recommendation_queue_decision_support_trend_db_rows_with_psycopg,
+    )
+
+    if (
+        isinstance(source_limit, bool)
+        or not isinstance(source_limit, int)
+        or source_limit < 1
+    ):
+        raise ValueError("source_limit must be a positive integer")
+    source_db_config = (
+        from_action_gated_strategy_recommendation_queue_decision_support_db_env()
+    )
+    if not source_db_config.enabled:
+        raise ValueError(
+            "action-gated-queue-decision-support-trend requires action-gated "
+            "queue decision-support DB to be enabled",
+        )
+    if source_db_config.dsn is None:
+        raise ValueError(
+            "action-gated-queue-decision-support-trend requires a source DB DSN",
+        )
+    trend_db_config = (
+        from_action_gated_strategy_recommendation_queue_decision_support_trend_db_env()
+        if persist
+        else None
+    )
+    generated_at = datetime.now(UTC)
+    config_version = ACTION_GATED_QUEUE_DECISION_SUPPORT_TREND_SCHEMA_VERSION
+    if persist:
+        if trend_db_config is None:
+            raise ValueError(
+                "action-gated-queue-decision-support-trend persistence requires "
+                "trend DB config",
+            )
+        if not trend_db_config.enabled:
+            raise ValueError(
+                "action-gated-queue-decision-support-trend persistence requires "
+                "trend DB to be enabled",
+            )
+        if trend_db_config.dsn is None:
+            raise ValueError(
+                "action-gated-queue-decision-support-trend persistence requires "
+                "a trend DB DSN",
+            )
+    if runner is not None:
+        try:
+            return runner(
+                source_dsn=source_db_config.dsn,
+                generated_at=generated_at,
+                config_version=config_version,
+                source_limit=source_limit,
+                source_risk_status=source_risk_status,
+                source_table_name=source_db_config.table_name,
+                persist=persist,
+                trend_dsn=None if trend_db_config is None else trend_db_config.dsn,
+                trend_reports_table_name=(
+                    None
+                    if trend_db_config is None
+                    else trend_db_config.reports_table_name
+                ),
+                trend_sources_table_name=(
+                    None
+                    if trend_db_config is None
+                    else trend_db_config.sources_table_name
+                ),
+            )
+        except Exception as exc:
+            message = _redact_db_dsn(str(exc), dsn=source_db_config.dsn)
+            if trend_db_config is not None and trend_db_config.dsn is not None:
+                message = _redact_db_dsn(message, dsn=trend_db_config.dsn)
+            if not message.strip():
+                message = exc.__class__.__name__
+            raise RuntimeError(message) from None
+
+    try:
+        newest_first_pairs = (
+            load_paper_action_gated_strategy_recommendation_queue_decision_support_reports_with_psycopg(
+                source_db_config.dsn,
+                risk_status=source_risk_status,
+                limit=source_limit,
+                table_name=source_db_config.table_name,
+            )
+        )
+    except Exception as exc:
+        _raise_redacted_db_read_error(exc, dsn=source_db_config.dsn)
+    if not newest_first_pairs:
+        raise ValueError("no paper action-gated queue decision-support reports found")
+
+    chronological_pairs = tuple(reversed(newest_first_pairs))
+    trend_report = (
+        build_paper_action_gated_strategy_recommendation_queue_decision_support_trend_report(
+            chronological_pairs,
+            generated_at=generated_at,
+        )
+    )
+    if not persist:
+        return trend_report, False
+
+    try:
+        insert_paper_action_gated_strategy_recommendation_queue_decision_support_trend_db_rows_with_psycopg(
+            trend_db_config.dsn,
+            trend_report,
+            chronological_pairs,
+            reports_table_name=trend_db_config.reports_table_name,
+            sources_table_name=trend_db_config.sources_table_name,
+        )
+    except Exception as exc:
+        _raise_redacted_db_sink_error(exc, dsn=trend_db_config.dsn)
+    return trend_report, True
 
 
 def _run_cost_audit(
@@ -2555,6 +2735,35 @@ def _print_action_gated_queue_decision_support_summary(
         f"ready_notional={top_row.total_ready_notional} "
         f"priority_score={top_row.research_priority_score}",
     )
+
+
+def _print_action_gated_queue_decision_support_trend_summary(
+    report: object,
+    *,
+    persisted: bool,
+) -> None:
+    status_counts = dict(report.risk_status_counts)
+    reason_code_counts = ",".join(
+        f"{reason_code}:{count}"
+        for reason_code, count in report.repeated_reason_code_counts
+    )
+    print(
+        "action-gated-queue-decision-support-trend: "
+        f"snapshots={report.source_snapshot_count} "
+        f"first={_iso_or_none(report.first_generated_at)} "
+        f"latest={_iso_or_none(report.latest_generated_at)} "
+        f"latest_risk_status={_none_or_value(report.latest_risk_status)} "
+        f"pass={status_counts.get('pass', 0)} "
+        f"watch={status_counts.get('watch', 0)} "
+        f"blocked={status_counts.get('blocked', 0)} "
+        f"ready_notional_delta={_none_or_value(report.ready_notional_delta)} "
+        f"top_priority_score_delta={_none_or_value(report.top_priority_score_delta)} "
+        "average_priority_score_delta="
+        f"{_none_or_value(report.average_priority_score_delta)} "
+        f"duplicate_generated_at_count={report.duplicate_generated_at_count} "
+        f"persisted={persisted}",
+    )
+    print(f"trend_reason_codes: {reason_code_counts or 'none'}")
 
 
 def _print_action_gated_queue_history_summary(report: object) -> None:

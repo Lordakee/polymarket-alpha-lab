@@ -45,6 +45,60 @@ The Action-Gated Decision-Support Trend Report is a library-only Phase 1 paper-o
 
 Duplicate `generated_at` values are reported as duplicate source timestamps so operators can identify ambiguous snapshot ordering without changing the source data.
 
-Trend output is only a paper/report/readonly review aid. It does not rank reports, approve reports, allocate notional, size positions, construct execution intent, or perform execution. DB persistence, CLI wiring, loaders, readers, and runtime sinks are intentionally out of this first trend node.
+Trend output is only a paper/report/readonly review aid. It does not rank reports, approve reports, allocate notional, size positions, construct execution intent, or perform execution.
 
-Trend DB persistence stores compact scalar trend summaries, JSON count maps, reason-code rows, hard paper/report/readonly flags, and ordered source snapshot references to already-persisted decision-support reports. It does not duplicate priority/risk payloads, and it does not provide full trend hydration from the database; callers that need full reports must use the existing source snapshots. CLI/runtime wiring is deferred.
+The Phase 1 boundary stays explicit for the CLI surface:
+
+- no live trading
+- no auth
+- no wallet/private keys
+- no account reads
+- no order construction
+- no order signing
+- no order submission
+- no order cancellation
+- no order replacement
+- no exchange mutation
+
+Trend DB persistence stores compact scalar trend summaries, JSON count maps, reason-code rows, hard paper/report/readonly flags, and ordered source snapshot references to already-persisted decision-support reports. It does not duplicate priority/risk payloads, and it does not provide full trend hydration from the database; callers that need full reports must use the existing source snapshots.
+
+## Trend CLI
+
+The Phase 1 CLI surface is `polymarket-alpha-lab action-gated-queue-decision-support-trend`. It remains paper-only, report-only, and readonly from the operator point of view by default: it reads already-persisted decision-support reports from the source DB, builds a redacted aggregate trend summary, and prints review-only output.
+
+The command uses environment-only DB configuration. It does not accept DSNs, credentials, wallet material, or other secret values as CLI flags, and CLI output must stay redacted.
+
+### Source DB
+
+Source snapshot loading is controlled only by the existing action-gated queue decision-support source DB environment variables:
+
+```text
+POLYMARKET_ALPHA_LAB_ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_ENABLED
+POLYMARKET_ALPHA_LAB_ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_DSN
+POLYMARKET_ALPHA_LAB_ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_TABLE
+```
+
+Those source DB variables select the already-persisted decision-support reports that the trend command reads. They are process-edge runtime inputs only and must not be echoed into docs, notes, or CLI output.
+
+### Optional Trend Persistence
+
+The command supports optional `--persist` trend DB persistence. Without `--persist`, the command is a read/report-only trend summary over source snapshots and should not write trend rows.
+
+When `--persist` is set, trend-row persistence still depends on environment-only trend DB configuration:
+
+```text
+POLYMARKET_ALPHA_LAB_ACTION_GATED_QUEUE_DECISION_SUPPORT_TREND_DB_ENABLED
+POLYMARKET_ALPHA_LAB_ACTION_GATED_QUEUE_DECISION_SUPPORT_TREND_DB_DSN
+POLYMARKET_ALPHA_LAB_ACTION_GATED_QUEUE_DECISION_SUPPORT_TREND_DB_REPORTS_TABLE
+POLYMARKET_ALPHA_LAB_ACTION_GATED_QUEUE_DECISION_SUPPORT_TREND_DB_SOURCES_TABLE
+```
+
+That optional persistence path stores compact trend manifests only. It must not create live trading state, authenticate to an exchange, read accounts, construct orders, sign orders, submit orders, cancel orders, replace orders, or mutate an exchange.
+
+### CLI Options
+
+The command options follow the existing aggregate-report CLI pattern:
+
+- `--source-limit`: optional positive integer source snapshot cap for the source DB read path.
+- `--source-risk-status`: optional source filter for the latest source risk status with `pass`, `watch`, or `blocked`.
+- `--persist`: optional flag that enables trend-row persistence only when the trend DB env config is enabled.

@@ -567,6 +567,9 @@ def test_docs_state_trend_db_persistence_scope() -> None:
         "ordered source snapshot references",
         "does not duplicate priority/risk payloads",
         "does not provide full trend hydration",
-        "CLI/runtime wiring is deferred",
+        "polymarket-alpha-lab action-gated-queue-decision-support-trend",
+        "Without `--persist`, the command is a read/report-only trend summary",
+        "POLYMARKET_ALPHA_LAB_ACTION_GATED_QUEUE_DECISION_SUPPORT_TREND_DB_REPORTS_TABLE",
+        "POLYMARKET_ALPHA_LAB_ACTION_GATED_QUEUE_DECISION_SUPPORT_TREND_DB_SOURCES_TABLE",
     ):
         assert phrase in normalized

@@ -91,11 +91,35 @@ from polymarket_alpha_lab.strategy_cycle_action_gated_queue_source import (
 from polymarket_alpha_lab.action_gated_strategy_recommendation_queue import (
     PaperActionGatedStrategyRecommendationQueueReport,
 )
+from polymarket_alpha_lab.action_gated_strategy_recommendation_queue_decision_support_db_row import (
+    paper_action_gated_strategy_recommendation_queue_decision_support_to_db_row,
+)
+from polymarket_alpha_lab.action_gated_strategy_recommendation_queue_decision_support_trend_db_row import (
+    ACTION_GATED_QUEUE_DECISION_SUPPORT_TREND_SCHEMA_VERSION,
+)
+from polymarket_alpha_lab.action_gated_strategy_recommendation_queue_priority import (
+    build_paper_action_gated_strategy_recommendation_queue_priority_report,
+)
 from polymarket_alpha_lab.action_gated_strategy_recommendation_queue_psycopg_read import (
     PaperActionGatedStrategyRecommendationQueueReadOptions,
 )
+from polymarket_alpha_lab.action_gated_strategy_recommendation_queue_risk import (
+    PaperActionGatedStrategyRecommendationQueueRiskConfig,
+    build_paper_action_gated_strategy_recommendation_queue_risk_report,
+)
 from polymarket_alpha_lab.paper_recommendation_cycle_action_gate import (
     PaperRecommendationCycleActionGateReasonCodeCount,
+)
+from polymarket_alpha_lab.supabase_action_gated_strategy_recommendation_queue_decision_support_config import (
+    ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_DSN_ENV_VAR,
+    ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_ENABLED_ENV_VAR,
+    ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_TABLE_ENV_VAR,
+)
+from polymarket_alpha_lab.supabase_action_gated_strategy_recommendation_queue_decision_support_trend_config import (
+    ACTION_GATED_QUEUE_DECISION_SUPPORT_TREND_DB_DSN_ENV_VAR,
+    ACTION_GATED_QUEUE_DECISION_SUPPORT_TREND_DB_ENABLED_ENV_VAR,
+    ACTION_GATED_QUEUE_DECISION_SUPPORT_TREND_DB_REPORTS_TABLE_ENV_VAR,
+    ACTION_GATED_QUEUE_DECISION_SUPPORT_TREND_DB_SOURCES_TABLE_ENV_VAR,
 )
 from polymarket_alpha_lab.supabase_action_gated_strategy_recommendation_queue_config import (
     ACTION_GATED_QUEUE_DB_DSN_ENV_VAR,
@@ -4814,6 +4838,688 @@ def test_action_gated_queue_decision_support_cli_rejects_dsn_flag(capsys):
 
     captured = capsys.readouterr()
     assert "unrecognized arguments: --action-gated-queue-db-dsn" in captured.err
+
+
+def test_action_gated_queue_decision_support_trend_cli_requires_source_db_config(
+    monkeypatch,
+    capsys,
+):
+    monkeypatch.delenv(
+        ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_ENABLED_ENV_VAR,
+        raising=False,
+    )
+    monkeypatch.delenv(ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_DSN_ENV_VAR, raising=False)
+    monkeypatch.delenv(
+        ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_TABLE_ENV_VAR,
+        raising=False,
+    )
+
+    def forbidden_runner(**kwargs):
+        raise AssertionError("trend runner should not run")
+
+    exit_code = main(
+        ["action-gated-queue-decision-support-trend"],
+        action_gated_queue_decision_support_trend_runner=forbidden_runner,
+        client_factory=lambda: (_ for _ in ()).throw(
+            AssertionError("client should not be constructed"),
+        ),
+    )
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert "action-gated-queue-decision-support-trend failed:" in captured.err
+    assert "requires action-gated queue decision-support DB to be enabled" in (
+        captured.err
+    )
+
+
+def test_action_gated_queue_decision_support_trend_cli_uses_injected_runner(
+    monkeypatch,
+    capsys,
+):
+    source_dsn = "postgresql://decision-support.example.invalid/source"
+    trend_dsn = "postgresql://decision-support.example.invalid/trend"
+    monkeypatch.setenv(ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_DSN_ENV_VAR, source_dsn)
+    monkeypatch.setenv(
+        ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_TABLE_ENV_VAR,
+        "decision_support_archive",
+    )
+    monkeypatch.setenv(
+        ACTION_GATED_QUEUE_DECISION_SUPPORT_TREND_DB_ENABLED_ENV_VAR,
+        "true",
+    )
+    monkeypatch.setenv(
+        ACTION_GATED_QUEUE_DECISION_SUPPORT_TREND_DB_DSN_ENV_VAR,
+        trend_dsn,
+    )
+    monkeypatch.setenv(
+        ACTION_GATED_QUEUE_DECISION_SUPPORT_TREND_DB_REPORTS_TABLE_ENV_VAR,
+        "trend_reports_archive",
+    )
+    monkeypatch.setenv(
+        ACTION_GATED_QUEUE_DECISION_SUPPORT_TREND_DB_SOURCES_TABLE_ENV_VAR,
+        "trend_sources_archive",
+    )
+    calls = []
+
+    def fake_trend_runner(
+        *,
+        source_dsn,
+        generated_at,
+        config_version,
+        source_limit,
+        source_risk_status,
+        source_table_name,
+        persist,
+        trend_dsn,
+        trend_reports_table_name,
+        trend_sources_table_name,
+    ):
+        calls.append(
+            {
+                "source_dsn": source_dsn,
+                "generated_at": generated_at,
+                "config_version": config_version,
+                "source_limit": source_limit,
+                "source_risk_status": source_risk_status,
+                "source_table_name": source_table_name,
+                "persist": persist,
+                "trend_dsn": trend_dsn,
+                "trend_reports_table_name": trend_reports_table_name,
+                "trend_sources_table_name": trend_sources_table_name,
+            },
+        )
+        return (
+            SimpleNamespace(
+                source_snapshot_count=3,
+                first_generated_at=datetime(2026, 6, 20, 10, 0, tzinfo=UTC),
+                latest_generated_at=datetime(2026, 6, 20, 12, 0, tzinfo=UTC),
+                latest_risk_status="watch",
+                risk_status_counts=(("pass", 1), ("watch", 2), ("blocked", 0)),
+                ready_notional_delta=Decimal("12.500000"),
+                top_priority_score_delta=Decimal("1.000000"),
+                average_priority_score_delta=Decimal("0.500000"),
+                duplicate_generated_at_count=1,
+                repeated_reason_code_counts=(("source_queue_watch", 2),),
+                paper_only=True,
+                report_only=True,
+                readonly=True,
+            ),
+            True,
+        )
+
+    exit_code = main(
+        [
+            "action-gated-queue-decision-support-trend",
+            "--source-limit",
+            "25",
+            "--source-risk-status",
+            "watch",
+            "--persist",
+        ],
+        action_gated_queue_decision_support_trend_runner=fake_trend_runner,
+        client_factory=lambda: (_ for _ in ()).throw(
+            AssertionError("client should not be constructed"),
+        ),
+    )
+
+    assert exit_code == 0
+    assert len(calls) == 1
+    assert calls[0]["source_dsn"] == source_dsn
+    assert isinstance(calls[0]["generated_at"], datetime)
+    assert calls[0]["config_version"] == (
+        ACTION_GATED_QUEUE_DECISION_SUPPORT_TREND_SCHEMA_VERSION
+    )
+    assert calls[0]["source_limit"] == 25
+    assert calls[0]["source_risk_status"] == "watch"
+    assert calls[0]["source_table_name"] == "decision_support_archive"
+    assert calls[0]["persist"] is True
+    assert calls[0]["trend_dsn"] == trend_dsn
+    assert calls[0]["trend_reports_table_name"] == "trend_reports_archive"
+    assert calls[0]["trend_sources_table_name"] == "trend_sources_archive"
+
+    captured = capsys.readouterr()
+    assert "action-gated-queue-decision-support-trend:" in captured.out
+    assert "snapshots=3" in captured.out
+    assert "latest_risk_status=watch" in captured.out
+    assert "pass=1" in captured.out
+    assert "watch=2" in captured.out
+    assert "blocked=0" in captured.out
+    assert "ready_notional_delta=12.500000" in captured.out
+    assert "duplicate_generated_at_count=1" in captured.out
+    assert "persisted=True" in captured.out
+    assert "trend_reason_codes: source_queue_watch:2" in captured.out
+    assert source_dsn not in captured.out
+    assert source_dsn not in captured.err
+    assert trend_dsn not in captured.out
+    assert trend_dsn not in captured.err
+
+
+def test_action_gated_queue_decision_support_trend_cli_injected_runner_requires_trend_db_when_persisting(
+    monkeypatch,
+    capsys,
+):
+    source_dsn = "postgresql://decision-support.example.invalid/source"
+    monkeypatch.setenv(ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_DSN_ENV_VAR, source_dsn)
+    monkeypatch.setenv(
+        ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_TABLE_ENV_VAR,
+        "decision_support_archive",
+    )
+    monkeypatch.delenv(
+        ACTION_GATED_QUEUE_DECISION_SUPPORT_TREND_DB_ENABLED_ENV_VAR,
+        raising=False,
+    )
+    monkeypatch.delenv(
+        ACTION_GATED_QUEUE_DECISION_SUPPORT_TREND_DB_DSN_ENV_VAR,
+        raising=False,
+    )
+
+    def forbidden_runner(**kwargs):
+        raise AssertionError("trend runner should not run")
+
+    exit_code = main(
+        [
+            "action-gated-queue-decision-support-trend",
+            "--persist",
+        ],
+        action_gated_queue_decision_support_trend_runner=forbidden_runner,
+        client_factory=lambda: (_ for _ in ()).throw(
+            AssertionError("client should not be constructed"),
+        ),
+    )
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert "action-gated-queue-decision-support-trend failed:" in captured.err
+    assert "trend DB to be enabled" in captured.err
+
+
+def test_action_gated_queue_decision_support_trend_cli_injected_runner_redacts_both_dsns(
+    monkeypatch,
+    capsys,
+):
+    source_dsn = "postgresql://decision-support.example.invalid/source"
+    trend_dsn = "postgresql://decision-support.example.invalid/trend"
+    monkeypatch.setenv(ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_DSN_ENV_VAR, source_dsn)
+    monkeypatch.setenv(
+        ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_TABLE_ENV_VAR,
+        "decision_support_archive",
+    )
+    monkeypatch.setenv(
+        ACTION_GATED_QUEUE_DECISION_SUPPORT_TREND_DB_ENABLED_ENV_VAR,
+        "true",
+    )
+    monkeypatch.setenv(
+        ACTION_GATED_QUEUE_DECISION_SUPPORT_TREND_DB_DSN_ENV_VAR,
+        trend_dsn,
+    )
+
+    def failing_runner(**kwargs):
+        raise RuntimeError(f"source={source_dsn} trend={trend_dsn}")
+
+    exit_code = main(
+        [
+            "action-gated-queue-decision-support-trend",
+            "--persist",
+        ],
+        action_gated_queue_decision_support_trend_runner=failing_runner,
+        client_factory=lambda: (_ for _ in ()).throw(
+            AssertionError("client should not be constructed"),
+        ),
+    )
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert source_dsn not in captured.err
+    assert trend_dsn not in captured.err
+    assert "<redacted-dsn>" in captured.err
+
+
+def _decision_support_snapshot_db_record(
+    generated_at: datetime,
+    *,
+    queue_reports: tuple[PaperActionGatedStrategyRecommendationQueueReport, ...],
+):
+    priority_report = (
+        build_paper_action_gated_strategy_recommendation_queue_priority_report(
+            queue_reports,
+            generated_at=generated_at,
+        )
+    )
+    risk_report = build_paper_action_gated_strategy_recommendation_queue_risk_report(
+        queue_reports,
+        config=PaperActionGatedStrategyRecommendationQueueRiskConfig(
+            config_version="action-gated-queue-risk-v0",
+            max_total_ready_notional=Decimal("1000.000000"),
+            max_single_queue_ready_notional=Decimal("500.000000"),
+            max_ready_candidate_count=100,
+            max_total_candidate_count=200,
+            throttle_utilization_threshold=Decimal("0.900000"),
+        ),
+        generated_at=generated_at,
+    )
+    row = paper_action_gated_strategy_recommendation_queue_decision_support_to_db_row(
+        priority_report,
+        risk_report,
+    )
+    return (
+        row.snapshot_sha256,
+        row.generated_at,
+        row.priority_source_report_count,
+        row.priority_research_ready_count,
+        row.priority_watch_count,
+        row.priority_blocked_count,
+        row.priority_total_ready_notional,
+        row.top_research_priority_score,
+        row.average_research_priority_score,
+        row.risk_config_version,
+        row.risk_status,
+        row.risk_recommended_next_step,
+        row.risk_source_queue_count,
+        row.risk_candidate_count,
+        row.risk_ready_count,
+        row.risk_total_ready_notional,
+        row.risk_largest_queue_ready_notional,
+        list(row.risk_reason_codes_json),
+        row.priority_payload_json,
+        row.risk_payload_json,
+        row.paper_only,
+        row.report_only,
+        row.readonly,
+    )
+
+
+def test_action_gated_queue_decision_support_trend_cli_default_psycopg_paths_no_network(
+    monkeypatch,
+    capsys,
+):
+    source_dsn = "postgresql://decision-support.example.invalid/source"
+    trend_dsn = "postgresql://decision-support.example.invalid/trend"
+    monkeypatch.setenv(ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_DSN_ENV_VAR, source_dsn)
+    monkeypatch.setenv(
+        ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_TABLE_ENV_VAR,
+        "decision_support_archive",
+    )
+    monkeypatch.setenv(
+        ACTION_GATED_QUEUE_DECISION_SUPPORT_TREND_DB_ENABLED_ENV_VAR,
+        "true",
+    )
+    monkeypatch.setenv(
+        ACTION_GATED_QUEUE_DECISION_SUPPORT_TREND_DB_DSN_ENV_VAR,
+        trend_dsn,
+    )
+    monkeypatch.setenv(
+        ACTION_GATED_QUEUE_DECISION_SUPPORT_TREND_DB_REPORTS_TABLE_ENV_VAR,
+        "trend_reports_archive",
+    )
+    monkeypatch.setenv(
+        ACTION_GATED_QUEUE_DECISION_SUPPORT_TREND_DB_SOURCES_TABLE_ENV_VAR,
+        "trend_sources_archive",
+    )
+
+    first_at = datetime(2026, 6, 20, 10, 0, tzinfo=UTC)
+    latest_at = datetime(2026, 6, 20, 12, 0, tzinfo=UTC)
+    source_records = (
+        _decision_support_snapshot_db_record(
+            latest_at,
+            queue_reports=(_watch_action_gated_queue_report(latest_at),),
+        ),
+        _decision_support_snapshot_db_record(
+            first_at,
+            queue_reports=(_blocked_action_gated_queue_report(first_at),),
+        ),
+    )
+
+    class FakeCursor:
+        def __init__(self, rows=()):
+            self.rows = rows
+            self.calls = []
+            self.closed = False
+
+        def execute(self, sql, params=()):
+            self.calls.append((" ".join(sql.split()), params))
+
+        def fetchall(self):
+            return self.rows
+
+        def close(self):
+            self.closed = True
+
+    class FakeConnection:
+        def __init__(self, rows=()):
+            self.cursor_instance = FakeCursor(rows)
+            self.cursor_count = 0
+            self.commit_count = 0
+            self.rollback_count = 0
+            self.close_count = 0
+
+        def cursor(self):
+            self.cursor_count += 1
+            return self.cursor_instance
+
+        def commit(self):
+            self.commit_count += 1
+
+        def rollback(self):
+            self.rollback_count += 1
+
+        def close(self):
+            self.close_count += 1
+
+    class FakeJsonb:
+        def __init__(self, value):
+            self.value = value
+
+    source_connection = FakeConnection(source_records)
+    trend_connection = FakeConnection()
+    connect_calls = []
+
+    def fake_connect(dsn):
+        connect_calls.append(dsn)
+        if dsn == source_dsn:
+            return source_connection
+        if dsn == trend_dsn:
+            return trend_connection
+        raise AssertionError(f"unexpected dsn: {dsn}")
+
+    monkeypatch.setitem(sys.modules, "psycopg", SimpleNamespace(connect=fake_connect))
+    monkeypatch.setitem(
+        sys.modules,
+        "psycopg.types.json",
+        SimpleNamespace(Jsonb=FakeJsonb),
+    )
+    sys.modules.pop(
+        "polymarket_alpha_lab.action_gated_strategy_recommendation_queue_decision_support_store",
+        None,
+    )
+    sys.modules.pop(
+        "polymarket_alpha_lab.action_gated_strategy_recommendation_queue_decision_support_psycopg",
+        None,
+    )
+    sys.modules.pop(
+        "polymarket_alpha_lab.action_gated_strategy_recommendation_queue_decision_support_trend_store",
+        None,
+    )
+    sys.modules.pop(
+        "polymarket_alpha_lab.action_gated_strategy_recommendation_queue_decision_support_trend_psycopg",
+        None,
+    )
+
+    exit_code = main(
+        [
+            "action-gated-queue-decision-support-trend",
+            "--source-limit",
+            "2",
+            "--persist",
+        ],
+        client_factory=lambda: (_ for _ in ()).throw(
+            AssertionError("client should not be constructed"),
+        ),
+    )
+
+    assert exit_code == 0
+    assert connect_calls == [source_dsn, trend_dsn]
+    assert source_connection.commit_count == 1
+    assert source_connection.rollback_count == 0
+    assert source_connection.close_count == 1
+    assert trend_connection.commit_count == 1
+    assert trend_connection.rollback_count == 0
+    assert trend_connection.close_count == 1
+    source_sql, source_params = source_connection.cursor_instance.calls[0]
+    assert "FROM decision_support_archive" in source_sql
+    assert (
+        "ORDER BY generated_at DESC, inserted_at DESC, snapshot_sha256 DESC"
+        in source_sql
+    )
+    assert source_params == (2,)
+    trend_sql_calls = tuple(call[0] for call in trend_connection.cursor_instance.calls)
+    assert any("INSERT INTO trend_reports_archive" in sql for sql in trend_sql_calls)
+    assert sum("INSERT INTO trend_sources_archive" in sql for sql in trend_sql_calls) == 2
+
+    captured = capsys.readouterr()
+    assert "action-gated-queue-decision-support-trend:" in captured.out
+    assert "snapshots=2" in captured.out
+    assert "latest_risk_status=watch" in captured.out
+    assert "pass=0" in captured.out
+    assert "watch=1" in captured.out
+    assert "blocked=1" in captured.out
+    assert "persisted=True" in captured.out
+    assert "trend_reason_codes:" in captured.out
+    assert source_dsn not in captured.out
+    assert source_dsn not in captured.err
+    assert trend_dsn not in captured.out
+    assert trend_dsn not in captured.err
+
+
+def test_action_gated_queue_decision_support_trend_cli_default_psycopg_no_persist_uses_only_source_db(
+    monkeypatch,
+    capsys,
+):
+    source_dsn = "postgresql://decision-support.example.invalid/source"
+    monkeypatch.setenv(ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_DSN_ENV_VAR, source_dsn)
+    monkeypatch.setenv(
+        ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_TABLE_ENV_VAR,
+        "decision_support_archive",
+    )
+    monkeypatch.setenv(
+        ACTION_GATED_QUEUE_DECISION_SUPPORT_TREND_DB_ENABLED_ENV_VAR,
+        "false",
+    )
+    monkeypatch.delenv(
+        ACTION_GATED_QUEUE_DECISION_SUPPORT_TREND_DB_DSN_ENV_VAR,
+        raising=False,
+    )
+
+    first_at = datetime(2026, 6, 20, 10, 0, tzinfo=UTC)
+    latest_at = datetime(2026, 6, 20, 12, 0, tzinfo=UTC)
+    source_records = (
+        _decision_support_snapshot_db_record(
+            latest_at,
+            queue_reports=(_watch_action_gated_queue_report(latest_at),),
+        ),
+        _decision_support_snapshot_db_record(
+            first_at,
+            queue_reports=(_blocked_action_gated_queue_report(first_at),),
+        ),
+    )
+
+    class FakeCursor:
+        def __init__(self, rows=()):
+            self.rows = rows
+            self.calls = []
+            self.closed = False
+
+        def execute(self, sql, params=()):
+            self.calls.append((" ".join(sql.split()), params))
+
+        def fetchall(self):
+            return self.rows
+
+        def close(self):
+            self.closed = True
+
+    class FakeConnection:
+        def __init__(self, rows=()):
+            self.cursor_instance = FakeCursor(rows)
+            self.commit_count = 0
+            self.rollback_count = 0
+            self.close_count = 0
+
+        def cursor(self):
+            return self.cursor_instance
+
+        def commit(self):
+            self.commit_count += 1
+
+        def rollback(self):
+            self.rollback_count += 1
+
+        def close(self):
+            self.close_count += 1
+
+    class FakeJsonb:
+        def __init__(self, value):
+            self.value = value
+
+    source_connection = FakeConnection(source_records)
+    connect_calls = []
+
+    def fake_connect(dsn):
+        connect_calls.append(dsn)
+        if dsn == source_dsn:
+            return source_connection
+        raise AssertionError(f"unexpected dsn: {dsn}")
+
+    monkeypatch.setitem(sys.modules, "psycopg", SimpleNamespace(connect=fake_connect))
+    monkeypatch.setitem(
+        sys.modules,
+        "psycopg.types.json",
+        SimpleNamespace(Jsonb=FakeJsonb),
+    )
+    sys.modules.pop(
+        "polymarket_alpha_lab.action_gated_strategy_recommendation_queue_decision_support_store",
+        None,
+    )
+    sys.modules.pop(
+        "polymarket_alpha_lab.action_gated_strategy_recommendation_queue_decision_support_psycopg",
+        None,
+    )
+    sys.modules.pop(
+        "polymarket_alpha_lab.action_gated_strategy_recommendation_queue_decision_support_trend_store",
+        None,
+    )
+    sys.modules.pop(
+        "polymarket_alpha_lab.action_gated_strategy_recommendation_queue_decision_support_trend_psycopg",
+        None,
+    )
+
+    exit_code = main(
+        [
+            "action-gated-queue-decision-support-trend",
+            "--source-limit",
+            "2",
+        ],
+        client_factory=lambda: (_ for _ in ()).throw(
+            AssertionError("client should not be constructed"),
+        ),
+    )
+
+    assert exit_code == 0
+    assert connect_calls == [source_dsn]
+    captured = capsys.readouterr()
+    assert "persisted=False" in captured.out
+    assert source_dsn not in captured.out
+    assert source_dsn not in captured.err
+
+
+def test_action_gated_queue_decision_support_trend_cli_injected_runner_defaults_to_no_persist_without_trend_db(
+    monkeypatch,
+    capsys,
+):
+    source_dsn = "postgresql://decision-support.example.invalid/source"
+    monkeypatch.setenv(ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_DSN_ENV_VAR, source_dsn)
+    monkeypatch.setenv(
+        ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_TABLE_ENV_VAR,
+        "decision_support_archive",
+    )
+    monkeypatch.setenv(
+        ACTION_GATED_QUEUE_DECISION_SUPPORT_TREND_DB_ENABLED_ENV_VAR,
+        "false",
+    )
+    monkeypatch.delenv(
+        ACTION_GATED_QUEUE_DECISION_SUPPORT_TREND_DB_DSN_ENV_VAR,
+        raising=False,
+    )
+    calls = []
+
+    def fake_trend_runner(
+        *,
+        source_dsn,
+        generated_at,
+        config_version,
+        source_limit,
+        source_risk_status,
+        source_table_name,
+        persist,
+        trend_dsn,
+        trend_reports_table_name,
+        trend_sources_table_name,
+    ):
+        calls.append(
+            {
+                "source_dsn": source_dsn,
+                "generated_at": generated_at,
+                "config_version": config_version,
+                "source_limit": source_limit,
+                "source_risk_status": source_risk_status,
+                "source_table_name": source_table_name,
+                "persist": persist,
+                "trend_dsn": trend_dsn,
+                "trend_reports_table_name": trend_reports_table_name,
+                "trend_sources_table_name": trend_sources_table_name,
+            },
+        )
+        return (
+            SimpleNamespace(
+                source_snapshot_count=2,
+                first_generated_at=datetime(2026, 6, 20, 10, 0, tzinfo=UTC),
+                latest_generated_at=datetime(2026, 6, 20, 12, 0, tzinfo=UTC),
+                latest_risk_status="watch",
+                risk_status_counts=(("watch", 1), ("blocked", 1)),
+                ready_notional_delta=Decimal("0.000000"),
+                top_priority_score_delta=Decimal("0.000000"),
+                average_priority_score_delta=Decimal("0.000000"),
+                duplicate_generated_at_count=0,
+                repeated_reason_code_counts=(),
+                paper_only=True,
+                report_only=True,
+                readonly=True,
+            ),
+            False,
+        )
+
+    exit_code = main(
+        [
+            "action-gated-queue-decision-support-trend",
+            "--source-limit",
+            "2",
+        ],
+        action_gated_queue_decision_support_trend_runner=fake_trend_runner,
+        client_factory=lambda: (_ for _ in ()).throw(
+            AssertionError("client should not be constructed"),
+        ),
+    )
+
+    assert exit_code == 0
+    assert len(calls) == 1
+    assert calls[0]["source_dsn"] == source_dsn
+    assert calls[0]["persist"] is False
+    assert calls[0]["trend_dsn"] is None
+    assert calls[0]["trend_reports_table_name"] is None
+    assert calls[0]["trend_sources_table_name"] is None
+    captured = capsys.readouterr()
+    assert "persisted=False" in captured.out
+
+
+def test_action_gated_queue_decision_support_trend_cli_rejects_dsn_flag(capsys):
+    with pytest.raises(SystemExit):
+        main(
+            [
+                "action-gated-queue-decision-support-trend",
+                "--decision-support-db-dsn",
+                "forbidden-value",
+            ],
+            client_factory=lambda: "fake-client",
+        )
+
+    captured = capsys.readouterr()
+    assert "unrecognized arguments: --decision-support-db-dsn" in captured.err
 
 
 def test_action_gated_queue_history_cli_requires_enabled_db_config(
