@@ -131,6 +131,11 @@ from polymarket_alpha_lab.supabase_action_gated_strategy_recommendation_queue_hi
     ACTION_GATED_QUEUE_HISTORY_DB_ENABLED_ENV_VAR,
     ACTION_GATED_QUEUE_HISTORY_DB_TABLE_ENV_VAR,
 )
+from polymarket_alpha_lab.supabase_local_observability_trends_config import (
+    LOCAL_OBSERVABILITY_TRENDS_DB_DSN_ENV_VAR,
+    LOCAL_OBSERVABILITY_TRENDS_DB_ENABLED_ENV_VAR,
+    LOCAL_OBSERVABILITY_TRENDS_DB_TABLE_ENV_VAR,
+)
 from polymarket_alpha_lab.supabase_outcome_tracking_config import (
     OUTCOME_TRACKING_DB_DSN_ENV_VAR,
     OUTCOME_TRACKING_DB_ENABLED_ENV_VAR,
@@ -3285,6 +3290,61 @@ def _observability_trends_stub_report(
     )
 
 
+def _observability_trends_real_report():
+    from polymarket_alpha_lab.local_observability_trends import (
+        LocalObservabilityTrendsReport,
+    )
+    from polymarket_alpha_lab.nav_risk_trend import (
+        PaperNavRiskTrendConfig,
+        build_paper_nav_risk_trend_report,
+    )
+    from polymarket_alpha_lab.outcome_freshness import (
+        OutcomeFreshnessConfig,
+        build_outcome_freshness_report,
+    )
+    from polymarket_alpha_lab.paper_trade_cost_trend import (
+        PaperTradeCostTrendConfig,
+        build_paper_trade_cost_trend_report,
+    )
+    from polymarket_alpha_lab.strategy_evidence_trend import (
+        PaperStrategyEvidenceTrendConfig,
+        build_paper_strategy_evidence_trend_report,
+    )
+
+    generated_at = datetime(2026, 6, 20, 18, 30, tzinfo=UTC)
+    return LocalObservabilityTrendsReport(
+        generated_at=generated_at,
+        config_version="local-observability-trends-v0",
+        strategy_evidence_trend=build_paper_strategy_evidence_trend_report(
+            (),
+            config=PaperStrategyEvidenceTrendConfig(
+                config_version="strategy-evidence-trend-v0",
+            ),
+            generated_at=generated_at,
+        ),
+        outcome_freshness=build_outcome_freshness_report(
+            (),
+            config=OutcomeFreshnessConfig(
+                config_version="outcome-freshness-v0",
+                stale_after_seconds=60,
+            ),
+            generated_at=generated_at,
+        ),
+        nav_risk_trend=build_paper_nav_risk_trend_report(
+            (),
+            config=PaperNavRiskTrendConfig(config_version="nav-risk-trend-v0"),
+            generated_at=generated_at,
+        ),
+        paper_trade_cost_trend=build_paper_trade_cost_trend_report(
+            (),
+            config=PaperTradeCostTrendConfig(
+                config_version="paper-trade-cost-trend-v0",
+            ),
+            generated_at=generated_at,
+        ),
+    )
+
+
 def test_observability_trends_cli_passes_paths_config_and_prints_without_client(
     tmp_path,
     capsys,
@@ -3376,6 +3436,323 @@ def test_observability_trends_cli_passes_paths_config_and_prints_without_client(
     assert "paper_only=True" in captured.out
     assert "report_only=True" in captured.out
     assert "readonly=True" in captured.out
+
+
+def test_observability_trends_cli_defaults_to_no_persist_without_db(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    cycle_log, trade_log, nav_log, outcome_log = _write_strategy_audit_inputs(
+        tmp_path,
+        _resolved_outcome_report(),
+    )
+    monkeypatch.delenv(LOCAL_OBSERVABILITY_TRENDS_DB_ENABLED_ENV_VAR, raising=False)
+    monkeypatch.setenv(
+        LOCAL_OBSERVABILITY_TRENDS_DB_DSN_ENV_VAR,
+        "postgresql://observability.example.invalid/ignored",
+    )
+    sink_calls = []
+    client_factory_calls = 0
+
+    def fake_observability_trends_runner(**kwargs):
+        return _observability_trends_stub_report()
+
+    def forbidden_observability_trends_sink(**kwargs):
+        sink_calls.append(kwargs)
+        raise AssertionError("observability trends DB sink should not run")
+
+    def forbidden_client_factory():
+        nonlocal client_factory_calls
+        client_factory_calls += 1
+        raise AssertionError("client should not be constructed")
+
+    exit_code = main(
+        [
+            "observability-trends",
+            "--cycle-log",
+            str(cycle_log),
+            "--trade-log",
+            str(trade_log),
+            "--nav-log",
+            str(nav_log),
+            "--outcome-log",
+            str(outcome_log),
+        ],
+        observability_trends_runner=fake_observability_trends_runner,
+        local_observability_trends_db_sink=forbidden_observability_trends_sink,
+        client_factory=forbidden_client_factory,
+    )
+
+    assert exit_code == 0
+    assert client_factory_calls == 0
+    assert sink_calls == []
+    captured = capsys.readouterr()
+    assert "observability-trends:" in captured.out
+    assert "persisted=False" in captured.out
+    assert "observability.example.invalid" not in captured.out
+    assert "observability.example.invalid" not in captured.err
+
+
+def test_observability_trends_cli_persists_report_when_requested(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    dsn = "postgresql://observability.example.invalid/persist"
+    monkeypatch.setenv(LOCAL_OBSERVABILITY_TRENDS_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(LOCAL_OBSERVABILITY_TRENDS_DB_DSN_ENV_VAR, dsn)
+    monkeypatch.setenv(
+        LOCAL_OBSERVABILITY_TRENDS_DB_TABLE_ENV_VAR,
+        "local_observability_trends_archive",
+    )
+    cycle_log, trade_log, nav_log, outcome_log = _write_strategy_audit_inputs(
+        tmp_path,
+        _resolved_outcome_report(),
+    )
+    report = _observability_trends_stub_report()
+    sink_calls = []
+
+    def fake_observability_trends_runner(**kwargs):
+        return report
+
+    def fake_observability_trends_sink(*, dsn, report, table_name):
+        sink_calls.append((dsn, report, table_name))
+        return SimpleNamespace(report_sha256="a" * 64)
+
+    exit_code = main(
+        [
+            "observability-trends",
+            "--cycle-log",
+            str(cycle_log),
+            "--trade-log",
+            str(trade_log),
+            "--nav-log",
+            str(nav_log),
+            "--outcome-log",
+            str(outcome_log),
+            "--persist",
+        ],
+        observability_trends_runner=fake_observability_trends_runner,
+        local_observability_trends_db_sink=fake_observability_trends_sink,
+        client_factory=lambda: (_ for _ in ()).throw(
+            AssertionError("client should not be constructed"),
+        ),
+    )
+
+    assert exit_code == 0
+    assert sink_calls == [
+        (dsn, report, "local_observability_trends_archive"),
+    ]
+    captured = capsys.readouterr()
+    assert "observability-trends:" in captured.out
+    assert "persisted=True" in captured.out
+    assert dsn not in captured.out
+    assert dsn not in captured.err
+    assert "local_observability_trends_archive" not in captured.out
+
+
+def test_observability_trends_cli_requires_db_config_before_persisting(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    monkeypatch.delenv(LOCAL_OBSERVABILITY_TRENDS_DB_ENABLED_ENV_VAR, raising=False)
+    monkeypatch.delenv(LOCAL_OBSERVABILITY_TRENDS_DB_DSN_ENV_VAR, raising=False)
+    monkeypatch.delenv(LOCAL_OBSERVABILITY_TRENDS_DB_TABLE_ENV_VAR, raising=False)
+    cycle_log, trade_log, nav_log, outcome_log = _write_strategy_audit_inputs(
+        tmp_path,
+        _resolved_outcome_report(),
+    )
+    calls = []
+
+    def forbidden_observability_trends_runner(**kwargs):
+        calls.append(("runner", kwargs))
+        raise AssertionError("observability trends runner should not run")
+
+    def forbidden_observability_trends_sink(**kwargs):
+        calls.append(("sink", kwargs))
+        raise AssertionError("observability trends DB sink should not run")
+
+    exit_code = main(
+        [
+            "observability-trends",
+            "--cycle-log",
+            str(cycle_log),
+            "--trade-log",
+            str(trade_log),
+            "--nav-log",
+            str(nav_log),
+            "--outcome-log",
+            str(outcome_log),
+            "--persist",
+        ],
+        observability_trends_runner=forbidden_observability_trends_runner,
+        local_observability_trends_db_sink=forbidden_observability_trends_sink,
+    )
+
+    assert exit_code == 1
+    assert calls == []
+    captured = capsys.readouterr()
+    assert "observability-trends failed:" in captured.err
+    assert "persistence requires local observability trends DB to be enabled" in captured.err
+
+
+def test_observability_trends_cli_redacts_dsn_on_persistence_failure(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    dsn = "postgresql://observability-secret.example.invalid/persist"
+    monkeypatch.setenv(LOCAL_OBSERVABILITY_TRENDS_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(LOCAL_OBSERVABILITY_TRENDS_DB_DSN_ENV_VAR, dsn)
+    cycle_log, trade_log, nav_log, outcome_log = _write_strategy_audit_inputs(
+        tmp_path,
+        _resolved_outcome_report(),
+    )
+
+    def fake_observability_trends_runner(**kwargs):
+        return _observability_trends_stub_report()
+
+    def broken_observability_trends_sink(*, dsn, report, table_name):
+        raise RuntimeError(f"failed to persist to {dsn}")
+
+    exit_code = main(
+        [
+            "observability-trends",
+            "--cycle-log",
+            str(cycle_log),
+            "--trade-log",
+            str(trade_log),
+            "--nav-log",
+            str(nav_log),
+            "--outcome-log",
+            str(outcome_log),
+            "--persist",
+        ],
+        observability_trends_runner=fake_observability_trends_runner,
+        local_observability_trends_db_sink=broken_observability_trends_sink,
+    )
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert "observability-trends failed: failed to persist to <redacted-dsn>" in (
+        captured.err
+    )
+    assert dsn not in captured.out
+    assert dsn not in captured.err
+    assert "observability-secret" not in captured.out
+    assert "observability-secret" not in captured.err
+
+
+def test_observability_trends_cli_default_psycopg_persist_path_no_network(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    dsn = "postgresql://observability.example.invalid/persist"
+    monkeypatch.setenv(LOCAL_OBSERVABILITY_TRENDS_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(LOCAL_OBSERVABILITY_TRENDS_DB_DSN_ENV_VAR, dsn)
+    monkeypatch.setenv(
+        LOCAL_OBSERVABILITY_TRENDS_DB_TABLE_ENV_VAR,
+        "local_observability_trends_archive",
+    )
+    cycle_log, trade_log, nav_log, outcome_log = _write_strategy_audit_inputs(
+        tmp_path,
+        _resolved_outcome_report(),
+    )
+    report = _observability_trends_real_report()
+
+    class FakeCursor:
+        def __init__(self):
+            self.calls = []
+            self.closed = False
+
+        def execute(self, sql, params=()):
+            self.calls.append((" ".join(sql.split()), params))
+
+        def close(self):
+            self.closed = True
+
+    class FakeConnection:
+        def __init__(self):
+            self.cursor_instance = FakeCursor()
+            self.cursor_count = 0
+            self.commit_count = 0
+            self.rollback_count = 0
+            self.close_count = 0
+
+        def cursor(self):
+            self.cursor_count += 1
+            return self.cursor_instance
+
+        def commit(self):
+            self.commit_count += 1
+
+        def rollback(self):
+            self.rollback_count += 1
+
+        def close(self):
+            self.close_count += 1
+
+    class FakeJsonb:
+        def __init__(self, value):
+            self.value = value
+
+    connection = FakeConnection()
+    connect_calls = []
+
+    def fake_connect(connect_dsn):
+        connect_calls.append(connect_dsn)
+        if connect_dsn != dsn:
+            raise AssertionError(f"unexpected dsn: {connect_dsn}")
+        return connection
+
+    monkeypatch.setitem(sys.modules, "psycopg", SimpleNamespace(connect=fake_connect))
+    monkeypatch.setitem(
+        sys.modules,
+        "psycopg.types.json",
+        SimpleNamespace(Jsonb=FakeJsonb),
+    )
+    sys.modules.pop("polymarket_alpha_lab.local_observability_trends_store", None)
+    sys.modules.pop("polymarket_alpha_lab.local_observability_trends_psycopg", None)
+
+    exit_code = main(
+        [
+            "observability-trends",
+            "--cycle-log",
+            str(cycle_log),
+            "--trade-log",
+            str(trade_log),
+            "--nav-log",
+            str(nav_log),
+            "--outcome-log",
+            str(outcome_log),
+            "--persist",
+        ],
+        observability_trends_runner=lambda **kwargs: report,
+        client_factory=lambda: (_ for _ in ()).throw(
+            AssertionError("client should not be constructed"),
+        ),
+    )
+
+    assert exit_code == 0
+    assert connect_calls == [dsn]
+    assert connection.commit_count == 1
+    assert connection.rollback_count == 0
+    assert connection.close_count == 1
+    assert connection.cursor_instance.closed is True
+    sql, params = connection.cursor_instance.calls[0]
+    assert "INSERT INTO local_observability_trends_archive" in sql
+    assert len(params) == 15
+    assert isinstance(params[11], FakeJsonb)
+    assert params[11].value["config_version"] == "local-observability-trends-v0"
+    captured = capsys.readouterr()
+    assert "observability-trends:" in captured.out
+    assert "persisted=True" in captured.out
+    assert dsn not in captured.out
+    assert dsn not in captured.err
+    assert "local_observability_trends_archive" not in captured.out
 
 
 @pytest.mark.parametrize(

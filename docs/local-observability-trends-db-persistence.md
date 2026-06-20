@@ -4,8 +4,11 @@ This optional Supabase/Postgres persistence-only surface stores deterministic
 `LocalObservabilityTrendsReport` snapshots. It is paper-only, report-only, and
 readonly. The default table is `local_observability_trends_reports`.
 
-This is a persistence foundation only. It adds no CLI wiring; callers must opt
-in explicitly from their own paper/report path.
+This remains a persistence-only boundary. Explicit CLI --persist wiring is
+default-off: `observability-trends` does not write by default. Only
+`observability-trends --persist` may read the local observability DB environment
+config and insert the generated paper-only/report-only/readonly row when the
+enabled env config is present. There are no DSN CLI flags.
 
 ## Environment
 
@@ -70,6 +73,8 @@ There is no replacement. There is no exchange mutation.
 
 The config may read process environment values, validate them, and return a
 frozen dataclass. Store and adapter code may connect to Supabase/Postgres and
-insert or load local observability trend rows only. They must not authenticate
-exchange clients, read exchange accounts, construct orders, sign payloads,
-submit orders, cancel orders, replace orders, or mutate the exchange.
+insert or load local observability trend rows only. The CLI may invoke the
+insert path only under explicit `--persist` plus enabled environment config, and
+it must not add DSN CLI flags. These paths must not authenticate exchange
+clients, read exchange accounts, construct orders, sign payloads, submit orders,
+cancel orders, replace orders, or mutate the exchange.

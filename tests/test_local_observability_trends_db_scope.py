@@ -690,7 +690,11 @@ def test_local_observability_trends_docs_state_persistence_only_boundary() -> No
         "no cancellation",
         "no replacement",
         "no exchange mutation",
-        "no cli wiring",
+        "explicit cli --persist",
+        "default-off",
+        "observability-trends --persist",
+        "enabled env config",
+        "no dsn cli flags",
     ):
         assert required in text
     for env_var in LOCAL_OBSERVABILITY_TRENDS_ENV_VARS:

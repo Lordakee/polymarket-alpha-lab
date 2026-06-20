@@ -18,7 +18,7 @@ It also includes an optional local-only Strategy Risk Audit preflight for contin
 
 A separate `strategy-evidence` summary is local evidence observability only: it reads caller-selected local paper logs and existing local reports to describe evidence presence, gaps, and risk flags without changing run behavior.
 
-The `observability-trends` command is a local-only trend summary over the same paper artifacts. It reads caller-selected cycle, paper-trade, NAV, optional outcome, and optional Strategy Risk Audit logs, builds the existing strategy-evidence, outcome-freshness, NAV-risk, and paper-trade-cost trend reports, and prints a compact read-only summary without writing artifacts or changing strategy behavior.
+The `observability-trends` command is a local-only trend summary over the same paper artifacts. It reads caller-selected cycle, paper-trade, NAV, optional outcome, and optional Strategy Risk Audit logs, builds the existing strategy-evidence, outcome-freshness, NAV-risk, and paper-trade-cost trend reports, and prints a compact read-only summary without changing strategy behavior. By default it performs no DB write and mutates no local logs or artifacts; an optional paper-only/report-only/readonly DB insert is allowed only when `--persist` is passed and the local observability DB environment config is enabled.
 
 The current phase does not contain:
 
@@ -112,11 +112,12 @@ Phase 1 boundary: this module is pure local report math. It does not score marke
 
 ## Local Observability Trends v0
 
-- Print local trend summaries with `polymarket-alpha-lab observability-trends --cycle-log <path> --trade-log <path> --nav-log <path> [--outcome-log <path>] [--strategy-audit-log <path>] [--outcome-stale-after-seconds <seconds>]`.
+- Print local trend summaries with `polymarket-alpha-lab observability-trends --cycle-log <path> --trade-log <path> --nav-log <path> [--outcome-log <path>] [--strategy-audit-log <path>] [--outcome-stale-after-seconds <seconds>] [--persist]`.
 - The command reads caller-supplied local JSONL logs only. It builds four existing read-only trend reports: strategy evidence trend, outcome freshness, NAV risk trend, and paper trade cost trend.
+- Default is no DB write. `--persist` is the only persistence opt-in; when present, the CLI reads local observability DB environment config and, only if enabled, inserts the generated paper-only/report-only/readonly row. There are no DSN CLI flags.
 - Required cycle, trade, and NAV histories use source/append-order prefixes from their typed readers as the only local trend ordering authority; the command does not timestamp-sort prefix inputs, including the NAV inputs used for the NAV risk trend. Optional outcome and Strategy Risk Audit logs are local evidence inputs only and are never refreshed from external services.
 - Empty required logs produce deterministic empty trend states where supported by the child reducers. Invalid or missing local logs fail the command without constructing a client.
-- Boundary: paper-only/report-only/read-only local observability. The command does not write, append, repair, or mutate logs; construct clients; fetch data; authenticate; read accounts; touch wallets or private keys; place, sign, submit, or cancel orders; interact with live trading surfaces; rank investments; recommend trades; provide trade instruction; provide financial advice; tune strategy behavior; or alter strategy-cycle decisions.
+- Boundary: paper-only/report-only/read-only local observability. The command does not write, append, repair, or mutate local logs or artifacts; construct exchange/API clients; fetch data; authenticate; read accounts; touch wallets or private keys; place, sign, submit, or cancel orders; interact with live trading surfaces; rank investments; recommend trades; provide trade instruction; provide financial advice; tune strategy behavior; or alter strategy-cycle decisions.
 
 ## Paper Trade Cost Audit v0
 

@@ -160,6 +160,7 @@ StrategyRecommendationHistoryRunner = Callable[
 CostAuditRunner = Callable[..., PaperTradeCostAuditReport]
 StrategyEvidenceRunner = Callable[..., "PaperStrategyEvidenceSnapshotReport"]
 ObservabilityTrendsRunner = Callable[..., LocalObservabilityTrendsReport]
+LocalObservabilityTrendsDbSink = Callable[..., object]
 CycleSnapshotSource = Callable[..., object]
 CycleSnapshotDbSink = Callable[..., object]
 ActionGatedQueueSource = Callable[..., object]
@@ -276,6 +277,7 @@ def main(
     observability_trends_runner: ObservabilityTrendsRunner = (
         run_local_observability_trends
     ),
+    local_observability_trends_db_sink: LocalObservabilityTrendsDbSink | None = None,
     cycle_snapshot_source: CycleSnapshotSource | None = None,
     cycle_snapshot_db_sink: CycleSnapshotDbSink = (
         insert_paper_recommendation_cycle_snapshot_with_psycopg
@@ -527,6 +529,12 @@ def main(
         type=int,
         default=86_400,
         dest="outcome_stale_after_seconds",
+    )
+    observability_trends.add_argument(
+        "--persist",
+        action="store_true",
+        default=False,
+        dest="persist",
     )
 
     cycle_snapshot_db_trend = subparsers.add_parser("cycle-snapshot-db-trend")
@@ -1016,6 +1024,25 @@ def main(
 
     if args.command == "observability-trends":
         try:
+            observability_trends_db_config = None
+            if args.persist:
+                from polymarket_alpha_lab.supabase_local_observability_trends_config import (
+                    from_local_observability_trends_db_env,
+                )
+
+                observability_trends_db_config = (
+                    from_local_observability_trends_db_env()
+                )
+                if not observability_trends_db_config.enabled:
+                    raise ValueError(
+                        "observability-trends persistence requires local "
+                        "observability trends DB to be enabled",
+                    )
+                if observability_trends_db_config.dsn is None:
+                    raise ValueError(
+                        "observability-trends persistence requires a local "
+                        "observability trends DB DSN",
+                    )
             report = observability_trends_runner(
                 cycle_log=args.cycle_log,
                 trade_log=args.trade_log,
@@ -1028,7 +1055,34 @@ def main(
                 ),
                 generated_at=datetime.now(UTC),
             )
-            _print_observability_trends_summary(report)
+            persisted = False
+            if observability_trends_db_config is not None:
+                dsn = observability_trends_db_config.dsn
+                if dsn is None:
+                    raise ValueError(
+                        "observability-trends persistence requires a local "
+                        "observability trends DB DSN",
+                    )
+                if local_observability_trends_db_sink is None:
+                    from polymarket_alpha_lab.local_observability_trends_psycopg import (
+                        insert_local_observability_trends_report_with_psycopg,
+                    )
+
+                    resolved_db_sink = (
+                        insert_local_observability_trends_report_with_psycopg
+                    )
+                else:
+                    resolved_db_sink = local_observability_trends_db_sink
+                try:
+                    resolved_db_sink(
+                        dsn=dsn,
+                        report=report,
+                        table_name=observability_trends_db_config.table_name,
+                    )
+                except Exception as exc:
+                    _raise_redacted_db_sink_error(exc, dsn=dsn)
+                persisted = True
+            _print_observability_trends_summary(report, persisted=persisted)
             return 0
         except Exception as exc:
             print(f"observability-trends failed: {exc}", file=sys.stderr)
@@ -2646,6 +2700,8 @@ def _print_strategy_evidence_summary(
 
 def _print_observability_trends_summary(
     report: LocalObservabilityTrendsReport,
+    *,
+    persisted: bool = False,
 ) -> None:
     strategy = report.strategy_evidence_trend
     outcome = report.outcome_freshness
@@ -2663,7 +2719,8 @@ def _print_observability_trends_summary(
         f"cost_audit_reports={cost.cost_audit_report_count} "
         f"paper_only={report.paper_only} "
         f"report_only={report.report_only} "
-        f"readonly={report.readonly}",
+        f"readonly={report.readonly} "
+        f"persisted={persisted}",
     )
     print(
         "  strategy_evidence_latest_gaps="

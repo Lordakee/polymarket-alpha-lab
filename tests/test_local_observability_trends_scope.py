@@ -1045,6 +1045,8 @@ def _parser_argument_surface(
             if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
                 references.add(arg.value)
         for keyword in node.keywords:
+            if keyword.arg != "dest":
+                continue
             if isinstance(keyword.value, ast.Constant) and isinstance(
                 keyword.value.value,
                 str,
@@ -1107,6 +1109,8 @@ def test_cli_observability_trends_parser_surface_has_no_live_or_advice_options()
         "strategy_audit_log",
         "--outcome-stale-after-seconds",
         "outcome_stale_after_seconds",
+        "--persist",
+        "persist",
     }
     for fragment in CLI_OBSERVABILITY_FORBIDDEN_SURFACE_FRAGMENTS:
         assert not any(
