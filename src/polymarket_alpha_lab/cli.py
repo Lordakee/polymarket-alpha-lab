@@ -64,6 +64,10 @@ from polymarket_alpha_lab.paper_recommendation_cycle_review import (
     PaperRecommendationCycleReviewConfig,
     build_paper_recommendation_cycle_review_report,
 )
+from polymarket_alpha_lab.paper_recommendation_cycle_action_gate import (
+    PaperRecommendationCycleActionGateConfig,
+    build_paper_recommendation_cycle_action_gate_report,
+)
 from polymarket_alpha_lab.performance_summary import (
     PerformanceSummary,
     PerformanceSummaryConfig,
@@ -142,6 +146,7 @@ CycleSnapshotSource = Callable[..., object]
 CycleSnapshotDbSink = Callable[..., object]
 CycleSnapshotDbTrendRunner = Callable[..., object]
 CycleSnapshotDbReviewRunner = Callable[..., object]
+CycleSnapshotDbActionGateRunner = Callable[..., object]
 _MISSING = object()
 
 
@@ -244,6 +249,7 @@ def main(
     ),
     cycle_snapshot_db_trend_runner: CycleSnapshotDbTrendRunner | None = None,
     cycle_snapshot_db_review_runner: CycleSnapshotDbReviewRunner | None = None,
+    cycle_snapshot_db_action_gate_runner: CycleSnapshotDbActionGateRunner | None = None,
 ) -> int:
     parser = argparse.ArgumentParser(prog="polymarket-alpha-lab")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -492,6 +498,22 @@ def main(
     )
     cycle_snapshot_review.add_argument("--limit", type=int, default=50)
     cycle_snapshot_review.add_argument(
+        "--stale-after-hours",
+        type=Decimal,
+        default=Decimal("6.000000"),
+        dest="stale_after_hours",
+    )
+
+    cycle_snapshot_action_gate = subparsers.add_parser(
+        "paper-recommendation-cycle-action-gate",
+    )
+    cycle_snapshot_action_gate.add_argument(
+        "--source-config-version",
+        default=None,
+        dest="source_config_version",
+    )
+    cycle_snapshot_action_gate.add_argument("--limit", type=int, default=50)
+    cycle_snapshot_action_gate.add_argument(
         "--stale-after-hours",
         type=Decimal,
         default=Decimal("6.000000"),
@@ -891,6 +913,23 @@ def main(
         except Exception as exc:
             print(
                 f"paper-recommendation-cycle-review failed: {exc}",
+                file=sys.stderr,
+            )
+            return 1
+
+    if args.command == "paper-recommendation-cycle-action-gate":
+        try:
+            report = _run_cycle_snapshot_db_action_gate(
+                source_config_version=args.source_config_version,
+                limit=args.limit,
+                stale_after_hours=args.stale_after_hours,
+                runner=cycle_snapshot_db_action_gate_runner,
+            )
+            _print_cycle_snapshot_db_action_gate_summary(report)
+            return 0
+        except Exception as exc:
+            print(
+                f"paper-recommendation-cycle-action-gate failed: {exc}",
                 file=sys.stderr,
             )
             return 1
@@ -1359,6 +1398,65 @@ def _run_cycle_snapshot_db_review(
     return build_paper_recommendation_cycle_review_report(
         tuple(reversed(snapshots)),
         config=config,
+        generated_at=generated_at,
+    )
+
+
+def _run_cycle_snapshot_db_action_gate(
+    *,
+    source_config_version: str | None,
+    limit: int,
+    stale_after_hours: Decimal,
+    runner: CycleSnapshotDbActionGateRunner | None,
+) -> object:
+    if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+        raise ValueError("limit must be a positive integer")
+    db_config = from_cycle_snapshot_db_env()
+    if not db_config.enabled:
+        raise ValueError(
+            "paper-recommendation-cycle-action-gate requires "
+            "cycle snapshot DB to be enabled",
+        )
+    if db_config.dsn is None:
+        raise ValueError("paper-recommendation-cycle-action-gate requires a DB DSN")
+    generated_at = datetime.now(UTC)
+    review_config = PaperRecommendationCycleReviewConfig(
+        config_version="paper-recommendation-cycle-review-v0",
+        stale_after_hours=stale_after_hours.quantize(Decimal("0.000001")),
+    )
+    action_gate_config = PaperRecommendationCycleActionGateConfig(
+        config_version="paper-recommendation-cycle-action-gate-v0",
+    )
+    if runner is not None:
+        try:
+            return runner(
+                dsn=db_config.dsn,
+                generated_at=generated_at,
+                review_config=review_config,
+                action_gate_config=action_gate_config,
+                source_config_version=source_config_version,
+                limit=limit,
+                table_name=db_config.table_name,
+            )
+        except Exception as exc:
+            _raise_redacted_db_sink_error(exc, dsn=db_config.dsn)
+    try:
+        snapshots = load_paper_recommendation_cycle_snapshots_with_psycopg(
+            db_config.dsn,
+            config_version=source_config_version,
+            limit=limit,
+            table_name=db_config.table_name,
+        )
+    except Exception as exc:
+        _raise_redacted_db_sink_error(exc, dsn=db_config.dsn)
+    review_report = build_paper_recommendation_cycle_review_report(
+        tuple(reversed(snapshots)),
+        config=review_config,
+        generated_at=generated_at,
+    )
+    return build_paper_recommendation_cycle_action_gate_report(
+        review_report,
+        config=action_gate_config,
         generated_at=generated_at,
     )
 
@@ -2053,6 +2151,23 @@ def _print_cycle_snapshot_db_review_summary(report: object) -> None:
         f"reason_codes={reason_code_counts or 'none'} "
         f"review_status={report.review_status} "
         f"stale_history={report.stale_history}",
+    )
+
+
+def _print_cycle_snapshot_db_action_gate_summary(report: object) -> None:
+    reason_code_counts = ",".join(
+        f"{row.reason_code}:{row.count}" for row in report.reason_code_counts
+    )
+    print(
+        "paper-recommendation-cycle-action-gate: "
+        f"review_status={report.review_status} "
+        f"latest_status={_none_or_value(report.latest_final_status)} "
+        f"action_status={report.action_status} "
+        f"next_step={report.recommended_next_step} "
+        f"missing_required_artifacts={report.missing_required_artifact_count} "
+        f"blocked_reasons={report.blocked_reason_count} "
+        f"watch_reasons={report.watch_reason_count} "
+        f"reason_codes={reason_code_counts or 'none'}",
     )
 
 

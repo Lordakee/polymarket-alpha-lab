@@ -4,7 +4,8 @@ This page documents the paper-only recommendation layer that sits after market
 scanning, forecasting, cost-aware strategy checks, candidate assessment, and
 readiness gates. It is selection and reporting infrastructure only. It does not
 execute live trades, authenticate accounts, use wallets or private keys, call
-relayers, place real orders, or cancel real orders.
+relayers, place real orders, cancel real orders, inspect accounts, or deploy
+capital.
 
 ## Why Polymarket Is Different
 
@@ -48,10 +49,11 @@ The intended flow is:
 ```text
 strategy cycle
 -> rich paper recommendation artifacts
--> artifact index + pipeline report
 -> cycle snapshot
 -> Supabase/Postgres persistence
--> DB-backed review/trend CLI
+-> DB-backed cycle review
+-> paper cycle action gate
+-> candidate research/recommendation queue
 ```
 
 The strategy cycle consumes prior paper reports and exposes already-built local
@@ -70,12 +72,34 @@ history and later read-only review. Documentation should mention this
 persistence only at a high level and should never include real DSNs, passwords,
 tokens, service keys, wallet material, or other secrets.
 
-The DB-backed review/trend CLI reads persisted snapshot history and prints
+The DB-backed cycle review reads persisted snapshot history and produces
 concise observability summaries: latest status, pass/watch/blocked counts,
-blocked or watch artifact pressure, missing required artifacts, and reason-code
-counts or movement. It is not an approval workflow, execution workflow, order
-manager, account inspection tool, or bridge from paper reports into live
-trading.
+blocked or watch artifact pressure, missing required artifacts, stale-history
+state, and reason-code counts. It is not live approval, not an execution
+workflow, not order management, not account inspection, not wallet/private-key
+access, and not capital deployment.
+
+The paper cycle action gate consumes the DB-backed review report and converts
+review status plus evidence pressure into one of three paper next steps only:
+
+- `build_candidate_research_queue` when the cycle review passes and required
+  evidence is present and fresh enough to build a candidate
+  research/recommendation queue;
+- `await_fresh_cycle_evidence` when the review is watch or cycle evidence is
+  stale enough that the paper layer should wait for a fresher persisted cycle;
+- `repair_cycle_evidence` when the review is blocked or required cycle evidence
+  is missing, malformed, or blocked.
+
+The gate's `build_candidate_research_queue` result means "paper research queue
+construction may proceed." It does not approve a live trade, create order
+intent, manage orders, inspect accounts, read wallets or private keys, sign
+payloads, or deploy capital. A candidate research/recommendation queue remains a
+paper-only/report-only/readonly review queue.
+
+DB-backed trend reporting remains separate readonly observability over
+persisted cycle state. It can summarize blocker/watch movement across stored
+snapshots, but it must not become an approval workflow, execution workflow,
+account review, or capital-deployment workflow.
 
 JSONL bundle logs may remain as append-only debug/export artifacts for local
 paper review, regression fixtures, or portability, but DB-backed snapshot
@@ -226,13 +250,13 @@ notional.
 
 ### Queue, Risk Budget, and Reason Trends
 
-The queue module is a review queue, not an execution queue. It should admit
-ranked paper recommendations under local limits such as maximum queue size,
-minimum net edge, liquidity threshold, market-context freshness, settlement
-freshness, and finalization buffer. Queue statuses should be deterministic,
-for example `queued`, `deferred`, and `blocked`, with reason codes explaining
-capacity, stale inputs, liquidity failures, settlement timing, or net-edge
-threshold failures.
+The queue module is a research/recommendation review queue, not an execution
+queue. It should admit ranked paper recommendations under local limits such as
+maximum queue size, minimum net edge, liquidity threshold, market-context
+freshness, settlement freshness, and finalization buffer. Queue statuses should
+be deterministic, for example `queued`, `deferred`, and `blocked`, with reason
+codes explaining capacity, stale inputs, liquidity failures, settlement timing,
+or net-edge threshold failures.
 
 The risk budget module should allocate paper notional under local caps:
 
@@ -361,16 +385,27 @@ watch rows or reduced paper size, and `blocked` forces watch or reject with zero
 selected notional. These gates are evidence gates for paper recommendations
 only; they are not execution readiness gates for live orders.
 
+After persisted cycle review exists, the paper cycle action gate is the only
+cycle-level handoff into candidate research/recommendation queue construction.
+It still operates inside the paper-only/report-only/read-only boundary: it maps
+review status and evidence pressure to `build_candidate_research_queue`,
+`await_fresh_cycle_evidence`, or `repair_cycle_evidence`, and nothing beyond
+those paper next steps.
+
 ## Phase Boundary
 
 This stage ends at append-only paper bundle history and readonly trend reports.
+The DB-backed cycle review and paper cycle action gate extend that report-only
+chain into persisted cycle observability and paper next-step selection only.
 There is no live trading layer in this phase. No module in the recommendation
-loop should add account authentication, wallet access, signing, order request
-construction, order submission, order cancellation, relayer mutation, private
-state reads, or exchange-state mutation. Any future phase that considers those
-surfaces must be documented separately and cannot be inferred from a
-recommendation, selected side, selected notional, readiness pass, or history
-trend.
+loop should add live approval, order management, account inspection, account
+authentication, wallet access, private-key access, signing, order request
+construction, order submission, order cancellation, relayer mutation, capital
+deployment, private state reads, or exchange-state mutation. Any future phase
+that considers those surfaces must be documented separately and cannot be
+inferred from a recommendation, selected side, selected notional, readiness
+pass, DB-backed review pass, action-gate `build_candidate_research_queue`
+result, or history trend.
 
 ## Bundle and Log Stage
 

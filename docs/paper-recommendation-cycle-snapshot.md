@@ -1,8 +1,9 @@
 # Paper Recommendation Cycle Snapshot
 
 This page documents the paper recommendation cycle snapshot,
-Supabase/Postgres-first persistence, and trend layer. The layer is paper-only,
-report-only, and read-only/readonly. The phase boundary is explicit:
+Supabase/Postgres-first persistence, DB-backed cycle review, paper cycle action
+gate, and trend layer. The layer is paper-only, report-only, and
+read-only/readonly. The phase boundary is explicit:
 paper-only/report-only/read-only. It summarizes already-built local paper
 reports; it does not fetch market data, perform live trading, authenticate,
 read accounts, mutate accounts, read wallets or private keys, sign payloads,
@@ -16,9 +17,11 @@ paper cycle was complete, consistent, cost-aware, and ready for human
 inspection, but it is not an approval workflow, live execution signal, or
 exchange-facing payload.
 
-A DB-backed review or trend CLI is observability over persisted paper evidence.
-It is not approval, execution, order management, live account review, or
-permission to move from paper reports into exchange-facing behavior.
+A DB-backed review, paper cycle action gate, or trend CLI is observability over
+persisted paper evidence. It is not live approval, not execution, not order
+management, not account inspection, not wallet/private-key access, not capital
+deployment, and not permission to move from paper reports into exchange-facing
+behavior.
 
 ## Purpose
 
@@ -48,16 +51,17 @@ status rules.
 
 ## Placement
 
-The DB-backed review path starts with the strategy cycle and keeps each later
-step inside the paper-report boundary:
+The DB-backed review and paper cycle action-gate path starts with the strategy
+cycle and keeps each later step inside the paper-report boundary:
 
 ```text
 strategy cycle
 -> rich paper recommendation artifacts
--> artifact index + pipeline report
 -> cycle snapshot
 -> Supabase/Postgres persistence
--> DB-backed review/trend CLI
+-> DB-backed cycle review
+-> paper cycle action gate
+-> candidate research/recommendation queue
 ```
 
 The strategy cycle answers: "Which local paper reports were produced for this
@@ -77,7 +81,9 @@ report, and which reason codes or safety flags are attached?"
 
 The cycle snapshot answers: "For this generated-at cycle timestamp, what is the
 stable paper-only/report-only/readonly cycle state after combining the pipeline
-rollup with the artifact index?"
+rollup with the artifact index?" The artifact index and pipeline report are
+internal inputs to the snapshot step; the snapshot is the stable handoff into
+database persistence.
 
 The persistence layer answers: "Which already-built snapshots were durably
 recorded in the local Supabase/Postgres store for later readonly inspection?"
@@ -85,13 +91,38 @@ This is local Supabase/Postgres persistence at a high level only; documents,
 logs, and CLI output should not include real DSNs, passwords, tokens, service
 keys, wallet material, or other secrets.
 
-The DB-backed review/trend CLI answers: "Across persisted local paper
-snapshots, how often did the paper cycle pass, watch, or block, what is the
-latest status, whether blocker pressure is increasing, and which reason codes
-or required artifacts explain the trend?" It must load persisted snapshot
-history only for read-only observability and must not approve, submit, cancel,
-sign, allocate real capital, read accounts, mutate accounts, or construct order
-payloads.
+The DB-backed cycle review answers: "Across persisted local paper snapshots,
+how often did the paper cycle pass, watch, or block, what is the latest status,
+whether blocker pressure is increasing, and which reason codes or required
+artifacts explain the review result?" It must load persisted snapshot history
+only for read-only observability and must not approve, submit, cancel, sign,
+deploy capital, read accounts, inspect accounts, mutate accounts, or construct
+order payloads.
+
+The paper cycle action gate answers: "Given the DB-backed review status and the
+current evidence pressure from missing required artifacts, stale history,
+blocked artifacts, watch artifacts, and reason codes, which paper next step is
+allowed next?" It converts review status and evidence pressure into paper next
+steps only:
+
+- `build_candidate_research_queue` when the cycle review passes and required
+  evidence is present and fresh enough for paper research/recommendation queue
+  construction;
+- `await_fresh_cycle_evidence` when the review is watch or evidence pressure is
+  stale enough that the next paper step should wait for a fresher cycle;
+- `repair_cycle_evidence` when the review is blocked or required cycle evidence
+  is missing, malformed, or blocked.
+
+The paper cycle action gate is not live approval, not order management, not
+account inspection, not wallet/private-key access, and not capital deployment.
+Its output may allow building a candidate research/recommendation queue for
+paper review, but it must not create order intent, allocate real capital,
+inspect account state, touch wallet material, or bridge into live execution.
+
+The DB-backed trend CLI remains separate readonly observability over persisted
+cycle state. It can summarize blocker/watch movement across stored snapshots,
+but it must not become an approval workflow, execution workflow, account review,
+or capital-deployment workflow.
 
 Optional JSONL export/debug may still exist after persistence as a non-primary
 diagnostic copy, but it is outside the required DB-backed review path and
@@ -275,6 +306,13 @@ verify:
   and rolls back on any invalid nested report or snapshot field;
 - DB writes are limited to local paper snapshot/report history tables and never
   create exchange-facing artifacts;
+- DB-backed cycle review and the paper cycle action gate convert persisted
+  paper evidence into review status and one of
+  `build_candidate_research_queue`, `await_fresh_cycle_evidence`, or
+  `repair_cycle_evidence` only;
+- the paper cycle action gate is not live approval, not order management, not
+  account inspection, not wallet/private-key access, and not capital
+  deployment;
 - optional JSONL export/debug validates before opening the target file and is
   clearly non-primary;
 - optional JSONL readers, if present, are readonly and fail with clear row
@@ -303,9 +341,9 @@ Future CLI, orchestration, or runner wiring must stay inside the same boundary:
   observability;
 - make absent optional inputs visible as local evidence gaps rather than
   refreshing them from external systems;
-- ensure pipeline, artifact index, snapshot, persistence, optional JSONL
-  export/debug, and trend docs all describe outputs as research/report artifacts
-  only;
+- ensure pipeline, artifact index, snapshot, persistence, DB-backed review,
+  paper cycle action gate, optional JSONL export/debug, and trend docs all
+  describe outputs as research/report artifacts only;
 - update scope tests when any new module, command, DB helper, optional JSONL
   helper, or trend helper is added.
 

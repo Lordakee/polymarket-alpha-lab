@@ -2530,6 +2530,338 @@ def test_paper_recommendation_cycle_review_cli_runner_failure_redacts_dsn(
     assert "test-dsn-value" not in captured.err
 
 
+def test_paper_recommendation_cycle_action_gate_cli_requires_enabled_db_config(
+    monkeypatch,
+    capsys,
+):
+    monkeypatch.delenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_ENABLED", raising=False)
+    monkeypatch.delenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_DSN", raising=False)
+
+    def forbidden_runner(**kwargs):
+        raise AssertionError("action gate runner should not run")
+
+    def forbidden_client_factory():
+        raise AssertionError("client should not be constructed")
+
+    exit_code = main(
+        ["paper-recommendation-cycle-action-gate"],
+        cycle_snapshot_db_action_gate_runner=forbidden_runner,
+        client_factory=forbidden_client_factory,
+    )
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert "paper-recommendation-cycle-action-gate failed:" in captured.err
+    assert "requires cycle snapshot DB to be enabled" in captured.err
+
+
+def test_paper_recommendation_cycle_action_gate_cli_reads_db_config_and_prints_summary(
+    monkeypatch,
+    capsys,
+):
+    monkeypatch.setenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_ENABLED", "true")
+    monkeypatch.setenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_DSN", "test-dsn-value")
+    monkeypatch.setenv(
+        "POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_TABLE",
+        "cycle_snapshot_archive",
+    )
+    calls = []
+
+    def fake_action_gate_runner(
+        *,
+        dsn,
+        generated_at,
+        review_config,
+        action_gate_config,
+        source_config_version,
+        limit,
+        table_name,
+    ):
+        calls.append(
+            {
+                "dsn": dsn,
+                "generated_at": generated_at,
+                "review_config": review_config,
+                "action_gate_config": action_gate_config,
+                "source_config_version": source_config_version,
+                "limit": limit,
+                "table_name": table_name,
+            },
+        )
+        return SimpleNamespace(
+            source_config_version="paper-recommendation-cycle-review-v0",
+            review_status="pass",
+            latest_final_status="pass",
+            action_status="research_ready",
+            recommended_next_step="build_candidate_research_queue",
+            missing_required_artifact_count=0,
+            blocked_reason_count=0,
+            watch_reason_count=0,
+            reason_code_counts=(
+                SimpleNamespace(reason_code="cycle_review_pass", count=1),
+            ),
+            paper_only=True,
+            report_only=True,
+            readonly=True,
+        )
+
+    def forbidden_client_factory():
+        raise AssertionError("client should not be constructed")
+
+    exit_code = main(
+        [
+            "paper-recommendation-cycle-action-gate",
+            "--source-config-version",
+            "paper-recommendation-cycle-snapshot-v0",
+            "--limit",
+            "25",
+            "--stale-after-hours",
+            "12.000000",
+        ],
+        cycle_snapshot_db_action_gate_runner=fake_action_gate_runner,
+        client_factory=forbidden_client_factory,
+    )
+
+    assert exit_code == 0
+    assert len(calls) == 1
+    assert calls[0]["dsn"] == "test-dsn-value"
+    assert (
+        calls[0]["review_config"].config_version
+        == "paper-recommendation-cycle-review-v0"
+    )
+    assert calls[0]["review_config"].stale_after_hours == Decimal("12.000000")
+    assert (
+        calls[0]["action_gate_config"].config_version
+        == "paper-recommendation-cycle-action-gate-v0"
+    )
+    assert (
+        calls[0]["source_config_version"]
+        == "paper-recommendation-cycle-snapshot-v0"
+    )
+    assert calls[0]["limit"] == 25
+    assert calls[0]["table_name"] == "cycle_snapshot_archive"
+    assert isinstance(calls[0]["generated_at"], datetime)
+
+    captured = capsys.readouterr()
+    assert "paper-recommendation-cycle-action-gate:" in captured.out
+    assert "review_status=pass" in captured.out
+    assert "latest_status=pass" in captured.out
+    assert "action_status=research_ready" in captured.out
+    assert "next_step=build_candidate_research_queue" in captured.out
+    assert "missing_required_artifacts=0" in captured.out
+    assert "blocked_reasons=0" in captured.out
+    assert "watch_reasons=0" in captured.out
+    assert "reason_codes=cycle_review_pass:1" in captured.out
+    assert "test-dsn-value" not in captured.out
+    assert "test-dsn-value" not in captured.err
+
+
+def test_paper_recommendation_cycle_action_gate_cli_default_psycopg_load_path_no_network(
+    monkeypatch,
+    capsys,
+):
+    fake_dsn = "postgresql://fake.example.invalid/action-gate"
+    monkeypatch.setenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_ENABLED", "true")
+    monkeypatch.setenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_DSN", fake_dsn)
+    monkeypatch.setenv(
+        "POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_TABLE",
+        "cycle_snapshot_archive",
+    )
+
+    config_version = "paper-recommendation-cycle-snapshot-v0"
+
+    def snapshot_row(generated_at, *, final_status, artifact_status):
+        pipeline_report = build_paper_recommendation_pipeline_report(
+            generated_at=generated_at,
+            config_version="paper-recommendation-pipeline-v0",
+            stages=(
+                PaperRecommendationPipelineStage(
+                    stage_name=f"{final_status}_stage",
+                    status=final_status,
+                    message=f"{final_status} stage",
+                    input_count=1,
+                    output_count=1,
+                ),
+            ),
+        )
+        artifact_index_report = build_paper_recommendation_artifact_index_report(
+            generated_at=generated_at,
+            config_version="paper-recommendation-artifact-index-v0",
+            artifacts=(
+                SimpleNamespace(
+                    artifact_name="strategy_cycle_blocked_counts",
+                    config_version="paper-recommendation-artifact-index-v0",
+                    generated_at=generated_at,
+                    status=artifact_status,
+                    item_count=1,
+                    reason_codes=(f"{artifact_status}_artifact",),
+                    flags=("paper_only", "report_only", "readonly"),
+                    paper_only=True,
+                    report_only=True,
+                    readonly=True,
+                ),
+                SimpleNamespace(
+                    artifact_name="strategy_cycle_screening_report",
+                    config_version="paper-recommendation-artifact-index-v0",
+                    generated_at=generated_at,
+                    status="pass",
+                    item_count=1,
+                    reason_codes=("screening_ready_candidates",),
+                    flags=("paper_only", "report_only", "readonly"),
+                    paper_only=True,
+                    report_only=True,
+                    readonly=True,
+                ),
+            ),
+        )
+        row = paper_recommendation_cycle_snapshot_to_db_row(
+            build_paper_recommendation_cycle_snapshot_report(
+                generated_at=generated_at,
+                config_version=config_version,
+                pipeline_report=pipeline_report,
+                artifact_index_report=artifact_index_report,
+            ),
+        )
+        return (
+            row.snapshot_sha256,
+            row.generated_at,
+            row.config_version,
+            row.final_status,
+            row.stage_counts_json,
+            row.artifact_counts_json,
+            list(row.reason_codes),
+            row.payload_json,
+            row.paper_only,
+            row.report_only,
+            row.readonly,
+        )
+
+    rows = (
+        snapshot_row(
+            datetime(2026, 6, 19, 14, 0, tzinfo=UTC),
+            final_status="pass",
+            artifact_status="pass",
+        ),
+        snapshot_row(
+            datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
+            final_status="pass",
+            artifact_status="pass",
+        ),
+    )
+
+    class FakeCursor:
+        def __init__(self):
+            self.calls = []
+            self.closed = False
+
+        def execute(self, sql, params=()):
+            self.calls.append((" ".join(sql.split()), params))
+
+        def fetchall(self):
+            return rows
+
+        def close(self):
+            self.closed = True
+
+    class FakeConnection:
+        def __init__(self):
+            self.cursor_instance = FakeCursor()
+            self.cursor_count = 0
+            self.commit_count = 0
+            self.rollback_count = 0
+            self.close_count = 0
+
+        def cursor(self):
+            self.cursor_count += 1
+            return self.cursor_instance
+
+        def commit(self):
+            self.commit_count += 1
+
+        def rollback(self):
+            self.rollback_count += 1
+
+        def close(self):
+            self.close_count += 1
+
+    class FakeJsonb:
+        def __init__(self, value):
+            self.value = value
+
+    connection = FakeConnection()
+    connect_calls = []
+    monkeypatch.setitem(
+        sys.modules,
+        "psycopg",
+        SimpleNamespace(connect=lambda dsn: connect_calls.append(dsn) or connection),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "psycopg.types.json",
+        SimpleNamespace(Jsonb=FakeJsonb),
+    )
+
+    exit_code = main(
+        [
+            "paper-recommendation-cycle-action-gate",
+            "--source-config-version",
+            config_version,
+            "--limit",
+            "2",
+            "--stale-after-hours",
+            "24.000000",
+        ],
+        client_factory=lambda: (_ for _ in ()).throw(
+            AssertionError("client should not be constructed"),
+        ),
+    )
+
+    assert exit_code == 0
+    assert connect_calls == [fake_dsn]
+    assert connection.cursor_count == 1
+    assert connection.commit_count == 1
+    assert connection.rollback_count == 0
+    assert connection.close_count == 1
+    assert connection.cursor_instance.closed is True
+    sql, params = connection.cursor_instance.calls[0]
+    assert "FROM cycle_snapshot_archive" in sql
+    assert "ORDER BY generated_at DESC, inserted_at DESC, snapshot_sha256 DESC" in sql
+    assert params == (config_version, 2)
+
+    captured = capsys.readouterr()
+    assert "paper-recommendation-cycle-action-gate:" in captured.out
+    assert "review_status=pass" in captured.out
+    assert "latest_status=pass" in captured.out
+    assert "action_status=research_ready" in captured.out
+    assert "next_step=build_candidate_research_queue" in captured.out
+    assert fake_dsn not in captured.out
+    assert fake_dsn not in captured.err
+
+
+def test_paper_recommendation_cycle_action_gate_cli_runner_failure_redacts_dsn(
+    monkeypatch,
+    capsys,
+):
+    monkeypatch.setenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_ENABLED", "true")
+    monkeypatch.setenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_DSN", "test-dsn-value")
+
+    def broken_runner(**kwargs):
+        raise RuntimeError("could not connect to test-dsn-value")
+
+    exit_code = main(
+        ["paper-recommendation-cycle-action-gate"],
+        cycle_snapshot_db_action_gate_runner=broken_runner,
+    )
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert (
+        "paper-recommendation-cycle-action-gate failed: "
+        "could not connect to <redacted-dsn>"
+    ) in captured.err
+    assert "test-dsn-value" not in captured.err
+
+
 def _strategy_evidence_stub_report(
     *,
     status: str = "local_evidence_observed",
