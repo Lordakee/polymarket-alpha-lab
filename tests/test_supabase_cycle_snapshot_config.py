@@ -23,6 +23,11 @@ from polymarket_alpha_lab.supabase_action_gated_strategy_recommendation_queue_hi
     ACTION_GATED_QUEUE_HISTORY_DB_ENABLED_ENV_VAR,
     ACTION_GATED_QUEUE_HISTORY_DB_TABLE_ENV_VAR,
 )
+from polymarket_alpha_lab.supabase_action_gated_strategy_recommendation_queue_decision_support_config import (
+    ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_DSN_ENV_VAR,
+    ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_ENABLED_ENV_VAR,
+    ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_TABLE_ENV_VAR,
+)
 from polymarket_alpha_lab.supabase_outcome_tracking_config import (
     OUTCOME_TRACKING_DB_DSN_ENV_VAR,
     OUTCOME_TRACKING_DB_ENABLED_ENV_VAR,
@@ -255,6 +260,9 @@ def test_env_example_documents_supported_db_variable_names_only() -> None:
         f"{ACTION_GATED_QUEUE_HISTORY_DB_ENABLED_ENV_VAR}=",
         f"{ACTION_GATED_QUEUE_HISTORY_DB_DSN_ENV_VAR}=",
         f"{ACTION_GATED_QUEUE_HISTORY_DB_TABLE_ENV_VAR}=",
+        f"{ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_ENABLED_ENV_VAR}=",
+        f"{ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_DSN_ENV_VAR}=",
+        f"{ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_TABLE_ENV_VAR}=",
     ]
 
     assert CYCLE_SNAPSHOT_DB_ENABLED_ENV_VAR in text
@@ -275,6 +283,9 @@ def test_env_example_documents_supported_db_variable_names_only() -> None:
     assert ACTION_GATED_QUEUE_HISTORY_DB_ENABLED_ENV_VAR in text
     assert ACTION_GATED_QUEUE_HISTORY_DB_DSN_ENV_VAR in text
     assert ACTION_GATED_QUEUE_HISTORY_DB_TABLE_ENV_VAR in text
+    assert ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_ENABLED_ENV_VAR in text
+    assert ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_DSN_ENV_VAR in text
+    assert ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_TABLE_ENV_VAR in text
     assert lines == expected_lines
     assert all(line.endswith("=") for line in lines)
     assert "POLYMARKET_ALPHA_DATABASE_URL" not in text
