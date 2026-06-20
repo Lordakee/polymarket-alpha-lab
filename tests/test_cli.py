@@ -16,10 +16,14 @@ from polymarket_alpha_lab.forecast_evidence import (
     PaperForecastEvidenceReport,
     build_paper_forecast_evidence_report,
 )
+from polymarket_alpha_lab.journal import PaperTradeJournal, PaperTradeRecord
 from polymarket_alpha_lab.outcome_tracker import (
     OutcomeTrackingConfig,
     OutcomeTrackingLog,
     OutcomeTrackingReport,
+)
+from polymarket_alpha_lab.paper_trade_journal_db_row import (
+    paper_trade_record_to_db_row,
 )
 from polymarket_alpha_lab.paper_recommendation_cycle_snapshot import (
     PaperRecommendationCycleSnapshotReport,
@@ -3858,6 +3862,178 @@ def test_run_cli_default_loop_persists_default_snapshot_report_from_real_cycle(
     assert cycle_report.snapshot_ready_count == 1
     assert cycle_report.cost_aware_report_count == 1
     assert cycle_report.screening_report is not None
+
+
+def test_run_cli_default_loop_persists_paper_trade_and_nav_db_sinks_from_real_cycle(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    monkeypatch.delenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_ENABLED", raising=False)
+    monkeypatch.delenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_DSN", raising=False)
+    monkeypatch.delenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_TABLE", raising=False)
+    monkeypatch.chdir(tmp_path)
+    trade_dsn = "postgresql://paper-trade.example.invalid/default-loop"
+    nav_dsn = "postgresql://paper-nav.example.invalid/default-loop"
+    monkeypatch.setenv(PAPER_TRADE_JOURNAL_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(PAPER_TRADE_JOURNAL_DB_DSN_ENV_VAR, trade_dsn)
+    monkeypatch.setenv(
+        PAPER_TRADE_JOURNAL_DB_TABLE_ENV_VAR,
+        "paper_trade_archive",
+    )
+    monkeypatch.setenv(PAPER_NAV_SNAPSHOT_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(PAPER_NAV_SNAPSHOT_DB_DSN_ENV_VAR, nav_dsn)
+    monkeypatch.setenv(
+        PAPER_NAV_SNAPSHOT_DB_TABLE_ENV_VAR,
+        "paper_nav_archive",
+    )
+
+    yes_token_id = "fake-yes-token"
+    no_token_id = "fake-no-token"
+    raw_market = {
+        "conditionId": "0xfakecondition",
+        "slug": "fake-local-market",
+        "question": "Will the local fake event resolve yes?",
+        "active": True,
+        "closed": False,
+        "acceptingOrders": True,
+        "enableOrderBook": True,
+        "endDate": "2030-01-01T00:00:00Z",
+        "volume24hr": "5000",
+        "liquidity": "10000",
+        "orderMinSize": "5",
+        "orderPriceMinTickSize": "0.01",
+        "outcomes": ["Yes", "No"],
+        "clobTokenIds": [yes_token_id, no_token_id],
+        "description": "Resolves according to a local fake public source.",
+        "resolutionSource": "https://example.invalid/fake-resolution",
+    }
+    raw_books = {
+        yes_token_id: {
+            "asset_id": yes_token_id,
+            "bids": [{"price": "0.5300", "size": "100.0000"}],
+            "asks": [{"price": "0.5500", "size": "100.0000"}],
+        },
+        no_token_id: {
+            "asset_id": no_token_id,
+            "bids": [{"price": "0.3700", "size": "100.0000"}],
+            "asks": [{"price": "0.4000", "size": "100.0000"}],
+        },
+    }
+    list_markets_calls = []
+    order_book_calls = []
+    trade_sink_calls = []
+    nav_sink_calls = []
+
+    class FakeMarketDataClient:
+        def list_markets(self, *, active, closed, limit, search=None):
+            list_markets_calls.append(
+                {
+                    "active": active,
+                    "closed": closed,
+                    "limit": limit,
+                    "search": search,
+                }
+            )
+            return [raw_market]
+
+        def get_order_book(self, *, token_id):
+            order_book_calls.append(token_id)
+            return raw_books[token_id]
+
+    fake_client = FakeMarketDataClient()
+    paper_journal_path = tmp_path / "artifacts" / "paper-trades.jsonl"
+    archive_root = tmp_path / "raw"
+    cycle_log = tmp_path / "cycle.jsonl"
+    nav_log = tmp_path / "nav.jsonl"
+
+    def fake_trade_sink(*, dsn, record, table_name):
+        journal_lines = paper_journal_path.read_text(encoding="utf-8").splitlines()
+        trade_sink_calls.append((dsn, record, table_name, len(journal_lines)))
+
+    def fake_nav_sink(*, dsn, snapshot, table_name):
+        nav_lines = nav_log.read_text(encoding="utf-8").splitlines()
+        nav_sink_calls.append((dsn, snapshot, table_name, len(nav_lines)))
+
+    exit_code = main(
+        [
+            "run",
+            "--paper-execute",
+            "--limit",
+            "1",
+            "--max-markets",
+            "1",
+            "--no-prefilter",
+            "--archive-root",
+            str(archive_root),
+            "--cycle-log",
+            str(cycle_log),
+            "--nav-log",
+            str(nav_log),
+            "--starting-cash",
+            "10000",
+            "--max-iterations",
+            "1",
+        ],
+        client_factory=lambda: fake_client,
+        paper_trade_record_db_sink=fake_trade_sink,
+        paper_nav_snapshot_db_sink=fake_nav_sink,
+    )
+
+    assert exit_code == 0
+    assert list_markets_calls == [
+        {
+            "active": True,
+            "closed": False,
+            "limit": 1,
+            "search": None,
+        },
+    ]
+    assert order_book_calls[:2] == [yes_token_id, no_token_id]
+
+    local_trades = PaperTradeJournal.read(paper_journal_path)
+    assert len(local_trades) == 1
+    local_trade = local_trades[0]
+    assert isinstance(local_trade, PaperTradeRecord)
+    assert paper_trade_record_to_db_row(local_trade).paper_only is True
+    assert trade_sink_calls == [
+        (
+            trade_dsn,
+            local_trade,
+            "paper_trade_archive",
+            1,
+        ),
+    ]
+    _, trade_record, _, journal_line_count_at_sink = trade_sink_calls[0]
+    assert isinstance(trade_record, PaperTradeRecord)
+    assert paper_trade_record_to_db_row(trade_record).paper_only is True
+    assert journal_line_count_at_sink == 1
+
+    local_nav_snapshots = PaperNavLog.read(nav_log)
+    assert len(local_nav_snapshots) == 1
+    local_nav_snapshot = local_nav_snapshots[0]
+    assert isinstance(local_nav_snapshot, PaperNavSnapshot)
+    assert local_nav_snapshot.paper_only is True
+    assert nav_sink_calls == [
+        (
+            nav_dsn,
+            local_nav_snapshot,
+            "paper_nav_archive",
+            1,
+        ),
+    ]
+    _, nav_snapshot, _, nav_line_count_at_sink = nav_sink_calls[0]
+    assert isinstance(nav_snapshot, PaperNavSnapshot)
+    assert nav_snapshot.paper_only is True
+    assert nav_line_count_at_sink == 1
+
+    captured = capsys.readouterr()
+    assert "completed=1" in captured.out
+    assert "failed=0" in captured.out
+    assert trade_dsn not in captured.out
+    assert trade_dsn not in captured.err
+    assert nav_dsn not in captured.out
+    assert nav_dsn not in captured.err
 
 
 def test_run_cli_returns_one_when_loop_runner_fails(tmp_path, capsys):

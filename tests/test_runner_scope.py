@@ -205,6 +205,27 @@ FORBIDDEN_PUBLIC_EXPORT_FRAGMENTS = {
     "websocket",
 }
 
+FORBIDDEN_DYNAMIC_IMPORT_CALLS = {
+    "__import__",
+    "builtins.__import__",
+    "import_module",
+    "importlib.import_module",
+}
+
+FORBIDDEN_SOURCE_STRING_TOKENS = (
+    "polymarket_alpha_lab.api",
+    "py_clob_client",
+    "eth_account",
+    "private_key",
+    "auth",
+    "wallet",
+    "account",
+    "place_order",
+    "submit_order",
+    "cancel_order",
+    "sign_order",
+)
+
 # Names this orchestrator legitimately references even though they overlap
 # with otherwise-reserved vocabulary. "MarketDataClient" / "client" are the
 # reused Protocol + injected param (Q5); the loop composes the paper-only /
@@ -302,6 +323,68 @@ def public_export_fragment_matches(name: str) -> bool:
     )
 
 
+def dotted_reference_name(node: ast.AST) -> str | None:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        parent = dotted_reference_name(node.value)
+        if parent is None:
+            return node.attr
+        return f"{parent}.{node.attr}"
+    return None
+
+
+def source_string_references_forbidden_token(value: str, token: str) -> bool:
+    if "." in token or "_" in token:
+        return token in value
+
+    parts: list[str] = []
+    current = ""
+    for character in value.lower():
+        if character.isalnum():
+            current += character
+        elif current:
+            parts.append(current)
+            current = ""
+    if current:
+        parts.append(current)
+    return token in parts
+
+
+def docstring_constant_ids(tree: ast.AST) -> set[int]:
+    docstring_ids: set[int] = set()
+    for node in ast.walk(tree):
+        if not isinstance(
+            node,
+            (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef),
+        ):
+            continue
+        if not node.body:
+            continue
+        first_statement = node.body[0]
+        if not isinstance(first_statement, ast.Expr):
+            continue
+        if (
+            isinstance(first_statement.value, ast.Constant)
+            and isinstance(first_statement.value.value, str)
+        ):
+            docstring_ids.add(id(first_statement.value))
+    return docstring_ids
+
+
+def non_docstring_source_strings(tree: ast.AST) -> tuple[tuple[int, str], ...]:
+    docstring_ids = docstring_constant_ids(tree)
+    strings: list[tuple[int, str]] = []
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and id(node) not in docstring_ids
+        ):
+            strings.append((node.lineno, node.value))
+    return tuple(strings)
+
+
 def test_runner_imports_only_allowed_dependencies():
     tree = parse_module()
     for module_name in imported_modules(tree):
@@ -321,6 +404,34 @@ def test_runner_does_not_import_live_or_loader_surfaces():
         module_matches_prefix(name, "polymarket_alpha_lab.api")
         for name in runtime_imports
     ), runtime_imports
+
+
+def test_runner_does_not_use_dynamic_import_calls():
+    tree = parse_module()
+    violations = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        call_name = dotted_reference_name(node.func)
+        if call_name in FORBIDDEN_DYNAMIC_IMPORT_CALLS:
+            violations.append((node.lineno, call_name))
+
+    assert violations == []
+
+
+def test_runner_source_strings_do_not_reference_forbidden_live_surfaces():
+    tree = parse_module()
+    violations = []
+    for line_number, value in non_docstring_source_strings(tree):
+        matches = tuple(
+            token
+            for token in FORBIDDEN_SOURCE_STRING_TOKENS
+            if source_string_references_forbidden_token(value, token)
+        )
+        if matches:
+            violations.append((line_number, matches, value))
+
+    assert violations == []
 
 
 def test_runner_public_exports_exactly_loop_api():

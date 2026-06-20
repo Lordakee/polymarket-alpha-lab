@@ -833,6 +833,36 @@ def test_cycle_snapshot_sink_failure_counts_as_iteration_failure(tmp_path):
     assert summary.last_error == "RuntimeError: snapshot db unavailable"
 
 
+def test_cycle_report_log_is_appended_before_cycle_snapshot_sink_failure(tmp_path):
+    market, books = _screening_ready_market_and_books()
+    cycle_log = tmp_path / "cycle.jsonl"
+
+    def cycle_snapshot_source(*, cycle_report, iteration_started_at):
+        return CycleSnapshotShape(generated_at=iteration_started_at)
+
+    def broken_cycle_snapshot_sink(snapshot):
+        assert len(PaperStrategyCycleLog.read(cycle_log)) == 1
+        raise RuntimeError("snapshot db unavailable")
+
+    summary = run_strategy_loop(
+        client=FakeMarketDataClient([market], books),
+        scan_config=scan_config(tmp_path),
+        cycle_config=cycle_config(),
+        starting_cash=Decimal("10000"),
+        nav_log_path=tmp_path / "nav.jsonl",
+        cycle_report_log_path=cycle_log,
+        cycle_snapshot_source=cycle_snapshot_source,
+        cycle_snapshot_sink=broken_cycle_snapshot_sink,
+        on_cycle_error="log_and_continue",
+    )
+
+    assert summary.iterations_completed == 0
+    assert summary.iterations_failed == 1
+    assert summary.cycle_snapshots_persisted == 0
+    assert summary.last_error == "RuntimeError: snapshot db unavailable"
+    assert len(PaperStrategyCycleLog.read(cycle_log)) == 1
+
+
 @pytest.mark.parametrize(
     ("overrides", "message"),
     (
