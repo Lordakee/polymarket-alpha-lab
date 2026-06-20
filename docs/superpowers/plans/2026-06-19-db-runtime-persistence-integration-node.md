@@ -100,11 +100,11 @@ Run the three focused config test files plus `tests/test_supabase_cycle_snapshot
 - Test: `tests/test_cli.py`
 - Test: `tests/test_runner.py` if present, otherwise the runner coverage inside `tests/test_cli.py`
 
-- [ ] **Step 1: Write failing strategy-cycle test**
+- [x] **Step 1: Write failing strategy-cycle test**
 
 Add a test proving that when paper execution produces a `PaperTradeRecord`, an injected `paper_trade_record_sink` receives the exact record after JSONL journaling.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run:
 
@@ -114,7 +114,7 @@ Run:
 
 Expected: failure because `run_strategy_cycle` does not accept `paper_trade_record_sink`.
 
-- [ ] **Step 3: Implement minimal sink parameter**
+- [x] **Step 3: Implement minimal sink parameter**
 
 Add optional keyword parameter:
 
@@ -124,11 +124,11 @@ paper_trade_record_sink: Callable[[object], object] | None = None,
 
 Validate it is callable or `None`. In the existing paper execution block, after `journal.append(paper_result.record)`, call `paper_trade_record_sink(paper_result.record)` when provided.
 
-- [ ] **Step 4: Wire runner pass-through**
+- [x] **Step 4: Wire runner pass-through**
 
 Add optional `paper_trade_record_sink` to `run_strategy_loop` and pass it into `run_strategy_cycle`. Keep `runner.py` free of DB adapter imports.
 
-- [ ] **Step 5: Wire CLI env boundary**
+- [x] **Step 5: Wire CLI env boundary**
 
 In `cli.py`, import `from_paper_trade_journal_db_env` and `insert_paper_trade_record_with_psycopg`. Add injectable `paper_trade_record_db_sink` defaulting to the psycopg insert function. In `strategy-cycle` and `run`, if env is enabled, require DSN and pass a closure:
 
@@ -141,7 +141,7 @@ def run_paper_trade_record_sink(record: object) -> object:
     )
 ```
 
-- [ ] **Step 6: Run focused tests**
+- [x] **Step 6: Run focused tests**
 
 Run `tests/test_strategy_cycle.py`, `tests/test_cli.py`, and any runner test file touched by the change.
 
@@ -154,11 +154,11 @@ Run `tests/test_strategy_cycle.py`, `tests/test_cli.py`, and any runner test fil
 - Test: `tests/test_paper_portfolio_nav.py`
 - Test: `tests/test_cli.py`
 
-- [ ] **Step 1: Write failing NAV test**
+- [x] **Step 1: Write failing NAV test**
 
 Add a `tests/test_paper_portfolio_nav.py` test proving `nav_snapshot_sink` receives the same `PaperNavSnapshot` returned by `mark_paper_portfolio_nav`.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run:
 
@@ -168,15 +168,15 @@ Run:
 
 Expected: failure because `mark_paper_portfolio_nav` does not accept `nav_snapshot_sink`.
 
-- [ ] **Step 3: Implement minimal sink parameter**
+- [x] **Step 3: Implement minimal sink parameter**
 
 Add optional `nav_snapshot_sink: Callable[[PaperNavSnapshot], object] | None = None` and call it after optional `PaperNavLog.append(snapshot)`.
 
-- [ ] **Step 4: Wire runner and CLI**
+- [x] **Step 4: Wire runner and CLI**
 
 Add `nav_snapshot_sink` pass-through in `_mark_nav_or_skip` and `run_strategy_loop`. In `portfolio-nav` and `run`, enable DB persistence via `from_paper_nav_snapshot_db_env` and `insert_paper_nav_snapshot_with_psycopg`.
 
-- [ ] **Step 5: Run focused tests**
+- [x] **Step 5: Run focused tests**
 
 Run `tests/test_paper_portfolio_nav.py`, `tests/test_cli.py`, and affected runner coverage.
 
@@ -186,11 +186,11 @@ Run `tests/test_paper_portfolio_nav.py`, `tests/test_cli.py`, and affected runne
 - Modify: `src/polymarket_alpha_lab/cli.py`
 - Test: `tests/test_cli.py`
 
-- [ ] **Step 1: Write failing CLI test**
+- [x] **Step 1: Write failing CLI test**
 
 Add a no-network `check-outcomes` CLI test that sets outcome tracking DB env enabled, injects a fake `outcome_tracking_db_sink`, and asserts the generated `OutcomeTrackingReport` is passed to the sink without DSN appearing in stdout/stderr.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run:
 
@@ -200,11 +200,11 @@ Run:
 
 Expected: failure because `main` has no outcome tracking DB sink injection.
 
-- [ ] **Step 3: Wire CLI**
+- [x] **Step 3: Wire CLI**
 
 Import `from_outcome_tracking_db_env` and `insert_outcome_tracking_report_with_psycopg`. Add injectable `outcome_tracking_db_sink` defaulting to the psycopg insert function. In the `check-outcomes` command, after optional JSONL log append, call the DB sink when env is enabled.
 
-- [ ] **Step 4: Run focused tests**
+- [x] **Step 4: Run focused tests**
 
 Run all `check-outcomes` CLI tests and `tests/test_outcome_tracking_psycopg.py`.
 
@@ -213,7 +213,7 @@ Run all `check-outcomes` CLI tests and `tests/test_outcome_tracking_psycopg.py`.
 **Files:**
 - All files changed by Tasks 1-4.
 
-- [ ] **Step 1: Run full gate**
+- [x] **Step 1: Run full gate**
 
 Run:
 
@@ -224,15 +224,15 @@ git diff --check
 codegraph sync && codegraph status .
 ```
 
-- [ ] **Step 2: Secret scan changed files**
+- [x] **Step 2: Secret scan changed files**
 
 Run an `rg` scan over changed files for obvious token/credential patterns. Expected: no live secrets, no real DSNs with credentials.
 
-- [ ] **Step 3: OpenCode review**
+- [x] **Step 3: OpenCode review**
 
 Use local OpenCode for plan and code review. Model must be `zhipuai-coding-plan/glm-5.2`, thinking/max variant. Claude is not the review path for this node.
 
-- [ ] **Step 4: Commit and push**
+- [x] **Step 4: Commit and push**
 
 Create logical commits only after tests and review. Push to `origin/main` once the node is green and reviewed.
 

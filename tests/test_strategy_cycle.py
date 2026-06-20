@@ -15,6 +15,7 @@ from polymarket_alpha_lab.cost_aware_event_strategy import (
 )
 from polymarket_alpha_lab.cost_aware_snapshot_builder import PaperCostAwareSnapshotConfig
 from polymarket_alpha_lab.forecast_provider import PaperForecastConfig
+from polymarket_alpha_lab.journal import PaperTradeJournal
 from polymarket_alpha_lab.llm_forecast import PaperLLMForecastConfig
 from polymarket_alpha_lab.llm_research_transport import (
     GLMChatTransport,
@@ -958,6 +959,95 @@ def test_strategy_cycle_executes_paper_trades_inline_when_configured(tmp_path):
     # marker strategy_type, sizing_limiter + planned_exit_rule populated).
     assert record["sizing_limiter"] == "screening_book_depth"
     assert record["planned_exit_rule"] == "hold_to_resolution"
+
+
+def test_strategy_cycle_paper_trade_record_sink_receives_appended_record(
+    tmp_path,
+    monkeypatch,
+):
+    market, books = _screening_ready_market_and_books()
+    client = FakeMarketDataClient([market], books)
+    journal_path = tmp_path / "paper-trades.jsonl"
+    config = cycle_config(
+        paper_execution_config=PaperExecutionConfig(
+            config_version="paper-execution-v1",
+        ),
+        paper_trade_journal_path=journal_path,
+    )
+    appended_records = []
+    sink_records = []
+    original_append = PaperTradeJournal.append
+
+    def recording_append(self, record):
+        appended_records.append(record)
+        original_append(self, record)
+
+    monkeypatch.setattr(PaperTradeJournal, "append", recording_append)
+
+    run_strategy_cycle(
+        client=client,
+        scan_config=scan_config(tmp_path),
+        cycle_config=config,
+        generated_at=GENERATED_AT,
+        paper_trade_record_sink=sink_records.append,
+    )
+
+    assert len(appended_records) == 1
+    assert sink_records == appended_records
+    assert sink_records[0] is appended_records[0]
+    assert PaperTradeJournal.read(journal_path) == (sink_records[0],)
+
+
+def test_strategy_cycle_rejects_invalid_paper_trade_record_sink_before_client_work(
+    tmp_path,
+):
+    client = FakeMarketDataClient([], {})
+
+    with pytest.raises(ValueError, match="paper_trade_record_sink"):
+        run_strategy_cycle(
+            client=client,
+            scan_config=scan_config(tmp_path),
+            cycle_config=cycle_config(),
+            generated_at=GENERATED_AT,
+            paper_trade_record_sink=object(),
+        )
+
+    assert client.list_markets_calls == []
+    assert client.get_order_book_calls == []
+
+
+def test_strategy_cycle_paper_trade_record_sink_failure_propagates_after_append(
+    tmp_path,
+):
+    market, books = _screening_ready_market_and_books()
+    client = FakeMarketDataClient([market], books)
+    journal_path = tmp_path / "paper-trades.jsonl"
+    config = cycle_config(
+        paper_execution_config=PaperExecutionConfig(
+            config_version="paper-execution-v1",
+        ),
+        paper_trade_journal_path=journal_path,
+    )
+    sink_records = []
+
+    class SinkError(RuntimeError):
+        pass
+
+    def failing_sink(record):
+        sink_records.append(record)
+        raise SinkError("sink failure")
+
+    with pytest.raises(SinkError, match="sink failure"):
+        run_strategy_cycle(
+            client=client,
+            scan_config=scan_config(tmp_path),
+            cycle_config=config,
+            generated_at=GENERATED_AT,
+            paper_trade_record_sink=failing_sink,
+        )
+
+    assert len(sink_records) == 1
+    assert PaperTradeJournal.read(journal_path) == (sink_records[0],)
 
 
 def test_strategy_cycle_no_paper_execution_when_config_is_none(tmp_path):

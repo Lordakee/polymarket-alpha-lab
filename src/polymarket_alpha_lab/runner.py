@@ -3,7 +3,7 @@
 Thin live-layer loop that chains the already-tested Stage 1b/4/5 primitives in
 a synchronous ``time.sleep`` loop:
 
-    run_strategy_cycle -> PaperStrategyCycleLog.append -> mark_paper_portfolio_nav
+    run_strategy_cycle -> PaperStrategyCycleLog.append -> paper NAV mark
 
 Each iteration is isolated: a single cycle/NAV failure is recorded in the
 ``RunLoopSummary`` (``iterations_failed`` + ``last_error``) and the loop
@@ -13,13 +13,13 @@ when ``on_cycle_error="raise"``.
 First-run journal skip (IMPORTANT): on the first iteration the paper-trade
 journal may not exist yet (no paper trades journaled -- paper execution
 default-off, or the cycle produced no screening_ready candidate).
-``mark_paper_portfolio_nav`` reads the journal via ``PaperTradeJournal.read``,
-which opens the file directly and raises ``FileNotFoundError`` if it is absent.
-The runner pre-checks the journal path AND defensively catches
-``FileNotFoundError`` around the NAV mark, skipping the mark and recording the
-skip in ``RunLoopSummary.nav_marks_skipped``. The iteration itself still
-completes (the cycle ran and the report was logged) -- the skip is a benign
-first-run condition, never a cycle failure.
+The NAV reader opens the journal directly and raises ``FileNotFoundError`` if
+it is absent. The runner pre-checks the journal path AND defensively catches
+``FileNotFoundError`` around that read only, skipping the mark and recording
+the skip in ``RunLoopSummary.nav_marks_skipped``. Downstream NAV log/client/sink
+failures remain iteration failures. The iteration itself still completes when
+the skip is a benign first-run condition (the cycle ran and the report was
+logged).
 
 Protocol-only (Q5): this module does NOT import ``api``. It reuses
 ``strategy_cycle.MarketDataClient`` (a superset of
@@ -37,6 +37,10 @@ hard-enforced with ``is``).
 Optional recommendation cycle snapshot persistence is injected as a source/sink
 pair, so this module never fakes a recommendation snapshot from a
 ``PaperStrategyCycleReport`` and never imports DB adapters.
+
+Paper trade record and NAV snapshot persistence use the same boundary: optional
+callable sinks are injected by the CLI/process layer. This module never imports
+DB config or adapter modules.
 """
 
 from __future__ import annotations
@@ -47,7 +51,10 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 
-from polymarket_alpha_lab.paper_portfolio_nav import mark_paper_portfolio_nav
+from polymarket_alpha_lab.paper_portfolio_nav import (
+    _mark_paper_portfolio_nav_from_records,
+    _read_paper_trade_journal_records,
+)
 from polymarket_alpha_lab.pipeline import MarketScanConfig
 from polymarket_alpha_lab.strategy_cycle import (
     MarketDataClient,
@@ -132,6 +139,8 @@ def run_strategy_loop(
     on_cycle_error: str = "log_and_continue",
     cycle_snapshot_source: object | None = None,
     cycle_snapshot_sink: object | None = None,
+    paper_trade_record_sink: object | None = None,
+    nav_snapshot_sink: object | None = None,
 ) -> RunLoopSummary:
     """Run the strategy cycle + NAV mark loop ``max_iterations`` times.
 
@@ -142,9 +151,10 @@ def run_strategy_loop(
     (c) If ``cycle_config.paper_trade_journal_path`` is set AND the journal file
         exists, ``mark_paper_portfolio_nav(...)``; otherwise skip the NAV mark
         (first-run / no paper trades yet) and increment ``nav_marks_skipped``.
-        ``FileNotFoundError`` from the NAV mark (race: file vanished between the
-        existence check and ``PaperTradeJournal.read``) is also treated as a
-        benign skip, never a cycle failure.
+        ``FileNotFoundError`` from the NAV journal read (race: file vanished
+        between the existence check and read) is also treated as a benign skip,
+        never a cycle failure. Later NAV log/client/sink failures are cycle
+        failures.
     (d) If ``repeat_mode == "interval"`` and more iterations remain,
         ``time.sleep(interval_seconds)``.
 
@@ -153,10 +163,10 @@ def run_strategy_loop(
     ``on_cycle_error="raise"`` propagates immediately. The returned
     ``RunLoopSummary`` is paper-only/report-only.
 
-    ``cycle_snapshot_source`` and ``cycle_snapshot_sink`` are optional. They are
-    called only when both are supplied, after the strategy cycle report is
-    appended and before NAV marking. A source/sink failure is treated like any
-    other iteration failure by the existing ``on_cycle_error`` policy.
+    ``cycle_snapshot_source`` / ``cycle_snapshot_sink``,
+    ``paper_trade_record_sink``, and ``nav_snapshot_sink`` are optional injected
+    persistence hooks. Sink failures are treated like any other iteration
+    failure by the existing ``on_cycle_error`` policy.
     """
     _validate_loop_params(
         client=client,
@@ -171,6 +181,8 @@ def run_strategy_loop(
         on_cycle_error=on_cycle_error,
         cycle_snapshot_source=cycle_snapshot_source,
         cycle_snapshot_sink=cycle_snapshot_sink,
+        paper_trade_record_sink=paper_trade_record_sink,
+        nav_snapshot_sink=nav_snapshot_sink,
     )
 
     iterations_completed = 0
@@ -193,6 +205,7 @@ def run_strategy_loop(
                 client=client,
                 scan_config=scan_config,
                 cycle_config=cycle_config,
+                paper_trade_record_sink=paper_trade_record_sink,
             )
             # (b) Append the validated report to the cycle JSONL log.
             PaperStrategyCycleLog(cycle_report_log_path).append(report)
@@ -212,6 +225,7 @@ def run_strategy_loop(
                 starting_cash=starting_cash,
                 nav_log_path=nav_log_path,
                 marked_at=iteration_at,
+                nav_snapshot_sink=nav_snapshot_sink,
             )
             iterations_completed += 1
         except Exception as exc:
@@ -245,33 +259,37 @@ def _mark_nav_or_skip(
     starting_cash: Decimal,
     nav_log_path: Path | str | None,
     marked_at: datetime,
+    nav_snapshot_sink: object | None = None,
 ) -> int:
     """Run the NAV mark when the journal exists; otherwise return skip count.
 
-    Returns ``1`` when the NAV mark was skipped (journal absent or read raised
-    ``FileNotFoundError``), ``0`` when the mark ran. A ``None`` journal path
-    (paper execution default-off) returns ``0`` -- there is no journal to read,
-    so NAV marking is simply not configured for this cycle, not a skip.
+    Returns ``1`` when the NAV mark was skipped (journal absent or the journal
+    read raised ``FileNotFoundError``), ``0`` when the mark ran. A ``None``
+    journal path (paper execution default-off) returns ``0`` -- there is no
+    journal to read, so NAV marking is simply not configured for this cycle, not
+    a skip.
     """
     journal_path = cycle_config.paper_trade_journal_path
     if journal_path is None:
         return 0
-    try:
-        if not Path(journal_path).exists():
-            # First run: the cycle ran but produced no paper trades yet (or
-            # paper execution is wired but yielded no screening_ready
-            # candidate), so the journal file was never created. Skip the NAV
-            # mark rather than crashing on PaperTradeJournal.read's open().
-            return 1
-        mark_paper_portfolio_nav(
-            journal_path,
-            starting_cash=starting_cash,
-            client=client,
-            marked_at=marked_at,
-            nav_log_path=nav_log_path,
-        )
-    except Exception:
+    if not Path(journal_path).exists():
+        # First run: the cycle ran but produced no paper trades yet (or paper
+        # execution is wired but yielded no screening_ready candidate), so the
+        # journal file was never created. Skip the NAV mark rather than crashing
+        # on the journal reader's open().
         return 1
+    try:
+        records = _read_paper_trade_journal_records(journal_path)
+    except FileNotFoundError:
+        return 1
+    _mark_paper_portfolio_nav_from_records(
+        records,
+        starting_cash=starting_cash,
+        client=client,
+        marked_at=marked_at,
+        nav_log_path=nav_log_path,
+        nav_snapshot_sink=nav_snapshot_sink,  # type: ignore[arg-type]
+    )
     return 0
 
 
@@ -289,6 +307,8 @@ def _validate_loop_params(
     on_cycle_error: str,
     cycle_snapshot_source: object,
     cycle_snapshot_sink: object,
+    paper_trade_record_sink: object,
+    nav_snapshot_sink: object,
 ) -> None:
     if not isinstance(client, MarketDataClient):
         raise ValueError("client must be a MarketDataClient")
@@ -328,6 +348,10 @@ def _validate_loop_params(
         raise ValueError("cycle_snapshot_source must be callable or None")
     if cycle_snapshot_sink is not None and not callable(cycle_snapshot_sink):
         raise ValueError("cycle_snapshot_sink must be callable or None")
+    if paper_trade_record_sink is not None and not callable(paper_trade_record_sink):
+        raise ValueError("paper_trade_record_sink must be callable or None")
+    if nav_snapshot_sink is not None and not callable(nav_snapshot_sink):
+        raise ValueError("nav_snapshot_sink must be callable or None")
 
 
 def _as_utc(value: datetime) -> datetime:

@@ -81,6 +81,21 @@ from polymarket_alpha_lab.paper_strategy_selection_policy import (
 from polymarket_alpha_lab.strategy_cycle_snapshot_source import (
     build_strategy_cycle_snapshot_source_report,
 )
+from polymarket_alpha_lab.supabase_outcome_tracking_config import (
+    OUTCOME_TRACKING_DB_DSN_ENV_VAR,
+    OUTCOME_TRACKING_DB_ENABLED_ENV_VAR,
+    OUTCOME_TRACKING_DB_TABLE_ENV_VAR,
+)
+from polymarket_alpha_lab.supabase_paper_nav_snapshot_config import (
+    PAPER_NAV_SNAPSHOT_DB_DSN_ENV_VAR,
+    PAPER_NAV_SNAPSHOT_DB_ENABLED_ENV_VAR,
+    PAPER_NAV_SNAPSHOT_DB_TABLE_ENV_VAR,
+)
+from polymarket_alpha_lab.supabase_paper_trade_journal_config import (
+    PAPER_TRADE_JOURNAL_DB_DSN_ENV_VAR,
+    PAPER_TRADE_JOURNAL_DB_ENABLED_ENV_VAR,
+    PAPER_TRADE_JOURNAL_DB_TABLE_ENV_VAR,
+)
 
 
 def test_scan_cli_builds_read_only_scan_config(tmp_path):
@@ -229,7 +244,13 @@ def test_strategy_cycle_cli_paper_execute_flag_enables_inline_paper_pass(tmp_pat
     def fake_client_factory():
         return "fake-client"
 
-    def fake_cycle_runner(*, client, scan_config, cycle_config):
+    def fake_cycle_runner(
+        *,
+        client,
+        scan_config,
+        cycle_config,
+        paper_trade_record_sink=None,
+    ):
         calls.append(cycle_config)
         return PaperStrategyCycleReport(
             generated_at=datetime.now(UTC),
@@ -265,6 +286,111 @@ def test_strategy_cycle_cli_paper_execute_flag_enables_inline_paper_pass(tmp_pat
     assert cycle_config.paper_execution_config is not None
     assert cycle_config.paper_execution_config.config_version == "paper-execution-v1"
     assert cycle_config.paper_trade_journal_path == journal_path
+
+
+def test_strategy_cycle_cli_wires_paper_trade_db_sink_when_enabled(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    fake_dsn = "postgresql://paper-trade.example.invalid/db"
+    monkeypatch.setenv(PAPER_TRADE_JOURNAL_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(PAPER_TRADE_JOURNAL_DB_DSN_ENV_VAR, fake_dsn)
+    monkeypatch.setenv(
+        PAPER_TRADE_JOURNAL_DB_TABLE_ENV_VAR,
+        "paper_trade_archive",
+    )
+    record = SimpleNamespace(packet_id="packet-1")
+    sink_calls = []
+
+    def fake_cycle_runner(*, client, scan_config, cycle_config, paper_trade_record_sink):
+        assert paper_trade_record_sink is not None
+        paper_trade_record_sink(record)
+        return PaperStrategyCycleReport(
+            generated_at=datetime.now(UTC),
+            config_version="strategy-cycle-v1",
+            scan_market_count=0,
+            considered_count=0,
+            snapshot_ready_count=0,
+            cost_aware_report_count=0,
+            blocked_counts=(),
+            screening_report=None,
+        )
+
+    def fake_paper_trade_record_db_sink(*, dsn, record, table_name):
+        sink_calls.append((dsn, record, table_name))
+
+    exit_code = main(
+        [
+            "strategy-cycle",
+            "--paper-execute",
+            "--paper-journal",
+            str(tmp_path / "paper-trades.jsonl"),
+            "--archive-root",
+            str(tmp_path / "raw"),
+            "--output",
+            str(tmp_path / "strategy-cycle.jsonl"),
+        ],
+        cycle_runner=fake_cycle_runner,
+        paper_trade_record_db_sink=fake_paper_trade_record_db_sink,
+        client_factory=lambda: "fake-client",
+    )
+
+    assert exit_code == 0
+    assert sink_calls == [
+        (
+            fake_dsn,
+            record,
+            "paper_trade_archive",
+        ),
+    ]
+    captured = capsys.readouterr()
+    assert fake_dsn not in captured.out
+    assert fake_dsn not in captured.err
+
+
+def test_strategy_cycle_cli_redacts_dsn_when_paper_trade_db_sink_fails(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    fake_dsn = "postgresql://paper-trade.example.invalid/db"
+    monkeypatch.setenv(PAPER_TRADE_JOURNAL_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(PAPER_TRADE_JOURNAL_DB_DSN_ENV_VAR, fake_dsn)
+    monkeypatch.setenv(
+        PAPER_TRADE_JOURNAL_DB_TABLE_ENV_VAR,
+        "paper_trade_archive",
+    )
+    record = SimpleNamespace(packet_id="packet-1")
+
+    def fake_cycle_runner(*, client, scan_config, cycle_config, paper_trade_record_sink):
+        paper_trade_record_sink(record)
+        raise AssertionError("unreachable after sink failure")
+
+    def broken_paper_trade_record_db_sink(*, dsn, record, table_name):
+        raise RuntimeError(f"could not connect to {dsn}")
+
+    exit_code = main(
+        [
+            "strategy-cycle",
+            "--paper-execute",
+            "--paper-journal",
+            str(tmp_path / "paper-trades.jsonl"),
+            "--archive-root",
+            str(tmp_path / "raw"),
+            "--output",
+            str(tmp_path / "strategy-cycle.jsonl"),
+        ],
+        cycle_runner=fake_cycle_runner,
+        paper_trade_record_db_sink=broken_paper_trade_record_db_sink,
+        client_factory=lambda: "fake-client",
+    )
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert fake_dsn not in captured.out
+    assert fake_dsn not in captured.err
+    assert "<redacted-dsn>" in captured.err
 
 
 def test_strategy_cycle_cli_default_omits_paper_execute(tmp_path):
@@ -394,7 +520,15 @@ def test_portfolio_nav_cli_builds_nav_call_and_prints_summary(tmp_path, capsys):
     def fake_client_factory():
         return "fake-client"
 
-    def fake_nav_runner(*, journal_path, starting_cash, client, marked_at, nav_log_path):
+    def fake_nav_runner(
+        *,
+        journal_path,
+        starting_cash,
+        client,
+        marked_at,
+        nav_log_path,
+        nav_snapshot_sink=None,
+    ):
         calls.append(
             {
                 "journal_path": journal_path,
@@ -402,6 +536,7 @@ def test_portfolio_nav_cli_builds_nav_call_and_prints_summary(tmp_path, capsys):
                 "client": client,
                 "marked_at": marked_at,
                 "nav_log_path": nav_log_path,
+                "nav_snapshot_sink": nav_snapshot_sink,
             }
         )
         return _empty_nav_snapshot()
@@ -430,6 +565,7 @@ def test_portfolio_nav_cli_builds_nav_call_and_prints_summary(tmp_path, capsys):
     assert call["starting_cash"] == Decimal("10000")
     assert call["client"] == "fake-client"
     assert call["nav_log_path"] == nav_log_path
+    assert call["nav_snapshot_sink"] is None
     assert isinstance(call["marked_at"], datetime)
 
     captured = capsys.readouterr()
@@ -442,7 +578,15 @@ def test_portfolio_nav_cli_builds_nav_call_and_prints_summary(tmp_path, capsys):
 def test_portfolio_nav_cli_defaults_nav_log_to_none(tmp_path):
     calls = []
 
-    def fake_nav_runner(*, journal_path, starting_cash, client, marked_at, nav_log_path):
+    def fake_nav_runner(
+        *,
+        journal_path,
+        starting_cash,
+        client,
+        marked_at,
+        nav_log_path,
+        nav_snapshot_sink=None,
+    ):
         calls.append(nav_log_path)
         return _empty_nav_snapshot()
 
@@ -460,6 +604,112 @@ def test_portfolio_nav_cli_defaults_nav_log_to_none(tmp_path):
 
     assert exit_code == 0
     assert calls == [None]
+
+
+def test_portfolio_nav_cli_wires_nav_snapshot_db_sink_when_enabled(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    fake_dsn = "postgresql://paper-nav.example.invalid/db"
+    monkeypatch.setenv(PAPER_NAV_SNAPSHOT_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(PAPER_NAV_SNAPSHOT_DB_DSN_ENV_VAR, fake_dsn)
+    monkeypatch.setenv(
+        PAPER_NAV_SNAPSHOT_DB_TABLE_ENV_VAR,
+        "paper_nav_archive",
+    )
+    snapshot = _empty_nav_snapshot()
+    sink_calls = []
+
+    def fake_nav_runner(
+        *,
+        journal_path,
+        starting_cash,
+        client,
+        marked_at,
+        nav_log_path,
+        nav_snapshot_sink,
+    ):
+        assert nav_snapshot_sink is not None
+        nav_snapshot_sink(snapshot)
+        return snapshot
+
+    def fake_paper_nav_snapshot_db_sink(*, dsn, snapshot, table_name):
+        sink_calls.append((dsn, snapshot, table_name))
+
+    exit_code = main(
+        [
+            "portfolio-nav",
+            "--journal",
+            str(tmp_path / "paper-trades.jsonl"),
+            "--starting-cash",
+            "10000",
+        ],
+        nav_runner=fake_nav_runner,
+        paper_nav_snapshot_db_sink=fake_paper_nav_snapshot_db_sink,
+        client_factory=lambda: "fake-client",
+    )
+
+    assert exit_code == 0
+    assert sink_calls == [
+        (
+            fake_dsn,
+            snapshot,
+            "paper_nav_archive",
+        ),
+    ]
+    captured = capsys.readouterr()
+    assert fake_dsn not in captured.out
+    assert fake_dsn not in captured.err
+
+
+def test_portfolio_nav_cli_redacts_dsn_when_nav_snapshot_db_sink_fails(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    fake_dsn = "postgresql://paper-nav.example.invalid/db"
+    monkeypatch.setenv(PAPER_NAV_SNAPSHOT_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(PAPER_NAV_SNAPSHOT_DB_DSN_ENV_VAR, fake_dsn)
+    monkeypatch.setenv(
+        PAPER_NAV_SNAPSHOT_DB_TABLE_ENV_VAR,
+        "paper_nav_archive",
+    )
+    snapshot = _empty_nav_snapshot()
+
+    def fake_nav_runner(
+        *,
+        journal_path,
+        starting_cash,
+        client,
+        marked_at,
+        nav_log_path,
+        nav_snapshot_sink,
+    ):
+        nav_snapshot_sink(snapshot)
+        raise AssertionError("unreachable after sink failure")
+
+    def broken_paper_nav_snapshot_db_sink(*, dsn, snapshot, table_name):
+        raise RuntimeError(f"could not connect to {dsn}")
+
+    exit_code = main(
+        [
+            "portfolio-nav",
+            "--journal",
+            str(tmp_path / "paper-trades.jsonl"),
+            "--starting-cash",
+            "10000",
+        ],
+        nav_runner=fake_nav_runner,
+        paper_nav_snapshot_db_sink=broken_paper_nav_snapshot_db_sink,
+        client_factory=lambda: "fake-client",
+    )
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert fake_dsn not in captured.out
+    assert fake_dsn not in captured.err
+    assert "<redacted-dsn>" in captured.err
 
 
 def test_portfolio_nav_cli_returns_one_when_nav_runner_fails(tmp_path, capsys):
@@ -2990,7 +3240,8 @@ def test_run_cli_builds_loop_call_single_shot(tmp_path, capsys):
     def fake_loop_runner(*, client, scan_config, cycle_config, starting_cash,
                          nav_log_path, cycle_report_log_path, repeat_mode,
                          interval_seconds, max_iterations,
-                         cycle_snapshot_source=None, cycle_snapshot_sink=None):
+                         cycle_snapshot_source=None, cycle_snapshot_sink=None,
+                         paper_trade_record_sink=None, nav_snapshot_sink=None):
         calls.append(
             {
                 "client": client,
@@ -3004,6 +3255,8 @@ def test_run_cli_builds_loop_call_single_shot(tmp_path, capsys):
                 "max_iterations": max_iterations,
                 "cycle_snapshot_source": cycle_snapshot_source,
                 "cycle_snapshot_sink": cycle_snapshot_sink,
+                "paper_trade_record_sink": paper_trade_record_sink,
+                "nav_snapshot_sink": nav_snapshot_sink,
             }
         )
         return _empty_run_summary()
@@ -3052,6 +3305,8 @@ def test_run_cli_builds_loop_call_single_shot(tmp_path, capsys):
     assert call["max_iterations"] == 1
     assert call["cycle_snapshot_source"] is None
     assert call["cycle_snapshot_sink"] is None
+    assert call["paper_trade_record_sink"] is None
+    assert call["nav_snapshot_sink"] is None
 
     captured = capsys.readouterr()
     assert "run:" in captured.out
@@ -3065,7 +3320,8 @@ def test_run_cli_maps_positive_repeat_interval_to_interval_mode(tmp_path):
     def fake_loop_runner(*, client, scan_config, cycle_config, starting_cash,
                          nav_log_path, cycle_report_log_path, repeat_mode,
                          interval_seconds, max_iterations,
-                         cycle_snapshot_source=None, cycle_snapshot_sink=None):
+                         cycle_snapshot_source=None, cycle_snapshot_sink=None,
+                         paper_trade_record_sink=None, nav_snapshot_sink=None):
         calls.append(
             {
                 "repeat_mode": repeat_mode,
@@ -3073,6 +3329,8 @@ def test_run_cli_maps_positive_repeat_interval_to_interval_mode(tmp_path):
                 "max_iterations": max_iterations,
                 "cycle_snapshot_source": cycle_snapshot_source,
                 "cycle_snapshot_sink": cycle_snapshot_sink,
+                "paper_trade_record_sink": paper_trade_record_sink,
+                "nav_snapshot_sink": nav_snapshot_sink,
             }
         )
         return _empty_run_summary()
@@ -3103,6 +3361,8 @@ def test_run_cli_maps_positive_repeat_interval_to_interval_mode(tmp_path):
             "max_iterations": 10,
             "cycle_snapshot_source": None,
             "cycle_snapshot_sink": None,
+            "paper_trade_record_sink": None,
+            "nav_snapshot_sink": None,
         },
     ]
 
@@ -3113,7 +3373,8 @@ def test_run_cli_paper_execute_flag_enables_inline_paper_pass(tmp_path):
     def fake_loop_runner(*, client, scan_config, cycle_config, starting_cash,
                          nav_log_path, cycle_report_log_path, repeat_mode,
                          interval_seconds, max_iterations,
-                         cycle_snapshot_source=None, cycle_snapshot_sink=None):
+                         cycle_snapshot_source=None, cycle_snapshot_sink=None,
+                         paper_trade_record_sink=None, nav_snapshot_sink=None):
         calls.append(cycle_config)
         return _empty_run_summary()
 
@@ -3150,6 +3411,10 @@ def test_run_cli_leaves_cycle_snapshot_db_disabled_by_default(
 ):
     monkeypatch.delenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_ENABLED", raising=False)
     monkeypatch.delenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_DSN", raising=False)
+    monkeypatch.delenv(PAPER_TRADE_JOURNAL_DB_ENABLED_ENV_VAR, raising=False)
+    monkeypatch.delenv(PAPER_TRADE_JOURNAL_DB_DSN_ENV_VAR, raising=False)
+    monkeypatch.delenv(PAPER_NAV_SNAPSHOT_DB_ENABLED_ENV_VAR, raising=False)
+    monkeypatch.delenv(PAPER_NAV_SNAPSHOT_DB_DSN_ENV_VAR, raising=False)
     calls = []
 
     def fake_loop_runner(**kwargs):
@@ -3174,6 +3439,143 @@ def test_run_cli_leaves_cycle_snapshot_db_disabled_by_default(
     assert len(calls) == 1
     assert calls[0]["cycle_snapshot_source"] is None
     assert calls[0]["cycle_snapshot_sink"] is None
+    assert calls[0]["paper_trade_record_sink"] is None
+    assert calls[0]["nav_snapshot_sink"] is None
+
+
+def test_run_cli_wires_paper_trade_and_nav_db_sinks_when_env_enabled(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    trade_dsn = "postgresql://paper-trade.example.invalid/db"
+    nav_dsn = "postgresql://paper-nav.example.invalid/db"
+    monkeypatch.setenv(PAPER_TRADE_JOURNAL_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(PAPER_TRADE_JOURNAL_DB_DSN_ENV_VAR, trade_dsn)
+    monkeypatch.setenv(
+        PAPER_TRADE_JOURNAL_DB_TABLE_ENV_VAR,
+        "paper_trade_archive",
+    )
+    monkeypatch.setenv(PAPER_NAV_SNAPSHOT_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(PAPER_NAV_SNAPSHOT_DB_DSN_ENV_VAR, nav_dsn)
+    monkeypatch.setenv(
+        PAPER_NAV_SNAPSHOT_DB_TABLE_ENV_VAR,
+        "paper_nav_archive",
+    )
+    trade_record = SimpleNamespace(packet_id="packet-1")
+    nav_snapshot = _empty_nav_snapshot()
+    trade_sink_calls = []
+    nav_sink_calls = []
+    loop_calls = []
+
+    def fake_loop_runner(**kwargs):
+        loop_calls.append(kwargs)
+        assert kwargs["paper_trade_record_sink"] is not None
+        assert kwargs["nav_snapshot_sink"] is not None
+        kwargs["paper_trade_record_sink"](trade_record)
+        kwargs["nav_snapshot_sink"](nav_snapshot)
+        return _empty_run_summary()
+
+    def fake_paper_trade_record_db_sink(*, dsn, record, table_name):
+        trade_sink_calls.append((dsn, record, table_name))
+
+    def fake_paper_nav_snapshot_db_sink(*, dsn, snapshot, table_name):
+        nav_sink_calls.append((dsn, snapshot, table_name))
+
+    exit_code = main(
+        [
+            "run",
+            "--paper-execute",
+            "--archive-root",
+            str(tmp_path / "raw"),
+            "--starting-cash",
+            "10000",
+            "--cycle-log",
+            str(tmp_path / "cycle.jsonl"),
+        ],
+        loop_runner=fake_loop_runner,
+        paper_trade_record_db_sink=fake_paper_trade_record_db_sink,
+        paper_nav_snapshot_db_sink=fake_paper_nav_snapshot_db_sink,
+        client_factory=lambda: "fake-client",
+    )
+
+    assert exit_code == 0
+    assert len(loop_calls) == 1
+    assert trade_sink_calls == [
+        (
+            trade_dsn,
+            trade_record,
+            "paper_trade_archive",
+        ),
+    ]
+    assert nav_sink_calls == [
+        (
+            nav_dsn,
+            nav_snapshot,
+            "paper_nav_archive",
+        ),
+    ]
+    captured = capsys.readouterr()
+    assert trade_dsn not in captured.out
+    assert trade_dsn not in captured.err
+    assert nav_dsn not in captured.out
+    assert nav_dsn not in captured.err
+
+
+def test_run_cli_redacts_dsn_when_paper_trade_db_sink_failure_is_reported(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    trade_dsn = "postgresql://paper-trade.example.invalid/db"
+    monkeypatch.setenv(PAPER_TRADE_JOURNAL_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(PAPER_TRADE_JOURNAL_DB_DSN_ENV_VAR, trade_dsn)
+    monkeypatch.setenv(
+        PAPER_TRADE_JOURNAL_DB_TABLE_ENV_VAR,
+        "paper_trade_archive",
+    )
+    trade_record = SimpleNamespace(packet_id="packet-1")
+
+    def fake_loop_runner(**kwargs):
+        assert kwargs["paper_trade_record_sink"] is not None
+        try:
+            kwargs["paper_trade_record_sink"](trade_record)
+        except Exception as exc:
+            return RunLoopSummary(
+                iterations_completed=0,
+                iterations_failed=1,
+                first_iteration_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
+                last_iteration_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
+                last_error=f"{type(exc).__name__}: {exc}",
+            )
+        raise AssertionError("sink should fail")
+
+    def broken_paper_trade_record_db_sink(*, dsn, record, table_name):
+        raise RuntimeError(f"could not connect to {dsn}")
+
+    exit_code = main(
+        [
+            "run",
+            "--paper-execute",
+            "--archive-root",
+            str(tmp_path / "raw"),
+            "--starting-cash",
+            "10000",
+            "--cycle-log",
+            str(tmp_path / "cycle.jsonl"),
+        ],
+        loop_runner=fake_loop_runner,
+        paper_trade_record_db_sink=broken_paper_trade_record_db_sink,
+        client_factory=lambda: "fake-client",
+    )
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    assert trade_dsn not in captured.out
+    assert trade_dsn not in captured.err
+    assert "last_error=RuntimeError: could not connect to <redacted-dsn>" in (
+        captured.out
+    )
 
 
 def test_run_cli_wires_cycle_snapshot_db_sink_when_env_enabled(
@@ -3462,7 +3864,8 @@ def test_run_cli_returns_one_when_loop_runner_fails(tmp_path, capsys):
     def broken_loop_runner(*, client, scan_config, cycle_config, starting_cash,
                            nav_log_path, cycle_report_log_path, repeat_mode,
                            interval_seconds, max_iterations,
-                           cycle_snapshot_source=None, cycle_snapshot_sink=None):
+                           cycle_snapshot_source=None, cycle_snapshot_sink=None,
+                           paper_trade_record_sink=None, nav_snapshot_sink=None):
         raise RuntimeError("loop failed")
 
     exit_code = main(
@@ -3488,7 +3891,8 @@ def test_run_cli_prints_last_error_when_iterations_failed(tmp_path, capsys):
     def partial_loop_runner(*, client, scan_config, cycle_config, starting_cash,
                             nav_log_path, cycle_report_log_path, repeat_mode,
                             interval_seconds, max_iterations,
-                            cycle_snapshot_source=None, cycle_snapshot_sink=None):
+                            cycle_snapshot_source=None, cycle_snapshot_sink=None,
+                            paper_trade_record_sink=None, nav_snapshot_sink=None):
         return RunLoopSummary(
             iterations_completed=2,
             iterations_failed=1,
@@ -4253,6 +4657,151 @@ def test_check_outcomes_cli_writes_outcome_log_even_without_resolved_observation
     assert "check-outcomes:" in captured.out
     assert "checked=0" in captured.out
     assert "no resolved observations yet" in captured.out
+
+
+def test_check_outcomes_cli_leaves_outcome_tracking_db_sink_inert_when_disabled(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.delenv(OUTCOME_TRACKING_DB_ENABLED_ENV_VAR, raising=False)
+    monkeypatch.delenv(OUTCOME_TRACKING_DB_DSN_ENV_VAR, raising=False)
+    monkeypatch.delenv(OUTCOME_TRACKING_DB_TABLE_ENV_VAR, raising=False)
+    sink_calls = []
+
+    def forbidden_outcome_tracking_db_sink(**kwargs):
+        sink_calls.append(kwargs)
+        raise AssertionError("outcome tracking DB sink should not run")
+
+    exit_code = main(
+        [
+            "check-outcomes",
+            "--journal",
+            str(tmp_path / "paper-trades.jsonl"),
+        ],
+        outcome_runner=lambda **_: _empty_outcome_report(),
+        outcome_tracking_db_sink=forbidden_outcome_tracking_db_sink,
+        client_factory=lambda: "fake-client",
+    )
+
+    assert exit_code == 0
+    assert sink_calls == []
+
+
+def test_check_outcomes_cli_wires_outcome_tracking_db_sink_when_enabled(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    fake_dsn = "postgresql://outcome-db.example.invalid/outcomes"
+    monkeypatch.setenv(OUTCOME_TRACKING_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(OUTCOME_TRACKING_DB_DSN_ENV_VAR, fake_dsn)
+    monkeypatch.setenv(
+        OUTCOME_TRACKING_DB_TABLE_ENV_VAR,
+        "outcome_tracking_archive",
+    )
+    report = _empty_outcome_report()
+    sink_calls = []
+    outcome_log = tmp_path / "outcomes.jsonl"
+
+    def fake_outcome_tracking_db_sink(*, dsn, report, table_name):
+        assert OutcomeTrackingLog.read(outcome_log) == (report,)
+        sink_calls.append((dsn, report, table_name))
+
+    exit_code = main(
+        [
+            "check-outcomes",
+            "--journal",
+            str(tmp_path / "paper-trades.jsonl"),
+            "--outcome-log",
+            str(outcome_log),
+        ],
+        outcome_runner=lambda **_: report,
+        outcome_tracking_db_sink=fake_outcome_tracking_db_sink,
+        client_factory=lambda: "fake-client",
+    )
+
+    assert exit_code == 0
+    assert sink_calls == [
+        (
+            fake_dsn,
+            report,
+            "outcome_tracking_archive",
+        ),
+    ]
+    captured = capsys.readouterr()
+    assert fake_dsn not in captured.out
+    assert fake_dsn not in captured.err
+
+
+def test_check_outcomes_cli_returns_one_when_outcome_tracking_db_sink_fails_without_dsn(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    fake_dsn = "postgresql://outcome-db.example.invalid/outcomes"
+    monkeypatch.setenv(OUTCOME_TRACKING_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(OUTCOME_TRACKING_DB_DSN_ENV_VAR, fake_dsn)
+    monkeypatch.setenv(
+        OUTCOME_TRACKING_DB_TABLE_ENV_VAR,
+        "outcome_tracking_archive",
+    )
+    sink_calls = []
+
+    def broken_outcome_tracking_db_sink(*, dsn, report, table_name):
+        sink_calls.append((dsn, report, table_name))
+        raise RuntimeError("database unavailable")
+
+    exit_code = main(
+        [
+            "check-outcomes",
+            "--journal",
+            str(tmp_path / "paper-trades.jsonl"),
+        ],
+        outcome_runner=lambda **_: _empty_outcome_report(),
+        outcome_tracking_db_sink=broken_outcome_tracking_db_sink,
+        client_factory=lambda: "fake-client",
+    )
+
+    assert exit_code == 1
+    assert len(sink_calls) == 1
+    captured = capsys.readouterr()
+    assert "check-outcomes failed: database unavailable" in captured.err
+    assert fake_dsn not in captured.out
+    assert fake_dsn not in captured.err
+
+
+def test_check_outcomes_cli_redacts_dsn_when_outcome_tracking_db_sink_fails(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    fake_dsn = "postgresql://outcome-db.example.invalid/outcomes"
+    monkeypatch.setenv(OUTCOME_TRACKING_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(OUTCOME_TRACKING_DB_DSN_ENV_VAR, fake_dsn)
+    monkeypatch.setenv(
+        OUTCOME_TRACKING_DB_TABLE_ENV_VAR,
+        "outcome_tracking_archive",
+    )
+
+    def broken_outcome_tracking_db_sink(*, dsn, report, table_name):
+        raise RuntimeError(f"could not connect to {dsn}")
+
+    exit_code = main(
+        [
+            "check-outcomes",
+            "--journal",
+            str(tmp_path / "paper-trades.jsonl"),
+        ],
+        outcome_runner=lambda **_: _empty_outcome_report(),
+        outcome_tracking_db_sink=broken_outcome_tracking_db_sink,
+        client_factory=lambda: "fake-client",
+    )
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert fake_dsn not in captured.out
+    assert fake_dsn not in captured.err
+    assert "<redacted-dsn>" in captured.err
 
 
 def test_check_outcomes_cli_skips_evidence_log_when_no_observations(tmp_path):

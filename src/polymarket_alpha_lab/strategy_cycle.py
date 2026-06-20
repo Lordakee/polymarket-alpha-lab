@@ -35,7 +35,7 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Callable, Protocol, runtime_checkable
 
 from polymarket_alpha_lab.archive import RawArchive
 from polymarket_alpha_lab.book_imbalance_forecast import (
@@ -376,6 +376,7 @@ def run_strategy_cycle(
     scan_config: MarketScanConfig,
     cycle_config: PaperStrategyCycleConfig,
     generated_at: datetime | None = None,
+    paper_trade_record_sink: Callable[[object], object] | None = None,
 ) -> PaperStrategyCycleReport:
     if not isinstance(client, MarketDataClient):
         raise ValueError("client must be a MarketDataClient")
@@ -385,6 +386,8 @@ def run_strategy_cycle(
         raise ValueError("cycle_config must be a PaperStrategyCycleConfig")
     if generated_at is not None and not isinstance(generated_at, datetime):
         raise ValueError("generated_at must be a datetime or None")
+    if paper_trade_record_sink is not None and not callable(paper_trade_record_sink):
+        raise ValueError("paper_trade_record_sink must be callable or None")
 
     if generated_at is not None:
         timestamp = _as_utc(generated_at)
@@ -664,6 +667,8 @@ def run_strategy_cycle(
                 continue
             if paper_result.record is not None:
                 journal.append(paper_result.record)
+                if paper_trade_record_sink is not None:
+                    paper_trade_record_sink(paper_result.record)
 
     # 5. Assemble + validate invariants in __post_init__.
     return PaperStrategyCycleReport(

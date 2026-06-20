@@ -21,9 +21,9 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Callable, Protocol, runtime_checkable
 
-from polymarket_alpha_lab.journal import PaperTradeJournal
+from polymarket_alpha_lab.journal import PaperTradeJournal, PaperTradeRecord
 from polymarket_alpha_lab.normalize import normalize_order_book
 from polymarket_alpha_lab.positions import (
     PaperNavLog,
@@ -55,6 +55,7 @@ def mark_paper_portfolio_nav(
     client: MarketNavClient,
     marked_at: datetime,
     nav_log_path: Path | str | None = None,
+    nav_snapshot_sink: Callable[[PaperNavSnapshot], object] | None = None,
 ) -> PaperNavSnapshot:
     """Mark the paper portfolio NAV from a journal + live order books.
 
@@ -63,16 +64,43 @@ def mark_paper_portfolio_nav(
     dict-comprehension over ``portfolio.positions`` performs no fetches and the
     resulting NAV equals ``starting_cash``.
     """
-    if not isinstance(starting_cash, Decimal):
-        raise ValueError("starting_cash must be a Decimal")
-    if starting_cash <= 0:
-        raise ValueError("starting_cash must be positive")
-    if not isinstance(client, MarketNavClient):
-        raise ValueError("client must be a MarketNavClient")
-    if not isinstance(marked_at, datetime):
-        raise ValueError("marked_at must be a datetime")
+    _validate_nav_mark_inputs(
+        starting_cash=starting_cash,
+        client=client,
+        marked_at=marked_at,
+        nav_snapshot_sink=nav_snapshot_sink,
+    )
+    return _mark_paper_portfolio_nav_from_records(
+        _read_paper_trade_journal_records(journal_path),
+        starting_cash=starting_cash,
+        client=client,
+        marked_at=marked_at,
+        nav_log_path=nav_log_path,
+        nav_snapshot_sink=nav_snapshot_sink,
+    )
 
-    records = PaperTradeJournal.read(journal_path)
+
+def _read_paper_trade_journal_records(
+    journal_path: Path | str,
+) -> tuple[PaperTradeRecord, ...]:
+    return PaperTradeJournal.read(journal_path)
+
+
+def _mark_paper_portfolio_nav_from_records(
+    records: tuple[PaperTradeRecord, ...],
+    *,
+    starting_cash: Decimal,
+    client: MarketNavClient,
+    marked_at: datetime,
+    nav_log_path: Path | str | None = None,
+    nav_snapshot_sink: Callable[[PaperNavSnapshot], object] | None = None,
+) -> PaperNavSnapshot:
+    _validate_nav_mark_inputs(
+        starting_cash=starting_cash,
+        client=client,
+        marked_at=marked_at,
+        nav_snapshot_sink=nav_snapshot_sink,
+    )
     portfolio = build_paper_portfolio(records, starting_cash=starting_cash)
     books_by_token_id = {
         position.token_id: normalize_order_book(
@@ -84,4 +112,25 @@ def mark_paper_portfolio_nav(
     snapshot = mark_paper_nav(portfolio, books_by_token_id, marked_at=marked_at)
     if nav_log_path is not None:
         PaperNavLog(nav_log_path).append(snapshot)
+    if nav_snapshot_sink is not None:
+        nav_snapshot_sink(snapshot)
     return snapshot
+
+
+def _validate_nav_mark_inputs(
+    *,
+    starting_cash: Decimal,
+    client: MarketNavClient,
+    marked_at: datetime,
+    nav_snapshot_sink: Callable[[PaperNavSnapshot], object] | None,
+) -> None:
+    if not isinstance(starting_cash, Decimal):
+        raise ValueError("starting_cash must be a Decimal")
+    if starting_cash <= 0:
+        raise ValueError("starting_cash must be positive")
+    if not isinstance(client, MarketNavClient):
+        raise ValueError("client must be a MarketNavClient")
+    if not isinstance(marked_at, datetime):
+        raise ValueError("marked_at must be a datetime")
+    if nav_snapshot_sink is not None and not callable(nav_snapshot_sink):
+        raise ValueError("nav_snapshot_sink must be callable or None")

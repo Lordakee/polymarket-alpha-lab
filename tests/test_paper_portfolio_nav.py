@@ -210,6 +210,55 @@ def test_appends_nav_log_when_path_supplied(tmp_path):
     assert stored["paper_only"] is True
 
 
+def test_injected_nav_snapshot_sink_receives_returned_snapshot(tmp_path):
+    journal_path = tmp_path / "paper-trades.jsonl"
+    PaperTradeJournal(path=journal_path).append(_buy_record(token_id="111", condition_id="0xabc"))
+    client = FakeNavClient({"111": _book_payload("111")})
+    received = []
+
+    def sink(snapshot):
+        received.append(snapshot)
+
+    snapshot = mark_paper_portfolio_nav(
+        journal_path,
+        starting_cash=Decimal("10000"),
+        client=client,
+        marked_at=MARKED_AT,
+        nav_snapshot_sink=sink,
+    )
+
+    assert received == [snapshot]
+    assert received[0] is snapshot
+
+
+def test_nav_snapshot_sink_runs_after_nav_log_append_even_when_sink_raises(tmp_path):
+    journal_path = tmp_path / "paper-trades.jsonl"
+    PaperTradeJournal(path=journal_path).append(_buy_record(token_id="111", condition_id="0xabc"))
+    nav_log_path = tmp_path / "nav.jsonl"
+    client = FakeNavClient({"111": _book_payload("111")})
+    sink_observations = []
+
+    def sink(snapshot):
+        lines = nav_log_path.read_text(encoding="utf-8").splitlines()
+        sink_observations.append((snapshot, nav_log_path.exists(), len(lines)))
+        raise RuntimeError("sink failed")
+
+    with pytest.raises(RuntimeError, match="sink failed"):
+        mark_paper_portfolio_nav(
+            journal_path,
+            starting_cash=Decimal("10000"),
+            client=client,
+            marked_at=MARKED_AT,
+            nav_log_path=nav_log_path,
+            nav_snapshot_sink=sink,
+        )
+
+    assert len(sink_observations) == 1
+    assert sink_observations[0][1:] == (True, 1)
+    assert nav_log_path.exists()
+    assert len(nav_log_path.read_text(encoding="utf-8").splitlines()) == 1
+
+
 def test_omits_nav_log_when_path_absent(tmp_path):
     journal_path = tmp_path / "paper-trades.jsonl"
     PaperTradeJournal(path=journal_path).append(_buy_record(token_id="111", condition_id="0xabc"))
@@ -224,6 +273,41 @@ def test_omits_nav_log_when_path_absent(tmp_path):
     )
 
     assert not nav_log_path.exists()
+
+
+def test_rejects_invalid_nav_snapshot_sink_before_any_client_fetch(tmp_path):
+    journal_path = tmp_path / "paper-trades.jsonl"
+    PaperTradeJournal(path=journal_path).append(_buy_record(token_id="111", condition_id="0xabc"))
+    client = FakeNavClient({"111": _book_payload("111")})
+
+    with pytest.raises(ValueError, match="nav_snapshot_sink"):
+        mark_paper_portfolio_nav(
+            journal_path,
+            starting_cash=Decimal("10000"),
+            client=client,
+            marked_at=MARKED_AT,
+            nav_snapshot_sink=object(),
+        )
+
+    assert client.fetched == []
+
+
+def test_nav_snapshot_sink_failure_propagates(tmp_path):
+    journal_path = tmp_path / "paper-trades.jsonl"
+    PaperTradeJournal(path=journal_path).append(_buy_record(token_id="111", condition_id="0xabc"))
+    client = FakeNavClient({"111": _book_payload("111")})
+
+    def sink(snapshot):
+        raise RuntimeError("sink failed")
+
+    with pytest.raises(RuntimeError, match="sink failed"):
+        mark_paper_portfolio_nav(
+            journal_path,
+            starting_cash=Decimal("10000"),
+            client=client,
+            marked_at=MARKED_AT,
+            nav_snapshot_sink=sink,
+        )
 
 
 def test_rejects_non_positive_starting_cash(tmp_path):

@@ -35,8 +35,17 @@ from polymarket_alpha_lab.outcome_tracker import (
     OutcomeTrackingReport,
     check_outcomes,
 )
+from polymarket_alpha_lab.outcome_tracking_psycopg import (
+    insert_outcome_tracking_report_with_psycopg,
+)
 from polymarket_alpha_lab.paper_execution import PaperExecutionConfig
+from polymarket_alpha_lab.paper_nav_snapshot_psycopg import (
+    insert_paper_nav_snapshot_with_psycopg,
+)
 from polymarket_alpha_lab.paper_portfolio_nav import mark_paper_portfolio_nav
+from polymarket_alpha_lab.paper_trade_journal_psycopg import (
+    insert_paper_trade_record_with_psycopg,
+)
 from polymarket_alpha_lab.paper_trade_cost_audit import (
     PaperTradeCostAuditConfig,
     PaperTradeCostAuditReport,
@@ -88,6 +97,15 @@ from polymarket_alpha_lab.strategy_cycle_snapshot_source import (
 from polymarket_alpha_lab.supabase_cycle_snapshot_config import (
     from_cycle_snapshot_db_env,
 )
+from polymarket_alpha_lab.supabase_outcome_tracking_config import (
+    from_outcome_tracking_db_env,
+)
+from polymarket_alpha_lab.supabase_paper_nav_snapshot_config import (
+    from_paper_nav_snapshot_db_env,
+)
+from polymarket_alpha_lab.supabase_paper_trade_journal_config import (
+    from_paper_trade_journal_db_env,
+)
 
 if TYPE_CHECKING:
     from polymarket_alpha_lab.nav_risk_metrics import PaperNavRiskMetricsReport
@@ -103,6 +121,9 @@ NavRunner = Callable[..., PaperNavSnapshot]
 HistoryRunner = Callable[..., PerformanceSummary]
 LoopRunner = Callable[..., RunLoopSummary]
 OutcomeRunner = Callable[..., OutcomeTrackingReport]
+OutcomeTrackingDbSink = Callable[..., object]
+PaperTradeRecordDbSink = Callable[..., object]
+PaperNavSnapshotDbSink = Callable[..., object]
 NavRiskRunner = Callable[..., "PaperNavRiskMetricsReport"]
 StrategyAuditRunner = Callable[..., PaperStrategyRiskAuditReport]
 StrategyAuditHistoryRunner = Callable[..., PaperStrategyRiskAuditHistoryReport]
@@ -117,6 +138,17 @@ CycleSnapshotSource = Callable[..., object]
 CycleSnapshotDbSink = Callable[..., object]
 CycleSnapshotDbTrendRunner = Callable[..., object]
 _MISSING = object()
+
+
+def _redact_db_dsn(text: str, *, dsn: str) -> str:
+    return text.replace(dsn, "<redacted-dsn>")
+
+
+def _raise_redacted_db_sink_error(exc: Exception, *, dsn: str) -> None:
+    message = _redact_db_dsn(str(exc), dsn=dsn)
+    if not message.strip():
+        message = exc.__class__.__name__
+    raise RuntimeError(message) from None
 
 
 def _apply_json_config(args: argparse.Namespace) -> None:
@@ -182,6 +214,15 @@ def main(
     nav_risk_runner: NavRiskRunner | None = None,
     loop_runner: LoopRunner = run_strategy_loop,
     outcome_runner: OutcomeRunner = check_outcomes,
+    outcome_tracking_db_sink: OutcomeTrackingDbSink = (
+        insert_outcome_tracking_report_with_psycopg
+    ),
+    paper_trade_record_db_sink: PaperTradeRecordDbSink = (
+        insert_paper_trade_record_with_psycopg
+    ),
+    paper_nav_snapshot_db_sink: PaperNavSnapshotDbSink = (
+        insert_paper_nav_snapshot_with_psycopg
+    ),
     strategy_audit_runner: StrategyAuditRunner | None = None,
     strategy_audit_history_runner: StrategyAuditHistoryRunner | None = None,
     strategy_recommendation_history_runner: (
@@ -576,6 +617,30 @@ def main(
 
     if args.command == "strategy-cycle":
         try:
+            paper_trade_db_config = from_paper_trade_journal_db_env()
+            strategy_cycle_paper_trade_record_sink = None
+            if paper_trade_db_config.enabled:
+                dsn = paper_trade_db_config.dsn
+                if dsn is None:
+                    raise ValueError(
+                        "paper trade journal DB persistence requires a DB DSN",
+                    )
+
+                def strategy_cycle_paper_trade_record_sink(
+                    record: object,
+                    *,
+                    db_dsn: str = dsn,
+                    table_name: str = paper_trade_db_config.table_name,
+                ) -> object:
+                    try:
+                        return paper_trade_record_db_sink(
+                            dsn=db_dsn,
+                            record=record,
+                            table_name=table_name,
+                        )
+                    except Exception as exc:
+                        _raise_redacted_db_sink_error(exc, dsn=db_dsn)
+
             scan_config = MarketScanConfig(
                 limit=args.limit,
                 archive_root=args.archive_root,
@@ -594,11 +659,16 @@ def main(
                 cycle_config = replace(
                     cycle_config, market_search=args.market_search
                 )
-            report = cycle_runner(
-                client=client_factory(),
-                scan_config=scan_config,
-                cycle_config=cycle_config,
-            )
+            cycle_runner_kwargs = {
+                "client": client_factory(),
+                "scan_config": scan_config,
+                "cycle_config": cycle_config,
+            }
+            if strategy_cycle_paper_trade_record_sink is not None:
+                cycle_runner_kwargs["paper_trade_record_sink"] = (
+                    strategy_cycle_paper_trade_record_sink
+                )
+            report = cycle_runner(**cycle_runner_kwargs)
             PaperStrategyCycleLog(args.output).append(report)
             _print_strategy_cycle_summary(report)
             return 0
@@ -608,13 +678,40 @@ def main(
 
     if args.command == "portfolio-nav":
         try:
-            snapshot = nav_runner(
-                journal_path=args.journal,
-                starting_cash=args.starting_cash,
-                client=client_factory(),
-                marked_at=datetime.now(UTC),
-                nav_log_path=args.nav_log,
-            )
+            paper_nav_db_config = from_paper_nav_snapshot_db_env()
+            portfolio_nav_snapshot_sink = None
+            if paper_nav_db_config.enabled:
+                dsn = paper_nav_db_config.dsn
+                if dsn is None:
+                    raise ValueError(
+                        "paper NAV snapshot DB persistence requires a DB DSN",
+                    )
+
+                def portfolio_nav_snapshot_sink(
+                    snapshot: PaperNavSnapshot,
+                    *,
+                    db_dsn: str = dsn,
+                    table_name: str = paper_nav_db_config.table_name,
+                ) -> object:
+                    try:
+                        return paper_nav_snapshot_db_sink(
+                            dsn=db_dsn,
+                            snapshot=snapshot,
+                            table_name=table_name,
+                        )
+                    except Exception as exc:
+                        _raise_redacted_db_sink_error(exc, dsn=db_dsn)
+
+            nav_runner_kwargs = {
+                "journal_path": args.journal,
+                "starting_cash": args.starting_cash,
+                "client": client_factory(),
+                "marked_at": datetime.now(UTC),
+                "nav_log_path": args.nav_log,
+            }
+            if portfolio_nav_snapshot_sink is not None:
+                nav_runner_kwargs["nav_snapshot_sink"] = portfolio_nav_snapshot_sink
+            snapshot = nav_runner(**nav_runner_kwargs)
             _print_portfolio_nav_summary(snapshot)
             return 0
         except Exception as exc:
@@ -762,8 +859,12 @@ def main(
     if args.command == "run":
         try:
             cycle_snapshot_db_config = from_cycle_snapshot_db_env()
+            paper_trade_db_config = from_paper_trade_journal_db_env()
+            paper_nav_db_config = from_paper_nav_snapshot_db_env()
             run_cycle_snapshot_source = None
             run_cycle_snapshot_sink = None
+            run_paper_trade_record_sink = None
+            run_nav_snapshot_sink = None
             if cycle_snapshot_db_config.enabled:
                 dsn = cycle_snapshot_db_config.dsn
                 if dsn is None:
@@ -771,18 +872,69 @@ def main(
                         "cycle snapshot DB persistence requires a DB DSN",
                     )
 
-                def run_cycle_snapshot_sink(report: object) -> object:
-                    return cycle_snapshot_db_sink(
-                        dsn=dsn,
-                        report=report,
-                        table_name=cycle_snapshot_db_config.table_name,
-                    )
+                def run_cycle_snapshot_sink(
+                    report: object,
+                    *,
+                    db_dsn: str = dsn,
+                    table_name: str = cycle_snapshot_db_config.table_name,
+                ) -> object:
+                    try:
+                        return cycle_snapshot_db_sink(
+                            dsn=db_dsn,
+                            report=report,
+                            table_name=table_name,
+                        )
+                    except Exception as exc:
+                        _raise_redacted_db_sink_error(exc, dsn=db_dsn)
 
                 run_cycle_snapshot_source = (
                     cycle_snapshot_source
                     if cycle_snapshot_source is not None
                     else build_strategy_cycle_snapshot_source_report
                 )
+            if paper_trade_db_config.enabled:
+                dsn = paper_trade_db_config.dsn
+                if dsn is None:
+                    raise ValueError(
+                        "paper trade journal DB persistence requires a DB DSN",
+                    )
+
+                def run_paper_trade_record_sink(
+                    record: object,
+                    *,
+                    db_dsn: str = dsn,
+                    table_name: str = paper_trade_db_config.table_name,
+                ) -> object:
+                    try:
+                        return paper_trade_record_db_sink(
+                            dsn=db_dsn,
+                            record=record,
+                            table_name=table_name,
+                        )
+                    except Exception as exc:
+                        _raise_redacted_db_sink_error(exc, dsn=db_dsn)
+
+            if paper_nav_db_config.enabled:
+                dsn = paper_nav_db_config.dsn
+                if dsn is None:
+                    raise ValueError(
+                        "paper NAV snapshot DB persistence requires a DB DSN",
+                    )
+
+                def run_nav_snapshot_sink(
+                    snapshot: PaperNavSnapshot,
+                    *,
+                    db_dsn: str = dsn,
+                    table_name: str = paper_nav_db_config.table_name,
+                ) -> object:
+                    try:
+                        return paper_nav_snapshot_db_sink(
+                            dsn=db_dsn,
+                            snapshot=snapshot,
+                            table_name=table_name,
+                        )
+                    except Exception as exc:
+                        _raise_redacted_db_sink_error(exc, dsn=db_dsn)
             scan_config = MarketScanConfig(
                 limit=args.limit,
                 archive_root=args.archive_root,
@@ -832,6 +984,8 @@ def main(
                 max_iterations=args.max_iterations,
                 cycle_snapshot_source=run_cycle_snapshot_source,
                 cycle_snapshot_sink=run_cycle_snapshot_sink,
+                paper_trade_record_sink=run_paper_trade_record_sink,
+                nav_snapshot_sink=run_nav_snapshot_sink,
             )
             _print_run_loop_summary(summary)
             return 0
@@ -864,6 +1018,7 @@ def main(
 
     if args.command == "check-outcomes":
         try:
+            outcome_tracking_db_config = from_outcome_tracking_db_env()
             report = outcome_runner(
                 client=client_factory(),
                 journal_path=args.journal,
@@ -881,6 +1036,20 @@ def main(
                 )
             if args.outcome_log is not None:
                 OutcomeTrackingLog(args.outcome_log).append(report)
+            if outcome_tracking_db_config.enabled:
+                dsn = outcome_tracking_db_config.dsn
+                if dsn is None:
+                    raise ValueError(
+                        "outcome tracking DB persistence requires a DB DSN",
+                    )
+                try:
+                    outcome_tracking_db_sink(
+                        dsn=dsn,
+                        report=report,
+                        table_name=outcome_tracking_db_config.table_name,
+                    )
+                except Exception as exc:
+                    _raise_redacted_db_sink_error(exc, dsn=dsn)
             _print_outcome_tracking_summary(report)
             return 0
         except Exception as exc:

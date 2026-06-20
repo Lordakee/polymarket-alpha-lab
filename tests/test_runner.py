@@ -29,6 +29,7 @@ from polymarket_alpha_lab.cost_aware_snapshot_builder import (
     PaperCostAwareSnapshotConfig,
 )
 from polymarket_alpha_lab.forecast_provider import PaperForecastConfig
+from polymarket_alpha_lab.journal import PaperTradeJournal
 from polymarket_alpha_lab.paper_execution import PaperExecutionConfig
 from polymarket_alpha_lab.pipeline import MarketScanConfig
 from polymarket_alpha_lab.project_screening import PaperProjectScreeningConfig
@@ -545,6 +546,187 @@ def test_nav_mark_runs_when_journal_exists_after_paper_trade(tmp_path):
     assert Decimal(snapshot["starting_cash"]) == Decimal("10000")
 
 
+def test_paper_trade_record_sink_runs_for_journaled_trade(tmp_path):
+    market, books = _screening_ready_market_and_books()
+    client = FakeMarketDataClient([market], books)
+    journal_path = tmp_path / "paper-trades.jsonl"
+    trade_records = []
+    config = cycle_config(
+        paper_execution_config=_paper_exec_config(),
+        paper_trade_journal_path=journal_path,
+    )
+
+    summary = run_strategy_loop(
+        client=client,
+        scan_config=scan_config(tmp_path),
+        cycle_config=config,
+        starting_cash=Decimal("10000"),
+        nav_log_path=tmp_path / "nav.jsonl",
+        cycle_report_log_path=tmp_path / "cycle.jsonl",
+        paper_trade_record_sink=trade_records.append,
+    )
+
+    assert summary.iterations_completed == 1
+    assert summary.iterations_failed == 0
+    assert len(trade_records) == 1
+    assert PaperTradeJournal.read(journal_path) == (trade_records[0],)
+
+
+def test_paper_trade_record_sink_failure_counts_as_iteration_failure(
+    tmp_path,
+):
+    market, books = _screening_ready_market_and_books()
+    client = FakeMarketDataClient([market], books)
+    journal_path = tmp_path / "paper-trades.jsonl"
+    config = cycle_config(
+        paper_execution_config=_paper_exec_config(),
+        paper_trade_journal_path=journal_path,
+    )
+
+    def broken_trade_sink(record):
+        raise RuntimeError("trade db unavailable")
+
+    summary = run_strategy_loop(
+        client=client,
+        scan_config=scan_config(tmp_path),
+        cycle_config=config,
+        starting_cash=Decimal("10000"),
+        nav_log_path=tmp_path / "nav.jsonl",
+        cycle_report_log_path=tmp_path / "cycle.jsonl",
+        paper_trade_record_sink=broken_trade_sink,
+        on_cycle_error="log_and_continue",
+    )
+
+    assert summary.iterations_completed == 0
+    assert summary.iterations_failed == 1
+    assert summary.last_error == "RuntimeError: trade db unavailable"
+    assert len(PaperTradeJournal.read(journal_path)) == 1
+
+
+def test_nav_snapshot_sink_runs_after_successful_nav_mark(tmp_path):
+    market, books = _screening_ready_market_and_books()
+    client = FakeMarketDataClient([market], books)
+    journal_path = tmp_path / "paper-trades.jsonl"
+    nav_log = tmp_path / "nav.jsonl"
+    nav_snapshots = []
+    config = cycle_config(
+        paper_execution_config=_paper_exec_config(),
+        paper_trade_journal_path=journal_path,
+    )
+
+    summary = run_strategy_loop(
+        client=client,
+        scan_config=scan_config(tmp_path),
+        cycle_config=config,
+        starting_cash=Decimal("10000"),
+        nav_log_path=nav_log,
+        cycle_report_log_path=tmp_path / "cycle.jsonl",
+        nav_snapshot_sink=nav_snapshots.append,
+    )
+
+    assert summary.iterations_completed == 1
+    assert summary.iterations_failed == 0
+    assert summary.nav_marks_skipped == 0
+    assert len(nav_snapshots) == 1
+    assert nav_snapshots[0].paper_only is True
+    assert len(nav_log.read_text(encoding="utf-8").splitlines()) == 1
+
+
+def test_nav_snapshot_sink_is_not_called_when_nav_mark_is_skipped(tmp_path):
+    non_binary = raw_market(
+        condition_id="0xcondNonBinary",
+        slug="market-non-binary",
+        question="Will a multi-outcome resolve?",
+        token_ids=("alpha-token", "beta-token", "gamma-token"),
+        outcomes=("Alpha", "Beta", "Gamma"),
+    )
+    journal_path = tmp_path / "paper-trades.jsonl"
+    nav_snapshots = []
+    config = cycle_config(
+        paper_execution_config=_paper_exec_config(),
+        paper_trade_journal_path=journal_path,
+    )
+
+    summary = run_strategy_loop(
+        client=FakeMarketDataClient([non_binary], {}),
+        scan_config=scan_config(tmp_path),
+        cycle_config=config,
+        starting_cash=Decimal("10000"),
+        nav_log_path=tmp_path / "nav.jsonl",
+        cycle_report_log_path=tmp_path / "cycle.jsonl",
+        nav_snapshot_sink=nav_snapshots.append,
+    )
+
+    assert summary.iterations_completed == 1
+    assert summary.iterations_failed == 0
+    assert summary.nav_marks_skipped == 1
+    assert nav_snapshots == []
+
+
+def test_nav_snapshot_sink_failure_counts_as_iteration_failure_not_nav_skip(tmp_path):
+    market, books = _screening_ready_market_and_books()
+    client = FakeMarketDataClient([market], books)
+    journal_path = tmp_path / "paper-trades.jsonl"
+    nav_log = tmp_path / "nav.jsonl"
+    config = cycle_config(
+        paper_execution_config=_paper_exec_config(),
+        paper_trade_journal_path=journal_path,
+    )
+
+    def broken_nav_sink(snapshot):
+        raise RuntimeError("nav db unavailable")
+
+    summary = run_strategy_loop(
+        client=client,
+        scan_config=scan_config(tmp_path),
+        cycle_config=config,
+        starting_cash=Decimal("10000"),
+        nav_log_path=nav_log,
+        cycle_report_log_path=tmp_path / "cycle.jsonl",
+        nav_snapshot_sink=broken_nav_sink,
+        on_cycle_error="log_and_continue",
+    )
+
+    assert summary.iterations_completed == 0
+    assert summary.iterations_failed == 1
+    assert summary.nav_marks_skipped == 0
+    assert summary.last_error == "RuntimeError: nav db unavailable"
+    assert len(nav_log.read_text(encoding="utf-8").splitlines()) == 1
+
+
+def test_nav_snapshot_sink_file_not_found_counts_as_iteration_failure_not_nav_skip(
+    tmp_path,
+):
+    market, books = _screening_ready_market_and_books()
+    client = FakeMarketDataClient([market], books)
+    journal_path = tmp_path / "paper-trades.jsonl"
+    nav_log = tmp_path / "nav.jsonl"
+    config = cycle_config(
+        paper_execution_config=_paper_exec_config(),
+        paper_trade_journal_path=journal_path,
+    )
+
+    def broken_nav_sink(snapshot):
+        raise FileNotFoundError("nav db certificate file missing")
+
+    summary = run_strategy_loop(
+        client=client,
+        scan_config=scan_config(tmp_path),
+        cycle_config=config,
+        starting_cash=Decimal("10000"),
+        nav_log_path=nav_log,
+        cycle_report_log_path=tmp_path / "cycle.jsonl",
+        nav_snapshot_sink=broken_nav_sink,
+        on_cycle_error="log_and_continue",
+    )
+
+    assert summary.iterations_completed == 0
+    assert summary.iterations_failed == 1
+    assert summary.nav_marks_skipped == 0
+    assert summary.last_error == "FileNotFoundError: nav db certificate file missing"
+    assert len(nav_log.read_text(encoding="utf-8").splitlines()) == 1
+
+
 def test_none_journal_path_skips_nav_mark_without_counting_as_skip(tmp_path):
     # Paper execution OFF -> paper_trade_journal_path is None. NAV marking is
     # not configured for this cycle, so the skip count stays zero (it is not a
@@ -669,6 +851,14 @@ def test_cycle_snapshot_sink_failure_counts_as_iteration_failure(tmp_path):
         (
             {"cycle_snapshot_sink": object()},
             "cycle_snapshot_sink must be callable or None",
+        ),
+        (
+            {"paper_trade_record_sink": object()},
+            "paper_trade_record_sink must be callable or None",
+        ),
+        (
+            {"nav_snapshot_sink": object()},
+            "nav_snapshot_sink must be callable or None",
         ),
     ),
 )
