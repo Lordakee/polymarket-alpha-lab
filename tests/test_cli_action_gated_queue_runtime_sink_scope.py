@@ -69,7 +69,10 @@ def _runtime_wiring_related(value: str) -> bool:
     lowered = value.lower().replace("-", "_")
     return _action_gated_queue_related(value) and any(
         fragment in lowered
-        for fragment in ("sink", "source", "db", "psycopg", "supabase")
+        for fragment in (
+            "action_gated_queue_source",
+            "action_gated_queue_sink",
+        )
     )
 
 

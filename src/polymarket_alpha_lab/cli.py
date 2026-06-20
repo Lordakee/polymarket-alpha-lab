@@ -155,6 +155,9 @@ CycleSnapshotSource = Callable[..., object]
 CycleSnapshotDbSink = Callable[..., object]
 ActionGatedQueueSource = Callable[..., object]
 ActionGatedQueueDbSink = Callable[..., object]
+ActionGatedQueueLoader = Callable[..., object]
+ActionGatedQueuePriorityBuilder = Callable[..., object]
+ActionGatedQueueRiskBuilder = Callable[..., object]
 CycleSnapshotDbTrendRunner = Callable[..., object]
 CycleSnapshotDbReviewRunner = Callable[..., object]
 CycleSnapshotDbActionGateRunner = Callable[..., object]
@@ -166,6 +169,13 @@ def _redact_db_dsn(text: str, *, dsn: str) -> str:
 
 
 def _raise_redacted_db_sink_error(exc: Exception, *, dsn: str) -> None:
+    message = _redact_db_dsn(str(exc), dsn=dsn)
+    if not message.strip():
+        message = exc.__class__.__name__
+    raise RuntimeError(message) from None
+
+
+def _raise_redacted_db_read_error(exc: Exception, *, dsn: str) -> None:
     message = _redact_db_dsn(str(exc), dsn=dsn)
     if not message.strip():
         message = exc.__class__.__name__
@@ -262,6 +272,11 @@ def main(
     action_gated_queue_db_sink: ActionGatedQueueDbSink = (
         insert_paper_action_gated_strategy_recommendation_queue_report_with_psycopg
     ),
+    action_gated_queue_loader: ActionGatedQueueLoader | None = None,
+    action_gated_queue_priority_builder: (
+        ActionGatedQueuePriorityBuilder | None
+    ) = None,
+    action_gated_queue_risk_builder: ActionGatedQueueRiskBuilder | None = None,
     cycle_snapshot_db_trend_runner: CycleSnapshotDbTrendRunner | None = None,
     cycle_snapshot_db_review_runner: CycleSnapshotDbReviewRunner | None = None,
     cycle_snapshot_db_action_gate_runner: CycleSnapshotDbActionGateRunner | None = None,
@@ -533,6 +548,56 @@ def main(
         type=Decimal,
         default=Decimal("6.000000"),
         dest="stale_after_hours",
+    )
+
+    action_gated_queue_decision_support = subparsers.add_parser(
+        "action-gated-queue-decision-support",
+    )
+    action_gated_queue_decision_support.add_argument(
+        "--source-config-version",
+        default=None,
+        dest="source_config_version",
+    )
+    action_gated_queue_decision_support.add_argument(
+        "--action-status",
+        choices=("research_ready", "watch", "blocked"),
+        default=None,
+        dest="action_status",
+    )
+    action_gated_queue_decision_support.add_argument(
+        "--limit",
+        type=int,
+        default=100,
+    )
+    action_gated_queue_decision_support.add_argument(
+        "--max-total-ready-notional",
+        type=Decimal,
+        default=Decimal("1000.000000"),
+        dest="max_total_ready_notional",
+    )
+    action_gated_queue_decision_support.add_argument(
+        "--max-single-queue-ready-notional",
+        type=Decimal,
+        default=Decimal("250.000000"),
+        dest="max_single_queue_ready_notional",
+    )
+    action_gated_queue_decision_support.add_argument(
+        "--max-ready-candidate-count",
+        type=int,
+        default=25,
+        dest="max_ready_candidate_count",
+    )
+    action_gated_queue_decision_support.add_argument(
+        "--max-total-candidate-count",
+        type=int,
+        default=100,
+        dest="max_total_candidate_count",
+    )
+    action_gated_queue_decision_support.add_argument(
+        "--throttle-utilization-threshold",
+        type=Decimal,
+        default=Decimal("0.800000"),
+        dest="throttle_utilization_threshold",
     )
 
     # Stage 17 market search: search Polymarket markets by keyword.
@@ -945,6 +1010,37 @@ def main(
         except Exception as exc:
             print(
                 f"paper-recommendation-cycle-action-gate failed: {exc}",
+                file=sys.stderr,
+            )
+            return 1
+
+    if args.command == "action-gated-queue-decision-support":
+        try:
+            priority_report, risk_report = _run_action_gated_queue_decision_support(
+                source_config_version=args.source_config_version,
+                action_status=args.action_status,
+                limit=args.limit,
+                max_total_ready_notional=args.max_total_ready_notional,
+                max_single_queue_ready_notional=(
+                    args.max_single_queue_ready_notional
+                ),
+                max_ready_candidate_count=args.max_ready_candidate_count,
+                max_total_candidate_count=args.max_total_candidate_count,
+                throttle_utilization_threshold=(
+                    args.throttle_utilization_threshold
+                ),
+                loader=action_gated_queue_loader,
+                priority_builder=action_gated_queue_priority_builder,
+                risk_builder=action_gated_queue_risk_builder,
+            )
+            _print_action_gated_queue_decision_support_summary(
+                priority_report,
+                risk_report,
+            )
+            return 0
+        except Exception as exc:
+            print(
+                f"action-gated-queue-decision-support failed: {exc}",
                 file=sys.stderr,
             )
             return 1
@@ -1514,6 +1610,89 @@ def _run_cycle_snapshot_db_action_gate(
         config=action_gate_config,
         generated_at=generated_at,
     )
+
+
+def _run_action_gated_queue_decision_support(
+    *,
+    source_config_version: str | None,
+    action_status: str | None,
+    limit: int,
+    max_total_ready_notional: Decimal,
+    max_single_queue_ready_notional: Decimal,
+    max_ready_candidate_count: int,
+    max_total_candidate_count: int,
+    throttle_utilization_threshold: Decimal,
+    loader: ActionGatedQueueLoader | None,
+    priority_builder: ActionGatedQueuePriorityBuilder | None,
+    risk_builder: ActionGatedQueueRiskBuilder | None,
+) -> tuple[object, object]:
+    from polymarket_alpha_lab.action_gated_strategy_recommendation_queue_priority import (
+        build_paper_action_gated_strategy_recommendation_queue_priority_report,
+    )
+    from polymarket_alpha_lab.action_gated_strategy_recommendation_queue_psycopg_read import (
+        PaperActionGatedStrategyRecommendationQueueReadOptions,
+        load_paper_action_gated_strategy_recommendation_queue_reports_with_psycopg,
+    )
+    from polymarket_alpha_lab.action_gated_strategy_recommendation_queue_risk import (
+        PaperActionGatedStrategyRecommendationQueueRiskConfig,
+        build_paper_action_gated_strategy_recommendation_queue_risk_report,
+    )
+
+    db_config = from_action_gated_strategy_recommendation_queue_db_env()
+    if not db_config.enabled:
+        raise ValueError(
+            "action-gated-queue-decision-support requires action-gated queue "
+            "read-only DB config to be enabled",
+        )
+    if db_config.dsn is None:
+        raise ValueError("action-gated-queue-decision-support requires a DB DSN")
+
+    read_options = PaperActionGatedStrategyRecommendationQueueReadOptions(
+        source_config_version=source_config_version,
+        action_status=action_status,
+        limit=limit,
+        table_name=db_config.table_name,
+    )
+    risk_config = PaperActionGatedStrategyRecommendationQueueRiskConfig(
+        config_version="action-gated-queue-risk-v0",
+        max_total_ready_notional=max_total_ready_notional,
+        max_single_queue_ready_notional=max_single_queue_ready_notional,
+        max_ready_candidate_count=max_ready_candidate_count,
+        max_total_candidate_count=max_total_candidate_count,
+        throttle_utilization_threshold=throttle_utilization_threshold,
+    )
+    generated_at = datetime.now(UTC)
+    resolved_loader = (
+        loader
+        if loader is not None
+        else load_paper_action_gated_strategy_recommendation_queue_reports_with_psycopg
+    )
+    resolved_priority_builder = (
+        priority_builder
+        if priority_builder is not None
+        else build_paper_action_gated_strategy_recommendation_queue_priority_report
+    )
+    resolved_risk_builder = (
+        risk_builder
+        if risk_builder is not None
+        else build_paper_action_gated_strategy_recommendation_queue_risk_report
+    )
+
+    try:
+        queue_reports = resolved_loader(db_config.dsn, options=read_options)
+    except Exception as exc:
+        _raise_redacted_db_read_error(exc, dsn=db_config.dsn)
+
+    priority_report = resolved_priority_builder(
+        queue_reports,
+        generated_at=generated_at,
+    )
+    risk_report = resolved_risk_builder(
+        queue_reports,
+        config=risk_config,
+        generated_at=generated_at,
+    )
+    return priority_report, risk_report
 
 
 def _run_cost_audit(
@@ -2223,6 +2402,62 @@ def _print_cycle_snapshot_db_action_gate_summary(report: object) -> None:
         f"blocked_reasons={report.blocked_reason_count} "
         f"watch_reasons={report.watch_reason_count} "
         f"reason_codes={reason_code_counts or 'none'}",
+    )
+
+
+def _print_action_gated_queue_decision_support_summary(
+    priority_report: object,
+    risk_report: object,
+) -> None:
+    print(
+        "action-gated-queue-decision-support: "
+        f"sources={priority_report.source_report_count} "
+        f"priority_research_ready={priority_report.research_ready_count} "
+        f"priority_watch={priority_report.watch_count} "
+        f"priority_blocked={priority_report.blocked_count} "
+        f"priority_total_ready_notional={priority_report.total_ready_notional} "
+        f"top_priority_score={priority_report.top_research_priority_score} "
+        f"average_priority_score={priority_report.average_research_priority_score} "
+        f"risk_status={risk_report.status} "
+        f"risk_next_step={risk_report.recommended_next_step} "
+        f"risk_reasons={_csv_or_none(risk_report.reason_codes)}",
+    )
+    print(
+        "queue_risk: "
+        f"sources={risk_report.source_queue_count} "
+        f"research_ready_sources={risk_report.research_ready_source_count} "
+        f"watch_sources={risk_report.watch_source_count} "
+        f"blocked_sources={risk_report.blocked_source_count} "
+        f"candidates={risk_report.candidate_count} "
+        f"ready={risk_report.ready_count} "
+        f"watch={risk_report.watch_count} "
+        f"blocked={risk_report.blocked_count} "
+        f"blocked_reasons={risk_report.blocked_reason_count} "
+        f"watch_reasons={risk_report.watch_reason_count} "
+        f"total_ready_notional={risk_report.total_ready_notional} "
+        f"largest_queue_ready_notional={risk_report.largest_queue_ready_notional} "
+        f"total_ready_notional_utilization="
+        f"{_none_or_value(risk_report.total_ready_notional_utilization)} "
+        f"largest_queue_ready_notional_utilization="
+        f"{_none_or_value(risk_report.largest_queue_ready_notional_utilization)} "
+        f"source_config_versions="
+        f"{_csv_or_none(risk_report.source_config_versions)}",
+    )
+    if not priority_report.priority_rows:
+        print("top_priority: none")
+        return
+
+    top_row = priority_report.priority_rows[0]
+    print(
+        "top_priority: "
+        f"rank={top_row.priority_rank} "
+        f"source_generated_at={top_row.source_generated_at.isoformat()} "
+        f"action_status={top_row.action_status} "
+        f"research_priority={top_row.research_priority} "
+        f"candidates={top_row.candidate_count} "
+        f"ready={top_row.ready_count} "
+        f"ready_notional={top_row.total_ready_notional} "
+        f"priority_score={top_row.research_priority_score}",
     )
 
 

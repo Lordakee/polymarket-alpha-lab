@@ -88,6 +88,15 @@ from polymarket_alpha_lab.strategy_cycle_snapshot_source import (
 from polymarket_alpha_lab.strategy_cycle_action_gated_queue_source import (
     build_strategy_cycle_action_gated_queue_source_report,
 )
+from polymarket_alpha_lab.action_gated_strategy_recommendation_queue import (
+    PaperActionGatedStrategyRecommendationQueueReport,
+)
+from polymarket_alpha_lab.action_gated_strategy_recommendation_queue_psycopg_read import (
+    PaperActionGatedStrategyRecommendationQueueReadOptions,
+)
+from polymarket_alpha_lab.paper_recommendation_cycle_action_gate import (
+    PaperRecommendationCycleActionGateReasonCodeCount,
+)
 from polymarket_alpha_lab.supabase_action_gated_strategy_recommendation_queue_config import (
     ACTION_GATED_QUEUE_DB_DSN_ENV_VAR,
     ACTION_GATED_QUEUE_DB_ENABLED_ENV_VAR,
@@ -4494,6 +4503,316 @@ def test_run_cli_prints_action_gated_queue_persisted_summary_when_present(
     assert exit_code == 0
     captured = capsys.readouterr()
     assert "action_gated_queues_persisted=2" in captured.out
+
+
+def test_action_gated_queue_decision_support_cli_requires_enabled_db_config(
+    monkeypatch,
+    capsys,
+):
+    monkeypatch.delenv(ACTION_GATED_QUEUE_DB_ENABLED_ENV_VAR, raising=False)
+    monkeypatch.delenv(ACTION_GATED_QUEUE_DB_DSN_ENV_VAR, raising=False)
+    monkeypatch.delenv(ACTION_GATED_QUEUE_DB_TABLE_ENV_VAR, raising=False)
+
+    def forbidden_loader(**kwargs):
+        raise AssertionError("read-only loader should not run")
+
+    def forbidden_builder(**kwargs):
+        raise AssertionError("pure builders should not run")
+
+    exit_code = main(
+        ["action-gated-queue-decision-support"],
+        action_gated_queue_loader=forbidden_loader,
+        action_gated_queue_priority_builder=forbidden_builder,
+        action_gated_queue_risk_builder=forbidden_builder,
+        client_factory=lambda: (_ for _ in ()).throw(
+            AssertionError("client should not be constructed"),
+        ),
+    )
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert "action-gated-queue-decision-support failed:" in captured.err
+    assert "requires action-gated queue read-only DB config to be enabled" in (
+        captured.err
+    )
+
+
+def test_action_gated_queue_decision_support_cli_uses_injected_loader_and_builders(
+    monkeypatch,
+    capsys,
+):
+    action_gated_dsn = "postgresql://action-gated.example.invalid/db"
+    monkeypatch.setenv(ACTION_GATED_QUEUE_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(ACTION_GATED_QUEUE_DB_DSN_ENV_VAR, action_gated_dsn)
+    monkeypatch.setenv(
+        ACTION_GATED_QUEUE_DB_TABLE_ENV_VAR,
+        "action_gated_queue_archive",
+    )
+    source_reports = (
+        SimpleNamespace(payload_json={"raw": "payload-secret-marker"}),
+        SimpleNamespace(payload_json={"raw": "second-payload-secret"}),
+    )
+    loader_calls = []
+    priority_calls = []
+    risk_calls = []
+
+    def fake_loader(dsn, *, options):
+        loader_calls.append((dsn, options))
+        return source_reports
+
+    def fake_priority_builder(reports, *, generated_at):
+        priority_calls.append((reports, generated_at))
+        return SimpleNamespace(
+            source_report_count=2,
+            research_ready_count=1,
+            watch_count=1,
+            blocked_count=0,
+            total_ready_notional=Decimal("123.456000"),
+            top_research_priority_score=Decimal("4.000000"),
+            average_research_priority_score=Decimal("2.000000"),
+            priority_rows=(
+                SimpleNamespace(
+                    priority_rank=1,
+                    source_generated_at=datetime(2026, 6, 20, 12, 0, tzinfo=UTC),
+                    action_status="research_ready",
+                    research_priority="research_review",
+                    candidate_count=5,
+                    ready_count=2,
+                    total_ready_notional=Decimal("123.456000"),
+                    research_priority_score=Decimal("4.000000"),
+                ),
+            ),
+            paper_only=True,
+            report_only=True,
+            readonly=True,
+        )
+
+    def fake_risk_builder(queue_reports, *, config, generated_at):
+        risk_calls.append((queue_reports, config, generated_at))
+        return SimpleNamespace(
+            status="watch",
+            recommended_next_step="throttle_paper_research_queue",
+            reason_codes=("near_total_ready_notional_cap",),
+            source_queue_count=2,
+            research_ready_source_count=1,
+            watch_source_count=1,
+            blocked_source_count=0,
+            candidate_count=5,
+            ready_count=2,
+            watch_count=3,
+            blocked_count=0,
+            blocked_reason_count=0,
+            watch_reason_count=1,
+            total_ready_notional=Decimal("123.456000"),
+            largest_queue_ready_notional=Decimal("100.000000"),
+            total_ready_notional_utilization=Decimal("0.617280"),
+            largest_queue_ready_notional_utilization=Decimal("0.500000"),
+            source_config_versions=("action-gated-v0",),
+            paper_only=True,
+            report_only=True,
+            readonly=True,
+        )
+
+    exit_code = main(
+        [
+            "action-gated-queue-decision-support",
+            "--source-config-version",
+            "paper-recommendation-cycle-action-gate-v0",
+            "--action-status",
+            "research_ready",
+            "--limit",
+            "25",
+            "--max-total-ready-notional",
+            "200",
+            "--max-single-queue-ready-notional",
+            "200",
+            "--max-ready-candidate-count",
+            "10",
+            "--max-total-candidate-count",
+            "20",
+            "--throttle-utilization-threshold",
+            "0.750000",
+        ],
+        action_gated_queue_loader=fake_loader,
+        action_gated_queue_priority_builder=fake_priority_builder,
+        action_gated_queue_risk_builder=fake_risk_builder,
+        client_factory=lambda: (_ for _ in ()).throw(
+            AssertionError("client should not be constructed"),
+        ),
+    )
+
+    assert exit_code == 0
+    assert len(loader_calls) == 1
+    assert loader_calls[0][0] == action_gated_dsn
+    read_options = loader_calls[0][1]
+    assert isinstance(read_options, PaperActionGatedStrategyRecommendationQueueReadOptions)
+    assert (
+        read_options.source_config_version
+        == "paper-recommendation-cycle-action-gate-v0"
+    )
+    assert read_options.action_status == "research_ready"
+    assert read_options.limit == 25
+    assert read_options.table_name == "action_gated_queue_archive"
+
+    assert priority_calls == [(source_reports, priority_calls[0][1])]
+    assert isinstance(priority_calls[0][1], datetime)
+    assert risk_calls[0][0] is source_reports
+    assert risk_calls[0][1].config_version == "action-gated-queue-risk-v0"
+    assert risk_calls[0][1].max_total_ready_notional == Decimal("200.000000")
+    assert risk_calls[0][1].max_single_queue_ready_notional == Decimal("200.000000")
+    assert risk_calls[0][1].max_ready_candidate_count == 10
+    assert risk_calls[0][1].max_total_candidate_count == 20
+    assert risk_calls[0][1].throttle_utilization_threshold == Decimal("0.750000")
+    assert isinstance(risk_calls[0][2], datetime)
+
+    captured = capsys.readouterr()
+    assert "action-gated-queue-decision-support:" in captured.out
+    assert "sources=2" in captured.out
+    assert "priority_research_ready=1" in captured.out
+    assert "priority_watch=1" in captured.out
+    assert "priority_blocked=0" in captured.out
+    assert "risk_status=watch" in captured.out
+    assert "risk_next_step=throttle_paper_research_queue" in captured.out
+    assert "risk_reasons=near_total_ready_notional_cap" in captured.out
+    assert "queue_risk:" in captured.out
+    assert "source_config_versions=action-gated-v0" in captured.out
+    assert "top_priority:" in captured.out
+    assert "payload-secret-marker" not in captured.out
+    assert "second-payload-secret" not in captured.out
+    assert action_gated_dsn not in captured.out
+    assert action_gated_dsn not in captured.err
+
+
+def _watch_action_gated_queue_report(
+    generated_at: datetime,
+) -> PaperActionGatedStrategyRecommendationQueueReport:
+    return PaperActionGatedStrategyRecommendationQueueReport(
+        generated_at=generated_at,
+        config_version="action-gated-queue-v0",
+        source_config_version="paper-recommendation-cycle-action-gate-v0",
+        action_status="watch",
+        recommended_next_step="await_fresh_cycle_evidence",
+        reason_code_counts=(
+            PaperRecommendationCycleActionGateReasonCodeCount(
+                reason_code="cycle_review_watch",
+                count=1,
+            ),
+        ),
+        candidate_count=0,
+        ready_count=0,
+        watch_count=0,
+        blocked_count=0,
+        total_ready_notional=Decimal("0"),
+    )
+
+
+def _blocked_action_gated_queue_report(
+    generated_at: datetime,
+) -> PaperActionGatedStrategyRecommendationQueueReport:
+    return PaperActionGatedStrategyRecommendationQueueReport(
+        generated_at=generated_at,
+        config_version="action-gated-queue-v0",
+        source_config_version="paper-recommendation-cycle-action-gate-v0",
+        action_status="blocked",
+        recommended_next_step="repair_cycle_evidence",
+        reason_code_counts=(
+            PaperRecommendationCycleActionGateReasonCodeCount(
+                reason_code="cycle_review_blocked",
+                count=1,
+            ),
+        ),
+        candidate_count=0,
+        ready_count=0,
+        watch_count=0,
+        blocked_count=0,
+        total_ready_notional=Decimal("0"),
+    )
+
+
+def test_action_gated_queue_decision_support_cli_default_builder_wiring(
+    monkeypatch,
+    capsys,
+):
+    action_gated_dsn = "postgresql://action-gated.example.invalid/db"
+    monkeypatch.setenv(ACTION_GATED_QUEUE_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(ACTION_GATED_QUEUE_DB_DSN_ENV_VAR, action_gated_dsn)
+    reports = (
+        _blocked_action_gated_queue_report(
+            datetime(2026, 6, 20, 10, 0, tzinfo=UTC),
+        ),
+        _watch_action_gated_queue_report(
+            datetime(2026, 6, 20, 11, 0, tzinfo=UTC),
+        ),
+    )
+
+    def fake_loader(dsn, *, options):
+        assert dsn == action_gated_dsn
+        assert options.limit == 100
+        return reports
+
+    exit_code = main(
+        ["action-gated-queue-decision-support"],
+        action_gated_queue_loader=fake_loader,
+        client_factory=lambda: (_ for _ in ()).throw(
+            AssertionError("client should not be constructed"),
+        ),
+    )
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    assert "action-gated-queue-decision-support:" in captured.out
+    assert "sources=2" in captured.out
+    assert "priority_research_ready=0" in captured.out
+    assert "priority_watch=1" in captured.out
+    assert "priority_blocked=1" in captured.out
+    assert "risk_status=blocked" in captured.out
+    assert "risk_next_step=block_paper_research_queue" in captured.out
+    assert "risk_reasons=source_queue_blocked" in captured.out
+    assert "top_priority:" in captured.out
+    assert "action_status=watch" in captured.out
+    assert action_gated_dsn not in captured.out
+    assert action_gated_dsn not in captured.err
+
+
+def test_action_gated_queue_decision_support_cli_redacts_dsn_on_loader_failure(
+    monkeypatch,
+    capsys,
+):
+    action_gated_dsn = "postgresql://action-gated.example.invalid/db"
+    monkeypatch.setenv(ACTION_GATED_QUEUE_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(ACTION_GATED_QUEUE_DB_DSN_ENV_VAR, action_gated_dsn)
+
+    def broken_loader(dsn, *, options):
+        raise RuntimeError(f"could not connect to {dsn}")
+
+    exit_code = main(
+        ["action-gated-queue-decision-support"],
+        action_gated_queue_loader=broken_loader,
+    )
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert (
+        "action-gated-queue-decision-support failed: "
+        "could not connect to <redacted-dsn>"
+    ) in captured.err
+    assert action_gated_dsn not in captured.out
+    assert action_gated_dsn not in captured.err
+
+
+def test_action_gated_queue_decision_support_cli_rejects_dsn_flag(capsys):
+    with pytest.raises(SystemExit):
+        main(
+            [
+                "action-gated-queue-decision-support",
+                "--action-gated-queue-db-dsn",
+                "forbidden-value",
+            ],
+            client_factory=lambda: "fake-client",
+        )
+
+    captured = capsys.readouterr()
+    assert "unrecognized arguments: --action-gated-queue-db-dsn" in captured.err
 
 
 def test_run_cli_rejects_action_gated_queue_dsn_flag(tmp_path):
