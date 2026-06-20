@@ -1,12 +1,7 @@
-"""Paper-only edge cost summary over forecast evidence observations.
-
-Pure arithmetic over caller-supplied ``PaperForecastEvidenceObservation`` values.
-This module is local/report-only and only reduces already-typed evidence values.
-"""
+"""Paper-only edge cost summary over supplied forecast evidence values."""
 
 from __future__ import annotations
 
-from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -18,31 +13,25 @@ RATIO_QUANTUM = Decimal("0.000001")
 ZERO = Decimal("0")
 ONE = Decimal("1")
 
-EDGE_COST_SUMMARY_STATUSES = (
-    "empty_edge_cost_history",
-    "insufficient_edge_cost_sample",
-    "edge_cost_evidence_observed",
-    "edge_cost_quality_flags",
-)
+EMPTY_STATUS = "empty_edge_cost_summary"
+OBSERVED_STATUS = "edge_cost_summary_observed"
 
 
 @dataclass(frozen=True)
 class PaperEdgeCostSummaryConfig:
     config_version: str
-    min_edge_observation_count: int = 30
-    min_fill_probability: Decimal = Decimal("0.500000")
-    max_residual_exposure_ratio: Decimal = Decimal("0.250000")
+    low_fill_probability_threshold: Decimal = Decimal("0.500000")
+    high_residual_exposure_threshold: Decimal = Decimal("0.100000")
 
     def __post_init__(self) -> None:
         _require_canonical_string("config_version", self.config_version)
-        _require_nonnegative_int(
-            "min_edge_observation_count",
-            self.min_edge_observation_count,
-        )
-        _require_probability_decimal("min_fill_probability", self.min_fill_probability)
         _require_probability_decimal(
-            "max_residual_exposure_ratio",
-            self.max_residual_exposure_ratio,
+            "low_fill_probability_threshold",
+            self.low_fill_probability_threshold,
+        )
+        _require_probability_decimal(
+            "high_residual_exposure_threshold",
+            self.high_residual_exposure_threshold,
         )
 
 
@@ -52,43 +41,51 @@ class PaperEdgeCostSummaryReport:
     config_version: str
     edge_observation_count: int
     first_observed_at: datetime | None
-    last_observed_at: datetime | None
+    latest_observed_at: datetime | None
+    unique_market_count: int
+    unique_strategy_count: int
+    unique_risk_tag_count: int
     mean_theoretical_edge_ratio: Decimal | None
     mean_executable_edge_ratio: Decimal | None
-    mean_edge_cost_drag: Decimal | None
-    mean_fill_probability: Decimal | None
-    mean_residual_exposure_ratio: Decimal | None
-    mean_paper_return_ratio: Decimal | None
+    mean_edge_cost_gap: Decimal | None
+    worst_edge_cost_gap: Decimal | None
     negative_executable_edge_count: int
-    negative_executable_edge_rate: Decimal | None
+    negative_executable_edge_ratio: Decimal | None
+    mean_fill_probability: Decimal | None
     low_fill_probability_count: int
-    low_fill_probability_rate: Decimal | None
+    low_fill_probability_ratio: Decimal | None
+    mean_residual_exposure_ratio: Decimal | None
+    worst_residual_exposure_ratio: Decimal | None
     high_residual_exposure_count: int
-    high_residual_exposure_rate: Decimal | None
+    high_residual_exposure_ratio: Decimal | None
+    mean_paper_return_ratio: Decimal | None
     positive_paper_return_count: int
-    positive_paper_return_rate: Decimal | None
+    positive_paper_return_ratio: Decimal | None
     status: str
     paper_only: bool = True
     report_only: bool = True
     readonly: bool = True
 
     def __post_init__(self) -> None:
+        if not isinstance(self.generated_at, datetime):
+            raise ValueError("generated_at must be a datetime")
         object.__setattr__(self, "generated_at", _as_utc(self.generated_at))
-        if self.first_observed_at is not None:
-            object.__setattr__(
-                self,
-                "first_observed_at",
-                _as_utc(self.first_observed_at),
-            )
-        if self.last_observed_at is not None:
-            object.__setattr__(
-                self,
-                "last_observed_at",
-                _as_utc(self.last_observed_at),
-            )
+        object.__setattr__(
+            self,
+            "first_observed_at",
+            _as_optional_utc("first_observed_at", self.first_observed_at),
+        )
+        object.__setattr__(
+            self,
+            "latest_observed_at",
+            _as_optional_utc("latest_observed_at", self.latest_observed_at),
+        )
         _require_canonical_string("config_version", self.config_version)
         for field_name in (
             "edge_observation_count",
+            "unique_market_count",
+            "unique_strategy_count",
+            "unique_risk_tag_count",
             "negative_executable_edge_count",
             "low_fill_probability_count",
             "high_residual_exposure_count",
@@ -98,25 +95,30 @@ class PaperEdgeCostSummaryReport:
         for field_name in (
             "mean_theoretical_edge_ratio",
             "mean_executable_edge_ratio",
-            "mean_edge_cost_drag",
             "mean_paper_return_ratio",
         ):
-            _require_optional_ratio_decimal(field_name, getattr(self, field_name))
+            _require_optional_quantized_decimal(field_name, getattr(self, field_name))
         for field_name in (
+            "mean_edge_cost_gap",
+            "worst_edge_cost_gap",
+        ):
+            _require_optional_nonnegative_quantized_decimal(
+                field_name,
+                getattr(self, field_name),
+            )
+        for field_name in (
+            "negative_executable_edge_ratio",
             "mean_fill_probability",
+            "low_fill_probability_ratio",
             "mean_residual_exposure_ratio",
+            "worst_residual_exposure_ratio",
+            "high_residual_exposure_ratio",
+            "positive_paper_return_ratio",
         ):
             _require_optional_probability_decimal(field_name, getattr(self, field_name))
-        for field_name in (
-            "negative_executable_edge_rate",
-            "low_fill_probability_rate",
-            "high_residual_exposure_rate",
-            "positive_paper_return_rate",
-        ):
-            _require_optional_probability_decimal(field_name, getattr(self, field_name))
-        if self.status not in EDGE_COST_SUMMARY_STATUSES:
+        if self.status not in (EMPTY_STATUS, OBSERVED_STATUS):
             raise ValueError("status must be a known edge cost summary status")
-        _validate_report_consistency(self)
+        _require_report_shape(self)
         if self.paper_only is not True:
             raise ValueError("paper_only must be True")
         if self.report_only is not True:
@@ -126,12 +128,13 @@ class PaperEdgeCostSummaryReport:
 
 
 def build_paper_edge_cost_summary_report(
-    observations: Iterable[PaperForecastEvidenceObservation],
+    observations: list[PaperForecastEvidenceObservation]
+    | tuple[PaperForecastEvidenceObservation, ...],
     *,
     config: PaperEdgeCostSummaryConfig,
     generated_at: datetime,
 ) -> PaperEdgeCostSummaryReport:
-    """Summarize edge-cost evidence from complete paper observations."""
+    """Reduce complete paper edge evidence into a read-only report."""
 
     if type(config) is not PaperEdgeCostSummaryConfig:
         raise ValueError("config must be a PaperEdgeCostSummaryConfig")
@@ -147,34 +150,42 @@ def build_paper_edge_cost_summary_report(
             config_version=config.config_version,
             edge_observation_count=0,
             first_observed_at=None,
-            last_observed_at=None,
+            latest_observed_at=None,
+            unique_market_count=0,
+            unique_strategy_count=0,
+            unique_risk_tag_count=0,
             mean_theoretical_edge_ratio=None,
             mean_executable_edge_ratio=None,
-            mean_edge_cost_drag=None,
-            mean_fill_probability=None,
-            mean_residual_exposure_ratio=None,
-            mean_paper_return_ratio=None,
+            mean_edge_cost_gap=None,
+            worst_edge_cost_gap=None,
             negative_executable_edge_count=0,
-            negative_executable_edge_rate=None,
+            negative_executable_edge_ratio=None,
+            mean_fill_probability=None,
             low_fill_probability_count=0,
-            low_fill_probability_rate=None,
+            low_fill_probability_ratio=None,
+            mean_residual_exposure_ratio=None,
+            worst_residual_exposure_ratio=None,
             high_residual_exposure_count=0,
-            high_residual_exposure_rate=None,
+            high_residual_exposure_ratio=None,
+            mean_paper_return_ratio=None,
             positive_paper_return_count=0,
-            positive_paper_return_rate=None,
-            status="empty_edge_cost_history",
+            positive_paper_return_ratio=None,
+            status=EMPTY_STATUS,
         )
 
+    edge_cost_gaps = tuple(_edge_cost_gap(item) for item in edge_items)
     negative_executable_edge_count = sum(
         1 for item in edge_items if item.executable_edge_ratio < ZERO
     )
     low_fill_probability_count = sum(
-        1 for item in edge_items if item.fill_probability < config.min_fill_probability
+        1
+        for item in edge_items
+        if item.fill_probability < config.low_fill_probability_threshold
     )
     high_residual_exposure_count = sum(
         1
         for item in edge_items
-        if item.residual_exposure_ratio > config.max_residual_exposure_ratio
+        if item.residual_exposure_ratio > config.high_residual_exposure_threshold
     )
     positive_paper_return_count = sum(
         1 for item in edge_items if item.paper_return_ratio > ZERO
@@ -185,53 +196,57 @@ def build_paper_edge_cost_summary_report(
         config_version=config.config_version,
         edge_observation_count=edge_observation_count,
         first_observed_at=edge_items[0].observed_at,
-        last_observed_at=edge_items[-1].observed_at,
+        latest_observed_at=edge_items[-1].observed_at,
+        unique_market_count=len({item.market_slug for item in edge_items}),
+        unique_strategy_count=len({item.strategy_type for item in edge_items}),
+        unique_risk_tag_count=len(
+            {risk_tag for item in edge_items for risk_tag in item.risk_tags},
+        ),
         mean_theoretical_edge_ratio=_mean(
             tuple(item.theoretical_edge_ratio for item in edge_items),
         ),
         mean_executable_edge_ratio=_mean(
             tuple(item.executable_edge_ratio for item in edge_items),
         ),
-        mean_edge_cost_drag=_mean(tuple(_edge_cost_drag(item) for item in edge_items)),
+        mean_edge_cost_gap=_mean(edge_cost_gaps),
+        worst_edge_cost_gap=max(edge_cost_gaps),
+        negative_executable_edge_count=negative_executable_edge_count,
+        negative_executable_edge_ratio=_ratio(
+            negative_executable_edge_count,
+            edge_observation_count,
+        ),
         mean_fill_probability=_mean(tuple(item.fill_probability for item in edge_items)),
+        low_fill_probability_count=low_fill_probability_count,
+        low_fill_probability_ratio=_ratio(
+            low_fill_probability_count,
+            edge_observation_count,
+        ),
         mean_residual_exposure_ratio=_mean(
             tuple(item.residual_exposure_ratio for item in edge_items),
+        ),
+        worst_residual_exposure_ratio=max(
+            item.residual_exposure_ratio for item in edge_items
+        ),
+        high_residual_exposure_count=high_residual_exposure_count,
+        high_residual_exposure_ratio=_ratio(
+            high_residual_exposure_count,
+            edge_observation_count,
         ),
         mean_paper_return_ratio=_mean(
             tuple(item.paper_return_ratio for item in edge_items),
         ),
-        negative_executable_edge_count=negative_executable_edge_count,
-        negative_executable_edge_rate=_rate(
-            negative_executable_edge_count,
-            edge_observation_count,
-        ),
-        low_fill_probability_count=low_fill_probability_count,
-        low_fill_probability_rate=_rate(
-            low_fill_probability_count,
-            edge_observation_count,
-        ),
-        high_residual_exposure_count=high_residual_exposure_count,
-        high_residual_exposure_rate=_rate(
-            high_residual_exposure_count,
-            edge_observation_count,
-        ),
         positive_paper_return_count=positive_paper_return_count,
-        positive_paper_return_rate=_rate(
+        positive_paper_return_ratio=_ratio(
             positive_paper_return_count,
             edge_observation_count,
         ),
-        status=_summary_status(
-            edge_observation_count=edge_observation_count,
-            negative_executable_edge_count=negative_executable_edge_count,
-            low_fill_probability_count=low_fill_probability_count,
-            high_residual_exposure_count=high_residual_exposure_count,
-            config=config,
-        ),
+        status=OBSERVED_STATUS,
     )
 
 
 def _normalize_observations(
-    observations: Iterable[PaperForecastEvidenceObservation],
+    observations: list[PaperForecastEvidenceObservation]
+    | tuple[PaperForecastEvidenceObservation, ...],
 ) -> tuple[PaperForecastEvidenceObservation, ...]:
     if type(observations) not in (list, tuple):
         raise ValueError("observations must be a list or tuple")
@@ -239,27 +254,33 @@ def _normalize_observations(
     for observation in observation_items:
         if type(observation) is not PaperForecastEvidenceObservation:
             raise ValueError(
-                "observations must contain PaperForecastEvidenceObservation values"
+                "observations must contain PaperForecastEvidenceObservation values",
             )
         if observation.paper_only is not True:
-            raise ValueError("observations must be paper-only")
-        if not _complete_edge_role(observation):
-            raise ValueError("observations must contain complete edge role values")
+            raise ValueError("observations must have paper_only True")
+        _require_complete_edge_observation(observation)
     return observation_items
 
 
-def _complete_edge_role(item: PaperForecastEvidenceObservation) -> bool:
-    return (
-        item.theoretical_edge_ratio is not None
-        and item.executable_edge_ratio is not None
-        and item.fill_probability is not None
-        and item.residual_exposure_ratio is not None
-        and item.paper_return_ratio is not None
-    )
+def _require_complete_edge_observation(
+    observation: PaperForecastEvidenceObservation,
+) -> None:
+    for field_name in (
+        "theoretical_edge_ratio",
+        "executable_edge_ratio",
+        "fill_probability",
+        "residual_exposure_ratio",
+        "paper_return_ratio",
+    ):
+        if getattr(observation, field_name) is None:
+            raise ValueError(f"observations must contain complete edge values: {field_name}")
 
 
-def _edge_cost_drag(item: PaperForecastEvidenceObservation) -> Decimal:
-    return max(item.theoretical_edge_ratio - item.executable_edge_ratio, ZERO)
+def _edge_cost_gap(observation: PaperForecastEvidenceObservation) -> Decimal:
+    gap = observation.theoretical_edge_ratio - observation.executable_edge_ratio
+    if gap < ZERO:
+        return ZERO.quantize(RATIO_QUANTUM)
+    return _quantize_ratio(gap)
 
 
 def _mean(values: tuple[Decimal, ...]) -> Decimal | None:
@@ -268,79 +289,84 @@ def _mean(values: tuple[Decimal, ...]) -> Decimal | None:
     return _quantize_ratio(sum(values, ZERO) / Decimal(len(values)))
 
 
-def _rate(numerator: int, denominator: int) -> Decimal | None:
+def _ratio(numerator: int, denominator: int) -> Decimal | None:
     if denominator == 0:
         return None
     return _quantize_ratio(Decimal(numerator) / Decimal(denominator))
 
 
-def _summary_status(
-    *,
-    edge_observation_count: int,
-    negative_executable_edge_count: int,
-    low_fill_probability_count: int,
-    high_residual_exposure_count: int,
-    config: PaperEdgeCostSummaryConfig,
-) -> str:
-    if edge_observation_count == 0:
-        return "empty_edge_cost_history"
-    if (
-        negative_executable_edge_count > 0
-        or low_fill_probability_count > 0
-        or high_residual_exposure_count > 0
-    ):
-        return "edge_cost_quality_flags"
-    if edge_observation_count < config.min_edge_observation_count:
-        return "insufficient_edge_cost_sample"
-    return "edge_cost_evidence_observed"
-
-
-def _validate_report_consistency(report: PaperEdgeCostSummaryReport) -> None:
+def _require_report_shape(report: PaperEdgeCostSummaryReport) -> None:
     if report.edge_observation_count == 0:
-        if report.first_observed_at is not None or report.last_observed_at is not None:
-            raise ValueError("observed_at bounds must be absent without observations")
-        for field_name in (
-            "mean_theoretical_edge_ratio",
-            "mean_executable_edge_ratio",
-            "mean_edge_cost_drag",
-            "mean_fill_probability",
-            "mean_residual_exposure_ratio",
-            "mean_paper_return_ratio",
-            "negative_executable_edge_rate",
-            "low_fill_probability_rate",
-            "high_residual_exposure_rate",
-            "positive_paper_return_rate",
-        ):
-            if getattr(report, field_name) is not None:
-                raise ValueError(f"{field_name} must be absent without observations")
-        for field_name in (
-            "negative_executable_edge_count",
-            "low_fill_probability_count",
-            "high_residual_exposure_count",
-            "positive_paper_return_count",
-        ):
-            if getattr(report, field_name) != 0:
-                raise ValueError(f"{field_name} must be zero without edge_observation_count")
-        if report.status != "empty_edge_cost_history":
-            raise ValueError("status must match edge cost observations")
+        _require_empty_report_shape(report)
         return
+    _require_nonempty_report_shape(report)
 
-    if report.first_observed_at is None or report.last_observed_at is None:
-        raise ValueError("observed_at bounds are required with observations")
+
+def _require_empty_report_shape(report: PaperEdgeCostSummaryReport) -> None:
+    if report.first_observed_at is not None:
+        raise ValueError("first_observed_at must be absent without observations")
+    if report.latest_observed_at is not None:
+        raise ValueError("latest_observed_at must be absent without observations")
+    for field_name in (
+        "unique_market_count",
+        "unique_strategy_count",
+        "unique_risk_tag_count",
+        "negative_executable_edge_count",
+        "low_fill_probability_count",
+        "high_residual_exposure_count",
+        "positive_paper_return_count",
+    ):
+        if getattr(report, field_name) != 0:
+            raise ValueError(f"{field_name} must be zero without observations")
     for field_name in (
         "mean_theoretical_edge_ratio",
         "mean_executable_edge_ratio",
-        "mean_edge_cost_drag",
+        "mean_edge_cost_gap",
+        "worst_edge_cost_gap",
+        "negative_executable_edge_ratio",
         "mean_fill_probability",
+        "low_fill_probability_ratio",
         "mean_residual_exposure_ratio",
+        "worst_residual_exposure_ratio",
+        "high_residual_exposure_ratio",
         "mean_paper_return_ratio",
-        "negative_executable_edge_rate",
-        "low_fill_probability_rate",
-        "high_residual_exposure_rate",
-        "positive_paper_return_rate",
+        "positive_paper_return_ratio",
+    ):
+        if getattr(report, field_name) is not None:
+            raise ValueError(f"{field_name} must be absent without observations")
+    if report.status != EMPTY_STATUS:
+        raise ValueError("status must match edge cost summary observations")
+
+
+def _require_nonempty_report_shape(report: PaperEdgeCostSummaryReport) -> None:
+    if report.first_observed_at is None:
+        raise ValueError("first_observed_at is required with observations")
+    if report.latest_observed_at is None:
+        raise ValueError("latest_observed_at is required with observations")
+    for field_name in (
+        "mean_theoretical_edge_ratio",
+        "mean_executable_edge_ratio",
+        "mean_edge_cost_gap",
+        "worst_edge_cost_gap",
+        "negative_executable_edge_ratio",
+        "mean_fill_probability",
+        "low_fill_probability_ratio",
+        "mean_residual_exposure_ratio",
+        "worst_residual_exposure_ratio",
+        "high_residual_exposure_ratio",
+        "mean_paper_return_ratio",
+        "positive_paper_return_ratio",
     ):
         if getattr(report, field_name) is None:
             raise ValueError(f"{field_name} is required with observations")
+    if report.unique_market_count == 0:
+        raise ValueError("unique_market_count is required with observations")
+    if report.unique_strategy_count == 0:
+        raise ValueError("unique_strategy_count is required with observations")
+    if report.unique_market_count > report.edge_observation_count:
+        raise ValueError("unique_market_count cannot exceed edge_observation_count")
+    if report.unique_strategy_count > report.edge_observation_count:
+        raise ValueError("unique_strategy_count cannot exceed edge_observation_count")
     for field_name in (
         "negative_executable_edge_count",
         "low_fill_probability_count",
@@ -349,67 +375,39 @@ def _validate_report_consistency(report: PaperEdgeCostSummaryReport) -> None:
     ):
         if getattr(report, field_name) > report.edge_observation_count:
             raise ValueError(f"{field_name} cannot exceed edge_observation_count")
-    if report.status == "empty_edge_cost_history":
-        raise ValueError("status must match edge cost observations")
-    expected_rates = (
+    expected_ratios = (
         (
-            "negative_executable_edge_rate",
+            "negative_executable_edge_ratio",
             report.negative_executable_edge_count,
-            report.negative_executable_edge_rate,
+            report.negative_executable_edge_ratio,
         ),
         (
-            "low_fill_probability_rate",
+            "low_fill_probability_ratio",
             report.low_fill_probability_count,
-            report.low_fill_probability_rate,
+            report.low_fill_probability_ratio,
         ),
         (
-            "high_residual_exposure_rate",
+            "high_residual_exposure_ratio",
             report.high_residual_exposure_count,
-            report.high_residual_exposure_rate,
+            report.high_residual_exposure_ratio,
         ),
         (
-            "positive_paper_return_rate",
+            "positive_paper_return_ratio",
             report.positive_paper_return_count,
-            report.positive_paper_return_rate,
+            report.positive_paper_return_ratio,
         ),
     )
-    for field_name, count, rate in expected_rates:
-        if rate != _rate(count, report.edge_observation_count):
-            raise ValueError(f"{field_name} must match edge observation count")
-    if report.mean_edge_cost_drag is not None and report.mean_edge_cost_drag < ZERO:
-        raise ValueError("mean_edge_cost_drag must be nonnegative")
-    if (
-        report.mean_executable_edge_ratio is not None
-        and report.mean_executable_edge_ratio < ZERO
-        and report.negative_executable_edge_count == 0
-    ):
+    for field_name, count, ratio in expected_ratios:
+        if ratio != _ratio(count, report.edge_observation_count):
+            raise ValueError(f"{field_name} must match edge_observation_count")
+    if report.worst_edge_cost_gap < report.mean_edge_cost_gap:
+        raise ValueError("worst_edge_cost_gap must cover mean_edge_cost_gap")
+    if report.worst_residual_exposure_ratio < report.mean_residual_exposure_ratio:
         raise ValueError(
-            "mean_executable_edge_ratio cannot be negative without negative observations",
+            "worst_residual_exposure_ratio must cover mean_residual_exposure_ratio",
         )
-    if (
-        report.mean_theoretical_edge_ratio is not None
-        and report.mean_executable_edge_ratio is not None
-        and report.mean_edge_cost_drag is not None
-        and report.mean_edge_cost_drag + RATIO_QUANTUM
-        < _quantize_ratio(
-            max(
-                report.mean_theoretical_edge_ratio
-                - report.mean_executable_edge_ratio,
-                ZERO,
-            ),
-        )
-    ):
-        raise ValueError("mean_edge_cost_drag must cover mean executable drag")
-    quality_count = (
-        report.negative_executable_edge_count
-        + report.low_fill_probability_count
-        + report.high_residual_exposure_count
-    )
-    if report.status == "edge_cost_quality_flags":
-        if quality_count == 0:
-            raise ValueError("status must match edge cost quality flags")
-    elif quality_count != 0:
-        raise ValueError("status must match edge cost quality flags")
+    if report.status != OBSERVED_STATUS:
+        raise ValueError("status must match edge cost summary observations")
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -418,6 +416,14 @@ def _as_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=UTC)
     return value.astimezone(UTC)
+
+
+def _as_optional_utc(field_name: str, value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if not isinstance(value, datetime):
+        raise ValueError(f"{field_name} must be a datetime or None")
+    return _as_utc(value)
 
 
 def _require_canonical_string(field_name: str, value: object) -> None:
@@ -441,32 +447,39 @@ def _require_decimal(field_name: str, value: object) -> None:
         raise ValueError(f"{field_name} must be finite")
 
 
-def _require_optional_decimal(field_name: str, value: object) -> None:
+def _require_quantized_decimal(field_name: str, value: object) -> None:
+    _require_decimal(field_name, value)
+    if value != value.quantize(RATIO_QUANTUM):
+        raise ValueError(f"{field_name} must align to {RATIO_QUANTUM}")
+
+
+def _require_optional_quantized_decimal(field_name: str, value: object) -> None:
     if value is None:
         return
-    _require_decimal(field_name, value)
+    _require_quantized_decimal(field_name, value)
 
 
-def _require_optional_ratio_decimal(field_name: str, value: object) -> None:
-    _require_optional_decimal(field_name, value)
-    if value is not None and value != value.quantize(RATIO_QUANTUM):
-        raise ValueError(f"{field_name} must align to {RATIO_QUANTUM}")
+def _require_optional_nonnegative_quantized_decimal(
+    field_name: str,
+    value: object,
+) -> None:
+    if value is None:
+        return
+    _require_quantized_decimal(field_name, value)
+    if value < ZERO:
+        raise ValueError(f"{field_name} must be nonnegative")
 
 
 def _require_probability_decimal(field_name: str, value: object) -> None:
-    _require_decimal(field_name, value)
+    _require_quantized_decimal(field_name, value)
     if value < ZERO or value > ONE:
         raise ValueError(f"{field_name} must be between 0 and 1")
-    if value != value.quantize(RATIO_QUANTUM):
-        raise ValueError(f"{field_name} must align to {RATIO_QUANTUM}")
 
 
 def _require_optional_probability_decimal(field_name: str, value: object) -> None:
     if value is None:
         return
     _require_probability_decimal(field_name, value)
-    if value != value.quantize(RATIO_QUANTUM):
-        raise ValueError(f"{field_name} must align to {RATIO_QUANTUM}")
 
 
 def _quantize_ratio(value: Decimal) -> Decimal:

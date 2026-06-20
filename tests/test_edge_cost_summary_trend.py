@@ -29,41 +29,56 @@ def _config(**overrides) -> PaperEdgeCostSummaryTrendConfig:
 
 
 def _summary_report(**overrides) -> PaperEdgeCostSummaryReport:
+    overrides = _summary_overrides_for_current_schema(overrides)
     values = {
         "generated_at": datetime(2026, 6, 18, 12, 0, tzinfo=UTC),
         "config_version": "edge-cost-summary-v0",
         "edge_observation_count": 4,
         "first_observed_at": datetime(2026, 6, 1, tzinfo=UTC),
-        "last_observed_at": datetime(2026, 6, 4, tzinfo=UTC),
+        "latest_observed_at": datetime(2026, 6, 4, tzinfo=UTC),
+        "unique_market_count": 1,
+        "unique_strategy_count": 1,
+        "unique_risk_tag_count": 1,
         "mean_theoretical_edge_ratio": Decimal("0.080000"),
         "mean_executable_edge_ratio": Decimal("0.050000"),
-        "mean_edge_cost_drag": Decimal("0.030000"),
+        "mean_edge_cost_gap": Decimal("0.030000"),
+        "worst_edge_cost_gap": Decimal("0.030000"),
         "mean_fill_probability": Decimal("0.750000"),
         "mean_residual_exposure_ratio": Decimal("0.100000"),
+        "worst_residual_exposure_ratio": Decimal("0.100000"),
         "mean_paper_return_ratio": Decimal("0.010000"),
         "negative_executable_edge_count": 0,
-        "negative_executable_edge_rate": Decimal("0.000000"),
+        "negative_executable_edge_ratio": Decimal("0.000000"),
         "low_fill_probability_count": 0,
-        "low_fill_probability_rate": Decimal("0.000000"),
+        "low_fill_probability_ratio": Decimal("0.000000"),
         "high_residual_exposure_count": 0,
-        "high_residual_exposure_rate": Decimal("0.000000"),
+        "high_residual_exposure_ratio": Decimal("0.000000"),
         "positive_paper_return_count": 3,
-        "positive_paper_return_rate": Decimal("0.750000"),
-        "status": "edge_cost_evidence_observed",
+        "positive_paper_return_ratio": Decimal("0.750000"),
+        "status": "edge_cost_summary_observed",
     }
     values.update(overrides)
     if (
-        "mean_edge_cost_drag" in overrides
+        "mean_edge_cost_gap" in overrides
         and "mean_theoretical_edge_ratio" not in overrides
         and "mean_executable_edge_ratio" not in overrides
     ):
         values["mean_theoretical_edge_ratio"] = (
-            values["mean_executable_edge_ratio"] + values["mean_edge_cost_drag"]
+            values["mean_executable_edge_ratio"] + values["mean_edge_cost_gap"]
         ).quantize(Decimal("0.000001"))
-    elif "mean_edge_cost_drag" in overrides and "mean_executable_edge_ratio" not in overrides:
+    elif "mean_edge_cost_gap" in overrides and "mean_executable_edge_ratio" not in overrides:
         values["mean_executable_edge_ratio"] = (
-            values["mean_theoretical_edge_ratio"] - values["mean_edge_cost_drag"]
+            values["mean_theoretical_edge_ratio"] - values["mean_edge_cost_gap"]
         ).quantize(Decimal("0.000001"))
+    if "mean_edge_cost_gap" in overrides and "worst_edge_cost_gap" not in overrides:
+        values["worst_edge_cost_gap"] = values["mean_edge_cost_gap"]
+    if (
+        "mean_residual_exposure_ratio" in overrides
+        and "worst_residual_exposure_ratio" not in overrides
+    ):
+        values["worst_residual_exposure_ratio"] = values[
+            "mean_residual_exposure_ratio"
+        ]
     return PaperEdgeCostSummaryReport(**values)
 
 
@@ -73,23 +88,52 @@ def _empty_summary_report(generated_at: datetime = GENERATED_AT) -> PaperEdgeCos
         config_version="edge-cost-summary-v0",
         edge_observation_count=0,
         first_observed_at=None,
-        last_observed_at=None,
+        latest_observed_at=None,
+        unique_market_count=0,
+        unique_strategy_count=0,
+        unique_risk_tag_count=0,
         mean_theoretical_edge_ratio=None,
         mean_executable_edge_ratio=None,
-        mean_edge_cost_drag=None,
+        mean_edge_cost_gap=None,
+        worst_edge_cost_gap=None,
         mean_fill_probability=None,
         mean_residual_exposure_ratio=None,
+        worst_residual_exposure_ratio=None,
         mean_paper_return_ratio=None,
         negative_executable_edge_count=0,
-        negative_executable_edge_rate=None,
+        negative_executable_edge_ratio=None,
         low_fill_probability_count=0,
-        low_fill_probability_rate=None,
+        low_fill_probability_ratio=None,
         high_residual_exposure_count=0,
-        high_residual_exposure_rate=None,
+        high_residual_exposure_ratio=None,
         positive_paper_return_count=0,
-        positive_paper_return_rate=None,
-        status="empty_edge_cost_history",
+        positive_paper_return_ratio=None,
+        status="empty_edge_cost_summary",
     )
+
+
+def _summary_overrides_for_current_schema(overrides):
+    values = dict(overrides)
+    field_aliases = {
+        "last_observed_at": "latest_observed_at",
+        "mean_edge_cost_drag": "mean_edge_cost_gap",
+        "negative_executable_edge_rate": "negative_executable_edge_ratio",
+        "low_fill_probability_rate": "low_fill_probability_ratio",
+        "high_residual_exposure_rate": "high_residual_exposure_ratio",
+        "positive_paper_return_rate": "positive_paper_return_ratio",
+    }
+    for old_name, new_name in field_aliases.items():
+        if old_name in values:
+            values[new_name] = values.pop(old_name)
+    status_aliases = {
+        "empty_edge_cost_history": "empty_edge_cost_summary",
+        "insufficient_edge_cost_sample": "edge_cost_summary_observed",
+        "edge_cost_evidence_observed": "edge_cost_summary_observed",
+        "edge_cost_quality_flags": "edge_cost_summary_observed",
+    }
+    if values.get("status") in status_aliases:
+        values["status"] = status_aliases[values["status"]]
+    return values
 
 
 def _trend_report(
@@ -262,13 +306,13 @@ def test_edge_cost_summary_trend_counts_status_rows_with_quantized_ratios():
         ),
         PaperEdgeCostSummaryTrendStatusRow(
             "insufficient_edge_cost_sample",
-            1,
-            Decimal("0.250000"),
+            0,
+            Decimal("0.000000"),
         ),
         PaperEdgeCostSummaryTrendStatusRow(
             "edge_cost_evidence_observed",
-            1,
-            Decimal("0.250000"),
+            2,
+            Decimal("0.500000"),
         ),
         PaperEdgeCostSummaryTrendStatusRow(
             "edge_cost_quality_flags",
@@ -300,7 +344,7 @@ def test_edge_cost_summary_trend_canonicalizes_valid_source_rate_decimals():
     assert report.latest_positive_paper_return_rate == Decimal("0.500000")
 
 
-def test_edge_cost_summary_trend_counts_insufficient_sample_streak():
+def test_edge_cost_summary_trend_does_not_infer_insufficient_sample_without_source_status():
     report = _trend_report(
         _summary_report(
             generated_at=datetime(2026, 6, 18, 12, 0, tzinfo=UTC),
@@ -322,8 +366,8 @@ def test_edge_cost_summary_trend_counts_insufficient_sample_streak():
         ),
     )
 
-    assert report.latest_status == "insufficient_edge_cost_sample"
-    assert report.consecutive_insufficient_sample_count == 2
+    assert report.latest_status == "edge_cost_evidence_observed"
+    assert report.consecutive_insufficient_sample_count == 0
     assert report.consecutive_quality_flag_count == 0
 
 
@@ -583,17 +627,35 @@ def test_edge_cost_summary_trend_direct_constructor_rejects_negative_cost_drag_m
 
 
 def test_edge_cost_summary_trend_report_bounds_insufficient_sample_streak():
-    report = _trend_report(
-        _summary_report(
-            generated_at=datetime(2026, 6, 18, 12, 0, tzinfo=UTC),
-            status="edge_cost_evidence_observed",
-        ),
-        _summary_report(
-            generated_at=datetime(2026, 6, 18, 13, 0, tzinfo=UTC),
-            edge_observation_count=2,
-            positive_paper_return_count=1,
-            positive_paper_return_rate=Decimal("0.500000"),
-            status="insufficient_edge_cost_sample",
+    observed = _trend_report(
+        _summary_report(generated_at=datetime(2026, 6, 18, 12, 0, tzinfo=UTC)),
+        _summary_report(generated_at=datetime(2026, 6, 18, 13, 0, tzinfo=UTC)),
+    )
+    report = replace(
+        observed,
+        latest_status="insufficient_edge_cost_sample",
+        consecutive_insufficient_sample_count=1,
+        status_rows=(
+            PaperEdgeCostSummaryTrendStatusRow(
+                "empty_edge_cost_history",
+                0,
+                Decimal("0.000000"),
+            ),
+            PaperEdgeCostSummaryTrendStatusRow(
+                "insufficient_edge_cost_sample",
+                1,
+                Decimal("0.500000"),
+            ),
+            PaperEdgeCostSummaryTrendStatusRow(
+                "edge_cost_evidence_observed",
+                1,
+                Decimal("0.500000"),
+            ),
+            PaperEdgeCostSummaryTrendStatusRow(
+                "edge_cost_quality_flags",
+                0,
+                Decimal("0.000000"),
+            ),
         ),
     )
 
@@ -605,7 +667,7 @@ def test_edge_cost_summary_trend_report_bounds_insufficient_sample_streak():
         replace(
             report,
             latest_negative_executable_edge_count=1,
-            latest_negative_executable_edge_rate=Decimal("0.500000"),
+            latest_negative_executable_edge_rate=Decimal("0.250000"),
             largest_negative_executable_edge_count=1,
         )
 

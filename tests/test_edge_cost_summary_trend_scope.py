@@ -14,7 +14,8 @@ EXPECTED_EXPORTS = (
 )
 EXPECTED_FIRST_PARTY_IMPORTS = {
     "polymarket_alpha_lab.edge_cost_summary": {
-        "EDGE_COST_SUMMARY_STATUSES",
+        "EMPTY_STATUS",
+        "OBSERVED_STATUS",
         "PaperEdgeCostSummaryReport",
     },
 }

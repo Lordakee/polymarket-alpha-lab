@@ -7,7 +7,8 @@ from datetime import UTC, datetime
 from decimal import Decimal, ROUND_HALF_EVEN
 
 from polymarket_alpha_lab.edge_cost_summary import (
-    EDGE_COST_SUMMARY_STATUSES,
+    EMPTY_STATUS,
+    OBSERVED_STATUS,
     PaperEdgeCostSummaryReport,
 )
 
@@ -15,6 +16,16 @@ from polymarket_alpha_lab.edge_cost_summary import (
 RATIO_QUANTUM = Decimal("0.000001")
 ZERO = Decimal("0")
 ONE = Decimal("1")
+EMPTY_TREND_STATUS = "empty_edge_cost_history"
+INSUFFICIENT_TREND_STATUS = "insufficient_edge_cost_sample"
+OBSERVED_TREND_STATUS = "edge_cost_evidence_observed"
+QUALITY_TREND_STATUS = "edge_cost_quality_flags"
+EDGE_COST_SUMMARY_STATUSES = (
+    EMPTY_TREND_STATUS,
+    INSUFFICIENT_TREND_STATUS,
+    OBSERVED_TREND_STATUS,
+    QUALITY_TREND_STATUS,
+)
 
 
 @dataclass(frozen=True)
@@ -161,7 +172,7 @@ def build_paper_edge_cost_summary_trend_report(
             edge_cost_reports[0].generated_at if edge_cost_reports else None
         ),
         latest_report_generated_at=latest.generated_at if latest is not None else None,
-        latest_status=latest.status if latest is not None else None,
+        latest_status=_trend_status(latest) if latest is not None else None,
         latest_edge_observation_count=(
             latest.edge_observation_count if latest is not None else 0
         ),
@@ -171,7 +182,9 @@ def build_paper_edge_cost_summary_trend_report(
         latest_mean_executable_edge_ratio=(
             latest.mean_executable_edge_ratio if latest is not None else None
         ),
-        latest_mean_edge_cost_drag=latest.mean_edge_cost_drag if latest is not None else None,
+        latest_mean_edge_cost_drag=(
+            latest.mean_edge_cost_gap if latest is not None else None
+        ),
         latest_mean_fill_probability=(
             latest.mean_fill_probability if latest is not None else None
         ),
@@ -185,7 +198,7 @@ def build_paper_edge_cost_summary_trend_report(
             latest.negative_executable_edge_count if latest is not None else 0
         ),
         latest_negative_executable_edge_rate=(
-            _canonical_optional_ratio(latest.negative_executable_edge_rate)
+            _canonical_optional_ratio(latest.negative_executable_edge_ratio)
             if latest is not None
             else None
         ),
@@ -193,7 +206,7 @@ def build_paper_edge_cost_summary_trend_report(
             latest.low_fill_probability_count if latest is not None else 0
         ),
         latest_low_fill_probability_rate=(
-            _canonical_optional_ratio(latest.low_fill_probability_rate)
+            _canonical_optional_ratio(latest.low_fill_probability_ratio)
             if latest is not None
             else None
         ),
@@ -201,7 +214,7 @@ def build_paper_edge_cost_summary_trend_report(
             latest.high_residual_exposure_count if latest is not None else 0
         ),
         latest_high_residual_exposure_rate=(
-            _canonical_optional_ratio(latest.high_residual_exposure_rate)
+            _canonical_optional_ratio(latest.high_residual_exposure_ratio)
             if latest is not None
             else None
         ),
@@ -209,7 +222,7 @@ def build_paper_edge_cost_summary_trend_report(
             latest.positive_paper_return_count if latest is not None else 0
         ),
         latest_positive_paper_return_rate=(
-            _canonical_optional_ratio(latest.positive_paper_return_rate)
+            _canonical_optional_ratio(latest.positive_paper_return_ratio)
             if latest is not None
             else None
         ),
@@ -233,11 +246,11 @@ def build_paper_edge_cost_summary_trend_report(
         ),
         consecutive_quality_flag_count=_consecutive_status_count(
             edge_cost_reports,
-            "edge_cost_quality_flags",
+            QUALITY_TREND_STATUS,
         ),
         consecutive_insufficient_sample_count=_consecutive_status_count(
             edge_cost_reports,
-            "insufficient_edge_cost_sample",
+            INSUFFICIENT_TREND_STATUS,
         ),
         status_rows=_build_status_rows(status_counts, report_count),
     )
@@ -266,8 +279,22 @@ def _status_counts(
 ) -> dict[str, int]:
     counts = {status: 0 for status in EDGE_COST_SUMMARY_STATUSES}
     for report in reports:
-        counts[report.status] += 1
+        counts[_trend_status(report)] += 1
     return counts
+
+
+def _trend_status(report: PaperEdgeCostSummaryReport) -> str:
+    if report.status == EMPTY_STATUS:
+        return EMPTY_TREND_STATUS
+    if report.status != OBSERVED_STATUS:
+        raise ValueError("report status must be a known edge cost summary status")
+    if (
+        report.negative_executable_edge_count != 0
+        or report.low_fill_probability_count != 0
+        or report.high_residual_exposure_count != 0
+    ):
+        return QUALITY_TREND_STATUS
+    return OBSERVED_TREND_STATUS
 
 
 def _build_status_rows(
@@ -290,7 +317,7 @@ def _consecutive_status_count(
 ) -> int:
     count = 0
     for report in reversed(reports):
-        if report.status != status:
+        if _trend_status(report) != status:
             break
         count += 1
     return count
@@ -300,9 +327,9 @@ def _worst_observed_mean_edge_cost_drag(
     reports: tuple[PaperEdgeCostSummaryReport, ...],
 ) -> Decimal | None:
     values = tuple(
-        report.mean_edge_cost_drag
+        report.mean_edge_cost_gap
         for report in reports
-        if report.mean_edge_cost_drag is not None
+        if report.mean_edge_cost_gap is not None
     )
     return max(values) if values else None
 
@@ -379,7 +406,7 @@ def _validate_report_consistency(report: PaperEdgeCostSummaryTrendReport) -> Non
     if _status_report_count(report, report.latest_status) < 1:
         raise ValueError("latest_status must be counted in status_rows")
     if report.latest_edge_observation_count == 0:
-        if report.latest_status != "empty_edge_cost_history":
+        if report.latest_status != EMPTY_TREND_STATUS:
             raise ValueError("latest_status must match latest edge cost observations")
         for field_name in (
             "latest_mean_theoretical_edge_ratio",
@@ -489,9 +516,9 @@ def _validate_report_consistency(report: PaperEdgeCostSummaryTrendReport) -> Non
         if rate != _ratio(count, report.latest_edge_observation_count):
             raise ValueError(f"{field_name} must match latest_edge_observation_count")
 
-    if report.latest_status == "empty_edge_cost_history":
+    if report.latest_status == EMPTY_TREND_STATUS:
         raise ValueError("latest_status must match latest edge cost observations")
-    if report.latest_status == "edge_cost_evidence_observed":
+    if report.latest_status == OBSERVED_TREND_STATUS:
         if (
             report.latest_negative_executable_edge_count != 0
             or report.latest_low_fill_probability_count != 0
@@ -502,12 +529,12 @@ def _validate_report_consistency(report: PaperEdgeCostSummaryTrendReport) -> Non
             raise ValueError("observed latest report resets quality flag streak")
         if report.consecutive_insufficient_sample_count != 0:
             raise ValueError("observed latest report resets insufficient sample streak")
-    elif report.latest_status == "insufficient_edge_cost_sample":
+    elif report.latest_status == INSUFFICIENT_TREND_STATUS:
         if report.consecutive_insufficient_sample_count < 1:
             raise ValueError("insufficient sample latest report requires a streak")
         if report.consecutive_insufficient_sample_count > _status_report_count(
             report,
-            "insufficient_edge_cost_sample",
+            INSUFFICIENT_TREND_STATUS,
         ):
             raise ValueError(
                 "insufficient sample streak cannot exceed status_rows count"
@@ -520,12 +547,12 @@ def _validate_report_consistency(report: PaperEdgeCostSummaryTrendReport) -> Non
             or report.latest_high_residual_exposure_count != 0
         ):
             raise ValueError("insufficient sample latest report cannot carry quality flags")
-    elif report.latest_status == "edge_cost_quality_flags":
+    elif report.latest_status == QUALITY_TREND_STATUS:
         if report.consecutive_quality_flag_count < 1:
             raise ValueError("quality flag latest report requires a quality flag streak")
         if report.consecutive_quality_flag_count > _status_report_count(
             report,
-            "edge_cost_quality_flags",
+            QUALITY_TREND_STATUS,
         ):
             raise ValueError("quality flag streak cannot exceed status_rows count")
         if report.consecutive_insufficient_sample_count != 0:
@@ -591,7 +618,7 @@ def _nonempty_source_report_count(report: PaperEdgeCostSummaryTrendReport) -> in
     empty_count = next(
         row.report_count
         for row in report.status_rows
-        if row.edge_cost_status == "empty_edge_cost_history"
+        if row.edge_cost_status == EMPTY_TREND_STATUS
     )
     return report.edge_cost_report_count - empty_count
 

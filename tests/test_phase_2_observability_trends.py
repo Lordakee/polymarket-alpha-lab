@@ -167,22 +167,27 @@ def _edge_cost_report(**overrides: Any) -> PaperEdgeCostSummaryReport:
         "config_version": "edge-cost-summary-v0",
         "edge_observation_count": 4,
         "first_observed_at": datetime(2026, 6, 18, 9, 0, tzinfo=UTC),
-        "last_observed_at": datetime(2026, 6, 18, 10, 0, tzinfo=UTC),
+        "latest_observed_at": datetime(2026, 6, 18, 10, 0, tzinfo=UTC),
+        "unique_market_count": 2,
+        "unique_strategy_count": 2,
+        "unique_risk_tag_count": 2,
         "mean_theoretical_edge_ratio": Decimal("0.080000"),
         "mean_executable_edge_ratio": Decimal("0.050000"),
-        "mean_edge_cost_drag": Decimal("0.030000"),
+        "mean_edge_cost_gap": Decimal("0.030000"),
+        "worst_edge_cost_gap": Decimal("0.050000"),
         "mean_fill_probability": Decimal("0.750000"),
         "mean_residual_exposure_ratio": Decimal("0.100000"),
+        "worst_residual_exposure_ratio": Decimal("0.100000"),
         "mean_paper_return_ratio": Decimal("0.010000"),
         "negative_executable_edge_count": 0,
-        "negative_executable_edge_rate": Decimal("0.000000"),
+        "negative_executable_edge_ratio": Decimal("0.000000"),
         "low_fill_probability_count": 0,
-        "low_fill_probability_rate": Decimal("0.000000"),
+        "low_fill_probability_ratio": Decimal("0.000000"),
         "high_residual_exposure_count": 0,
-        "high_residual_exposure_rate": Decimal("0.000000"),
+        "high_residual_exposure_ratio": Decimal("0.000000"),
         "positive_paper_return_count": 3,
-        "positive_paper_return_rate": Decimal("0.750000"),
-        "status": "edge_cost_evidence_observed",
+        "positive_paper_return_ratio": Decimal("0.750000"),
+        "status": "edge_cost_summary_observed",
     }
     values.update(overrides)
     return PaperEdgeCostSummaryReport(**values)
@@ -304,6 +309,10 @@ def test_phase_2_observability_trends_delegates_nonempty_histories():
     )
     assert report.edge_cost_summary_trend.edge_cost_report_count == 1
     assert report.edge_cost_summary_trend.latest_status == "edge_cost_evidence_observed"
+    assert report.edge_cost_summary_trend.latest_mean_edge_cost_drag == Decimal("0.030000")
+    assert report.edge_cost_summary_trend.latest_positive_paper_return_rate == Decimal(
+        "0.750000",
+    )
 
 
 def test_phase_2_observability_trends_edge_cost_history_is_optional():

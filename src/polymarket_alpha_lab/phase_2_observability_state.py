@@ -6,8 +6,10 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from polymarket_alpha_lab.edge_cost_summary import EDGE_COST_SUMMARY_STATUSES
-from polymarket_alpha_lab.edge_cost_summary_trend import PaperEdgeCostSummaryTrendReport
+from polymarket_alpha_lab.edge_cost_summary_trend import (
+    EDGE_COST_SUMMARY_STATUSES,
+    PaperEdgeCostSummaryTrendReport,
+)
 from polymarket_alpha_lab.forecast_calibration import REPORT_STATUSES
 from polymarket_alpha_lab.forecast_calibration_trend import (
     PaperForecastCalibrationTrendReport,

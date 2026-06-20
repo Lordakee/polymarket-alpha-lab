@@ -204,30 +204,69 @@ def _evidence_snapshot(
 
 
 def _edge_cost_report(**overrides: Any) -> PaperEdgeCostSummaryReport:
+    overrides = _edge_cost_overrides_for_current_schema(overrides)
     values = {
         "generated_at": datetime(2026, 6, 18, 13, 0, tzinfo=UTC),
         "config_version": "edge-cost-summary-v0",
         "edge_observation_count": 4,
         "first_observed_at": datetime(2026, 6, 18, 9, 0, tzinfo=UTC),
-        "last_observed_at": datetime(2026, 6, 18, 10, 0, tzinfo=UTC),
+        "latest_observed_at": datetime(2026, 6, 18, 10, 0, tzinfo=UTC),
+        "unique_market_count": 1,
+        "unique_strategy_count": 1,
+        "unique_risk_tag_count": 1,
         "mean_theoretical_edge_ratio": Decimal("0.080000"),
         "mean_executable_edge_ratio": Decimal("0.050000"),
-        "mean_edge_cost_drag": Decimal("0.030000"),
+        "mean_edge_cost_gap": Decimal("0.030000"),
+        "worst_edge_cost_gap": Decimal("0.030000"),
         "mean_fill_probability": Decimal("0.750000"),
         "mean_residual_exposure_ratio": Decimal("0.100000"),
+        "worst_residual_exposure_ratio": Decimal("0.100000"),
         "mean_paper_return_ratio": Decimal("0.010000"),
         "negative_executable_edge_count": 0,
-        "negative_executable_edge_rate": Decimal("0.000000"),
+        "negative_executable_edge_ratio": Decimal("0.000000"),
         "low_fill_probability_count": 0,
-        "low_fill_probability_rate": Decimal("0.000000"),
+        "low_fill_probability_ratio": Decimal("0.000000"),
         "high_residual_exposure_count": 0,
-        "high_residual_exposure_rate": Decimal("0.000000"),
+        "high_residual_exposure_ratio": Decimal("0.000000"),
         "positive_paper_return_count": 3,
-        "positive_paper_return_rate": Decimal("0.750000"),
-        "status": "edge_cost_evidence_observed",
+        "positive_paper_return_ratio": Decimal("0.750000"),
+        "status": "edge_cost_summary_observed",
     }
     values.update(overrides)
+    if "mean_edge_cost_gap" in overrides and "worst_edge_cost_gap" not in overrides:
+        values["worst_edge_cost_gap"] = values["mean_edge_cost_gap"]
+    if (
+        "mean_residual_exposure_ratio" in overrides
+        and "worst_residual_exposure_ratio" not in overrides
+    ):
+        values["worst_residual_exposure_ratio"] = values[
+            "mean_residual_exposure_ratio"
+        ]
     return PaperEdgeCostSummaryReport(**values)
+
+
+def _edge_cost_overrides_for_current_schema(overrides: dict[str, Any]) -> dict[str, Any]:
+    values = dict(overrides)
+    field_aliases = {
+        "last_observed_at": "latest_observed_at",
+        "mean_edge_cost_drag": "mean_edge_cost_gap",
+        "negative_executable_edge_rate": "negative_executable_edge_ratio",
+        "low_fill_probability_rate": "low_fill_probability_ratio",
+        "high_residual_exposure_rate": "high_residual_exposure_ratio",
+        "positive_paper_return_rate": "positive_paper_return_ratio",
+    }
+    for old_name, new_name in field_aliases.items():
+        if old_name in values:
+            values[new_name] = values.pop(old_name)
+    status_aliases = {
+        "empty_edge_cost_history": "empty_edge_cost_summary",
+        "insufficient_edge_cost_sample": "edge_cost_summary_observed",
+        "edge_cost_evidence_observed": "edge_cost_summary_observed",
+        "edge_cost_quality_flags": "edge_cost_summary_observed",
+    }
+    if values.get("status") in status_aliases:
+        values["status"] = status_aliases[values["status"]]
+    return values
 
 
 def _ready_source_report() -> PaperPhase2ObservabilityTrendsReport:
@@ -307,7 +346,7 @@ def test_generated_at_is_normalized_to_utc():
             ("evidence_not_observed", "evidence_gaps_present"),
         ),
         ("evidence_gaps", ("evidence_not_observed", "evidence_gaps_present")),
-        ("edge_cost_insufficient", ("edge_cost_not_observed",)),
+        ("edge_cost_quality_flags", ("edge_cost_not_observed",)),
     ),
 )
 def test_non_observed_latest_conditions_add_deterministic_reasons(
@@ -369,25 +408,25 @@ def test_non_observed_latest_conditions_add_deterministic_reasons(
             ),
             edge_cost_reports=(_edge_cost_report(),),
         ),
-        "edge_cost_insufficient": _build_source_report(
-            calibration_reports=(_calibration_report(),),
-            segment_summary_reports=(_segment_summary_report(),),
-            evidence_snapshots=(_evidence_snapshot(),),
-            edge_cost_reports=(
-                _edge_cost_report(
-                    edge_observation_count=4,
-                    negative_executable_edge_count=0,
-                    negative_executable_edge_rate=Decimal("0.000000"),
-                    low_fill_probability_count=0,
-                    low_fill_probability_rate=Decimal("0.000000"),
-                    high_residual_exposure_count=0,
-                    high_residual_exposure_rate=Decimal("0.000000"),
-                    positive_paper_return_count=3,
-                    positive_paper_return_rate=Decimal("0.750000"),
-                    status="insufficient_edge_cost_sample",
+            "edge_cost_quality_flags": _build_source_report(
+                calibration_reports=(_calibration_report(),),
+                segment_summary_reports=(_segment_summary_report(),),
+                evidence_snapshots=(_evidence_snapshot(),),
+                edge_cost_reports=(
+                    _edge_cost_report(
+                        edge_observation_count=4,
+                        negative_executable_edge_count=1,
+                        negative_executable_edge_rate=Decimal("0.250000"),
+                        low_fill_probability_count=1,
+                        low_fill_probability_rate=Decimal("0.250000"),
+                        high_residual_exposure_count=0,
+                        high_residual_exposure_rate=Decimal("0.000000"),
+                        positive_paper_return_count=3,
+                        positive_paper_return_rate=Decimal("0.750000"),
+                        status="edge_cost_quality_flags",
+                    ),
                 ),
             ),
-        ),
     }
     source_report = source_report_by_scenario[scenario]
 

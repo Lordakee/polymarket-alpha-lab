@@ -14,7 +14,6 @@ EXPECTED_EXPORTS = (
 
 ALLOWED_IMPORT_MODULES = {
     "__future__",
-    "collections.abc",
     "dataclasses",
     "datetime",
     "decimal",
@@ -25,53 +24,48 @@ FORBIDDEN_IMPORT_PREFIXES = {
     "api",
     "auth",
     "wallet",
-    "private_key",
+    "account",
     "client",
     "network",
     "request",
     "http",
     "urllib",
-    "journal",
-    "log",
     "pathlib",
+    "sqlite3",
 }
 
-FORBIDDEN_NAME_FRAGMENTS = {
+FORBIDDEN_SURFACE_FRAGMENTS = {
+    "account",
+    "advice",
     "api",
     "auth",
-    "wallet",
-    "privatekey",
     "client",
-    "network",
-    "request",
+    "command",
+    "database",
+    "fromfile",
     "http",
-    "urllib",
-    "journal",
-    "log",
+    "instruction",
+    "live",
+    "network",
     "order",
-    "trade",
-    "position",
+    "protocol",
     "rank",
     "recommend",
-    "instruction",
-    "advice",
-    "eligible",
-    "approved",
-    "actionable",
-    "validated",
-    "ready",
-    "live",
+    "replay",
+    "request",
+    "selection",
+    "sqlite",
+    "trade",
+    "urllib",
+    "wallet",
 }
 
-ALLOWED_FORBIDDEN_NAME_MATCHES = {
+ALLOWED_SURFACE_MATCHES = {
     "paperforecastevidenceobservation",
     "observations",
     "observation",
+    "normalizeobservations",
     "edgeobservationcount",
-    "minedgeobservationcount",
-    "edgestatus",
-    "status",
-    "statuses",
     "readonly",
 }
 
@@ -79,10 +73,6 @@ FORBIDDEN_CALL_NAMES = {
     "open",
     "read",
     "write",
-    "rank",
-    "recommend",
-    "instruction",
-    "advice",
 }
 
 FORBIDDEN_ATTR_NAMES = {
@@ -134,7 +124,29 @@ def module_exports(tree):
     return tuple(assigned_exports)
 
 
-def test_edge_cost_summary_imports_only_allowed_dependencies():
+def module_surface_tokens(tree):
+    tokens = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            tokens.add(node.name)
+        elif isinstance(node, ast.Name):
+            tokens.add(node.id)
+        elif isinstance(node, ast.Attribute):
+            tokens.add(node.attr)
+        elif isinstance(node, ast.arg):
+            tokens.add(node.arg)
+        elif isinstance(node, ast.keyword) and node.arg is not None:
+            tokens.add(node.arg)
+        elif isinstance(node, ast.alias):
+            tokens.add(node.name)
+            if node.asname is not None:
+                tokens.add(node.asname)
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            tokens.add(node.value)
+    return tokens
+
+
+def test_edge_cost_summary_imports_only_stdlib_and_forecast_evidence():
     tree = parse_module()
 
     for module_name in imported_modules(tree):
@@ -166,25 +178,10 @@ def test_package_root_does_not_export_edge_cost_summary_api():
             raise AssertionError("edge_cost_summary must remain module-local")
 
 
-def test_edge_cost_summary_does_not_define_forbidden_surfaces_or_operations():
+def test_edge_cost_summary_has_no_live_cli_or_advice_surfaces():
     tree = parse_module()
-    names = set()
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            names.add(node.name)
-        elif isinstance(node, ast.Name):
-            names.add(node.id)
-        elif isinstance(node, ast.Attribute):
-            names.add(node.attr)
-        elif isinstance(node, ast.arg):
-            names.add(node.arg)
-        elif isinstance(node, ast.keyword) and node.arg is not None:
-            names.add(node.arg)
-        elif isinstance(node, ast.alias):
-            names.add(node.name)
-            if node.asname is not None:
-                names.add(node.asname)
 
+    for node in ast.walk(tree):
         if isinstance(node, ast.Call):
             callee_name = None
             if isinstance(node.func, ast.Name):
@@ -196,10 +193,15 @@ def test_edge_cost_summary_does_not_define_forbidden_surfaces_or_operations():
         elif isinstance(node, ast.Attribute):
             assert node.attr not in FORBIDDEN_ATTR_NAMES, node.attr
 
-    lowered = {normalize_identifier(name) for name in names}
-    for fragment in FORBIDDEN_NAME_FRAGMENTS:
+    lowered = {normalize_identifier(token) for token in module_surface_tokens(tree)}
+    for fragment in FORBIDDEN_SURFACE_FRAGMENTS:
+        normalized_fragment = normalize_identifier(fragment)
         assert not any(
-            normalize_identifier(fragment) in name
-            for name in lowered
-            if name not in ALLOWED_FORBIDDEN_NAME_MATCHES
+            normalized_fragment in token
+            for token in lowered
+            if token not in ALLOWED_SURFACE_MATCHES
         ), fragment
+
+    source_text = MODULE_PATH.read_text(encoding="utf-8").lower()
+    assert "from_file" not in source_text
+    assert "cli" not in source_text
