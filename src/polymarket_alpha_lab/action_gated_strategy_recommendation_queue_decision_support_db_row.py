@@ -245,7 +245,7 @@ def _validate_priority_and_risk_snapshot_consistency(
         "priority_rows.config_version",
         _priority_source_config_versions(priority_report),
         "risk_report.source_config_versions",
-        risk_report.source_config_versions,
+        _risk_source_config_versions(risk_report),
     )
     _require_matching_value(
         "priority_report.research_ready_count",
@@ -301,6 +301,12 @@ def _priority_source_config_versions(
     priority_report: PaperActionGatedStrategyRecommendationQueuePriorityReport,
 ) -> tuple[str, ...]:
     return tuple(sorted({row.config_version for row in priority_report.priority_rows}))
+
+
+def _risk_source_config_versions(
+    risk_report: PaperActionGatedStrategyRecommendationQueueRiskReport,
+) -> tuple[str, ...]:
+    return tuple(sorted(risk_report.source_config_versions))
 
 
 def _priority_row_sum(

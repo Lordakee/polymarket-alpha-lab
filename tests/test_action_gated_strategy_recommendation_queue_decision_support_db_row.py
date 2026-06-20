@@ -44,6 +44,7 @@ class DecisionSupportDbRowSubclass(
 def _priority_row(
     *,
     priority_rank: int = 1,
+    config_version: str = "action-gated-strategy-recommendation-queue-v0",
     action_status: str = "research_ready",
     recommended_next_step: str = "review_candidate_research_queue",
     research_priority: str = "research_review",
@@ -59,7 +60,7 @@ def _priority_row(
     return PaperActionGatedStrategyRecommendationQueuePriorityRow(
         priority_rank=priority_rank,
         source_generated_at=SOURCE_GENERATED_AT,
-        config_version="action-gated-strategy-recommendation-queue-v0",
+        config_version=config_version,
         source_config_version="paper-recommendation-cycle-action-gate-v0",
         action_status=action_status,
         recommended_next_step=recommended_next_step,
@@ -104,6 +105,45 @@ def _priority_report() -> PaperActionGatedStrategyRecommendationQueuePriorityRep
     )
 
 
+def _multi_config_priority_report() -> PaperActionGatedStrategyRecommendationQueuePriorityReport:
+    first_row = _priority_row(
+        config_version="action-gated-strategy-recommendation-queue-a",
+        candidate_count=1,
+        ready_count=1,
+        watch_count=0,
+        total_ready_notional=Decimal("10.000000"),
+        top_queue_score=Decimal("0.600000"),
+        average_ready_score=Decimal("0.600000"),
+        research_priority_score=Decimal("5.200000"),
+    )
+    second_row = _priority_row(
+        priority_rank=2,
+        config_version="action-gated-strategy-recommendation-queue-b",
+        action_status="watch",
+        recommended_next_step="await_fresh_cycle_evidence",
+        research_priority="await_fresh_context",
+        candidate_count=1,
+        ready_count=0,
+        watch_count=1,
+        blocked_count=0,
+        total_ready_notional=Decimal("0.000000"),
+        top_queue_score=Decimal("0.000000"),
+        average_ready_score=Decimal("0.000000"),
+        research_priority_score=Decimal("1.000000"),
+    )
+    return PaperActionGatedStrategyRecommendationQueuePriorityReport(
+        generated_at=GENERATED_AT,
+        source_report_count=2,
+        research_ready_count=1,
+        watch_count=1,
+        blocked_count=0,
+        total_ready_notional=Decimal("10.000000"),
+        top_research_priority_score=Decimal("5.200000"),
+        average_research_priority_score=Decimal("3.100000"),
+        priority_rows=(first_row, second_row),
+    )
+
+
 def _risk_report() -> PaperActionGatedStrategyRecommendationQueueRiskReport:
     return PaperActionGatedStrategyRecommendationQueueRiskReport(
         generated_at=GENERATED_AT,
@@ -132,6 +172,36 @@ def _risk_report() -> PaperActionGatedStrategyRecommendationQueueRiskReport:
         max_total_candidate_count=10,
         throttle_utilization_threshold=Decimal("0.900000"),
     )
+
+
+def test_decision_support_db_row_accepts_source_config_versions_as_set_semantics():
+    priority_report = _multi_config_priority_report()
+    risk_report = PaperActionGatedStrategyRecommendationQueueRiskReport(
+        **{
+            **_risk_report().__dict__,
+            "source_config_versions": (
+                "action-gated-strategy-recommendation-queue-b",
+                "action-gated-strategy-recommendation-queue-a",
+            ),
+            "candidate_count": 2,
+            "ready_count": 1,
+            "watch_count": 1,
+            "total_ready_notional": Decimal("10.000000"),
+            "largest_queue_ready_notional": Decimal("10.000000"),
+            "total_ready_notional_utilization": Decimal("0.100000"),
+            "largest_queue_ready_notional_utilization": Decimal("0.166667"),
+        },
+    )
+
+    row = paper_action_gated_strategy_recommendation_queue_decision_support_to_db_row(
+        priority_report,
+        risk_report,
+    )
+
+    assert row.risk_payload_json["source_config_versions"] == [
+        "action-gated-strategy-recommendation-queue-b",
+        "action-gated-strategy-recommendation-queue-a",
+    ]
 
 
 def _assert_no_floats(value: object) -> None:
