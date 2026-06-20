@@ -38,3 +38,11 @@ Do not document secret values, DSNs, env contents, credentials, wallet material,
 Priority rows, risk summaries, and CLI summaries are operator review aids, not trade approvals. They can help an operator decide which persisted queue report to inspect first, whether ready notional is near a paper cap, and which watch or blocking reason codes explain the current state.
 
 The decision-support flow ends at redacted reporting. It does not read accounts, construct orders, sign orders, submit orders, cancel orders, replace orders, authenticate to an exchange, handle wallet/private keys, or mutate an exchange.
+
+## Trend Report
+
+The Action-Gated Decision-Support Trend Report is a library-only Phase 1 paper-only/report-only/readonly reducer over caller-supplied decision-support snapshot pairs. The caller supplies already-built snapshot pairs; the reducer sorts snapshots chronologically by `generated_at` before deriving trend fields and uses the original input position only as a deterministic tie-break for duplicate timestamps.
+
+Duplicate `generated_at` values are reported as duplicate source timestamps so operators can identify ambiguous snapshot ordering without changing the source data.
+
+Trend output is only a paper/report/readonly review aid. It does not rank reports, approve reports, allocate notional, size positions, construct execution intent, or perform execution. DB persistence, CLI wiring, loaders, readers, and runtime sinks are intentionally out of this first trend node.
