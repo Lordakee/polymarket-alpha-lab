@@ -1,6 +1,6 @@
 import json
 import sys
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
 
@@ -2753,14 +2753,15 @@ def test_paper_recommendation_cycle_action_gate_cli_default_psycopg_load_path_no
             row.readonly,
         )
 
+    now = datetime.now(UTC)
     rows = (
         snapshot_row(
-            datetime(2026, 6, 19, 14, 0, tzinfo=UTC),
+            now - timedelta(hours=1),
             final_status="pass",
             artifact_status="pass",
         ),
         snapshot_row(
-            datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
+            now - timedelta(hours=2),
             final_status="pass",
             artifact_status="pass",
         ),

@@ -46,3 +46,5 @@ The Action-Gated Decision-Support Trend Report is a library-only Phase 1 paper-o
 Duplicate `generated_at` values are reported as duplicate source timestamps so operators can identify ambiguous snapshot ordering without changing the source data.
 
 Trend output is only a paper/report/readonly review aid. It does not rank reports, approve reports, allocate notional, size positions, construct execution intent, or perform execution. DB persistence, CLI wiring, loaders, readers, and runtime sinks are intentionally out of this first trend node.
+
+Trend DB persistence stores compact scalar trend summaries, JSON count maps, reason-code rows, hard paper/report/readonly flags, and ordered source snapshot references to already-persisted decision-support reports. It does not duplicate priority/risk payloads, and it does not provide full trend hydration from the database; callers that need full reports must use the existing source snapshots. CLI/runtime wiring is deferred.
