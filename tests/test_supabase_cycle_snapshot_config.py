@@ -18,6 +18,11 @@ from polymarket_alpha_lab.supabase_action_gated_strategy_recommendation_queue_co
     ACTION_GATED_QUEUE_DB_ENABLED_ENV_VAR,
     ACTION_GATED_QUEUE_DB_TABLE_ENV_VAR,
 )
+from polymarket_alpha_lab.supabase_strategy_candidate_research_queue_config import (
+    STRATEGY_CANDIDATE_RESEARCH_QUEUE_DB_DSN_ENV_VAR,
+    STRATEGY_CANDIDATE_RESEARCH_QUEUE_DB_ENABLED_ENV_VAR,
+    STRATEGY_CANDIDATE_RESEARCH_QUEUE_DB_TABLE_ENV_VAR,
+)
 from polymarket_alpha_lab.supabase_action_gated_strategy_recommendation_queue_history_config import (
     ACTION_GATED_QUEUE_HISTORY_DB_DSN_ENV_VAR,
     ACTION_GATED_QUEUE_HISTORY_DB_ENABLED_ENV_VAR,
@@ -278,6 +283,9 @@ def test_env_example_documents_supported_db_variable_names_only() -> None:
         f"{ACTION_GATED_QUEUE_DB_ENABLED_ENV_VAR}=",
         f"{ACTION_GATED_QUEUE_DB_DSN_ENV_VAR}=",
         f"{ACTION_GATED_QUEUE_DB_TABLE_ENV_VAR}=",
+        f"{STRATEGY_CANDIDATE_RESEARCH_QUEUE_DB_ENABLED_ENV_VAR}=",
+        f"{STRATEGY_CANDIDATE_RESEARCH_QUEUE_DB_DSN_ENV_VAR}=",
+        f"{STRATEGY_CANDIDATE_RESEARCH_QUEUE_DB_TABLE_ENV_VAR}=",
         f"{ACTION_GATED_QUEUE_HISTORY_DB_ENABLED_ENV_VAR}=",
         f"{ACTION_GATED_QUEUE_HISTORY_DB_DSN_ENV_VAR}=",
         f"{ACTION_GATED_QUEUE_HISTORY_DB_TABLE_ENV_VAR}=",
@@ -314,6 +322,9 @@ def test_env_example_documents_supported_db_variable_names_only() -> None:
     assert ACTION_GATED_QUEUE_DB_ENABLED_ENV_VAR in text
     assert ACTION_GATED_QUEUE_DB_DSN_ENV_VAR in text
     assert ACTION_GATED_QUEUE_DB_TABLE_ENV_VAR in text
+    assert STRATEGY_CANDIDATE_RESEARCH_QUEUE_DB_ENABLED_ENV_VAR in text
+    assert STRATEGY_CANDIDATE_RESEARCH_QUEUE_DB_DSN_ENV_VAR in text
+    assert STRATEGY_CANDIDATE_RESEARCH_QUEUE_DB_TABLE_ENV_VAR in text
     assert ACTION_GATED_QUEUE_HISTORY_DB_ENABLED_ENV_VAR in text
     assert ACTION_GATED_QUEUE_HISTORY_DB_DSN_ENV_VAR in text
     assert ACTION_GATED_QUEUE_HISTORY_DB_TABLE_ENV_VAR in text
