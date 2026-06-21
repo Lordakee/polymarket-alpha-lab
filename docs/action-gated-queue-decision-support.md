@@ -95,6 +95,16 @@ POLYMARKET_ALPHA_LAB_ACTION_GATED_QUEUE_DECISION_SUPPORT_TREND_DB_SOURCES_TABLE
 
 That optional persistence path stores compact trend manifests only. It must not create live trading state, authenticate to an exchange, read accounts, construct orders, sign orders, submit orders, cancel orders, replace orders, or mutate an exchange.
 
+### Persisted Trend DB History
+
+The existing `polymarket-alpha-lab action-gated-queue-decision-support-trend` command is the rebuild path: it reads source decision-support rows, rebuilds the trend from those source snapshots, and optionally persists a compact trend manifest when `--persist` and trend DB env configuration are enabled.
+
+The read-only history surface is `polymarket-alpha-lab action-gated-queue-decision-support-trend-db-history`. It reads persisted trend DB rows only, uses only the trend DB environment variables listed above, and does not require the source decision-support DB environment variables. It supports `--limit` and optional `--latest-risk-status pass|watch|blocked`, exposes no DSN or table CLI flags, and never persists new rows.
+
+The history output reports the trend count, source snapshot count, first and latest trend timestamps, latest risk status, risk counts, duplicate `generated_at` count, consecutive watch and blocked streaks, latest deltas, and latest reason codes.
+
+The Phase 1 boundary is unchanged: this command is paper-only, report-only, and read-only. It must not perform live trading, auth, wallet/private-key handling, account reads, order construction, order signing, order submission, order cancellation, order replacement, or exchange/order mutation.
+
 ### CLI Options
 
 The command options follow the existing aggregate-report CLI pattern:
