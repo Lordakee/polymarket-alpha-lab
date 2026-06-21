@@ -3751,6 +3751,8 @@ def _print_action_gated_queue_decision_support_trend_db_history_summary(
         f"{_none_or_value(report.average_priority_score_delta)} "
         f"source_queue_count_delta={_none_or_value(report.source_queue_count_delta)} "
         f"duplicate_generated_at_count={report.duplicate_generated_at_count} "
+        "consecutive_latest_pass_count="
+        f"{report.consecutive_latest_pass_count} "
         "consecutive_latest_watch_count="
         f"{report.consecutive_latest_watch_count} "
         "consecutive_latest_blocked_count="

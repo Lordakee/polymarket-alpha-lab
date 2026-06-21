@@ -117,6 +117,7 @@ EXPECTED_SUMMARY_REPORT_FIELDS = {
     "average_priority_score_delta",
     "source_queue_count_delta",
     "duplicate_generated_at_count",
+    "consecutive_latest_pass_count",
     "consecutive_latest_watch_count",
     "consecutive_latest_blocked_count",
     "latest_reason_code_counts",

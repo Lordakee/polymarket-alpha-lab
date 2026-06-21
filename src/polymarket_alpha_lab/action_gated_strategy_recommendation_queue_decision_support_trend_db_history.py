@@ -35,6 +35,7 @@ class PaperActionGatedStrategyRecommendationQueueDecisionSupportTrendDbHistoryRe
     latest_risk_status: str | None
     risk_status_counts: tuple[tuple[str, int], ...]
     duplicate_generated_at_count: int
+    consecutive_latest_pass_count: int
     consecutive_latest_watch_count: int
     consecutive_latest_blocked_count: int
     ready_notional_delta: Decimal | None
@@ -53,6 +54,7 @@ class PaperActionGatedStrategyRecommendationQueueDecisionSupportTrendDbHistoryRe
             "trend_count",
             "total_source_snapshot_count",
             "duplicate_generated_at_count",
+            "consecutive_latest_pass_count",
             "consecutive_latest_watch_count",
             "consecutive_latest_blocked_count",
         ):
@@ -150,6 +152,10 @@ def build_paper_action_gated_strategy_recommendation_queue_decision_support_tren
         risk_status_counts=_risk_status_counts(chronological_rows),
         duplicate_generated_at_count=_duplicate_generated_at_count(
             chronological_rows,
+        ),
+        consecutive_latest_pass_count=_latest_status_streak(
+            chronological_rows,
+            "pass",
         ),
         consecutive_latest_watch_count=_latest_status_streak(
             chronological_rows,
@@ -293,6 +299,18 @@ def _validate_report_consistency(
             raise ValueError("latest_trend_generated_at must be absent without trends")
         if report.latest_risk_status is not None:
             raise ValueError("latest_risk_status must be absent without trends")
+        if report.consecutive_latest_pass_count != 0:
+            raise ValueError(
+                "consecutive_latest_pass_count must be zero without trends",
+            )
+        if report.consecutive_latest_watch_count != 0:
+            raise ValueError(
+                "consecutive_latest_watch_count must be zero without trends",
+            )
+        if report.consecutive_latest_blocked_count != 0:
+            raise ValueError(
+                "consecutive_latest_blocked_count must be zero without trends",
+            )
         if report.ready_notional_delta is not None:
             raise ValueError("ready_notional_delta must be absent without trends")
         if report.top_priority_score_delta is not None:
@@ -322,6 +340,43 @@ def _validate_report_consistency(
             raise ValueError("source_queue_count_delta is required with trends")
     if sum(count for _, count in report.risk_status_counts) > report.trend_count:
         raise ValueError("risk_status_counts must not exceed trend_count")
+    _validate_latest_status_streaks(report)
+
+
+def _validate_latest_status_streaks(
+    report: PaperActionGatedStrategyRecommendationQueueDecisionSupportTrendDbHistoryReport,
+) -> None:
+    risk_status_counts = dict(report.risk_status_counts)
+    if report.trend_count == 0:
+        return
+
+    streaks = (
+        ("pass", "consecutive_latest_pass_count", report.consecutive_latest_pass_count),
+        (
+            "watch",
+            "consecutive_latest_watch_count",
+            report.consecutive_latest_watch_count,
+        ),
+        (
+            "blocked",
+            "consecutive_latest_blocked_count",
+            report.consecutive_latest_blocked_count,
+        ),
+    )
+    for status, field_name, count in streaks:
+        if report.latest_risk_status == status:
+            if count <= 0:
+                raise ValueError(
+                    f"{field_name} must be positive when latest_risk_status is {status}",
+                )
+        elif count != 0:
+            raise ValueError(
+                f"{field_name} must be zero unless latest_risk_status is {status}",
+            )
+        if count > risk_status_counts[status]:
+            raise ValueError(
+                f"{field_name} must not exceed {status} risk_status_count",
+            )
 
 
 def _as_utc(field_name: str, value: datetime) -> datetime:

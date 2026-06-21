@@ -34,6 +34,7 @@ def _history_report() -> SimpleNamespace:
         latest_risk_status="blocked",
         risk_status_counts=(("pass", 1), ("watch", 1), ("blocked", 1)),
         duplicate_generated_at_count=1,
+        consecutive_latest_pass_count=0,
         consecutive_latest_watch_count=0,
         consecutive_latest_blocked_count=2,
         ready_notional_delta=Decimal("-15.000000"),
@@ -183,6 +184,7 @@ def test_trend_db_history_cli_uses_injected_runner_and_prints_summary(
     assert "average_priority_score_delta=-0.250000" in captured.out
     assert "source_queue_count_delta=-2" in captured.out
     assert "duplicate_generated_at_count=1" in captured.out
+    assert "consecutive_latest_pass_count=0" in captured.out
     assert "consecutive_latest_watch_count=0" in captured.out
     assert "consecutive_latest_blocked_count=2" in captured.out
     assert (

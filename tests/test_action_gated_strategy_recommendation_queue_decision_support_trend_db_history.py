@@ -303,6 +303,7 @@ def test_trend_db_history_empty_input_is_readonly_report():
     assert history.latest_risk_status is None
     assert history.risk_status_counts == (("pass", 0), ("watch", 0), ("blocked", 0))
     assert history.duplicate_generated_at_count == 0
+    assert history.consecutive_latest_pass_count == 0
     assert history.consecutive_latest_watch_count == 0
     assert history.consecutive_latest_blocked_count == 0
     assert history.ready_notional_delta is None
@@ -339,6 +340,9 @@ def test_trend_db_history_sorts_newest_first_input_chronologically():
     assert history.first_trend_generated_at == older.trend_row.generated_at
     assert history.latest_trend_generated_at == latest.trend_row.generated_at
     assert history.latest_risk_status == "watch"
+    assert history.consecutive_latest_pass_count == 0
+    assert history.consecutive_latest_watch_count == 1
+    assert history.consecutive_latest_blocked_count == 0
     assert history.ready_notional_delta == latest.trend_row.ready_notional_delta
     assert history.top_priority_score_delta == latest.trend_row.top_priority_score_delta
     assert (
@@ -390,6 +394,7 @@ def test_trend_db_history_counts_risks_duplicates_streaks_and_latest_reason_code
 
     assert history.risk_status_counts == (("pass", 2), ("watch", 2), ("blocked", 1))
     assert history.duplicate_generated_at_count == 1
+    assert history.consecutive_latest_pass_count == 0
     assert history.consecutive_latest_watch_count == 2
     assert history.consecutive_latest_blocked_count == 0
     assert history.ready_notional_delta == Decimal("4.250000")
@@ -403,6 +408,39 @@ def test_trend_db_history_counts_risks_duplicates_streaks_and_latest_reason_code
     assert type(history.ready_notional_delta) is Decimal
     assert type(history.top_priority_score_delta) is Decimal
     assert type(history.average_priority_score_delta) is Decimal
+
+
+def test_trend_db_history_counts_consecutive_latest_pass_streak():
+    rows = (
+        _trend_db_rows(
+            trend_generated_at=BASE_AT,
+            latest_risk_status="pass",
+            snapshot_seed=61,
+        ),
+        _trend_db_rows(
+            trend_generated_at=BASE_AT + timedelta(hours=1),
+            latest_risk_status="watch",
+            snapshot_seed=62,
+        ),
+        _trend_db_rows(
+            trend_generated_at=BASE_AT + timedelta(hours=2),
+            latest_risk_status="pass",
+            snapshot_seed=63,
+        ),
+        _trend_db_rows(
+            trend_generated_at=BASE_AT + timedelta(hours=3),
+            latest_risk_status="pass",
+            snapshot_seed=64,
+        ),
+    )
+
+    history = _history(rows)
+
+    assert history.latest_risk_status == "pass"
+    assert history.risk_status_counts == (("pass", 3), ("watch", 1), ("blocked", 0))
+    assert history.consecutive_latest_pass_count == 2
+    assert history.consecutive_latest_watch_count == 0
+    assert history.consecutive_latest_blocked_count == 0
 
 
 def test_trend_db_history_uses_trend_sha256_as_deterministic_same_time_tie_order():
@@ -476,6 +514,113 @@ def test_trend_db_history_rejects_non_container_non_row_and_subclass_inputs():
     history = _history(())
     with pytest.raises(ValueError, match="trend_count must be an int"):
         replace(history, trend_count=True)
+
+
+def test_trend_db_history_rejects_inconsistent_latest_streak_invariants():
+    empty = _history(())
+    latest_pass = _history(
+        (
+            _trend_db_rows(
+                trend_generated_at=BASE_AT,
+                latest_risk_status="pass",
+                snapshot_seed=71,
+            ),
+        ),
+    )
+    latest_watch = _history(
+        (
+            _trend_db_rows(
+                trend_generated_at=BASE_AT,
+                latest_risk_status="pass",
+                snapshot_seed=72,
+            ),
+            _trend_db_rows(
+                trend_generated_at=BASE_AT + timedelta(hours=1),
+                latest_risk_status="watch",
+                snapshot_seed=73,
+            ),
+        ),
+    )
+    latest_blocked = _history(
+        (
+            _trend_db_rows(
+                trend_generated_at=BASE_AT,
+                latest_risk_status="pass",
+                snapshot_seed=74,
+            ),
+            _trend_db_rows(
+                trend_generated_at=BASE_AT + timedelta(hours=1),
+                latest_risk_status="blocked",
+                snapshot_seed=75,
+            ),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="consecutive_latest_pass_count must be an int"):
+        replace(latest_pass, consecutive_latest_pass_count=True)
+    with pytest.raises(
+        ValueError,
+        match="consecutive_latest_pass_count must be a nonnegative integer",
+    ):
+        replace(latest_pass, consecutive_latest_pass_count=-1)
+    with pytest.raises(
+        ValueError,
+        match="consecutive_latest_pass_count must be zero without trends",
+    ):
+        replace(empty, consecutive_latest_pass_count=1)
+    with pytest.raises(
+        ValueError,
+        match="consecutive_latest_watch_count must be zero without trends",
+    ):
+        replace(empty, consecutive_latest_watch_count=1)
+    with pytest.raises(
+        ValueError,
+        match="consecutive_latest_blocked_count must be zero without trends",
+    ):
+        replace(empty, consecutive_latest_blocked_count=1)
+    with pytest.raises(
+        ValueError,
+        match="consecutive_latest_pass_count must be positive when latest_risk_status is pass",
+    ):
+        replace(latest_pass, consecutive_latest_pass_count=0)
+    with pytest.raises(
+        ValueError,
+        match="consecutive_latest_pass_count must be zero unless latest_risk_status is pass",
+    ):
+        replace(latest_watch, consecutive_latest_pass_count=1)
+    with pytest.raises(
+        ValueError,
+        match="consecutive_latest_pass_count must not exceed pass risk_status_count",
+    ):
+        replace(latest_pass, consecutive_latest_pass_count=2)
+    with pytest.raises(
+        ValueError,
+        match="consecutive_latest_watch_count must not exceed watch risk_status_count",
+    ):
+        replace(latest_watch, consecutive_latest_watch_count=2)
+    with pytest.raises(
+        ValueError,
+        match=(
+            "consecutive_latest_blocked_count must not exceed "
+            "blocked risk_status_count"
+        ),
+    ):
+        replace(latest_blocked, consecutive_latest_blocked_count=2)
+    with pytest.raises(
+        ValueError,
+        match="consecutive_latest_watch_count must be zero unless latest_risk_status is watch",
+    ):
+        replace(latest_pass, consecutive_latest_watch_count=1)
+    with pytest.raises(
+        ValueError,
+        match="consecutive_latest_blocked_count must be zero unless latest_risk_status is blocked",
+    ):
+        replace(latest_pass, consecutive_latest_blocked_count=1)
+    with pytest.raises(
+        ValueError,
+        match="consecutive_latest_watch_count must be zero unless latest_risk_status is watch",
+    ):
+        replace(latest_blocked, consecutive_latest_watch_count=1)
 
 
 def test_trend_db_history_enforces_hard_flags_on_inputs_and_output():
