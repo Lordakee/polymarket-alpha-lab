@@ -425,6 +425,21 @@ def test_cost_audit_non_empty_report_requires_metrics_from_valid_trades(
         PaperTradeCostAuditReport(**kwargs)
 
 
+@pytest.mark.parametrize(
+    "field_name",
+    (
+        "mean_research_slippage",
+        "mean_fill_slippage",
+    ),
+)
+def test_cost_audit_report_rejects_negative_slippage_aggregates(field_name: str):
+    kwargs = _non_empty_report_kwargs()
+    kwargs[field_name] = Decimal("-0.001000")
+
+    with pytest.raises(ValueError, match=field_name):
+        PaperTradeCostAuditReport(**kwargs)
+
+
 def test_cost_audit_report_rejects_subquantum_fill_rate():
     report = build_paper_trade_cost_audit_report(
         (_record(1), _record(2, filled_size=Decimal("50"), unfilled_size=Decimal("50"))),

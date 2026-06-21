@@ -69,6 +69,8 @@ The report emits one status: `audit_ready` when every gate passes, `blocked_by_r
 
 The `cost_discipline` gate uses the local paper trade cost audit evidence: paper trade count, mean edge cost drag, and negative cost-adjusted edge count. It is incomplete when cost evidence is absent, when mean edge cost drag is unavailable, or when the trade count is below the configured floor; it fails when cost drag or negative cost-adjusted edge counts breach configured limits; and it otherwise passes as report-only evidence.
 
+Optional local Supabase/Postgres persistence for `PaperStrategyRiskAuditReport` snapshots is available as a DB foundation only. It is default-off, env-driven, has no DSN CLI flags, stores canonical `payload_json` plus audit status/count scalars, and preserves `paper_only`, `report_only`, and row-level `readonly` flags. See `docs/strategy-risk-audit-db-persistence.md`.
+
 Phase 1 boundary: this module is pure local report math. It does not score markets, select projects, tune strategy weights, size positions, read files, write logs, fetch, authenticate, handle wallets, handle private keys, read account data, construct or use API clients, perform live trading, place/sign/submit/cancel orders, make recommendations, rank investments, provide trade instruction, or provide financial advice.
 
 ## Strategy Risk Audit v0 Python API
@@ -123,6 +125,7 @@ Phase 1 boundary: this module is pure local report math. It does not score marke
 
 - Build a paper-only/report-only/readonly cost audit from the local paper trade journal with `build_paper_trade_cost_audit_report(...)` or `polymarket-alpha-lab cost-audit --trade-log <path>`.
 - The report reads existing `PaperTradeRecord` rows normally restored by `PaperTradeJournal.read(...)` and measures filled size, requested size, fill rate, theoretical edge, cost-adjusted edge, per-share edge cost drag, filled-size-weighted total cost drag, research slippage, fill slippage, partial fills, and negative cost-adjusted edge counts.
+- Optional local Supabase/Postgres persistence for `PaperTradeCostAuditReport` snapshots is available as a DB foundation only. It is default-off, env-driven, has no DSN CLI flags, stores canonical `payload_json` plus cost evidence scalars, and preserves `paper_only`, `report_only`, and `readonly` flags. See `docs/paper-trade-cost-audit-db-persistence.md`.
 - It is local observability over already-written paper records. It does not fetch market/account/order data, authenticate, handle wallets or private keys, place/sign/submit/cancel orders, rank investments, recommend trades, provide trade instruction, provide financial advice, tune strategy behavior, alter strategy-cycle decisions, or change paper execution/NAV behavior.
 - Boundary shorthand: no fetch, no auth, no wallet, no order, no rank, no recommend, no trade instruction, no financial advice.
 

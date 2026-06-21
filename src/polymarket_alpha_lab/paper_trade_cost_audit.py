@@ -71,13 +71,16 @@ class PaperTradeCostAuditReport:
         for field_name in (
             "mean_theoretical_edge",
             "mean_cost_adjusted_edge",
+        ):
+            _require_optional_decimal(field_name, getattr(self, field_name))
+        for field_name in (
             "mean_edge_cost_drag",
             "total_edge_cost_drag",
             "mean_research_slippage",
             "mean_fill_slippage",
             "largest_single_trade_cost_drag",
         ):
-            _require_optional_decimal(field_name, getattr(self, field_name))
+            _require_optional_nonnegative_decimal(field_name, getattr(self, field_name))
         _validate_report_consistency(self)
         if self.paper_only is not True:
             raise ValueError("paper_only must be True")

@@ -39,6 +39,11 @@ from polymarket_alpha_lab.supabase_local_observability_trends_config import (
     LOCAL_OBSERVABILITY_TRENDS_DB_ENABLED_ENV_VAR,
     LOCAL_OBSERVABILITY_TRENDS_DB_TABLE_ENV_VAR,
 )
+from polymarket_alpha_lab.supabase_paper_trade_cost_audit_config import (
+    PAPER_TRADE_COST_AUDIT_DB_DSN_ENV_VAR,
+    PAPER_TRADE_COST_AUDIT_DB_ENABLED_ENV_VAR,
+    PAPER_TRADE_COST_AUDIT_DB_TABLE_ENV_VAR,
+)
 from polymarket_alpha_lab.supabase_outcome_tracking_config import (
     OUTCOME_TRACKING_DB_DSN_ENV_VAR,
     OUTCOME_TRACKING_DB_ENABLED_ENV_VAR,
@@ -53,6 +58,11 @@ from polymarket_alpha_lab.supabase_paper_trade_journal_config import (
     PAPER_TRADE_JOURNAL_DB_DSN_ENV_VAR,
     PAPER_TRADE_JOURNAL_DB_ENABLED_ENV_VAR,
     PAPER_TRADE_JOURNAL_DB_TABLE_ENV_VAR,
+)
+from polymarket_alpha_lab.supabase_strategy_risk_audit_config import (
+    STRATEGY_RISK_AUDIT_DB_DSN_ENV_VAR,
+    STRATEGY_RISK_AUDIT_DB_ENABLED_ENV_VAR,
+    STRATEGY_RISK_AUDIT_DB_TABLE_ENV_VAR,
 )
 
 
@@ -281,6 +291,12 @@ def test_env_example_documents_supported_db_variable_names_only() -> None:
         f"{LOCAL_OBSERVABILITY_TRENDS_DB_ENABLED_ENV_VAR}=",
         f"{LOCAL_OBSERVABILITY_TRENDS_DB_DSN_ENV_VAR}=",
         f"{LOCAL_OBSERVABILITY_TRENDS_DB_TABLE_ENV_VAR}=",
+        f"{STRATEGY_RISK_AUDIT_DB_ENABLED_ENV_VAR}=",
+        f"{STRATEGY_RISK_AUDIT_DB_DSN_ENV_VAR}=",
+        f"{STRATEGY_RISK_AUDIT_DB_TABLE_ENV_VAR}=",
+        f"{PAPER_TRADE_COST_AUDIT_DB_ENABLED_ENV_VAR}=",
+        f"{PAPER_TRADE_COST_AUDIT_DB_DSN_ENV_VAR}=",
+        f"{PAPER_TRADE_COST_AUDIT_DB_TABLE_ENV_VAR}=",
     ]
 
     assert CYCLE_SNAPSHOT_DB_ENABLED_ENV_VAR in text
@@ -311,6 +327,12 @@ def test_env_example_documents_supported_db_variable_names_only() -> None:
     assert LOCAL_OBSERVABILITY_TRENDS_DB_ENABLED_ENV_VAR in text
     assert LOCAL_OBSERVABILITY_TRENDS_DB_DSN_ENV_VAR in text
     assert LOCAL_OBSERVABILITY_TRENDS_DB_TABLE_ENV_VAR in text
+    assert STRATEGY_RISK_AUDIT_DB_ENABLED_ENV_VAR in text
+    assert STRATEGY_RISK_AUDIT_DB_DSN_ENV_VAR in text
+    assert STRATEGY_RISK_AUDIT_DB_TABLE_ENV_VAR in text
+    assert PAPER_TRADE_COST_AUDIT_DB_ENABLED_ENV_VAR in text
+    assert PAPER_TRADE_COST_AUDIT_DB_DSN_ENV_VAR in text
+    assert PAPER_TRADE_COST_AUDIT_DB_TABLE_ENV_VAR in text
     assert lines == expected_lines
     assert all(line.endswith("=") for line in lines)
     assert "POLYMARKET_ALPHA_DATABASE_URL" not in text
