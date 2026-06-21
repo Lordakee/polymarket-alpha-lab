@@ -56,6 +56,9 @@ from polymarket_alpha_lab.paper_trade_cost_audit import (
     PaperTradeCostAuditReport,
     build_paper_trade_cost_audit_report,
 )
+from polymarket_alpha_lab.paper_trade_cost_trend import (
+    PaperTradeCostTrendReport,
+)
 from polymarket_alpha_lab.paper_trade_cost_audit_psycopg import (
     insert_paper_trade_cost_audit_report_with_psycopg,
 )
@@ -172,11 +175,13 @@ StrategyRiskAuditDbSink = Callable[..., object]
 NavRiskRunner = Callable[..., "PaperNavRiskMetricsReport"]
 StrategyAuditRunner = Callable[..., PaperStrategyRiskAuditReport]
 StrategyAuditHistoryRunner = Callable[..., PaperStrategyRiskAuditHistoryReport]
+StrategyAuditDbHistoryRunner = Callable[..., PaperStrategyRiskAuditHistoryReport]
 StrategyRecommendationHistoryRunner = Callable[
     ...,
     PaperStrategyRecommendationHistoryReport,
 ]
 CostAuditRunner = Callable[..., PaperTradeCostAuditReport]
+CostAuditDbTrendRunner = Callable[..., PaperTradeCostTrendReport]
 StrategyEvidenceRunner = Callable[..., "PaperStrategyEvidenceSnapshotReport"]
 ObservabilityTrendsRunner = Callable[..., LocalObservabilityTrendsReport]
 LocalObservabilityTrendsDbHistoryRunner = Callable[
@@ -298,10 +303,12 @@ def main(
     ),
     strategy_audit_runner: StrategyAuditRunner | None = None,
     strategy_audit_history_runner: StrategyAuditHistoryRunner | None = None,
+    strategy_audit_db_history_runner: StrategyAuditDbHistoryRunner | None = None,
     strategy_recommendation_history_runner: (
         StrategyRecommendationHistoryRunner | None
     ) = None,
     cost_audit_runner: CostAuditRunner | None = None,
+    cost_audit_db_trend_runner: CostAuditDbTrendRunner | None = None,
     strategy_evidence_runner: StrategyEvidenceRunner | None = None,
     observability_trends_runner: ObservabilityTrendsRunner = (
         run_local_observability_trends
@@ -428,6 +435,12 @@ def main(
         default=False,
         dest="persist",
     )
+    cost_audit_db_trend = subparsers.add_parser("cost-audit-db-trend")
+    cost_audit_db_trend.add_argument(
+        "--limit",
+        type=int,
+        default=100,
+    )
 
     history = subparsers.add_parser("history")
     history.add_argument(
@@ -493,6 +506,12 @@ def main(
         type=Path,
         required=True,
         dest="strategy_audit_log",
+    )
+    strategy_audit_db_history = subparsers.add_parser("strategy-audit-db-history")
+    strategy_audit_db_history.add_argument(
+        "--limit",
+        type=int,
+        default=100,
     )
 
     strategy_recommendation_history = subparsers.add_parser(
@@ -1026,6 +1045,37 @@ def main(
             print(f"cost-audit failed: {exc}", file=sys.stderr)
             return 1
 
+    if args.command == "cost-audit-db-trend":
+        try:
+            if args.limit <= 0:
+                raise ValueError("cost-audit-db-trend limit must be positive")
+            paper_trade_cost_audit_db_config = from_paper_trade_cost_audit_db_env()
+            if not paper_trade_cost_audit_db_config.enabled:
+                raise ValueError(
+                    "cost-audit-db-trend requires paper trade cost audit "
+                    "DB to be enabled",
+                )
+            dsn = paper_trade_cost_audit_db_config.dsn
+            if dsn is None:
+                raise ValueError(
+                    "cost-audit-db-trend requires a paper trade cost audit "
+                    "DB DSN",
+                )
+            try:
+                report = _run_cost_audit_db_trend(
+                    dsn=dsn,
+                    table_name=paper_trade_cost_audit_db_config.table_name,
+                    limit=args.limit,
+                    runner=cost_audit_db_trend_runner,
+                )
+            except Exception as exc:
+                _raise_redacted_db_read_error(exc, dsn=dsn)
+            _print_cost_audit_db_trend_summary(report)
+            return 0
+        except Exception as exc:
+            print(f"cost-audit-db-trend failed: {exc}", file=sys.stderr)
+            return 1
+
     if args.command == "history":
         try:
             summary = _run_history(
@@ -1101,6 +1151,40 @@ def main(
             return 0
         except Exception as exc:
             print(f"strategy-audit-history failed: {exc}", file=sys.stderr)
+            return 1
+
+    if args.command == "strategy-audit-db-history":
+        try:
+            if args.limit <= 0:
+                raise ValueError("strategy-audit-db-history limit must be positive")
+            strategy_risk_audit_db_config = from_strategy_risk_audit_db_env()
+            if not strategy_risk_audit_db_config.enabled:
+                raise ValueError(
+                    "strategy-audit-db-history requires strategy risk audit "
+                    "DB to be enabled",
+                )
+            dsn = strategy_risk_audit_db_config.dsn
+            if dsn is None:
+                raise ValueError(
+                    "strategy-audit-db-history requires a strategy risk audit "
+                    "DB DSN",
+                )
+            try:
+                report = _run_strategy_audit_db_history(
+                    dsn=dsn,
+                    table_name=strategy_risk_audit_db_config.table_name,
+                    limit=args.limit,
+                    runner=strategy_audit_db_history_runner,
+                )
+            except Exception as exc:
+                _raise_redacted_db_read_error(exc, dsn=dsn)
+            _print_strategy_audit_history_summary(
+                report,
+                prefix="strategy-audit-db-history",
+            )
+            return 0
+        except Exception as exc:
+            print(f"strategy-audit-db-history failed: {exc}", file=sys.stderr)
             return 1
 
     if args.command == "strategy-recommendation-history":
@@ -2653,6 +2737,116 @@ def _run_strategy_evidence(
     )
 
 
+def _run_strategy_audit_db_history(
+    *,
+    dsn: str,
+    table_name: str,
+    limit: int,
+    runner: StrategyAuditDbHistoryRunner | None,
+) -> PaperStrategyRiskAuditHistoryReport:
+    generated_at = datetime.now(UTC)
+    config = PaperStrategyRiskAuditHistoryConfig(
+        config_version="strategy-audit-db-history-v0",
+    )
+    if runner is not None:
+        return runner(
+            dsn=dsn,
+            table_name=table_name,
+            limit=limit,
+            config=config,
+            generated_at=generated_at,
+        )
+
+    from polymarket_alpha_lab.strategy_audit_db_history_load import (
+        load_strategy_audit_db_history_report,
+    )
+
+    try:
+        import psycopg
+    except ModuleNotFoundError as exc:
+        if exc.name != "psycopg":
+            raise
+        raise RuntimeError(
+            "psycopg is required to use the strategy audit DB history "
+            "psycopg adapter; install the postgres extra.",
+        ) from exc
+    try:
+        connection = psycopg.connect(dsn)
+    except Exception:
+        raise RuntimeError(
+            "failed to connect to the strategy risk audit database",
+        ) from None
+    try:
+        report = load_strategy_audit_db_history_report(
+            generated_at=generated_at,
+            config_version=config.config_version,
+            connection=connection,
+            limit=limit,
+            table_name=table_name,
+        )
+        connection.commit()
+        return report
+    except BaseException:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
+def _run_cost_audit_db_trend(
+    *,
+    dsn: str,
+    table_name: str,
+    limit: int,
+    runner: CostAuditDbTrendRunner | None,
+) -> PaperTradeCostTrendReport:
+    generated_at = datetime.now(UTC)
+    config_version = "cost-audit-db-trend-v0"
+    if runner is not None:
+        return runner(
+            dsn=dsn,
+            table_name=table_name,
+            limit=limit,
+            config_version=config_version,
+            generated_at=generated_at,
+        )
+
+    from polymarket_alpha_lab.paper_trade_cost_audit_db_history_load import (
+        load_paper_trade_cost_audit_db_history_report,
+    )
+
+    try:
+        import psycopg
+    except ModuleNotFoundError as exc:
+        if exc.name != "psycopg":
+            raise
+        raise RuntimeError(
+            "psycopg is required to use the cost audit DB trend psycopg "
+            "adapter; install the postgres extra.",
+        ) from exc
+    try:
+        connection = psycopg.connect(dsn)
+    except Exception:
+        raise RuntimeError(
+            "failed to connect to the paper trade cost audit database",
+        ) from None
+    try:
+        report = load_paper_trade_cost_audit_db_history_report(
+            generated_at=generated_at,
+            config_version=config_version,
+            connection=connection,
+            limit=limit,
+            table_name=table_name,
+        )
+        connection.commit()
+        return report
+    except BaseException:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
 def _run_local_observability_trends_db_history(
     *,
     dsn: str,
@@ -2799,6 +2993,8 @@ def _print_strategy_audit_summary(
 
 def _print_strategy_audit_history_summary(
     report: PaperStrategyRiskAuditHistoryReport,
+    *,
+    prefix: str = "strategy-audit-history",
 ) -> None:
     status_counts = {
         row.audit_status: row.audit_count for row in report.status_rows
@@ -2807,7 +3003,7 @@ def _print_strategy_audit_history_summary(
     latest = _iso_or_none(report.latest_audit_generated_at)
     latest_status = report.latest_audit_status or "none"
     print(
-        "strategy-audit-history: "
+        f"{prefix}: "
         f"reports={report.audit_report_count} "
         f"status={report.status} "
         f"latest_status={latest_status} "
@@ -2990,6 +3186,33 @@ def _print_local_observability_trends_db_history_summary(
         f"outcome={_format_history_status_row_counts(report.outcome_status_rows)} "
         f"nav={_format_history_status_row_counts(report.nav_status_rows)} "
         f"cost={_format_history_status_row_counts(report.cost_status_rows)}",
+    )
+
+
+def _print_cost_audit_db_trend_summary(
+    report: PaperTradeCostTrendReport,
+) -> None:
+    print(
+        "cost-audit-db-trend: "
+        f"status={report.status} "
+        f"report_count={report.cost_audit_report_count} "
+        f"first_report_generated_at={_iso_or_none(report.first_report_generated_at)} "
+        f"latest_report_generated_at={_iso_or_none(report.latest_report_generated_at)} "
+        f"latest_trade_count={report.latest_trade_count} "
+        f"latest_fill_rate={_none_or_value(report.latest_fill_rate)} "
+        "latest_mean_cost_adjusted_edge="
+        f"{_none_or_value(report.latest_mean_cost_adjusted_edge)} "
+        f"latest_mean_edge_cost_drag={_none_or_value(report.latest_mean_edge_cost_drag)} "
+        "latest_negative_cost_adjusted_edge_count="
+        f"{report.latest_negative_cost_adjusted_edge_count} "
+        "worst_observed_mean_edge_cost_drag="
+        f"{_none_or_value(report.worst_observed_mean_edge_cost_drag)} "
+        "consecutive_negative_cost_adjusted_edge_count="
+        f"{report.consecutive_negative_cost_adjusted_edge_count}",
+    )
+    print(
+        "  status_rows: "
+        f"{_format_cost_trend_status_row_counts(report.status_rows)}",
     )
 
 
@@ -3176,6 +3399,13 @@ def _none_or_value(value: object | None) -> str:
 def _format_history_status_row_counts(rows: tuple[object, ...]) -> str:
     return ",".join(
         f"{row.status}:{row.report_count}"
+        for row in rows
+    )
+
+
+def _format_cost_trend_status_row_counts(rows: tuple[object, ...]) -> str:
+    return ",".join(
+        f"{row.status}:{row.status_count}"
         for row in rows
     )
 
