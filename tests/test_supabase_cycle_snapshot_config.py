@@ -13,6 +13,16 @@ from polymarket_alpha_lab.supabase_cycle_snapshot_config import (
     SupabaseCycleSnapshotConfig,
     from_cycle_snapshot_db_env,
 )
+from polymarket_alpha_lab.supabase_paper_probability_recommendation_queue_config import (
+    PAPER_PROBABILITY_RECOMMENDATION_QUEUE_DB_DSN_ENV_VAR,
+    PAPER_PROBABILITY_RECOMMENDATION_QUEUE_DB_ENABLED_ENV_VAR,
+    PAPER_PROBABILITY_RECOMMENDATION_QUEUE_DB_TABLE_ENV_VAR,
+)
+from polymarket_alpha_lab.supabase_paper_recommendation_risk_budget_config import (
+    PAPER_RECOMMENDATION_RISK_BUDGET_DB_DSN_ENV_VAR,
+    PAPER_RECOMMENDATION_RISK_BUDGET_DB_ENABLED_ENV_VAR,
+    PAPER_RECOMMENDATION_RISK_BUDGET_DB_TABLE_ENV_VAR,
+)
 from polymarket_alpha_lab.supabase_action_gated_strategy_recommendation_queue_config import (
     ACTION_GATED_QUEUE_DB_DSN_ENV_VAR,
     ACTION_GATED_QUEUE_DB_ENABLED_ENV_VAR,
@@ -276,6 +286,12 @@ def test_env_example_documents_supported_db_variable_names_only() -> None:
         f"{CYCLE_SNAPSHOT_DB_ENABLED_ENV_VAR}=",
         f"{CYCLE_SNAPSHOT_DB_DSN_ENV_VAR}=",
         f"{CYCLE_SNAPSHOT_DB_TABLE_ENV_VAR}=",
+        f"{PAPER_PROBABILITY_RECOMMENDATION_QUEUE_DB_ENABLED_ENV_VAR}=",
+        f"{PAPER_PROBABILITY_RECOMMENDATION_QUEUE_DB_DSN_ENV_VAR}=",
+        f"{PAPER_PROBABILITY_RECOMMENDATION_QUEUE_DB_TABLE_ENV_VAR}=",
+        f"{PAPER_RECOMMENDATION_RISK_BUDGET_DB_ENABLED_ENV_VAR}=",
+        f"{PAPER_RECOMMENDATION_RISK_BUDGET_DB_DSN_ENV_VAR}=",
+        f"{PAPER_RECOMMENDATION_RISK_BUDGET_DB_TABLE_ENV_VAR}=",
         f"{PAPER_TRADE_JOURNAL_DB_ENABLED_ENV_VAR}=",
         f"{PAPER_TRADE_JOURNAL_DB_DSN_ENV_VAR}=",
         f"{PAPER_TRADE_JOURNAL_DB_TABLE_ENV_VAR}=",
@@ -318,6 +334,12 @@ def test_env_example_documents_supported_db_variable_names_only() -> None:
     assert CYCLE_SNAPSHOT_DB_ENABLED_ENV_VAR in text
     assert CYCLE_SNAPSHOT_DB_DSN_ENV_VAR in text
     assert CYCLE_SNAPSHOT_DB_TABLE_ENV_VAR in text
+    assert PAPER_PROBABILITY_RECOMMENDATION_QUEUE_DB_ENABLED_ENV_VAR in text
+    assert PAPER_PROBABILITY_RECOMMENDATION_QUEUE_DB_DSN_ENV_VAR in text
+    assert PAPER_PROBABILITY_RECOMMENDATION_QUEUE_DB_TABLE_ENV_VAR in text
+    assert PAPER_RECOMMENDATION_RISK_BUDGET_DB_ENABLED_ENV_VAR in text
+    assert PAPER_RECOMMENDATION_RISK_BUDGET_DB_DSN_ENV_VAR in text
+    assert PAPER_RECOMMENDATION_RISK_BUDGET_DB_TABLE_ENV_VAR in text
     assert PAPER_TRADE_JOURNAL_DB_ENABLED_ENV_VAR in text
     assert PAPER_TRADE_JOURNAL_DB_DSN_ENV_VAR in text
     assert PAPER_TRADE_JOURNAL_DB_TABLE_ENV_VAR in text
