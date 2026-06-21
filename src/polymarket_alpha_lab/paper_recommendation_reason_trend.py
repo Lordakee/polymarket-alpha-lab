@@ -495,8 +495,8 @@ def _require_action(field_name: str, value: object) -> str:
 
 
 def _require_side(field_name: str, value: object) -> str:
-    if type(value) is not str or value not in ("yes", "no"):
-        raise ValueError(f"{field_name} must be yes or no")
+    if type(value) is not str or value not in ("yes", "no", "none"):
+        raise ValueError(f"{field_name} must be yes, no, or none")
     return value
 
 

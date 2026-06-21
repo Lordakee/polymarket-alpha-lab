@@ -3089,7 +3089,7 @@ def _run_paper_recommendation_reason_trend(
 ) -> tuple[
     PaperRecommendationReasonTrendReport,
     Counter[str],
-    Counter[str],
+    Counter[tuple[str, str]],
 ]:
     bundles = read_paper_strategy_recommendation_bundle_log(recommendation_log)
     source_reports = tuple(
@@ -3105,12 +3105,13 @@ def _run_paper_recommendation_reason_trend(
         config=config,
         generated_at=datetime.now(UTC),
     )
+    windowed_source_reports = source_reports[-config.window_size :]
     action_counts: Counter[str] = Counter()
-    for source_report in source_reports:
+    for source_report in windowed_source_reports:
         action_counts.update(row.action for row in source_report.rows)
-    reason_code_counts: Counter[str] = Counter()
+    reason_code_counts: Counter[tuple[str, str]] = Counter()
     for row in report.reason_trend_rows:
-        reason_code_counts[row.reason_code] += row.count
+        reason_code_counts[(row.reason_code, row.source_status)] += row.count
     return report, action_counts, reason_code_counts
 
 
@@ -3131,8 +3132,8 @@ def _paper_recommendation_reason_trend_adapter_row(
     row: object,
 ) -> _PaperRecommendationReasonTrendAdapterRow:
     side = getattr(row, "scoring_side", None)
-    if side not in ("yes", "no"):
-        raise ValueError("recommendation rows must have a yes/no scoring_side")
+    if side not in ("yes", "no", "none"):
+        raise ValueError("recommendation rows must have a yes/no/none scoring_side")
     action = getattr(row, "action", None)
     if action not in ("recommend", "watch", "reject"):
         raise ValueError("recommendation rows must have an action")
@@ -3809,7 +3810,7 @@ def _print_paper_recommendation_reason_trend_summary(
     report: PaperRecommendationReasonTrendReport,
     *,
     action_counts: Counter[str],
-    reason_code_counts: Counter[str],
+    reason_code_counts: Counter[tuple[str, str]],
 ) -> None:
     print(
         "paper-recommendation-reason-trend: "
@@ -3822,7 +3823,7 @@ def _print_paper_recommendation_reason_trend_summary(
         f"readonly={report.readonly}",
     )
     print(
-        "  top_reason_codes: "
+        "  reason_code_counts_by_status: "
         f"{_format_reason_code_counts(reason_code_counts)}",
     )
     print(
@@ -3831,11 +3832,19 @@ def _print_paper_recommendation_reason_trend_summary(
     )
 
 
-def _format_reason_code_counts(reason_code_counts: Counter[str]) -> str:
+def _format_reason_code_counts(
+    reason_code_counts: Counter[tuple[str, str]],
+) -> str:
     if not reason_code_counts:
         return "none"
-    ordered = sorted(reason_code_counts.items(), key=lambda item: (-item[1], item[0]))
-    return " ".join(f"{reason_code}={count}" for reason_code, count in ordered)
+    ordered = sorted(
+        reason_code_counts.items(),
+        key=lambda item: (-item[1], item[0][0], item[0][1]),
+    )
+    return " ".join(
+        f"{reason_code}[{source_status}]={count}"
+        for (reason_code, source_status), count in ordered
+    )
 
 
 def _format_reason_trend_transitions(
