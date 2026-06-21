@@ -27,12 +27,27 @@ The read-only DB loader reads already-persisted reports from the existing paper 
 
 The pure history reducer summarizes trend/history metrics from typed reports. It computes aggregate history fields such as source report count, first and last source timestamps, action-status counts, ready notional movement, status transitions, latest action status, latest next step, and latest reason-code counts.
 
+The persisted history DB history command reads already-persisted history reports
+only:
+
+```text
+polymarket-alpha-lab action-gated-queue-history-db-history
+```
+
+It uses only the action-gated queue history DB environment boundary. It supports
+only --limit and --latest-action-status research_ready|watch|blocked, never
+persists rows, never reads source queue reports, and prints only redacted
+aggregate history over persisted history reports.
+
 ## Operator Flow
 
 1. The runtime sink appends paper queue reports from paper-only action-gated queue runs.
 2. The read-only DB loader reads already-persisted reports and returns typed report values without write semantics.
 3. The pure history reducer summarizes trend/history metrics across those typed reports without side effects.
 4. The CLI prints an aggregate-only summary for operator review.
+5. The persisted history DB history command reads already-persisted history
+   reports only and summarizes whether the stored history itself is stable,
+   oscillating, or repeatedly blocked.
 
 Optional `--persist` stores only the built aggregate
 `PaperActionGatedStrategyRecommendationQueueHistoryReport` through the separate

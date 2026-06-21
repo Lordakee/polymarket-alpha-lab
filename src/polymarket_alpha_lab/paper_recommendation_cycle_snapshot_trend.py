@@ -26,6 +26,8 @@ class PaperRecommendationCycleSnapshotTrendReport:
     watch_share: Decimal
     average_stage_count: Decimal
     average_artifact_count: Decimal
+    reason_code_counts: tuple[tuple[str, int], ...] = ()
+    latest_reason_codes: tuple[str, ...] = ()
     paper_only: bool = True
     report_only: bool = True
     readonly: bool = True
@@ -75,6 +77,16 @@ class PaperRecommendationCycleSnapshotTrendReport:
                 self.average_artifact_count,
             ),
         )
+        object.__setattr__(
+            self,
+            "reason_code_counts",
+            _validate_reason_code_counts(self.reason_code_counts),
+        )
+        object.__setattr__(
+            self,
+            "latest_reason_codes",
+            _validate_latest_reason_codes(self.latest_reason_codes),
+        )
         _require_hard_flags("trend report", self)
         _validate_trend_report_consistency(self)
 
@@ -96,6 +108,7 @@ def build_paper_recommendation_cycle_snapshot_trend_report(
     blocked_count = _status_count(source_snapshots, "blocked")
     generated_ats = tuple(snapshot.generated_at for snapshot in source_snapshots)
     latest_index = _latest_snapshot_index(source_snapshots)
+    reason_code_counts = _reason_code_counts(source_snapshots)
 
     return PaperRecommendationCycleSnapshotTrendReport(
         generated_at=generated_at,
@@ -117,6 +130,8 @@ def build_paper_recommendation_cycle_snapshot_trend_report(
         average_artifact_count=_quantize(
             Decimal(artifact_count_total) / Decimal(snapshot_count),
         ),
+        reason_code_counts=reason_code_counts,
+        latest_reason_codes=source_snapshots[latest_index].reason_codes,
     )
 
 
@@ -126,6 +141,7 @@ class _SourceSnapshot:
     final_status: str
     stage_count: int
     artifact_count: int
+    reason_codes: tuple[str, ...]
 
 
 def _normalize_snapshots(snapshots: object) -> tuple[_SourceSnapshot, ...]:
@@ -149,16 +165,42 @@ def _coerce_snapshot(value: object) -> _SourceSnapshot:
     _require_nonnegative_int("stage_count", stage_count)
     _require_nonnegative_int("artifact_count", artifact_count)
     _require_hard_flags("source snapshot", value)
+    reason_codes: tuple[str, ...] = ()
+    if hasattr(value, "reason_codes"):
+        reason_codes = _normalize_source_reason_codes(getattr(value, "reason_codes"))
     return _SourceSnapshot(
         generated_at=_as_utc(generated_at),
         final_status=final_status,
         stage_count=stage_count,
         artifact_count=artifact_count,
+        reason_codes=reason_codes,
     )
 
 
 def _status_count(snapshots: tuple[_SourceSnapshot, ...], status: str) -> int:
     return sum(1 for snapshot in snapshots if snapshot.final_status == status)
+
+
+def _reason_code_counts(
+    snapshots: tuple[_SourceSnapshot, ...],
+) -> tuple[tuple[str, int], ...]:
+    counts: dict[str, int] = {}
+    for snapshot in snapshots:
+        for reason_code in snapshot.reason_codes:
+            counts[reason_code] = counts.get(reason_code, 0) + 1
+    return tuple((reason_code, counts[reason_code]) for reason_code in sorted(counts))
+
+
+def _normalize_source_reason_codes(value: object) -> tuple[str, ...]:
+    if isinstance(value, (str, bytes)):
+        raise ValueError("reason_codes must be an iterable of strings")
+    try:
+        items = tuple(value)
+    except TypeError as exc:
+        raise ValueError("reason_codes must be an iterable of strings") from exc
+    for reason_code in items:
+        _require_canonical_string("reason_codes", reason_code)
+    return tuple(sorted(set(items)))
 
 
 def _latest_snapshot_index(snapshots: tuple[_SourceSnapshot, ...]) -> int:
@@ -204,6 +246,38 @@ def _validate_trend_report_consistency(
         raise ValueError(
             "average_artifact_count must match artifact_count_total and snapshot_count",
         )
+
+
+def _validate_reason_code_counts(value: object) -> tuple[tuple[str, int], ...]:
+    if type(value) is not tuple:
+        raise ValueError("reason_code_counts must be a tuple")
+    normalized: list[tuple[str, int]] = []
+    previous_reason_code: str | None = None
+    for pair in value:
+        if type(pair) is not tuple or len(pair) != 2:
+            raise ValueError("reason_code_counts must contain exact pairs")
+        reason_code, count = pair
+        _require_canonical_string("reason_code_counts", reason_code)
+        _require_nonnegative_int("reason_code_counts", count)
+        if previous_reason_code is not None and reason_code <= previous_reason_code:
+            raise ValueError("reason_code_counts must be sorted by unique reason code")
+        previous_reason_code = reason_code
+        normalized.append((reason_code, count))
+    return tuple(normalized)
+
+
+def _validate_latest_reason_codes(value: object) -> tuple[str, ...]:
+    if type(value) is not tuple:
+        raise ValueError("latest_reason_codes must be a tuple")
+    normalized: list[str] = []
+    previous_reason_code: str | None = None
+    for reason_code in value:
+        _require_canonical_string("latest_reason_codes", reason_code)
+        if previous_reason_code is not None and reason_code <= previous_reason_code:
+            raise ValueError("latest_reason_codes must be sorted unique reason codes")
+        previous_reason_code = reason_code
+        normalized.append(reason_code)
+    return tuple(normalized)
 
 
 def _required_attr(value: object, field_name: str) -> object:

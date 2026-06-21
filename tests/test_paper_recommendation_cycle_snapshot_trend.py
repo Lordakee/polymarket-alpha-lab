@@ -27,6 +27,18 @@ class CycleSnapshotShape:
     readonly: bool = True
 
 
+@dataclass(frozen=True)
+class CycleSnapshotWithReasonCodesShape:
+    generated_at: datetime
+    final_status: str
+    stage_count: int
+    artifact_count: int
+    reason_codes: object = ()
+    paper_only: bool = True
+    report_only: bool = True
+    readonly: bool = True
+
+
 class _DatetimeSubclass(datetime):
     pass
 
@@ -58,6 +70,29 @@ def snapshot(
         final_status=final_status,
         stage_count=stage_count,
         artifact_count=artifact_count,
+        paper_only=paper_only,
+        report_only=report_only,
+        readonly=readonly,
+    )
+
+
+def snapshot_with_reason_codes(
+    generated_at: datetime = datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
+    *,
+    final_status: str = "pass",
+    stage_count: int = 1,
+    artifact_count: int = 1,
+    reason_codes: object = (),
+    paper_only: bool = True,
+    report_only: bool = True,
+    readonly: bool = True,
+) -> CycleSnapshotWithReasonCodesShape:
+    return CycleSnapshotWithReasonCodesShape(
+        generated_at=generated_at,
+        final_status=final_status,
+        stage_count=stage_count,
+        artifact_count=artifact_count,
+        reason_codes=reason_codes,
         paper_only=paper_only,
         report_only=report_only,
         readonly=readonly,
@@ -117,16 +152,77 @@ def test_cycle_snapshot_trend_computes_counts_shares_averages_and_latest_status(
     assert summary.watch_share == d("0.333333")
     assert summary.average_stage_count == d("4.000000")
     assert summary.average_artifact_count == d("7.000000")
+    assert summary.reason_code_counts == ()
+    assert summary.latest_reason_codes == ()
     assert summary.paper_only is True
     assert summary.report_only is True
     assert summary.readonly is True
 
 
+def test_cycle_snapshot_trend_aggregates_reason_code_counts_deterministically():
+    summary = trend_report(
+        (
+            snapshot_with_reason_codes(
+                final_status="pass",
+                reason_codes=(
+                    "volatility-high",
+                    "liquidity-thin",
+                    "liquidity-thin",
+                ),
+            ),
+            snapshot_with_reason_codes(
+                final_status="watch",
+                reason_codes=("spread-wide", "liquidity-thin"),
+            ),
+            snapshot_with_reason_codes(
+                final_status="blocked",
+                reason_codes=("volatility-high",),
+            ),
+        ),
+    )
+
+    assert summary.reason_code_counts == (
+        ("liquidity-thin", 2),
+        ("spread-wide", 1),
+        ("volatility-high", 2),
+    )
+
+
+def test_cycle_snapshot_trend_latest_reason_codes_use_latest_status_snapshot():
+    summary = trend_report(
+        (
+            snapshot_with_reason_codes(
+                datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
+                final_status="blocked",
+                reason_codes=("blocked-late",),
+            ),
+            snapshot_with_reason_codes(
+                datetime(2026, 6, 19, 13, 0, tzinfo=UTC),
+                final_status="watch",
+                reason_codes=("watch-gate", "fresh-signal"),
+            ),
+        ),
+    )
+
+    assert summary.latest_status == "watch"
+    assert summary.latest_reason_codes == ("fresh-signal", "watch-gate")
+
+
 def test_cycle_snapshot_trend_uses_last_input_on_generated_at_tie_for_latest_status():
     summary = trend_report(
         (
-            snapshot(final_status="watch", stage_count=1, artifact_count=2),
-            snapshot(final_status="blocked", stage_count=3, artifact_count=4),
+            snapshot_with_reason_codes(
+                final_status="watch",
+                stage_count=1,
+                artifact_count=2,
+                reason_codes=("first-input",),
+            ),
+            snapshot_with_reason_codes(
+                final_status="blocked",
+                stage_count=3,
+                artifact_count=4,
+                reason_codes=("second-input", "alpha-reason"),
+            ),
         ),
     )
 
@@ -134,10 +230,18 @@ def test_cycle_snapshot_trend_uses_last_input_on_generated_at_tie_for_latest_sta
     assert summary.first_generated_at == datetime(2026, 6, 19, 12, 0, tzinfo=UTC)
     assert summary.last_generated_at == datetime(2026, 6, 19, 12, 0, tzinfo=UTC)
     assert summary.latest_status == "blocked"
+    assert summary.latest_reason_codes == ("alpha-reason", "second-input")
     assert summary.blocked_share == d("0.500000")
     assert summary.watch_share == d("0.500000")
     assert summary.average_stage_count == d("2.000000")
     assert summary.average_artifact_count == d("3.000000")
+
+
+def test_cycle_snapshot_trend_missing_reason_codes_are_empty_for_compatible_shapes():
+    summary = trend_report((snapshot(),))
+
+    assert summary.reason_code_counts == ()
+    assert summary.latest_reason_codes == ()
 
 
 def test_cycle_snapshot_trend_rejects_empty_snapshots_or_unsafe_flags():
@@ -164,6 +268,25 @@ def test_cycle_snapshot_trend_rejects_invalid_status_and_missing_counts():
         trend_report((snapshot(artifact_count=_IntSubclass(1)),))
     with pytest.raises(ValueError, match="stage_count"):
         trend_report((object(),))
+
+
+@pytest.mark.parametrize(
+    "reason_codes",
+    (
+        "not-a-container",
+        b"not-a-container",
+        (7,),
+        ("",),
+        (" blank",),
+        ("blank ",),
+        (_StringSubclass("not-exact-string"),),
+    ),
+)
+def test_cycle_snapshot_trend_rejects_invalid_reason_code_inputs(
+    reason_codes: object,
+):
+    with pytest.raises(ValueError, match="reason_codes"):
+        trend_report((snapshot_with_reason_codes(reason_codes=reason_codes),))
 
 
 def test_cycle_snapshot_trend_is_frozen_and_normalizes_datetimes_to_utc():
@@ -259,6 +382,20 @@ def test_cycle_snapshot_trend_constructor_rejects_bad_replacement():
         replace(summary, watch_share=d("0.500000"))
     with pytest.raises(ValueError, match="latest_status"):
         replace(summary, latest_status="skip")
+    with pytest.raises(ValueError, match="reason_code_counts"):
+        replace(summary, reason_code_counts=(("z-reason", 1), ("a-reason", 1)))
+    with pytest.raises(ValueError, match="reason_code_counts"):
+        replace(summary, reason_code_counts=(("a-reason", 1, 2),))
+    with pytest.raises(ValueError, match="reason_code_counts"):
+        replace(summary, reason_code_counts=(("a-reason", -1),))
+    with pytest.raises(ValueError, match="reason_code_counts"):
+        replace(summary, reason_code_counts=(("a-reason", 1), ("a-reason", 2)))
+    with pytest.raises(ValueError, match="latest_reason_codes"):
+        replace(summary, latest_reason_codes=("z-reason", "a-reason"))
+    with pytest.raises(ValueError, match="latest_reason_codes"):
+        replace(summary, latest_reason_codes=("a-reason", "a-reason"))
+    with pytest.raises(ValueError, match="latest_reason_codes"):
+        replace(summary, latest_reason_codes=(" ",))
     with pytest.raises(ValueError, match="trend report must be paper_only"):
         replace(summary, paper_only=False)
     with pytest.raises(ValueError, match="trend report must be report_only"):

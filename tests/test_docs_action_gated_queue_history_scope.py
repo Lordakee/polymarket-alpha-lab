@@ -19,9 +19,14 @@ REQUIRED_HEADINGS = (
 
 REQUIRED_PHRASES = (
     "action-gated-queue-history",
+    "action-gated-queue-history-db-history",
     "Phase 1 paper-only/report-only/read-only queue history",
     "runtime sink appends paper queue reports",
     "read-only DB loader reads already-persisted reports",
+    "persisted history DB history command reads already-persisted history reports only",
+    "uses only the action-gated queue history DB environment boundary",
+    "supports only --limit and --latest-action-status research_ready|watch|blocked",
+    "never persists rows",
     "pure history reducer summarizes trend/history metrics",
     "CLI prints an aggregate-only summary",
     "no live trading",

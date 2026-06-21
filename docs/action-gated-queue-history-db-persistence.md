@@ -31,6 +31,19 @@ aggregate history report. Without `--persist`, the CLI does not write history
 rows. With `--persist`, it stores only the aggregate history report and keeps
 CLI output redacted and aggregate-only.
 
+## Persisted History DB History
+
+`polymarket-alpha-lab action-gated-queue-history-db-history` is a persisted
+history DB history command. It reads already-persisted history reports only and
+uses the same history DB environment variables listed above. It supports only --limit
+and --latest-action-status research_ready|watch|blocked.
+
+The command never persists rows, never reads source queue reports, and never
+prints DSNs, table names, payload JSON, raw DB records, secrets, or environment
+contents. Its output is a redacted aggregate-only summary of stored history
+report stability, latest status, latest ready-notional movement, and latest
+reason-code counts.
+
 ## Migration
 
 The Supabase migration creates only

@@ -69,6 +69,8 @@ EXPECTED_SUMMARY_REFERENCES = {
     "watch_share",
     "average_stage_count",
     "average_artifact_count",
+    "reason_code_counts",
+    "latest_reason_codes",
 }
 
 FORBIDDEN_SUMMARY_REFERENCES = {

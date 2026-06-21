@@ -202,6 +202,7 @@ ActionGatedQueuePriorityBuilder = Callable[..., object]
 ActionGatedQueueRiskBuilder = Callable[..., object]
 ActionGatedQueueHistoryBuilder = Callable[..., object]
 ActionGatedQueueHistoryDbSink = Callable[..., object]
+ActionGatedQueueHistoryDbHistoryRunner = Callable[..., object]
 CycleSnapshotDbTrendRunner = Callable[..., object]
 CycleSnapshotDbReviewRunner = Callable[..., object]
 CycleSnapshotDbActionGateRunner = Callable[..., object]
@@ -340,6 +341,9 @@ def main(
     action_gated_queue_risk_builder: ActionGatedQueueRiskBuilder | None = None,
     action_gated_queue_history_builder: (
         ActionGatedQueueHistoryBuilder | None
+    ) = None,
+    action_gated_queue_history_db_history_runner: (
+        ActionGatedQueueHistoryDbHistoryRunner | None
     ) = None,
     cycle_snapshot_db_trend_runner: CycleSnapshotDbTrendRunner | None = None,
     cycle_snapshot_db_review_runner: CycleSnapshotDbReviewRunner | None = None,
@@ -775,6 +779,21 @@ def main(
         action="store_true",
         default=False,
         dest="persist",
+    )
+    action_gated_queue_history_db_history = subparsers.add_parser(
+        "action-gated-queue-history-db-history",
+    )
+    action_gated_queue_history_db_history.add_argument(
+        "--limit",
+        type=int,
+        default=100,
+        dest="limit",
+    )
+    action_gated_queue_history_db_history.add_argument(
+        "--latest-action-status",
+        choices=("research_ready", "watch", "blocked"),
+        default=None,
+        dest="latest_action_status",
     )
 
     # Stage 17 market search: search Polymarket markets by keyword.
@@ -1569,6 +1588,45 @@ def main(
         except Exception as exc:
             print(
                 f"action-gated-queue-history failed: {exc}",
+                file=sys.stderr,
+            )
+            return 1
+
+    if args.command == "action-gated-queue-history-db-history":
+        try:
+            if args.limit <= 0:
+                raise ValueError(
+                    "action-gated-queue-history-db-history limit must be positive",
+                )
+            history_db_config = (
+                from_action_gated_strategy_recommendation_queue_history_db_env()
+            )
+            if not history_db_config.enabled:
+                raise ValueError(
+                    "action-gated-queue-history-db-history requires "
+                    "action-gated queue history DB to be enabled",
+                )
+            dsn = history_db_config.dsn
+            if dsn is None:
+                raise ValueError(
+                    "action-gated-queue-history-db-history requires "
+                    "an action-gated queue history DB DSN",
+                )
+            try:
+                report = _run_action_gated_queue_history_db_history(
+                    dsn=dsn,
+                    table_name=history_db_config.table_name,
+                    latest_action_status=args.latest_action_status,
+                    limit=args.limit,
+                    runner=action_gated_queue_history_db_history_runner,
+                )
+            except Exception as exc:
+                _raise_redacted_db_read_error(exc, dsn=dsn)
+            _print_action_gated_queue_history_db_history_summary(report)
+            return 0
+        except Exception as exc:
+            print(
+                f"action-gated-queue-history-db-history failed: {exc}",
                 file=sys.stderr,
             )
             return 1
@@ -2586,6 +2644,53 @@ def _run_action_gated_queue_decision_support_trend_db_history(
     )
 
 
+def _run_action_gated_queue_history_db_history(
+    *,
+    dsn: str,
+    table_name: str,
+    latest_action_status: str | None,
+    limit: int,
+    runner: ActionGatedQueueHistoryDbHistoryRunner | None,
+) -> object:
+    generated_at = datetime.now(UTC)
+    config_version = "action-gated-queue-history-db-history-v0"
+    if runner is not None:
+        return runner(
+            dsn=dsn,
+            table_name=table_name,
+            latest_action_status=latest_action_status,
+            limit=limit,
+            config_version=config_version,
+            generated_at=generated_at,
+        )
+
+    from polymarket_alpha_lab.action_gated_strategy_recommendation_queue_history_db_history import (
+        PaperActionGatedStrategyRecommendationQueueHistoryDbHistoryConfig,
+        build_paper_action_gated_strategy_recommendation_queue_history_db_history_report,
+    )
+    from polymarket_alpha_lab.action_gated_strategy_recommendation_queue_history_psycopg import (
+        load_paper_action_gated_strategy_recommendation_queue_history_reports_with_psycopg,
+    )
+
+    history_reports = (
+        load_paper_action_gated_strategy_recommendation_queue_history_reports_with_psycopg(
+            dsn,
+            latest_action_status=latest_action_status,
+            limit=limit,
+            table_name=table_name,
+        )
+    )
+    return build_paper_action_gated_strategy_recommendation_queue_history_db_history_report(
+        history_reports,
+        config=(
+            PaperActionGatedStrategyRecommendationQueueHistoryDbHistoryConfig(
+                config_version=config_version,
+            )
+        ),
+        generated_at=generated_at,
+    )
+
+
 def _run_cost_audit(
     *,
     trade_log: Path,
@@ -3585,6 +3690,10 @@ def _print_cost_audit_db_trend_summary(
 
 
 def _print_cycle_snapshot_db_trend_summary(report: object) -> None:
+    reason_code_counts = ",".join(
+        f"{reason_code}:{count}" for reason_code, count in report.reason_code_counts
+    )
+    latest_reason_codes = ",".join(report.latest_reason_codes)
     print(
         "cycle-snapshot-db-trend: "
         f"snapshots={report.snapshot_count} "
@@ -3599,6 +3708,8 @@ def _print_cycle_snapshot_db_trend_summary(report: object) -> None:
         f"avg_stage_count={report.average_stage_count} "
         f"avg_artifact_count={report.average_artifact_count}",
     )
+    print(f"trend_reason_codes: {reason_code_counts or 'none'}")
+    print(f"latest_reason_codes: {latest_reason_codes or 'none'}")
 
 
 def _print_cycle_snapshot_db_review_summary(report: object) -> None:
@@ -3757,6 +3868,43 @@ def _print_action_gated_queue_decision_support_trend_db_history_summary(
         f"{report.consecutive_latest_watch_count} "
         "consecutive_latest_blocked_count="
         f"{report.consecutive_latest_blocked_count}",
+    )
+    print(f"latest_reason_codes: {reason_code_counts or 'none'}")
+
+
+def _print_action_gated_queue_history_db_history_summary(report: object) -> None:
+    status_counts = dict(report.action_status_counts)
+    reason_code_counts = ",".join(
+        f"{reason_code}:{count}" for reason_code, count in report.latest_reason_code_counts
+    )
+    print(
+        "action-gated-queue-history-db-history: "
+        f"history_report_count={report.history_report_count} "
+        "first_history_generated_at="
+        f"{_iso_or_none(report.first_history_generated_at)} "
+        "latest_history_generated_at="
+        f"{_iso_or_none(report.latest_history_generated_at)} "
+        f"latest_source_report_count="
+        f"{_none_or_value(report.latest_source_report_count)} "
+        f"latest_action_status={_none_or_value(report.latest_action_status)} "
+        "latest_recommended_next_step="
+        f"{_none_or_value(report.latest_recommended_next_step)} "
+        f"research_ready={status_counts.get('research_ready', 0)} "
+        f"watch={status_counts.get('watch', 0)} "
+        f"blocked={status_counts.get('blocked', 0)} "
+        f"duplicate_generated_at_count={report.duplicate_generated_at_count} "
+        "consecutive_latest_research_ready_count="
+        f"{report.consecutive_latest_research_ready_count} "
+        "consecutive_latest_watch_count="
+        f"{report.consecutive_latest_watch_count} "
+        "consecutive_latest_blocked_count="
+        f"{report.consecutive_latest_blocked_count} "
+        "latest_total_ready_notional="
+        f"{_none_or_value(report.latest_total_ready_notional)} "
+        "latest_ready_notional_delta="
+        f"{_none_or_value(report.latest_ready_notional_delta)} "
+        "latest_status_transition_count="
+        f"{_none_or_value(report.latest_status_transition_count)}",
     )
     print(f"latest_reason_codes: {reason_code_counts or 'none'}")
 

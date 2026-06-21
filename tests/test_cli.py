@@ -1973,6 +1973,11 @@ def test_cycle_snapshot_db_trend_cli_reads_db_config_and_prints_summary(
             watch_share=Decimal("0.333333"),
             average_stage_count=Decimal("4.000000"),
             average_artifact_count=Decimal("7.000000"),
+            reason_code_counts=(
+                ("blocked_snapshot", 2),
+                ("watch_snapshot", 1),
+            ),
+            latest_reason_codes=("blocked_snapshot", "thin_liquidity"),
             paper_only=True,
             report_only=True,
             readonly=True,
@@ -2013,6 +2018,8 @@ def test_cycle_snapshot_db_trend_cli_reads_db_config_and_prints_summary(
     assert "blocked=1" in captured.out
     assert "latest_status=blocked" in captured.out
     assert "blocked_share=0.333333" in captured.out
+    assert "trend_reason_codes: blocked_snapshot:2,watch_snapshot:1" in captured.out
+    assert "latest_reason_codes: blocked_snapshot,thin_liquidity" in captured.out
     assert "test-dsn-value" not in captured.out
     assert "test-dsn-value" not in captured.err
 
@@ -2173,6 +2180,14 @@ def test_cycle_snapshot_db_trend_cli_default_psycopg_load_path_no_network(
     assert "pass=1" in captured.out
     assert "blocked=1" in captured.out
     assert "latest_status=blocked" in captured.out
+    assert "trend_reason_codes:" in captured.out
+    assert "blocked_snapshot:1" in captured.out
+    assert "pass_snapshot:1" in captured.out
+    assert "pipeline_final_status_pass:2" in captured.out
+    assert (
+        "latest_reason_codes: "
+        "artifact_index_blocked,blocked_snapshot,pipeline_final_status_pass"
+    ) in captured.out
     assert fake_dsn not in captured.out
     assert fake_dsn not in captured.err
 

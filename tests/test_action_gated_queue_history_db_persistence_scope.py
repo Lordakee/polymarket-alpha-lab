@@ -139,6 +139,13 @@ def test_history_docs_state_persistence_only_boundary() -> None:
         "no cancellation",
         "no replacement",
         "no exchange mutation",
+        "persisted history db history",
+        "action-gated-queue-history-db-history",
+        "reads already-persisted history reports only",
+        "uses the same history db environment variables",
+        "supports only --limit",
+        "--latest-action-status research_ready|watch|blocked",
+        "never persists rows",
     ):
         assert required in text
 

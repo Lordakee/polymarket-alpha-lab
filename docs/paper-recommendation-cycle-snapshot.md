@@ -263,13 +263,15 @@ Expected trend outputs:
 - average stage/artifact count;
 - blocked share;
 - latest status;
-- optional future reason-code movement summaries when persisted history exposes
-  enough stable reason-code history.
+- aggregate reason-code counts across persisted snapshot history;
+- latest snapshot reason codes from the same snapshot used for latest status.
 
 Trend status is paper observability only. It can show that recent cycles are
 blocked more often, that a blocker persists, or that the latest cycle is watch,
-but it must not promote a paper recommendation, approve a row, rank
-investments, create order intent, or provide trade instruction.
+or which reason codes are recurring, but it must not promote a paper
+recommendation, approve a row, rank investments, create order intent, or provide
+trade instruction. Reason-code movement is readonly/report-only observability,
+not approval, instruction, or execution evidence by itself.
 
 ## Cost Assumption Artifacts
 

@@ -131,8 +131,10 @@ exchange mutations.
 
 DB-backed trend reporting remains separate readonly observability over
 persisted cycle state. It can summarize blocker/watch movement across stored
-snapshots, but it must not become an approval workflow, execution workflow,
-account review, or capital-deployment workflow.
+snapshots, aggregate reason-code counts across persisted snapshot history, and
+show latest snapshot reason codes from the same snapshot used for latest status,
+but it must not become an approval workflow, execution workflow, account review,
+or capital-deployment workflow.
 
 JSONL bundle logs may remain as append-only debug/export artifacts for local
 paper review, regression fixtures, or portability, but DB-backed snapshot
