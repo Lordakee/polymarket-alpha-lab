@@ -191,20 +191,22 @@ def test_db_foundation_does_not_define_live_auth_wallet_or_order_surfaces() -> N
             )
 
 
-def test_cli_has_no_paper_trade_cost_audit_db_wiring_or_dsn_flags() -> None:
-    cli_text = CLI_PATH.read_text(encoding="utf-8").lower()
+def test_cost_audit_cli_exposes_no_explicit_db_flags() -> None:
+    cli_text = CLI_PATH.read_text(encoding="utf-8")
+
+    command_index = cli_text.index('"cost-audit"')
+    next_command_index = cli_text.index('"history"', command_index)
+    command_block = cli_text[command_index:next_command_index]
+
+    assert "--persist" in command_block
 
     forbidden_cli_fragments = (
-        "paper-trade-cost-audit-db",
-        "paper_trade_cost_audit_db",
-        "paper-trade-cost-audit-dsn",
-        "paper-trade-cost-audit-table",
-        "paper_trade_cost_audit_psycopg",
-        "supabase_paper_trade_cost_audit_config",
-        "insert_paper_trade_cost_audit_report",
-        "load_paper_trade_cost_audit_reports",
+        "--paper-trade-cost-audit-db-dsn",
+        "--paper-trade-cost-audit-db-table",
+        "--paper-trade-cost-audit-db-enabled",
     )
     for fragment in forbidden_cli_fragments:
+        assert fragment not in command_block, fragment
         assert fragment not in cli_text, fragment
 
 

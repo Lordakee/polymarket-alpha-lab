@@ -30,12 +30,7 @@ FORBIDDEN_RUNTIME_FRAGMENTS = (
     "mutation",
 )
 CLI_PATH = Path("src/polymarket_alpha_lab/cli.py")
-FORBIDDEN_CLI_WIRING_FRAGMENTS = (
-    "strategy_risk_audit_psycopg",
-    "insert_strategy_risk_audit_report",
-    "load_strategy_risk_audit_reports",
-    "from_strategy_risk_audit_db_env",
-    "POLYMARKET_ALPHA_LAB_STRATEGY_RISK_AUDIT_DB_DSN",
+FORBIDDEN_CLI_FLAG_FRAGMENTS = (
     "--strategy-risk-audit-db-dsn",
     "--strategy-risk-audit-db-table",
     "--strategy-risk-audit-db-enabled",
@@ -54,8 +49,13 @@ def test_strategy_risk_audit_db_foundation_has_no_execution_surface() -> None:
         assert fragment not in combined
 
 
-def test_strategy_risk_audit_db_foundation_has_no_cli_wiring_or_dsn_flags() -> None:
-    cli_text = _read_lower(CLI_PATH)
+def test_strategy_risk_audit_db_foundation_exposes_no_explicit_cli_db_flags() -> None:
+    cli_text = CLI_PATH.read_text(encoding="utf-8")
 
-    for fragment in FORBIDDEN_CLI_WIRING_FRAGMENTS:
-        assert fragment.lower() not in cli_text
+    command_index = cli_text.index('"strategy-audit"')
+    next_command_index = cli_text.index('"strategy-audit-history"', command_index)
+    command_block = cli_text[command_index:next_command_index]
+
+    for fragment in FORBIDDEN_CLI_FLAG_FRAGMENTS:
+        assert fragment not in command_block
+        assert fragment not in cli_text

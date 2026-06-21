@@ -29,6 +29,11 @@ from polymarket_alpha_lab.local_observability_trends import (
     LocalObservabilityTrendsReport,
     run_local_observability_trends,
 )
+from polymarket_alpha_lab.local_observability_trends_db_history import (
+    LocalObservabilityTrendsDbHistoryConfig,
+    LocalObservabilityTrendsDbHistoryReport,
+    build_local_observability_trends_db_history_report,
+)
 from polymarket_alpha_lab.outcome_tracker import (
     OutcomeTrackingConfig,
     OutcomeTrackingLog,
@@ -50,6 +55,9 @@ from polymarket_alpha_lab.paper_trade_cost_audit import (
     PaperTradeCostAuditConfig,
     PaperTradeCostAuditReport,
     build_paper_trade_cost_audit_report,
+)
+from polymarket_alpha_lab.paper_trade_cost_audit_psycopg import (
+    insert_paper_trade_cost_audit_report_with_psycopg,
 )
 from polymarket_alpha_lab.pipeline import MarketScanConfig, run_market_scan
 from polymarket_alpha_lab.positions import PaperNavLog, PaperNavSnapshot
@@ -101,6 +109,9 @@ from polymarket_alpha_lab.strategy_risk_audit import (
     PaperStrategyRiskAuditReport,
     build_paper_strategy_risk_audit_report,
 )
+from polymarket_alpha_lab.strategy_risk_audit_psycopg import (
+    insert_strategy_risk_audit_report_with_psycopg,
+)
 from polymarket_alpha_lab.strategy_risk_audit_log import PaperStrategyRiskAuditLog
 from polymarket_alpha_lab.strategy_cycle_snapshot_source import (
     build_strategy_cycle_snapshot_source_report,
@@ -129,8 +140,14 @@ from polymarket_alpha_lab.supabase_outcome_tracking_config import (
 from polymarket_alpha_lab.supabase_paper_nav_snapshot_config import (
     from_paper_nav_snapshot_db_env,
 )
+from polymarket_alpha_lab.supabase_paper_trade_cost_audit_config import (
+    from_paper_trade_cost_audit_db_env,
+)
 from polymarket_alpha_lab.supabase_paper_trade_journal_config import (
     from_paper_trade_journal_db_env,
+)
+from polymarket_alpha_lab.supabase_strategy_risk_audit_config import (
+    from_strategy_risk_audit_db_env,
 )
 
 if TYPE_CHECKING:
@@ -150,6 +167,8 @@ OutcomeRunner = Callable[..., OutcomeTrackingReport]
 OutcomeTrackingDbSink = Callable[..., object]
 PaperTradeRecordDbSink = Callable[..., object]
 PaperNavSnapshotDbSink = Callable[..., object]
+PaperTradeCostAuditDbSink = Callable[..., object]
+StrategyRiskAuditDbSink = Callable[..., object]
 NavRiskRunner = Callable[..., "PaperNavRiskMetricsReport"]
 StrategyAuditRunner = Callable[..., PaperStrategyRiskAuditReport]
 StrategyAuditHistoryRunner = Callable[..., PaperStrategyRiskAuditHistoryReport]
@@ -160,6 +179,10 @@ StrategyRecommendationHistoryRunner = Callable[
 CostAuditRunner = Callable[..., PaperTradeCostAuditReport]
 StrategyEvidenceRunner = Callable[..., "PaperStrategyEvidenceSnapshotReport"]
 ObservabilityTrendsRunner = Callable[..., LocalObservabilityTrendsReport]
+LocalObservabilityTrendsDbHistoryRunner = Callable[
+    ...,
+    LocalObservabilityTrendsDbHistoryReport,
+]
 LocalObservabilityTrendsDbSink = Callable[..., object]
 CycleSnapshotSource = Callable[..., object]
 CycleSnapshotDbSink = Callable[..., object]
@@ -267,6 +290,12 @@ def main(
     paper_nav_snapshot_db_sink: PaperNavSnapshotDbSink = (
         insert_paper_nav_snapshot_with_psycopg
     ),
+    paper_trade_cost_audit_db_sink: PaperTradeCostAuditDbSink = (
+        insert_paper_trade_cost_audit_report_with_psycopg
+    ),
+    strategy_risk_audit_db_sink: StrategyRiskAuditDbSink = (
+        insert_strategy_risk_audit_report_with_psycopg
+    ),
     strategy_audit_runner: StrategyAuditRunner | None = None,
     strategy_audit_history_runner: StrategyAuditHistoryRunner | None = None,
     strategy_recommendation_history_runner: (
@@ -277,6 +306,9 @@ def main(
     observability_trends_runner: ObservabilityTrendsRunner = (
         run_local_observability_trends
     ),
+    local_observability_trends_db_history_runner: (
+        LocalObservabilityTrendsDbHistoryRunner | None
+    ) = None,
     local_observability_trends_db_sink: LocalObservabilityTrendsDbSink | None = None,
     cycle_snapshot_source: CycleSnapshotSource | None = None,
     cycle_snapshot_db_sink: CycleSnapshotDbSink = (
@@ -390,6 +422,12 @@ def main(
         required=True,
         dest="trade_log",
     )
+    cost_audit.add_argument(
+        "--persist",
+        action="store_true",
+        default=False,
+        dest="persist",
+    )
 
     history = subparsers.add_parser("history")
     history.add_argument(
@@ -441,6 +479,12 @@ def main(
         type=Path,
         default=None,
         dest="strategy_audit_log",
+    )
+    strategy_audit.add_argument(
+        "--persist",
+        action="store_true",
+        default=False,
+        dest="persist",
     )
 
     strategy_audit_history = subparsers.add_parser("strategy-audit-history")
@@ -535,6 +579,15 @@ def main(
         action="store_true",
         default=False,
         dest="persist",
+    )
+
+    local_observability_trends_db_history = subparsers.add_parser(
+        "local-observability-trends-db-history",
+    )
+    local_observability_trends_db_history.add_argument(
+        "--limit",
+        type=int,
+        default=100,
     )
 
     cycle_snapshot_db_trend = subparsers.add_parser("cycle-snapshot-db-trend")
@@ -931,10 +984,42 @@ def main(
 
     if args.command == "cost-audit":
         try:
+            cost_audit_report_sink = None
+            if args.persist:
+                paper_trade_cost_audit_db_config = from_paper_trade_cost_audit_db_env()
+                if not paper_trade_cost_audit_db_config.enabled:
+                    raise ValueError(
+                        "cost-audit persistence requires paper trade cost audit "
+                        "DB to be enabled",
+                    )
+                dsn = paper_trade_cost_audit_db_config.dsn
+                if dsn is None:
+                    raise ValueError(
+                        "cost-audit persistence requires a paper trade cost "
+                        "audit DB DSN",
+                    )
+
+                def cost_audit_report_sink(
+                    report: PaperTradeCostAuditReport,
+                    *,
+                    db_dsn: str = dsn,
+                    table_name: str = paper_trade_cost_audit_db_config.table_name,
+                ) -> object:
+                    try:
+                        return paper_trade_cost_audit_db_sink(
+                            dsn=db_dsn,
+                            report=report,
+                            table_name=table_name,
+                        )
+                    except Exception as exc:
+                        _raise_redacted_db_sink_error(exc, dsn=db_dsn)
+
             report = _run_cost_audit(
                 trade_log=args.trade_log,
                 runner=cost_audit_runner,
             )
+            if cost_audit_report_sink is not None:
+                cost_audit_report_sink(report)
             _print_cost_audit_summary(report)
             return 0
         except Exception as exc:
@@ -957,6 +1042,36 @@ def main(
 
     if args.command == "strategy-audit":
         try:
+            strategy_audit_report_sink = None
+            if args.persist:
+                strategy_risk_audit_db_config = from_strategy_risk_audit_db_env()
+                if not strategy_risk_audit_db_config.enabled:
+                    raise ValueError(
+                        "strategy-audit persistence requires strategy risk "
+                        "audit DB to be enabled",
+                    )
+                dsn = strategy_risk_audit_db_config.dsn
+                if dsn is None:
+                    raise ValueError(
+                        "strategy-audit persistence requires a strategy risk "
+                        "audit DB DSN",
+                    )
+
+                def strategy_audit_report_sink(
+                    report: PaperStrategyRiskAuditReport,
+                    *,
+                    db_dsn: str = dsn,
+                    table_name: str = strategy_risk_audit_db_config.table_name,
+                ) -> object:
+                    try:
+                        return strategy_risk_audit_db_sink(
+                            dsn=db_dsn,
+                            report=report,
+                            table_name=table_name,
+                        )
+                    except Exception as exc:
+                        _raise_redacted_db_sink_error(exc, dsn=db_dsn)
+
             report = _run_strategy_audit(
                 cycle_log=args.cycle_log,
                 trade_log=args.trade_log,
@@ -966,7 +1081,11 @@ def main(
             )
             if args.strategy_audit_log is not None:
                 PaperStrategyRiskAuditLog(args.strategy_audit_log).append(report)
-            _print_strategy_audit_summary(report)
+            persisted = False
+            if strategy_audit_report_sink is not None:
+                strategy_audit_report_sink(report)
+                persisted = True
+            _print_strategy_audit_summary(report, persisted=persisted)
             return 0
         except Exception as exc:
             print(f"strategy-audit failed: {exc}", file=sys.stderr)
@@ -1086,6 +1205,48 @@ def main(
             return 0
         except Exception as exc:
             print(f"observability-trends failed: {exc}", file=sys.stderr)
+            return 1
+
+    if args.command == "local-observability-trends-db-history":
+        try:
+            from polymarket_alpha_lab.supabase_local_observability_trends_config import (
+                from_local_observability_trends_db_env,
+            )
+
+            if args.limit <= 0:
+                raise ValueError(
+                    "local-observability-trends-db-history limit must be positive",
+                )
+            observability_trends_db_config = (
+                from_local_observability_trends_db_env()
+            )
+            if not observability_trends_db_config.enabled:
+                raise ValueError(
+                    "local-observability-trends-db-history requires local "
+                    "observability trends DB to be enabled",
+                )
+            dsn = observability_trends_db_config.dsn
+            if dsn is None:
+                raise ValueError(
+                    "local-observability-trends-db-history requires a local "
+                    "observability trends DB DSN",
+                )
+            try:
+                report = _run_local_observability_trends_db_history(
+                    dsn=dsn,
+                    table_name=observability_trends_db_config.table_name,
+                    limit=args.limit,
+                    runner=local_observability_trends_db_history_runner,
+                )
+            except Exception as exc:
+                _raise_redacted_db_read_error(exc, dsn=dsn)
+            _print_local_observability_trends_db_history_summary(report)
+            return 0
+        except Exception as exc:
+            print(
+                f"local-observability-trends-db-history failed: {exc}",
+                file=sys.stderr,
+            )
             return 1
 
     if args.command == "cycle-snapshot-db-trend":
@@ -2492,6 +2653,62 @@ def _run_strategy_evidence(
     )
 
 
+def _run_local_observability_trends_db_history(
+    *,
+    dsn: str,
+    table_name: str,
+    limit: int,
+    runner: LocalObservabilityTrendsDbHistoryRunner | None,
+) -> LocalObservabilityTrendsDbHistoryReport:
+    generated_at = datetime.now(UTC)
+    config = LocalObservabilityTrendsDbHistoryConfig(
+        config_version="local-observability-trends-db-history-v0",
+    )
+    if runner is not None:
+        return runner(
+            dsn=dsn,
+            table_name=table_name,
+            limit=limit,
+            config=config,
+            generated_at=generated_at,
+        )
+
+    from polymarket_alpha_lab.local_observability_trends_db_history_load import (
+        load_local_observability_trends_db_history_report,
+    )
+
+    try:
+        import psycopg
+    except ModuleNotFoundError as exc:
+        if exc.name != "psycopg":
+            raise
+        raise RuntimeError(
+            "psycopg is required to use the local observability trends "
+            "psycopg adapter; install the postgres extra.",
+        ) from exc
+    try:
+        connection = psycopg.connect(dsn)
+    except Exception:
+        raise RuntimeError(
+            "failed to connect to the local observability trends database",
+        ) from None
+    try:
+        report = load_local_observability_trends_db_history_report(
+            generated_at=generated_at,
+            config_version=config.config_version,
+            connection=connection,
+            limit=limit,
+            table_name=table_name,
+        )
+        connection.commit()
+        return report
+    except BaseException:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
 def _print_nav_risk_summary(report: "PaperNavRiskMetricsReport") -> None:
     """Print a compact NAV risk report summary to stdout."""
 
@@ -2555,7 +2772,11 @@ def _print_performance_summary(summary: PerformanceSummary) -> None:
         )
 
 
-def _print_strategy_audit_summary(report: PaperStrategyRiskAuditReport) -> None:
+def _print_strategy_audit_summary(
+    report: PaperStrategyRiskAuditReport,
+    *,
+    persisted: bool = False,
+) -> None:
     """Print a compact local strategy audit summary."""
 
     print(
@@ -2564,7 +2785,8 @@ def _print_strategy_audit_summary(report: PaperStrategyRiskAuditReport) -> None:
         f"gates={report.gate_count} "
         f"pass={report.pass_count} "
         f"fail={report.fail_count} "
-        f"incomplete={report.incomplete_count}",
+        f"incomplete={report.incomplete_count} "
+        f"persisted={persisted}",
     )
     for gate in report.gate_results:
         print(
@@ -2737,6 +2959,37 @@ def _print_observability_trends_summary(
     print(
         "  cost_latest_mean_edge_cost_drag="
         f"{_none_or_value(cost.latest_mean_edge_cost_drag)}",
+    )
+
+
+def _print_local_observability_trends_db_history_summary(
+    report: LocalObservabilityTrendsDbHistoryReport,
+) -> None:
+    print(
+        "local-observability-trends-db-history: "
+        f"status={report.status} "
+        f"report_count={report.report_count} "
+        f"first_report_generated_at={_iso_or_none(report.first_report_generated_at)} "
+        f"latest_report_generated_at={_iso_or_none(report.latest_report_generated_at)} "
+        "latest_strategy_evidence_status="
+        f"{_none_or_value(report.latest_strategy_evidence_status)} "
+        f"latest_outcome_status={_none_or_value(report.latest_outcome_status)} "
+        f"latest_nav_status={_none_or_value(report.latest_nav_status)} "
+        f"latest_cost_status={_none_or_value(report.latest_cost_status)} "
+        f"duplicate_generated_at_count={report.duplicate_generated_at_count} "
+        f"consecutive_outcome_stale_count={report.consecutive_outcome_stale_count} "
+        "consecutive_nav_warning_or_high_risk_count="
+        f"{report.consecutive_nav_warning_or_high_risk_count} "
+        "consecutive_cost_warning_or_critical_count="
+        f"{report.consecutive_cost_warning_or_critical_count}",
+    )
+    print(
+        "  status_rows: "
+        "strategy_evidence="
+        f"{_format_history_status_row_counts(report.strategy_evidence_status_rows)} "
+        f"outcome={_format_history_status_row_counts(report.outcome_status_rows)} "
+        f"nav={_format_history_status_row_counts(report.nav_status_rows)} "
+        f"cost={_format_history_status_row_counts(report.cost_status_rows)}",
     )
 
 
@@ -2918,6 +3171,13 @@ def _csv_or_none(values: tuple[str, ...]) -> str:
 
 def _none_or_value(value: object | None) -> str:
     return "none" if value is None else str(value)
+
+
+def _format_history_status_row_counts(rows: tuple[object, ...]) -> str:
+    return ",".join(
+        f"{row.status}:{row.report_count}"
+        for row in rows
+    )
 
 
 def _print_run_loop_summary(summary: RunLoopSummary) -> None:
