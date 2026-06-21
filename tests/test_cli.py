@@ -2195,6 +2195,387 @@ def test_paper_recommendation_reason_trend_cli_missing_log_returns_one_without_c
     assert "missing-strategy-recommendations.jsonl" in captured.err
 
 
+def _paper_probability_side_edge_input_row(
+    *,
+    market_slug: str,
+    side: str,
+    forecast_probability: Decimal,
+    side_price: Decimal,
+    fee_cost_per_share: Decimal,
+    spread_cost_per_share: Decimal = Decimal("0"),
+    slippage_cost_per_share: Decimal = Decimal("0"),
+    funding_cost_per_share: Decimal = Decimal("0"),
+    finalization_cost_per_share: Decimal = Decimal("0"),
+    time_cost_per_share: Decimal = Decimal("0"),
+    risk_cost_per_share: Decimal = Decimal("0"),
+    capital_cost_per_share: Decimal = Decimal("0"),
+    requested_paper_shares: Decimal = Decimal("100.000000"),
+    max_executable_shares: Decimal = Decimal("100.000000"),
+    market_context_fresh: bool = True,
+    settlement_context_fresh: bool = True,
+    reason_codes: tuple[str, ...] = ("seed",),
+) -> dict[str, object]:
+    return {
+        "market_slug": market_slug,
+        "question": "Will alpha happen?",
+        "side": side,
+        "forecast_probability": str(forecast_probability),
+        "side_price": str(side_price),
+        "fee_cost_per_share": str(fee_cost_per_share),
+        "spread_cost_per_share": str(spread_cost_per_share),
+        "slippage_cost_per_share": str(slippage_cost_per_share),
+        "funding_cost_per_share": str(funding_cost_per_share),
+        "finalization_cost_per_share": str(finalization_cost_per_share),
+        "time_cost_per_share": str(time_cost_per_share),
+        "risk_cost_per_share": str(risk_cost_per_share),
+        "capital_cost_per_share": str(capital_cost_per_share),
+        "requested_paper_shares": str(requested_paper_shares),
+        "max_executable_shares": str(max_executable_shares),
+        "market_context_fresh": market_context_fresh,
+        "settlement_context_fresh": settlement_context_fresh,
+        "reason_codes": list(reason_codes),
+        "paper_only": True,
+        "report_only": True,
+        "readonly": True,
+    }
+
+
+def _write_jsonl(path, rows):
+    path.write_text(
+        "\n".join(json.dumps(row, sort_keys=True) for row in rows) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _write_json(path, payload):
+    path.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _paper_probability_side_edge_sample_rows() -> tuple[dict[str, object], ...]:
+    return (
+        _paper_probability_side_edge_input_row(
+            market_slug="recommend-row",
+            side="yes",
+            forecast_probability=Decimal("0.640000"),
+            side_price=Decimal("0.570000"),
+            fee_cost_per_share=Decimal("0.010000"),
+            spread_cost_per_share=Decimal("0.002000"),
+            slippage_cost_per_share=Decimal("0.003000"),
+            funding_cost_per_share=Decimal("0.004000"),
+            finalization_cost_per_share=Decimal("0.005000"),
+            time_cost_per_share=Decimal("0.006000"),
+            risk_cost_per_share=Decimal("0.007000"),
+            capital_cost_per_share=Decimal("0.008000"),
+            reason_codes=("recommend_seed",),
+        ),
+        _paper_probability_side_edge_input_row(
+            market_slug="watch-row",
+            side="yes",
+            forecast_probability=Decimal("0.640000"),
+            side_price=Decimal("0.610000"),
+            fee_cost_per_share=Decimal("0.010000"),
+            market_context_fresh=False,
+            reason_codes=("watch_seed",),
+        ),
+        _paper_probability_side_edge_input_row(
+            market_slug="reject-row",
+            side="yes",
+            forecast_probability=Decimal("0.550000"),
+            side_price=Decimal("0.570000"),
+            fee_cost_per_share=Decimal("0.010000"),
+            reason_codes=("reject_seed",),
+        ),
+    )
+
+
+def _assert_paper_probability_side_edge_summary(
+    output: str,
+    *,
+    input_rows: int = 3,
+    row_count: int = 3,
+    recommend: int = 1,
+    watch: int = 1,
+    reject: int = 1,
+    reason_tokens: tuple[str, ...] = (
+        "recommend_seed",
+        "watch_seed",
+        "reject_seed",
+    ),
+) -> None:
+    assert "paper-probability-side-edge-report:" in output
+    assert f"input_rows={input_rows}" in output
+    assert f"row_count={row_count}" in output
+    assert f"recommend={recommend}" in output
+    assert f"watch={watch}" in output
+    assert f"reject={reject}" in output
+    assert "paper_only=True report_only=True readonly=True" in output
+    for reason_token in reason_tokens:
+        assert reason_token in output
+    assert "reason_code_counts:" in output
+
+
+def test_paper_probability_side_edge_report_cli_reads_local_jsonl_without_client(
+    tmp_path,
+    capsys,
+):
+    input_path = tmp_path / "paper-probability-side-edge.jsonl"
+    _write_jsonl(input_path, _paper_probability_side_edge_sample_rows())
+    before = input_path.read_bytes()
+    client_factory_calls = 0
+
+    def forbidden_client_factory():
+        nonlocal client_factory_calls
+        client_factory_calls += 1
+        raise AssertionError("client should not be constructed")
+
+    exit_code = main(
+        [
+            "paper-probability-side-edge-report",
+            "--input",
+            str(input_path),
+        ],
+        client_factory=forbidden_client_factory,
+    )
+
+    assert exit_code == 0
+    assert client_factory_calls == 0
+    assert input_path.read_bytes() == before
+    captured = capsys.readouterr()
+    _assert_paper_probability_side_edge_summary(captured.out)
+
+
+def test_paper_probability_side_edge_report_cli_reads_local_json_array_without_client(
+    tmp_path,
+    capsys,
+):
+    input_path = tmp_path / "paper-probability-side-edge.json"
+    _write_json(input_path, list(_paper_probability_side_edge_sample_rows()))
+    before = input_path.read_bytes()
+    client_factory_calls = 0
+
+    def forbidden_client_factory():
+        nonlocal client_factory_calls
+        client_factory_calls += 1
+        raise AssertionError("client should not be constructed")
+
+    exit_code = main(
+        [
+            "paper-probability-side-edge-report",
+            "--input",
+            str(input_path),
+        ],
+        client_factory=forbidden_client_factory,
+    )
+
+    assert exit_code == 0
+    assert client_factory_calls == 0
+    assert input_path.read_bytes() == before
+    captured = capsys.readouterr()
+    _assert_paper_probability_side_edge_summary(captured.out)
+
+
+def test_paper_probability_side_edge_report_cli_reads_rows_object_without_client(
+    tmp_path,
+    capsys,
+):
+    input_path = tmp_path / "paper-probability-side-edge.json"
+    _write_json(input_path, {"rows": list(_paper_probability_side_edge_sample_rows())})
+    before = input_path.read_bytes()
+    client_factory_calls = 0
+
+    def forbidden_client_factory():
+        nonlocal client_factory_calls
+        client_factory_calls += 1
+        raise AssertionError("client should not be constructed")
+
+    exit_code = main(
+        [
+            "paper-probability-side-edge-report",
+            "--input",
+            str(input_path),
+        ],
+        client_factory=forbidden_client_factory,
+    )
+
+    assert exit_code == 0
+    assert client_factory_calls == 0
+    assert input_path.read_bytes() == before
+    captured = capsys.readouterr()
+    _assert_paper_probability_side_edge_summary(captured.out)
+
+
+def test_paper_probability_side_edge_report_cli_empty_input_prints_zero_without_client(
+    tmp_path,
+    capsys,
+):
+    input_path = tmp_path / "empty-paper-probability-side-edge.jsonl"
+    input_path.write_text("", encoding="utf-8")
+    client_factory_calls = 0
+
+    def forbidden_client_factory():
+        nonlocal client_factory_calls
+        client_factory_calls += 1
+        raise AssertionError("client should not be constructed")
+
+    exit_code = main(
+        [
+            "paper-probability-side-edge-report",
+            "--input",
+            str(input_path),
+        ],
+        client_factory=forbidden_client_factory,
+    )
+
+    assert exit_code == 0
+    assert client_factory_calls == 0
+    assert input_path.read_bytes() == b""
+    captured = capsys.readouterr()
+    _assert_paper_probability_side_edge_summary(
+        captured.out,
+        input_rows=0,
+        row_count=0,
+        recommend=0,
+        watch=0,
+        reject=0,
+        reason_tokens=(),
+    )
+
+
+@pytest.mark.parametrize("envelope_key", ("inputs", "input_rows"))
+def test_paper_probability_side_edge_report_cli_reads_other_envelope_keys_without_client(
+    tmp_path,
+    capsys,
+    envelope_key,
+):
+    input_path = tmp_path / f"paper-probability-side-edge-{envelope_key}.json"
+    _write_json(
+        input_path,
+        {envelope_key: list(_paper_probability_side_edge_sample_rows())},
+    )
+    before = input_path.read_bytes()
+    client_factory_calls = 0
+
+    def forbidden_client_factory():
+        nonlocal client_factory_calls
+        client_factory_calls += 1
+        raise AssertionError("client should not be constructed")
+
+    exit_code = main(
+        [
+            "paper-probability-side-edge-report",
+            "--input",
+            str(input_path),
+        ],
+        client_factory=forbidden_client_factory,
+    )
+
+    assert exit_code == 0
+    assert client_factory_calls == 0
+    assert input_path.read_bytes() == before
+    captured = capsys.readouterr()
+    _assert_paper_probability_side_edge_summary(captured.out)
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected_fragment"),
+    (
+        ([[]], "input row 1 must be a JSON object"),
+        ([{"foo": "bar"}], "input row 1 is not a valid PaperSideEdgeAdapterInput"),
+    ),
+)
+def test_paper_probability_side_edge_report_cli_invalid_row_returns_one_without_client(
+    tmp_path,
+    capsys,
+    payload,
+    expected_fragment,
+):
+    input_path = tmp_path / "invalid-paper-probability-side-edge.json"
+    _write_json(input_path, payload)
+    client_factory_calls = 0
+
+    def forbidden_client_factory():
+        nonlocal client_factory_calls
+        client_factory_calls += 1
+        raise AssertionError("client should not be constructed")
+
+    exit_code = main(
+        [
+            "paper-probability-side-edge-report",
+            "--input",
+            str(input_path),
+        ],
+        client_factory=forbidden_client_factory,
+    )
+
+    assert exit_code == 1
+    assert client_factory_calls == 0
+    captured = capsys.readouterr()
+    assert "paper-probability-side-edge-report failed:" in captured.err
+    assert expected_fragment in captured.err
+
+
+def test_paper_probability_side_edge_report_cli_malformed_jsonl_returns_one_without_client(
+    tmp_path,
+    capsys,
+):
+    input_path = tmp_path / "bad-paper-probability-side-edge.jsonl"
+    _write_jsonl(input_path, (_paper_probability_side_edge_sample_rows()[0],))
+    with input_path.open("a", encoding="utf-8") as handle:
+        handle.write("{not-json}\n")
+    client_factory_calls = 0
+
+    def forbidden_client_factory():
+        nonlocal client_factory_calls
+        client_factory_calls += 1
+        raise AssertionError("client should not be constructed")
+
+    exit_code = main(
+        [
+            "paper-probability-side-edge-report",
+            "--input",
+            str(input_path),
+        ],
+        client_factory=forbidden_client_factory,
+    )
+
+    assert exit_code == 1
+    assert client_factory_calls == 0
+    captured = capsys.readouterr()
+    assert "paper-probability-side-edge-report failed:" in captured.err
+    assert "bad-paper-probability-side-edge.jsonl" in captured.err
+    assert "line 2 is not valid JSON" in captured.err
+
+
+def test_paper_probability_side_edge_report_cli_missing_input_returns_one_without_client(
+    tmp_path,
+    capsys,
+):
+    input_path = tmp_path / "missing-paper-probability-side-edge.jsonl"
+    assert not input_path.exists()
+    client_factory_calls = 0
+
+    def forbidden_client_factory():
+        nonlocal client_factory_calls
+        client_factory_calls += 1
+        raise AssertionError("client should not be constructed")
+
+    exit_code = main(
+        [
+            "paper-probability-side-edge-report",
+            "--input",
+            str(input_path),
+        ],
+        client_factory=forbidden_client_factory,
+    )
+
+    assert exit_code == 1
+    assert client_factory_calls == 0
+    assert not input_path.exists()
+    captured = capsys.readouterr()
+    assert "paper-probability-side-edge-report failed:" in captured.err
+    assert "missing-paper-probability-side-edge.jsonl" in captured.err
+
+
 def test_cycle_snapshot_db_trend_cli_requires_enabled_db_config(
     monkeypatch,
     capsys,

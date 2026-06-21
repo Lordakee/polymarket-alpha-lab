@@ -210,14 +210,17 @@ insufficient evidence.
 ## Next Stage Modules
 
 The next stage should split the paper recommendation loop into small reducer
-modules that can be developed in parallel. Each module consumes local paper
-inputs or prior paper reports, emits deterministic report rows, and keeps hard
-`paper_only`, `report_only`, and `readonly` flags.
+modules that can be developed in parallel. This is a strict phase boundary:
+each module consumes local paper inputs or prior paper reports, emits
+deterministic report rows, and keeps hard `paper_only`, `report_only`, and
+`readonly` flags. Any CLI surface for these reducers should stay report-only
+and local-file driven.
 
 Reducer modules for this stage are:
 
-- `paper_probability_side_edge` for side-level YES/NO probability edge rows.
-- `paper_capital_cost` for explicit paper capital carrying-cost estimates.
+- `paper_probability_side_edge` for side-aware YES/NO probability-event edge
+  rows.
+- `paper_capital_cost` for explicit paper capital cost estimates.
 - `paper_side_edge_adapter` for converting supplied strategy/economics rows into
   canonical side-edge inputs.
 - `paper_probability_recommendation_queue` for side-edge review/research queue
@@ -248,11 +251,12 @@ Reducer modules for this stage are:
   source status and transition trends across recovered paper recommendation
   reports.
 
-Those reducer modules are paper-only/report-only/readonly surfaces.
-`paper_recommendation_reason_trend` is implemented; the remaining reducers are
-planned and should not be package-root exports. Phase 2 modules should not
-import the planned reducers. Until a parallel worker creates one of them,
-documentation and boundary tests should treat each planned reducer name as
+Those reducer modules are paper-only/report-only/readonly surfaces, including
+the queue, risk-budget, and reason-trend pieces that feed the report-only
+workflow. `paper_recommendation_reason_trend` is implemented; the remaining
+reducers are planned and should not be package-root exports. Phase 2 modules
+should not import the planned reducers. Until a parallel worker creates one of
+them, documentation and boundary tests should treat each planned reducer name as
 planned scope only rather than importing it.
 
 ### Probability Side Edge
@@ -334,11 +338,19 @@ reducers, and print deterministic summaries. Useful commands would print side
 edge counts, queue counts, risk-budget allocations, top reason codes, and
 latest-run deltas.
 
-The implemented reason-trend slice is:
+The implemented report-only CLI slices are:
 
 ```bash
+polymarket-alpha-lab paper-probability-side-edge-report --input <path>
 polymarket-alpha-lab paper-recommendation-reason-trend --recommendation-log <path>
 ```
+
+The side-edge report command reads supplied local JSON or JSONL side-edge row
+inputs, recovers them as paper side-edge adapter inputs, builds the readonly
+probability side-edge reducer, and prints deterministic input, row,
+recommend/watch/reject, and reason-code counts. The input rows are paper
+strategy/economics evidence only; they are not order tickets or execution
+instructions.
 
 This command reads the supplied local JSONL strategy recommendation bundle log,
 recovers bundle entries, builds the paper recommendation reason-trend reducer,
@@ -349,8 +361,9 @@ and status-transition counts for recovered local bundle reports.
 CLI commands in this phase must not create live clients, fetch live exchange
 state, authenticate, read wallet or private-key material, sign payloads,
 construct real order payloads, submit orders, cancel orders, or mutate exchange
-or network state. `paper-recommendation-reason-trend` also must not append logs,
-write artifacts, inspect accounts, approve trades, or touch live state.
+or network state. `paper-probability-side-edge-report` and
+`paper-recommendation-reason-trend` also must not append logs, write artifacts,
+inspect accounts, approve trades, or touch live state.
 
 ### Parallel Development Boundaries
 

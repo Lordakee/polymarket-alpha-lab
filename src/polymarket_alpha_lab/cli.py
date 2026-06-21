@@ -173,6 +173,9 @@ from polymarket_alpha_lab.supabase_strategy_risk_audit_config import (
 
 if TYPE_CHECKING:
     from polymarket_alpha_lab.nav_risk_metrics import PaperNavRiskMetricsReport
+    from polymarket_alpha_lab.paper_probability_side_edge import (
+        PaperProbabilitySideEdgeReport,
+    )
     from polymarket_alpha_lab.strategy_evidence import (
         PaperStrategyEvidenceSnapshotReport,
     )
@@ -603,6 +606,15 @@ def main(
         type=Path,
         required=True,
         dest="recommendation_log",
+    )
+    paper_probability_side_edge_report = subparsers.add_parser(
+        "paper-probability-side-edge-report",
+    )
+    paper_probability_side_edge_report.add_argument(
+        "--input",
+        type=Path,
+        required=True,
+        dest="input_path",
     )
 
     strategy_evidence = subparsers.add_parser("strategy-evidence")
@@ -1412,6 +1424,23 @@ def main(
         except Exception as exc:
             print(
                 f"paper-recommendation-reason-trend failed: {exc}",
+                file=sys.stderr,
+            )
+            return 1
+
+    if args.command == "paper-probability-side-edge-report":
+        try:
+            report, reason_code_counts = _run_paper_probability_side_edge_report(
+                input_path=args.input_path,
+            )
+            _print_paper_probability_side_edge_report_summary(
+                report,
+                reason_code_counts=reason_code_counts,
+            )
+            return 0
+        except Exception as exc:
+            print(
+                f"paper-probability-side-edge-report failed: {exc}",
                 file=sys.stderr,
             )
             return 1
@@ -3116,6 +3145,103 @@ def _run_paper_recommendation_reason_trend(
     return report, action_counts, reason_code_counts
 
 
+def _run_paper_probability_side_edge_report(
+    *,
+    input_path: Path,
+) -> tuple["PaperProbabilitySideEdgeReport", Counter[str]]:
+    from polymarket_alpha_lab.json_recovery import from_jsonable
+    from polymarket_alpha_lab.paper_side_edge_adapter import (
+        PaperSideEdgeAdapterConfig,
+        PaperSideEdgeAdapterInput,
+        build_paper_side_edge_report_from_strategy_rows,
+    )
+
+    raw_rows = _read_paper_probability_side_edge_row_payloads(input_path)
+    rows = tuple(
+        _paper_probability_side_edge_input_from_payload(
+            row,
+            row_number=row_number,
+            input_type=PaperSideEdgeAdapterInput,
+            recover=from_jsonable,
+        )
+        for row_number, row in enumerate(raw_rows, start=1)
+    )
+    report = build_paper_side_edge_report_from_strategy_rows(
+        rows,
+        config=PaperSideEdgeAdapterConfig(
+            config_version="paper-probability-side-edge-report-v0",
+            min_net_probability_edge=Decimal("0.010000"),
+        ),
+        generated_at=datetime.now(UTC),
+    )
+    reason_code_counts: Counter[str] = Counter(
+        reason_code
+        for row in report.rows
+        for reason_code in row.reason_codes
+    )
+    return report, reason_code_counts
+
+
+def _read_paper_probability_side_edge_row_payloads(
+    path: Path,
+) -> tuple[object, ...]:
+    import json
+
+    text = path.read_text(encoding="utf-8")
+    stripped = text.strip()
+    if not stripped:
+        return ()
+    try:
+        parsed = json.loads(stripped)
+    except json.JSONDecodeError:
+        rows: list[object] = []
+        for line_number, raw_line in enumerate(text.splitlines(), start=1):
+            line = raw_line.strip()
+            if not line:
+                continue
+            try:
+                rows.append(json.loads(line))
+            except json.JSONDecodeError as exc:
+                raise ValueError(
+                    f"{path} line {line_number} is not valid JSON: {exc}",
+                ) from exc
+        if not rows:
+            return ()
+        return tuple(rows)
+    if isinstance(parsed, list):
+        return tuple(parsed)
+    if isinstance(parsed, dict):
+        for field_name in ("rows", "inputs", "input_rows"):
+            if field_name not in parsed:
+                continue
+            value = parsed[field_name]
+            if not isinstance(value, list):
+                raise ValueError(f"{path} {field_name} must be a JSON array")
+            return tuple(value)
+        return (parsed,)
+    raise ValueError(
+        f"{path} input must be a JSON object, JSON array, or JSONL file",
+    )
+
+
+def _paper_probability_side_edge_input_from_payload(
+    row: object,
+    *,
+    row_number: int,
+    input_type: type[object],
+    recover: Callable[[type[object], dict[str, object]], object],
+) -> object:
+    if not isinstance(row, dict):
+        raise ValueError(f"input row {row_number} must be a JSON object")
+    try:
+        return recover(input_type, row)
+    except (AttributeError, KeyError, TypeError, ValueError) as exc:
+        raise ValueError(
+            "input row "
+            f"{row_number} is not a valid PaperSideEdgeAdapterInput: {exc}",
+        ) from exc
+
+
 def _paper_recommendation_reason_trend_source_report(
     bundle: PaperStrategyRecommendationBundleReport,
 ) -> _PaperRecommendationReasonTrendAdapterReport:
@@ -3833,6 +3959,28 @@ def _print_paper_recommendation_reason_trend_summary(
     )
 
 
+def _print_paper_probability_side_edge_report_summary(
+    report: "PaperProbabilitySideEdgeReport",
+    *,
+    reason_code_counts: Counter[str],
+) -> None:
+    print(
+        "paper-probability-side-edge-report: "
+        f"input_rows={report.input_count} "
+        f"row_count={report.row_count} "
+        f"recommend={report.recommend_count} "
+        f"watch={report.watch_count} "
+        f"reject={report.reject_count} "
+        f"paper_only={report.paper_only} "
+        f"report_only={report.report_only} "
+        f"readonly={report.readonly}",
+    )
+    print(
+        "  reason_code_counts: "
+        f"{_format_paper_probability_side_edge_reason_code_counts(reason_code_counts)}",
+    )
+
+
 def _format_reason_code_counts(
     reason_code_counts: Counter[tuple[str, str]],
 ) -> str:
@@ -3845,6 +3993,17 @@ def _format_reason_code_counts(
     return " ".join(
         f"{reason_code}[{source_status}]={count}"
         for (reason_code, source_status), count in ordered
+    )
+
+
+def _format_paper_probability_side_edge_reason_code_counts(
+    reason_code_counts: Counter[str],
+) -> str:
+    if not reason_code_counts:
+        return "none"
+    ordered = sorted(reason_code_counts.items(), key=lambda item: (-item[1], item[0]))
+    return " ".join(
+        f"{reason_code}={count}" for reason_code, count in ordered
     )
 
 
