@@ -55,6 +55,26 @@ class QueueStatusReportShape:
     readonly: bool = True
 
 
+@dataclass(frozen=True)
+class ActionRowShape:
+    market_slug: str
+    side: str
+    action: str
+    reason_codes: tuple[str, ...]
+    paper_only: bool = True
+    report_only: bool = True
+    readonly: bool = True
+
+
+@dataclass(frozen=True)
+class ActionReportShape:
+    generated_at: datetime
+    rows: tuple[ActionRowShape, ...]
+    paper_only: bool = True
+    report_only: bool = True
+    readonly: bool = True
+
+
 def d(value: str) -> Decimal:
     return Decimal(value)
 
@@ -489,6 +509,66 @@ def test_reason_trend_tracks_market_side_status_transitions_across_runs():
         isinstance(row, PaperRecommendationTransitionTrendRow)
         for row in report.transition_trend_rows
     )
+
+
+def test_reason_trend_accepts_none_side_and_rejects_invalid_side():
+    none_before = ActionReportShape(
+        generated_at=datetime(2026, 6, 19, 9, 0, tzinfo=UTC),
+        rows=(
+            ActionRowShape(
+                market_slug="none-side-transition",
+                side="none",
+                action="watch",
+                reason_codes=("none_side_watch",),
+            ),
+        ),
+    )
+    none_after = ActionReportShape(
+        generated_at=datetime(2026, 6, 19, 10, 0, tzinfo=UTC),
+        rows=(
+            ActionRowShape(
+                market_slug="none-side-transition",
+                side="none",
+                action="reject",
+                reason_codes=("none_side_reject",),
+            ),
+        ),
+    )
+
+    report = _trend(none_before, none_after)
+
+    assert tuple(
+        (
+            row.market_slug,
+            row.side,
+            row.from_status,
+            row.to_status,
+            row.reason_codes,
+        )
+        for row in report.transition_trend_rows
+    ) == (
+        (
+            "none-side-transition",
+            "none",
+            "watch",
+            "reject",
+            ("none_side_reject",),
+        ),
+    )
+
+    invalid_side = ActionReportShape(
+        generated_at=datetime(2026, 6, 19, 11, 0, tzinfo=UTC),
+        rows=(
+            ActionRowShape(
+                market_slug="invalid-side",
+                side="both",
+                action="watch",
+                reason_codes=("invalid_side",),
+            ),
+        ),
+    )
+    with pytest.raises(ValueError, match="yes, no, or none"):
+        _trend(invalid_side)
 
 
 def test_reason_trend_rejects_free_form_noncanonical_reason_strings():

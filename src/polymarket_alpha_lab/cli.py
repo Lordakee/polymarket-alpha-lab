@@ -84,6 +84,7 @@ from polymarket_alpha_lab.paper_recommendation_cycle_review import (
 from polymarket_alpha_lab.paper_recommendation_reason_trend import (
     PaperRecommendationReasonTrendConfig,
     PaperRecommendationReasonTrendReport,
+    PaperRecommendationTransitionTrendRow,
     build_paper_recommendation_reason_trend_report,
 )
 from polymarket_alpha_lab.paper_recommendation_cycle_action_gate import (
@@ -3848,10 +3849,7 @@ def _format_reason_code_counts(
 
 
 def _format_reason_trend_transitions(
-    transition_rows: tuple[
-        "PaperRecommendationTransitionTrendRow",
-        ...,
-    ],
+    transition_rows: tuple[PaperRecommendationTransitionTrendRow, ...],
 ) -> str:
     if not transition_rows:
         return "none"
