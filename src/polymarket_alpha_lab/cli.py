@@ -151,6 +151,12 @@ from polymarket_alpha_lab.supabase_paper_trade_cost_audit_config import (
 from polymarket_alpha_lab.supabase_paper_trade_journal_config import (
     from_paper_trade_journal_db_env,
 )
+from polymarket_alpha_lab.supabase_strategy_candidate_research_queue_config import (
+    from_strategy_candidate_research_queue_db_env,
+)
+from polymarket_alpha_lab.supabase_strategy_candidate_research_queue_history_config import (
+    from_strategy_candidate_research_queue_history_db_env,
+)
 from polymarket_alpha_lab.supabase_strategy_risk_audit_config import (
     from_strategy_risk_audit_db_env,
 )
@@ -208,11 +214,18 @@ CycleSnapshotDbReviewRunner = Callable[..., object]
 CycleSnapshotDbActionGateRunner = Callable[..., object]
 ActionGatedQueueDecisionSupportTrendRunner = Callable[..., object]
 ActionGatedQueueDecisionSupportTrendDbHistoryRunner = Callable[..., object]
+StrategyCandidateResearchQueueLoader = Callable[..., object]
+StrategyCandidateResearchQueueHistoryBuilder = Callable[..., object]
+StrategyCandidateResearchQueueHistoryDbSink = Callable[..., object]
 _MISSING = object()
 
 
 def _redact_db_dsn(text: str, *, dsn: str) -> str:
     return text.replace(dsn, "<redacted-dsn>")
+
+
+def _redact_db_table_name(text: str, *, table_name: str) -> str:
+    return text.replace(table_name, "<redacted-table>")
 
 
 def _raise_redacted_db_sink_error(exc: Exception, *, dsn: str) -> None:
@@ -353,6 +366,15 @@ def main(
     ) = None,
     action_gated_queue_decision_support_trend_db_history_runner: (
         ActionGatedQueueDecisionSupportTrendDbHistoryRunner | None
+    ) = None,
+    strategy_candidate_research_queue_loader: (
+        StrategyCandidateResearchQueueLoader | None
+    ) = None,
+    strategy_candidate_research_queue_history_builder: (
+        StrategyCandidateResearchQueueHistoryBuilder | None
+    ) = None,
+    strategy_candidate_research_queue_history_db_sink: (
+        StrategyCandidateResearchQueueHistoryDbSink | None
     ) = None,
 ) -> int:
     parser = argparse.ArgumentParser(prog="polymarket-alpha-lab")
@@ -794,6 +816,38 @@ def main(
         choices=("research_ready", "watch", "blocked"),
         default=None,
         dest="latest_action_status",
+    )
+
+    strategy_candidate_research_queue_history = subparsers.add_parser(
+        "strategy-candidate-research-queue-history",
+    )
+    strategy_candidate_research_queue_history.add_argument(
+        "--source-config-version",
+        default=None,
+        dest="source_config_version",
+    )
+    strategy_candidate_research_queue_history.add_argument(
+        "--action-status",
+        choices=("research_ready", "watch", "blocked"),
+        default=None,
+        dest="action_status",
+    )
+    strategy_candidate_research_queue_history.add_argument(
+        "--research-status",
+        choices=("ready", "watch", "blocked"),
+        default=None,
+        dest="research_status",
+    )
+    strategy_candidate_research_queue_history.add_argument(
+        "--limit",
+        type=int,
+        default=100,
+    )
+    strategy_candidate_research_queue_history.add_argument(
+        "--persist",
+        action="store_true",
+        default=False,
+        dest="persist",
     )
 
     # Stage 17 market search: search Polymarket markets by keyword.
@@ -1631,6 +1685,30 @@ def main(
             )
             return 1
 
+    if args.command == "strategy-candidate-research-queue-history":
+        try:
+            report, persisted = _run_strategy_candidate_research_queue_history(
+                source_config_version=args.source_config_version,
+                action_status=args.action_status,
+                research_status=args.research_status,
+                limit=args.limit,
+                persist=args.persist,
+                loader=strategy_candidate_research_queue_loader,
+                history_builder=strategy_candidate_research_queue_history_builder,
+                history_db_sink=strategy_candidate_research_queue_history_db_sink,
+            )
+            _print_strategy_candidate_research_queue_history_summary(
+                report,
+                persisted=persisted,
+            )
+            return 0
+        except Exception as exc:
+            print(
+                f"strategy-candidate-research-queue-history failed: {exc}",
+                file=sys.stderr,
+            )
+            return 1
+
     if args.command == "run":
         try:
             cycle_snapshot_db_config = from_cycle_snapshot_db_env()
@@ -2433,7 +2511,10 @@ def _run_action_gated_queue_history(
     try:
         queue_reports = resolved_loader(db_config.dsn, options=read_options)
     except Exception as exc:
-        _raise_redacted_db_read_error(exc, dsn=db_config.dsn)
+        message = _redact_db_dsn(str(exc), dsn=db_config.dsn)
+        if not message.strip():
+            message = exc.__class__.__name__
+        raise RuntimeError(message) from None
 
     report = resolved_history_builder(
         queue_reports,
@@ -2460,6 +2541,119 @@ def _run_action_gated_queue_history(
     except Exception as exc:
         message = _redact_db_dsn(str(exc), dsn=history_db_config.dsn)
         message = _redact_db_dsn(message, dsn=db_config.dsn)
+        if not message.strip():
+            message = exc.__class__.__name__
+        raise RuntimeError(message) from None
+    return report, True
+
+
+def _run_strategy_candidate_research_queue_history(
+    *,
+    source_config_version: str | None,
+    action_status: str | None,
+    research_status: str | None,
+    limit: int,
+    persist: bool,
+    loader: StrategyCandidateResearchQueueLoader | None,
+    history_builder: StrategyCandidateResearchQueueHistoryBuilder | None,
+    history_db_sink: StrategyCandidateResearchQueueHistoryDbSink | None,
+) -> tuple[object, bool]:
+    from polymarket_alpha_lab.strategy_candidate_research_queue_history import (
+        build_paper_strategy_candidate_research_queue_history_report,
+    )
+    from polymarket_alpha_lab.strategy_candidate_research_queue_psycopg_read import (
+        PaperStrategyCandidateResearchQueueReadOptions,
+        load_paper_strategy_candidate_research_queue_reports_with_psycopg,
+    )
+
+    db_config = from_strategy_candidate_research_queue_db_env()
+    if not db_config.enabled:
+        raise ValueError(
+            "strategy-candidate-research-queue-history requires strategy "
+            "candidate research queue read-only DB config to be enabled",
+        )
+    if db_config.dsn is None:
+        raise ValueError(
+            "strategy-candidate-research-queue-history requires a DB DSN",
+        )
+    history_db_config = (
+        from_strategy_candidate_research_queue_history_db_env() if persist else None
+    )
+    if persist:
+        if history_db_config is None:
+            raise ValueError(
+                "strategy-candidate-research-queue-history persistence requires "
+                "history DB config",
+            )
+        if not history_db_config.enabled:
+            raise ValueError(
+                "strategy-candidate-research-queue-history persistence requires "
+                "history DB to be enabled",
+            )
+        if history_db_config.dsn is None:
+            raise ValueError(
+                "strategy-candidate-research-queue-history persistence requires "
+                "a history DB DSN",
+            )
+
+    read_options = PaperStrategyCandidateResearchQueueReadOptions(
+        source_config_version=source_config_version,
+        action_status=action_status,
+        research_status=research_status,
+        limit=limit,
+        table_name=db_config.table_name,
+    )
+    generated_at = datetime.now(UTC)
+    resolved_loader = (
+        loader
+        if loader is not None
+        else load_paper_strategy_candidate_research_queue_reports_with_psycopg
+    )
+    resolved_history_builder = (
+        history_builder
+        if history_builder is not None
+        else build_paper_strategy_candidate_research_queue_history_report
+    )
+
+    try:
+        queue_reports = resolved_loader(db_config.dsn, options=read_options)
+    except Exception as exc:
+        message = _redact_db_dsn(str(exc), dsn=db_config.dsn)
+        message = _redact_db_table_name(message, table_name=db_config.table_name)
+        if not message.strip():
+            message = exc.__class__.__name__
+        raise RuntimeError(message) from None
+
+    report = resolved_history_builder(
+        queue_reports,
+        generated_at=generated_at,
+    )
+    if not persist:
+        return report, False
+    if history_db_sink is None:
+        from polymarket_alpha_lab.strategy_candidate_research_queue_history_psycopg import (
+            insert_paper_strategy_candidate_research_queue_history_report_with_psycopg,
+        )
+
+        resolved_history_db_sink = (
+            insert_paper_strategy_candidate_research_queue_history_report_with_psycopg
+        )
+    else:
+        resolved_history_db_sink = history_db_sink
+    try:
+        resolved_history_db_sink(
+            dsn=history_db_config.dsn,
+            report=report,
+            table_name=history_db_config.table_name,
+        )
+    except Exception as exc:
+        message = _redact_db_dsn(str(exc), dsn=history_db_config.dsn)
+        message = _redact_db_dsn(message, dsn=db_config.dsn)
+        message = _redact_db_table_name(
+            message,
+            table_name=history_db_config.table_name,
+        )
+        message = _redact_db_table_name(message, table_name=db_config.table_name)
         if not message.strip():
             message = exc.__class__.__name__
         raise RuntimeError(message) from None
@@ -3933,6 +4127,49 @@ def _print_action_gated_queue_history_summary(
         f"ready_notional_delta={report.ready_notional_delta} "
         f"persisted={persisted} "
         f"latest_reason_code_counts={latest_reason_code_counts or 'none'}",
+    )
+
+
+def _print_strategy_candidate_research_queue_history_summary(
+    report: object,
+    *,
+    persisted: bool = False,
+) -> None:
+    latest_primary_reason_code_counts = ",".join(
+        f"{reason_code}={count}"
+        for reason_code, count in report.latest_primary_reason_code_counts
+    )
+    latest_reason_codes = ",".join(report.latest_reason_codes)
+    print(
+        "strategy-candidate-research-queue-history: "
+        f"source_report_count={report.source_report_count} "
+        f"first_source_generated_at={_iso_or_none(report.first_source_generated_at)} "
+        f"last_source_generated_at={_iso_or_none(report.last_source_generated_at)} "
+        f"action_status_research_ready_count={report.action_status_research_ready_count} "
+        f"action_status_watch_count={report.action_status_watch_count} "
+        f"action_status_blocked_count={report.action_status_blocked_count} "
+        f"research_status_ready_count={report.research_status_ready_count} "
+        f"research_status_watch_count={report.research_status_watch_count} "
+        f"research_status_blocked_count={report.research_status_blocked_count} "
+        f"total_ready_notional={report.total_ready_notional} "
+        f"total_selected_notional={report.total_selected_notional} "
+        f"total_suggested_notional={report.total_suggested_notional} "
+        f"latest_action_status={_none_or_value(report.latest_action_status)} "
+        "latest_recommended_next_step="
+        f"{_none_or_value(report.latest_recommended_next_step)} "
+        f"latest_research_status={_none_or_value(report.latest_research_status)} "
+        f"latest_top_research_priority_score={_none_or_value(report.latest_top_research_priority_score)} "
+        "latest_average_research_ready_score="
+        f"{_none_or_value(report.latest_average_research_ready_score)} "
+        f"status_transition_count={report.status_transition_count} "
+        f"ready_notional_delta={report.ready_notional_delta} "
+        f"selected_notional_delta={report.selected_notional_delta} "
+        f"latest_selected_count={report.latest_selected_count} "
+        f"latest_skipped_count={report.latest_skipped_count} "
+        f"latest_not_selected_count={report.latest_not_selected_count} "
+        f"latest_primary_reason_code_counts={latest_primary_reason_code_counts or 'none'} "
+        f"latest_reason_codes={latest_reason_codes or 'none'} "
+        f"persisted={persisted}",
     )
 
 
