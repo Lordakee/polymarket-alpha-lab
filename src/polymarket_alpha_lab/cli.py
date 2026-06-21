@@ -34,6 +34,8 @@ from polymarket_alpha_lab.local_observability_trends_db_history import (
     LocalObservabilityTrendsDbHistoryReport,
     build_local_observability_trends_db_history_report,
 )
+from polymarket_alpha_lab.nav_risk_trend import PaperNavRiskTrendReport
+from polymarket_alpha_lab.outcome_freshness import OutcomeFreshnessReport
 from polymarket_alpha_lab.outcome_tracker import (
     OutcomeTrackingConfig,
     OutcomeTrackingLog,
@@ -182,6 +184,8 @@ StrategyRecommendationHistoryRunner = Callable[
 ]
 CostAuditRunner = Callable[..., PaperTradeCostAuditReport]
 CostAuditDbTrendRunner = Callable[..., PaperTradeCostTrendReport]
+OutcomeTrackingDbHistoryRunner = Callable[..., OutcomeFreshnessReport]
+NavSnapshotDbTrendRunner = Callable[..., PaperNavRiskTrendReport]
 StrategyEvidenceRunner = Callable[..., "PaperStrategyEvidenceSnapshotReport"]
 ObservabilityTrendsRunner = Callable[..., LocalObservabilityTrendsReport]
 LocalObservabilityTrendsDbHistoryRunner = Callable[
@@ -309,6 +313,8 @@ def main(
     ) = None,
     cost_audit_runner: CostAuditRunner | None = None,
     cost_audit_db_trend_runner: CostAuditDbTrendRunner | None = None,
+    outcome_tracking_db_history_runner: OutcomeTrackingDbHistoryRunner | None = None,
+    nav_snapshot_db_trend_runner: NavSnapshotDbTrendRunner | None = None,
     strategy_evidence_runner: StrategyEvidenceRunner | None = None,
     observability_trends_runner: ObservabilityTrendsRunner = (
         run_local_observability_trends
@@ -420,6 +426,12 @@ def main(
         type=Path,
         required=True,
         dest="nav_log",
+    )
+    nav_snapshot_db_trend = subparsers.add_parser("nav-snapshot-db-trend")
+    nav_snapshot_db_trend.add_argument(
+        "--limit",
+        type=int,
+        default=100,
     )
 
     cost_audit = subparsers.add_parser("cost-audit")
@@ -776,6 +788,20 @@ def main(
         default=None,
         dest="outcome_log",
     )
+    outcome_tracking_db_history = subparsers.add_parser(
+        "outcome-tracking-db-history",
+    )
+    outcome_tracking_db_history.add_argument(
+        "--limit",
+        type=int,
+        default=100,
+    )
+    outcome_tracking_db_history.add_argument(
+        "--stale-after-seconds",
+        type=int,
+        default=86_400,
+        dest="stale_after_seconds",
+    )
 
     # Stage 7 continuous run: chains strategy-cycle + paper-execute + portfolio-nav.
     run_loop = subparsers.add_parser("run")
@@ -999,6 +1025,37 @@ def main(
             return 0
         except Exception as exc:
             print(f"nav-risk failed: {exc}", file=sys.stderr)
+            return 1
+
+    if args.command == "nav-snapshot-db-trend":
+        try:
+            if args.limit <= 0:
+                raise ValueError("nav-snapshot-db-trend limit must be positive")
+            paper_nav_db_config = from_paper_nav_snapshot_db_env()
+            if not paper_nav_db_config.enabled:
+                raise ValueError(
+                    "nav-snapshot-db-trend requires paper NAV snapshot "
+                    "DB to be enabled",
+                )
+            dsn = paper_nav_db_config.dsn
+            if dsn is None:
+                raise ValueError(
+                    "nav-snapshot-db-trend requires a paper NAV snapshot "
+                    "DB DSN",
+                )
+            try:
+                report = _run_nav_snapshot_db_trend(
+                    dsn=dsn,
+                    table_name=paper_nav_db_config.table_name,
+                    limit=args.limit,
+                    runner=nav_snapshot_db_trend_runner,
+                )
+            except Exception as exc:
+                _raise_redacted_db_read_error(exc, dsn=dsn)
+            _print_nav_snapshot_db_trend_summary(report)
+            return 0
+        except Exception as exc:
+            print(f"nav-snapshot-db-trend failed: {exc}", file=sys.stderr)
             return 1
 
     if args.command == "cost-audit":
@@ -1691,6 +1748,38 @@ def main(
             print(f"check-outcomes failed: {exc}", file=sys.stderr)
             return 1
 
+    if args.command == "outcome-tracking-db-history":
+        try:
+            if args.limit <= 0:
+                raise ValueError("outcome-tracking-db-history limit must be positive")
+            outcome_tracking_db_config = from_outcome_tracking_db_env()
+            if not outcome_tracking_db_config.enabled:
+                raise ValueError(
+                    "outcome-tracking-db-history requires outcome tracking "
+                    "DB to be enabled",
+                )
+            dsn = outcome_tracking_db_config.dsn
+            if dsn is None:
+                raise ValueError(
+                    "outcome-tracking-db-history requires an outcome tracking "
+                    "DB DSN",
+                )
+            try:
+                report = _run_outcome_tracking_db_history(
+                    dsn=dsn,
+                    table_name=outcome_tracking_db_config.table_name,
+                    limit=args.limit,
+                    stale_after_seconds=args.stale_after_seconds,
+                    runner=outcome_tracking_db_history_runner,
+                )
+            except Exception as exc:
+                _raise_redacted_db_read_error(exc, dsn=dsn)
+            _print_outcome_tracking_db_history_summary(report)
+            return 0
+        except Exception as exc:
+            print(f"outcome-tracking-db-history failed: {exc}", file=sys.stderr)
+            return 1
+
     return 2
 
 
@@ -1867,6 +1956,60 @@ def _run_nav_risk(
         config=config,
         generated_at=generated_at,
     )
+
+
+def _run_nav_snapshot_db_trend(
+    *,
+    dsn: str,
+    table_name: str,
+    limit: int,
+    runner: NavSnapshotDbTrendRunner | None,
+) -> PaperNavRiskTrendReport:
+    generated_at = datetime.now(UTC)
+    config_version = "nav-snapshot-db-trend-v0"
+    if runner is not None:
+        return runner(
+            dsn=dsn,
+            table_name=table_name,
+            limit=limit,
+            config_version=config_version,
+            generated_at=generated_at,
+        )
+
+    from polymarket_alpha_lab.paper_nav_snapshot_db_trend_load import (
+        load_paper_nav_snapshot_db_trend_report,
+    )
+
+    try:
+        import psycopg
+    except ModuleNotFoundError as exc:
+        if exc.name != "psycopg":
+            raise
+        raise RuntimeError(
+            "psycopg is required to use the NAV snapshot DB trend "
+            "psycopg adapter; install the postgres extra.",
+        ) from exc
+    try:
+        connection = psycopg.connect(dsn)
+    except Exception:
+        raise RuntimeError(
+            "failed to connect to the paper NAV snapshot database",
+        ) from None
+    try:
+        report = load_paper_nav_snapshot_db_trend_report(
+            generated_at=generated_at,
+            config_version=config_version,
+            connection=connection,
+            limit=limit,
+            table_name=table_name,
+        )
+        connection.commit()
+        return report
+    except BaseException:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
 
 
 def _run_cycle_snapshot_db_trend(
@@ -2847,6 +2990,63 @@ def _run_cost_audit_db_trend(
         connection.close()
 
 
+def _run_outcome_tracking_db_history(
+    *,
+    dsn: str,
+    table_name: str,
+    limit: int,
+    stale_after_seconds: int,
+    runner: OutcomeTrackingDbHistoryRunner | None,
+) -> OutcomeFreshnessReport:
+    generated_at = datetime.now(UTC)
+    config_version = "outcome-tracking-db-history-v0"
+    if runner is not None:
+        return runner(
+            dsn=dsn,
+            table_name=table_name,
+            limit=limit,
+            stale_after_seconds=stale_after_seconds,
+            config_version=config_version,
+            generated_at=generated_at,
+        )
+
+    from polymarket_alpha_lab.outcome_tracking_db_history_load import (
+        load_outcome_tracking_db_history_report,
+    )
+
+    try:
+        import psycopg
+    except ModuleNotFoundError as exc:
+        if exc.name != "psycopg":
+            raise
+        raise RuntimeError(
+            "psycopg is required to use the outcome tracking DB history "
+            "psycopg adapter; install the postgres extra.",
+        ) from exc
+    try:
+        connection = psycopg.connect(dsn)
+    except Exception:
+        raise RuntimeError(
+            "failed to connect to the outcome tracking database",
+        ) from None
+    try:
+        report = load_outcome_tracking_db_history_report(
+            generated_at=generated_at,
+            config_version=config_version,
+            connection=connection,
+            stale_after_seconds=stale_after_seconds,
+            limit=limit,
+            table_name=table_name,
+        )
+        connection.commit()
+        return report
+    except BaseException:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
 def _run_local_observability_trends_db_history(
     *,
     dsn: str,
@@ -3189,6 +3389,59 @@ def _print_local_observability_trends_db_history_summary(
     )
 
 
+def _print_outcome_tracking_db_history_summary(
+    report: OutcomeFreshnessReport,
+) -> None:
+    print(
+        "outcome-tracking-db-history: "
+        f"status={report.status} "
+        f"report_count={report.outcome_report_count} "
+        f"first_report_generated_at={_iso_or_none(report.first_report_generated_at)} "
+        f"latest_report_generated_at={_iso_or_none(report.latest_report_generated_at)} "
+        f"latest_total_markets_checked={report.latest_total_markets_checked} "
+        f"latest_resolved_count={report.latest_resolved_count} "
+        f"latest_pending_count={report.latest_pending_count} "
+        f"latest_resolved_ratio={_none_or_value(report.latest_resolved_ratio)} "
+        f"latest_pending_ratio={_none_or_value(report.latest_pending_ratio)} "
+        f"latest_report_age_seconds={_none_or_value(report.latest_report_age_seconds)} "
+        f"consecutive_pending_count={report.consecutive_pending_count}",
+    )
+    print(
+        "  status_rows: "
+        f"{_format_outcome_freshness_status_row_counts(report.status_rows)}",
+    )
+
+
+def _print_nav_snapshot_db_trend_summary(
+    report: PaperNavRiskTrendReport,
+) -> None:
+    print(
+        "nav-snapshot-db-trend: "
+        f"status={report.status} "
+        f"report_count={report.nav_risk_report_count} "
+        f"first_report_generated_at={_iso_or_none(report.first_report_generated_at)} "
+        f"latest_report_generated_at={_iso_or_none(report.latest_report_generated_at)} "
+        f"latest_exit_nav={_none_or_value(report.latest_exit_nav)} "
+        f"latest_cumulative_return={_none_or_value(report.latest_cumulative_return)} "
+        f"latest_max_drawdown={_none_or_value(report.latest_max_drawdown)} "
+        f"latest_max_drawdown_pct={_none_or_value(report.latest_max_drawdown_pct)} "
+        "latest_nav_return_volatility="
+        f"{_none_or_value(report.latest_nav_return_volatility)} "
+        f"latest_open_position_count={report.latest_open_position_count} "
+        f"latest_fully_executable_count={report.latest_fully_executable_count} "
+        f"latest_partially_executable_count={report.latest_partially_executable_count} "
+        f"latest_no_exit_depth_count={report.latest_no_exit_depth_count} "
+        "worst_observed_max_drawdown_pct="
+        f"{_none_or_value(report.worst_observed_max_drawdown_pct)} "
+        "consecutive_unexecutable_open_position_count="
+        f"{report.consecutive_unexecutable_open_position_count}",
+    )
+    print(
+        "  status_rows: "
+        f"{_format_history_status_row_counts(report.status_rows)}",
+    )
+
+
 def _print_cost_audit_db_trend_summary(
     report: PaperTradeCostTrendReport,
 ) -> None:
@@ -3399,6 +3652,13 @@ def _none_or_value(value: object | None) -> str:
 def _format_history_status_row_counts(rows: tuple[object, ...]) -> str:
     return ",".join(
         f"{row.status}:{row.report_count}"
+        for row in rows
+    )
+
+
+def _format_outcome_freshness_status_row_counts(rows: tuple[object, ...]) -> str:
+    return ",".join(
+        f"{row.status}:{row.outcome_report_count}"
         for row in rows
     )
 
