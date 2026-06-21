@@ -33,6 +33,11 @@ IMPLEMENTED_RECOMMENDATION_MODULE_NAMES = (
     "action_gated_strategy_recommendation_queue",
 )
 
+DB_ROW_CODEC_MODULE_NAMES = (
+    "paper_probability_recommendation_queue_db_row",
+    "paper_recommendation_risk_budget_db_row",
+)
+
 PLANNED_RECOMMENDATION_MODULE_NAMES = (
     "paper_capital_cost",
     "paper_correlation_grouping",
@@ -55,7 +60,11 @@ PLANNED_RECOMMENDATION_MODULE_NAMES = (
     "paper_side_edge_adapter",
 )
 
-RECOMMENDATION_MODULE_NAMES = IMPLEMENTED_RECOMMENDATION_MODULE_NAMES
+RECOMMENDATION_MODULE_NAMES = IMPLEMENTED_RECOMMENDATION_MODULE_NAMES + tuple(
+    module_name
+    for module_name in DB_ROW_CODEC_MODULE_NAMES
+    if (REPO_ROOT / "src" / "polymarket_alpha_lab" / f"{module_name}.py").exists()
+)
 
 PLANNED_RECOMMENDATION_PUBLIC_NAMES = {
     "paper_capital_cost": frozenset(
@@ -304,6 +313,34 @@ RECOMMENDATION_IMPORT_ALLOWLIST: dict[
         "dataclasses": frozenset({"dataclass"}),
         "datetime": frozenset({"UTC", "datetime"}),
         "decimal": frozenset({"Decimal"}),
+    },
+    "paper_probability_recommendation_queue_db_row": {
+        "__future__": frozenset({"annotations"}),
+        "dataclasses": frozenset({"asdict", "dataclass", "fields", "is_dataclass"}),
+        "datetime": frozenset({"UTC", "datetime"}),
+        "decimal": frozenset({"Decimal"}),
+        "hashlib": WHOLE_MODULE_IMPORT,
+        "json": WHOLE_MODULE_IMPORT,
+        "re": WHOLE_MODULE_IMPORT,
+        "typing": frozenset({"Any"}),
+        "polymarket_alpha_lab.json_recovery": frozenset({"from_jsonable"}),
+        "polymarket_alpha_lab.paper_probability_recommendation_queue": frozenset(
+            {"PaperProbabilityRecommendationQueueReport"},
+        ),
+    },
+    "paper_recommendation_risk_budget_db_row": {
+        "__future__": frozenset({"annotations"}),
+        "dataclasses": frozenset({"asdict", "dataclass", "fields", "is_dataclass"}),
+        "datetime": frozenset({"UTC", "datetime"}),
+        "decimal": frozenset({"Decimal"}),
+        "hashlib": WHOLE_MODULE_IMPORT,
+        "json": WHOLE_MODULE_IMPORT,
+        "re": WHOLE_MODULE_IMPORT,
+        "typing": frozenset({"Any"}),
+        "polymarket_alpha_lab.json_recovery": frozenset({"from_jsonable"}),
+        "polymarket_alpha_lab.paper_recommendation_risk_budget": frozenset(
+            {"PaperRecommendationRiskBudgetReport"},
+        ),
     },
     "paper_recommendation_reason_trend": {
         "__future__": frozenset({"annotations"}),
@@ -613,6 +650,13 @@ def test_recommendation_layer_scope_lists_planned_recommendation_modules() -> No
     }
 
 
+def test_recommendation_layer_lists_db_row_codec_modules() -> None:
+    assert set(DB_ROW_CODEC_MODULE_NAMES) == {
+        "paper_probability_recommendation_queue_db_row",
+        "paper_recommendation_risk_budget_db_row",
+    }
+
+
 def test_planned_recommendation_public_names_are_not_package_root_exports() -> None:
     package_exports = package_root_exports()
     package_bound_names = package_root_bound_names()
@@ -822,6 +866,15 @@ def _call_name(node: ast.Call) -> str | None:
     return None
 
 
+def _is_allowed_regex_compile_call(node: ast.Call) -> bool:
+    return (
+        isinstance(node.func, ast.Attribute)
+        and node.func.attr == "compile"
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "re"
+    )
+
+
 def assert_recommendation_tree_omits_forbidden_names_and_calls(
     tree: ast.AST,
 ) -> None:
@@ -864,7 +917,8 @@ def assert_recommendation_tree_omits_forbidden_names_and_calls(
         elif isinstance(node, ast.Call):
             callee_name = _call_name(node)
             if callee_name is not None:
-                assert callee_name not in FORBIDDEN_CALL_NAMES, callee_name
+                if not _is_allowed_regex_compile_call(node):
+                    assert callee_name not in FORBIDDEN_CALL_NAMES, callee_name
                 _assert_identifier_omits_forbidden_fragments(
                     callee_name,
                     FORBIDDEN_NAME_FRAGMENTS,
@@ -1175,6 +1229,13 @@ def build_report(client):
 """,
             id="forbidden-attribute-call",
         ),
+        pytest.param(
+            """
+def build_report(regex):
+    return regex.compile("pattern")
+""",
+            id="non-re-compile-call",
+        ),
     ),
 )
 def test_recommendation_layer_name_scope_guard_rejects_forbidden_names(
@@ -1193,6 +1254,18 @@ def test_recommendation_layer_name_scope_guard_allows_non_forbidden_substrings()
 def summarize_capital(report):
     capital_score = 1
     return capital_score
+""",
+        ),
+    )
+
+
+def test_recommendation_layer_name_scope_guard_allows_regex_compile_call() -> None:
+    assert_recommendation_tree_omits_forbidden_names_and_calls(
+        ast.parse(
+            r"""
+import re
+
+_SHA256_PATTERN = re.compile(r"^[a-f0-9]{64}$")
 """,
         ),
     )

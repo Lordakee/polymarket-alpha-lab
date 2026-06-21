@@ -73,6 +73,14 @@ history and later read-only review. Documentation should mention this
 persistence only at a high level and should never include real DSNs, passwords,
 tokens, service keys, wallet material, or other secrets.
 
+Pure DB row codec modules for `paper_probability_recommendation_queue` and
+`paper_recommendation_risk_budget` belong at that persistence edge only. They
+may translate validated paper reports into DB-ready rows and recover those rows
+for readonly review, but they do not own stores, clients, psycopg adapters, CLI
+surfaces, runtime wiring, or network writes. Decimal values stay Decimal-only at
+the report boundary, and any JSON payloads must reject floats or other unsafe
+numeric types.
+
 The DB-backed cycle review reads persisted snapshot history and produces
 concise observability summaries: latest status, pass/watch/blocked counts,
 blocked or watch artifact pressure, missing required artifacts, stale-history
