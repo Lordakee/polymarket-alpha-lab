@@ -7,7 +7,7 @@ from collections import Counter
 import sys
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
@@ -273,6 +273,16 @@ def _raise_redacted_db_read_error(exc: Exception, *, dsn: str) -> None:
     if not message.strip():
         message = exc.__class__.__name__
     raise RuntimeError(message) from None
+
+
+def _cli_decimal(value: str) -> Decimal:
+    try:
+        decimal = Decimal(value)
+    except (InvalidOperation, ValueError) as exc:
+        raise argparse.ArgumentTypeError("must be a decimal value") from exc
+    if not decimal.is_finite():
+        raise argparse.ArgumentTypeError("must be a finite decimal value")
+    return decimal
 
 
 def _apply_json_config(args: argparse.Namespace) -> None:
@@ -615,6 +625,30 @@ def main(
         type=Path,
         required=True,
         dest="input_path",
+    )
+    paper_recommendation_queue_report = subparsers.add_parser(
+        "paper-recommendation-queue-report",
+    )
+    paper_recommendation_queue_report.add_argument(
+        "--input",
+        type=Path,
+        required=True,
+        dest="input_path",
+    )
+    paper_recommendation_risk_budget_report = subparsers.add_parser(
+        "paper-recommendation-risk-budget-report",
+    )
+    paper_recommendation_risk_budget_report.add_argument(
+        "--input",
+        type=Path,
+        required=True,
+        dest="input_path",
+    )
+    paper_recommendation_risk_budget_report.add_argument(
+        "--nav-notional",
+        type=_cli_decimal,
+        default=None,
+        dest="nav_notional",
     )
 
     strategy_evidence = subparsers.add_parser("strategy-evidence")
@@ -1441,6 +1475,43 @@ def main(
         except Exception as exc:
             print(
                 f"paper-probability-side-edge-report failed: {exc}",
+                file=sys.stderr,
+            )
+            return 1
+
+    if args.command == "paper-recommendation-queue-report":
+        try:
+            report, reason_code_counts = _run_paper_recommendation_queue_report(
+                input_path=args.input_path,
+            )
+            _print_paper_recommendation_queue_report_summary(
+                report,
+                reason_code_counts=reason_code_counts,
+            )
+            return 0
+        except Exception as exc:
+            print(
+                f"paper-recommendation-queue-report failed: {exc}",
+                file=sys.stderr,
+            )
+            return 1
+
+    if args.command == "paper-recommendation-risk-budget-report":
+        try:
+            report, zero_allocation_count = (
+                _run_paper_recommendation_risk_budget_report(
+                    input_path=args.input_path,
+                    nav_notional=args.nav_notional,
+                )
+            )
+            _print_paper_recommendation_risk_budget_report_summary(
+                report,
+                zero_allocation_count=zero_allocation_count,
+            )
+            return 0
+        except Exception as exc:
+            print(
+                f"paper-recommendation-risk-budget-report failed: {exc}",
                 file=sys.stderr,
             )
             return 1
@@ -3182,6 +3253,77 @@ def _run_paper_probability_side_edge_report(
     return report, reason_code_counts
 
 
+def _run_paper_recommendation_queue_report(
+    *,
+    input_path: Path,
+) -> tuple[object, Counter[str]]:
+    from polymarket_alpha_lab.paper_probability_recommendation_queue import (
+        PaperProbabilityRecommendationQueueConfig,
+        build_paper_probability_recommendation_queue_report,
+    )
+    from polymarket_alpha_lab.paper_probability_recommendation_queue_local_input import (
+        read_paper_probability_recommendation_queue_side_edge_rows,
+    )
+
+    rows = read_paper_probability_recommendation_queue_side_edge_rows(input_path)
+    report = build_paper_probability_recommendation_queue_report(
+        rows,
+        config=PaperProbabilityRecommendationQueueConfig(
+            config_version="paper-recommendation-queue-cli-v0",
+            max_queue_rows=25,
+            min_recommendation_score=Decimal("0.000001"),
+            include_watch=True,
+        ),
+        generated_at=datetime.now(UTC),
+    )
+    reason_code_counts: Counter[str] = Counter(
+        reason_code
+        for row in report.queue_rows
+        for reason_code in row.reason_codes
+    )
+    return report, reason_code_counts
+
+
+def _run_paper_recommendation_risk_budget_report(
+    *,
+    input_path: Path,
+    nav_notional: Decimal | None,
+) -> tuple[object, int]:
+    from polymarket_alpha_lab.paper_recommendation_risk_budget import (
+        PaperRecommendationRiskBudgetConfig,
+        build_paper_recommendation_risk_budget_report,
+    )
+    from polymarket_alpha_lab.paper_recommendation_risk_budget_local_input import (
+        paper_recommendation_risk_budget_nav_report_from_notional,
+        read_paper_recommendation_risk_budget_selection_report,
+    )
+
+    selection_report = read_paper_recommendation_risk_budget_selection_report(
+        input_path,
+    )
+    nav_report = paper_recommendation_risk_budget_nav_report_from_notional(
+        nav_notional,
+    )
+    report = build_paper_recommendation_risk_budget_report(
+        selection_report,
+        config=PaperRecommendationRiskBudgetConfig(
+            config_version="paper-recommendation-risk-budget-cli-v0",
+            max_total_utilization=Decimal("0.250000"),
+            max_single_recommendation_share=Decimal("0.100000"),
+            min_remaining_notional=Decimal("10.000000"),
+            max_selected_count=25,
+        ),
+        generated_at=datetime.now(UTC),
+        nav_risk_metrics_report=nav_report,
+    )
+    zero_allocation_count = sum(
+        1
+        for row in selection_report.selection_rows
+        if row.selected_position_notional == Decimal("0.000000")
+    )
+    return report, zero_allocation_count
+
+
 def _read_paper_probability_side_edge_row_payloads(
     path: Path,
 ) -> tuple[object, ...]:
@@ -3981,6 +4123,56 @@ def _print_paper_probability_side_edge_report_summary(
     )
 
 
+def _print_paper_recommendation_queue_report_summary(
+    report: object,
+    *,
+    reason_code_counts: Counter[str],
+) -> None:
+    print(
+        "paper-recommendation-queue-report: "
+        f"input_count={report.input_count} "
+        f"queue_count={report.queue_count} "
+        f"research_review={report.research_review_count} "
+        f"await_fresh_context={report.await_fresh_context_count} "
+        f"skip={report.skip_count} "
+        f"excluded={report.excluded_count} "
+        f"paper_only={report.paper_only} "
+        f"report_only={report.report_only} "
+        f"readonly={report.readonly}",
+    )
+    print(
+        "  reason_code_counts: "
+        f"{_format_paper_probability_side_edge_reason_code_counts(reason_code_counts)}",
+    )
+
+
+def _print_paper_recommendation_risk_budget_report_summary(
+    report: object,
+    *,
+    zero_allocation_count: int,
+) -> None:
+    print(
+        "paper-recommendation-risk-budget-report: "
+        f"status={report.status} "
+        f"selected_count={report.selected_count} "
+        f"blocked_count={report.blocked_count} "
+        f"zero_allocation_count={zero_allocation_count} "
+        f"total_suggested_notional={report.total_suggested_notional} "
+        f"remaining_total_notional={report.remaining_total_notional} "
+        f"total_notional_utilization={report.total_notional_utilization} "
+        "largest_single_recommendation_share="
+        f"{report.largest_single_recommendation_share} "
+        f"nav_notional={report.nav_notional} "
+        f"paper_only={report.paper_only} "
+        f"report_only={report.report_only} "
+        f"readonly={report.readonly}",
+    )
+    print(
+        "  reason_codes: "
+        f"{_format_paper_recommendation_risk_budget_reason_codes(report.reason_codes)}",
+    )
+
+
 def _format_reason_code_counts(
     reason_code_counts: Counter[tuple[str, str]],
 ) -> str:
@@ -4005,6 +4197,14 @@ def _format_paper_probability_side_edge_reason_code_counts(
     return " ".join(
         f"{reason_code}={count}" for reason_code, count in ordered
     )
+
+
+def _format_paper_recommendation_risk_budget_reason_codes(
+    reason_codes: tuple[str, ...],
+) -> str:
+    if not reason_codes:
+        return "none"
+    return " ".join(reason_codes)
 
 
 def _format_reason_trend_transitions(

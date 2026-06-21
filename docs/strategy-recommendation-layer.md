@@ -332,16 +332,18 @@ local paper logs.
 
 ### CLI Report Workflow
 
-Any CLI added for these modules should be report-only. Commands may read local
-paper artifacts, recover append-only JSONL bundle entries, build readonly
-reducers, and print deterministic summaries. Useful commands would print side
-edge counts, queue counts, risk-budget allocations, top reason codes, and
-latest-run deltas.
+Any CLI added for these modules must be report-only and local-file driven.
+Commands may read local paper artifacts, recover append-only JSONL bundle
+entries, build readonly reducers, and print deterministic summaries. Useful
+commands print side-edge counts, queue counts, risk-budget allocations, top
+reason codes, and latest-run deltas.
 
-The implemented report-only CLI slices are:
+The report-only local-file workflow uses explicit input paths:
 
 ```bash
 polymarket-alpha-lab paper-probability-side-edge-report --input <path>
+polymarket-alpha-lab paper-recommendation-queue-report --input <path>
+polymarket-alpha-lab paper-recommendation-risk-budget-report --input <path>
 polymarket-alpha-lab paper-recommendation-reason-trend --recommendation-log <path>
 ```
 
@@ -352,18 +354,34 @@ recommend/watch/reject, and reason-code counts. The input rows are paper
 strategy/economics evidence only; they are not order tickets or execution
 instructions.
 
-This command reads the supplied local JSONL strategy recommendation bundle log,
-recovers bundle entries, builds the paper recommendation reason-trend reducer,
-and prints a deterministic reason/status trend summary. The summary is for
-paper review only: source report count, reason-code counts by source status,
-and status-transition counts for recovered local bundle reports.
+The queue report command reads supplied local paper side-edge or recommendation
+artifacts, recovers rows without fetching live data, builds the readonly paper
+recommendation queue reducer, and prints deterministic queue/review status
+counts and reason-code counts. The queue is for human paper review only; it is
+not an execution queue, order queue, or approval workflow.
+
+The risk-budget report command reads supplied local paper queue or allocation
+artifacts, applies local paper caps, builds the readonly risk-budget reducer,
+and prints deterministic paper allocation summaries, allocated versus
+zero-allocation counts, cap pressure, and reason-code counts. Risk-budget
+output is journal analysis only; it is not order sizing, exchange intent, or
+permission to trade.
+
+The reason-trend command reads the supplied local JSONL strategy recommendation
+bundle log, recovers bundle entries, builds the paper recommendation
+reason-trend reducer, and prints a deterministic reason/status trend summary.
+The summary is for paper review only: source report count, reason-code counts
+by source status, and status-transition counts for recovered local bundle
+reports.
 
 CLI commands in this phase must not create live clients, fetch live exchange
 state, authenticate, read wallet or private-key material, sign payloads,
 construct real order payloads, submit orders, cancel orders, or mutate exchange
-or network state. `paper-probability-side-edge-report` and
-`paper-recommendation-reason-trend` also must not append logs, write artifacts,
-inspect accounts, approve trades, or touch live state.
+or network state. This is the strict phase boundary for
+`paper-probability-side-edge-report`, `paper-recommendation-queue-report`,
+`paper-recommendation-risk-budget-report`, and
+`paper-recommendation-reason-trend`: they also must not append logs, write
+artifacts, inspect accounts, approve trades, or touch live state.
 
 ### Parallel Development Boundaries
 

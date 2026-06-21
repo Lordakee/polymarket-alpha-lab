@@ -2314,6 +2314,151 @@ def _assert_paper_probability_side_edge_summary(
     assert "reason_code_counts:" in output
 
 
+def _paper_recommendation_queue_side_edge_row(
+    market_slug: str,
+    *,
+    action: str,
+    side_probability: Decimal,
+    market_implied_probability: Decimal,
+    total_cost_per_share: Decimal,
+    requested_paper_shares: Decimal = Decimal("100.000000"),
+    max_executable_shares: Decimal = Decimal("100.000000"),
+    reason_codes: tuple[str, ...] = ("queue_seed",),
+) -> dict[str, object]:
+    gross_probability_edge = side_probability - market_implied_probability
+    net_probability_edge = gross_probability_edge - total_cost_per_share
+    if requested_paper_shares <= Decimal("0") or max_executable_shares <= Decimal("0"):
+        depth_status = "no_depth"
+        executable_paper_shares = Decimal("0.000000")
+    elif max_executable_shares < requested_paper_shares:
+        depth_status = "partial_depth"
+        executable_paper_shares = max_executable_shares
+    else:
+        depth_status = "sufficient_depth"
+        executable_paper_shares = requested_paper_shares
+    recommendation_score = Decimal("0.000000") if action == "reject" else net_probability_edge
+    return {
+        "market_slug": market_slug,
+        "question": f"Will {market_slug} resolve yes?",
+        "side": "yes",
+        "side_probability": str(side_probability.quantize(Decimal("0.000001"))),
+        "market_implied_probability": str(
+            market_implied_probability.quantize(Decimal("0.000001")),
+        ),
+        "gross_probability_edge": str(gross_probability_edge.quantize(Decimal("0.000001"))),
+        "total_cost_per_share": str(total_cost_per_share.quantize(Decimal("0.000001"))),
+        "net_probability_edge": str(net_probability_edge.quantize(Decimal("0.000001"))),
+        "recommendation_score": str(recommendation_score.quantize(Decimal("0.000001"))),
+        "action": action,
+        "depth_status": depth_status,
+        "requested_paper_shares": str(requested_paper_shares.quantize(Decimal("0.000001"))),
+        "max_executable_shares": str(max_executable_shares.quantize(Decimal("0.000001"))),
+        "executable_paper_shares": str(executable_paper_shares.quantize(Decimal("0.000001"))),
+        "reason_codes": list(reason_codes),
+        "paper_only": True,
+        "report_only": True,
+        "readonly": True,
+    }
+
+
+def _paper_recommendation_queue_sample_rows() -> tuple[dict[str, object], ...]:
+    return (
+        _paper_recommendation_queue_side_edge_row(
+            "queue-recommend",
+            action="recommend",
+            side_probability=Decimal("0.740000"),
+            market_implied_probability=Decimal("0.600000"),
+            total_cost_per_share=Decimal("0.010000"),
+            reason_codes=("queue_recommend_seed",),
+        ),
+        _paper_recommendation_queue_side_edge_row(
+            "queue-watch",
+            action="watch",
+            side_probability=Decimal("0.640000"),
+            market_implied_probability=Decimal("0.600000"),
+            total_cost_per_share=Decimal("0.010000"),
+            reason_codes=("queue_watch_seed",),
+        ),
+        _paper_recommendation_queue_side_edge_row(
+            "queue-reject",
+            action="reject",
+            side_probability=Decimal("0.550000"),
+            market_implied_probability=Decimal("0.570000"),
+            total_cost_per_share=Decimal("0.010000"),
+            reason_codes=("queue_reject_seed",),
+        ),
+    )
+
+
+def _assert_paper_recommendation_queue_report_summary(
+    output: str,
+    *,
+    input_count: int = 3,
+    queue_count: int = 3,
+    research_review_count: int = 1,
+    await_fresh_context_count: int = 1,
+    skip_count: int = 1,
+    excluded_count: int = 0,
+) -> None:
+    assert "paper-recommendation-queue-report:" in output
+    assert f"input_count={input_count}" in output
+    assert f"queue_count={queue_count}" in output
+    assert f"research_review={research_review_count}" in output
+    assert f"await_fresh_context={await_fresh_context_count}" in output
+    assert f"skip={skip_count}" in output
+    assert f"excluded={excluded_count}" in output
+    assert "paper_only=True report_only=True readonly=True" in output
+    assert "reason_code_counts:" in output
+
+
+def _paper_recommendation_risk_budget_sample_rows() -> tuple[dict[str, object], ...]:
+    return (
+        {
+            "decision": "selected",
+            "selected_position_notional": "12.345678",
+            "paper_only": True,
+            "report_only": True,
+            "readonly": True,
+        },
+        {
+            "decision": "skipped",
+            "selected_position_notional": "0.000000",
+            "paper_only": True,
+            "report_only": True,
+            "readonly": True,
+        },
+        {
+            "decision": "not_selected",
+            "selected_position_notional": "0.000000",
+            "paper_only": True,
+            "report_only": True,
+            "readonly": True,
+        },
+    )
+
+
+def _assert_paper_recommendation_risk_budget_report_summary(
+    output: str,
+    *,
+    status: str = "pass",
+    selected_count: int = 1,
+    blocked_count: int = 0,
+    zero_allocation_count: int = 2,
+) -> None:
+    assert "paper-recommendation-risk-budget-report:" in output
+    assert f"status={status}" in output
+    assert f"selected_count={selected_count}" in output
+    assert f"blocked_count={blocked_count}" in output
+    assert f"zero_allocation_count={zero_allocation_count}" in output
+    assert "total_suggested_notional=" in output
+    assert "remaining_total_notional=" in output
+    assert "total_notional_utilization=" in output
+    assert "largest_single_recommendation_share=" in output
+    assert "nav_notional=" in output
+    assert "paper_only=True report_only=True readonly=True" in output
+    assert "reason_codes:" in output
+
+
 def test_paper_probability_side_edge_report_cli_reads_local_jsonl_without_client(
     tmp_path,
     capsys,
@@ -2574,6 +2719,304 @@ def test_paper_probability_side_edge_report_cli_missing_input_returns_one_withou
     captured = capsys.readouterr()
     assert "paper-probability-side-edge-report failed:" in captured.err
     assert "missing-paper-probability-side-edge.jsonl" in captured.err
+
+
+def test_paper_recommendation_queue_report_cli_reads_local_jsonl_without_client(
+    tmp_path,
+    capsys,
+):
+    input_path = tmp_path / "paper-recommendation-queue.jsonl"
+    _write_jsonl(input_path, _paper_recommendation_queue_sample_rows())
+    before = input_path.read_bytes()
+    client_factory_calls = 0
+
+    def forbidden_client_factory():
+        nonlocal client_factory_calls
+        client_factory_calls += 1
+        raise AssertionError("client should not be constructed")
+
+    exit_code = main(
+        [
+            "paper-recommendation-queue-report",
+            "--input",
+            str(input_path),
+        ],
+        client_factory=forbidden_client_factory,
+    )
+
+    assert exit_code == 0
+    assert client_factory_calls == 0
+    assert input_path.read_bytes() == before
+    captured = capsys.readouterr()
+    _assert_paper_recommendation_queue_report_summary(captured.out)
+    assert "queue_recommend_seed" in captured.out
+    assert "queue_watch_seed" in captured.out
+    assert "queue_reject_seed" in captured.out
+
+
+def test_paper_recommendation_queue_report_cli_empty_input_prints_zero_without_client(
+    tmp_path,
+    capsys,
+):
+    input_path = tmp_path / "empty-paper-recommendation-queue.json"
+    input_path.write_text("", encoding="utf-8")
+    client_factory_calls = 0
+
+    def forbidden_client_factory():
+        nonlocal client_factory_calls
+        client_factory_calls += 1
+        raise AssertionError("client should not be constructed")
+
+    exit_code = main(
+        [
+            "paper-recommendation-queue-report",
+            "--input",
+            str(input_path),
+        ],
+        client_factory=forbidden_client_factory,
+    )
+
+    assert exit_code == 0
+    assert client_factory_calls == 0
+    assert input_path.read_bytes() == b""
+    captured = capsys.readouterr()
+    _assert_paper_recommendation_queue_report_summary(
+        captured.out,
+        input_count=0,
+        queue_count=0,
+        research_review_count=0,
+        await_fresh_context_count=0,
+        skip_count=0,
+        excluded_count=0,
+    )
+
+
+def test_paper_recommendation_queue_report_cli_invalid_row_returns_one_without_client(
+    tmp_path,
+    capsys,
+):
+    input_path = tmp_path / "bad-paper-recommendation-queue.json"
+    _write_json(input_path, [{"market_slug": "missing-fields"}])
+    client_factory_calls = 0
+
+    def forbidden_client_factory():
+        nonlocal client_factory_calls
+        client_factory_calls += 1
+        raise AssertionError("client should not be constructed")
+
+    exit_code = main(
+        [
+            "paper-recommendation-queue-report",
+            "--input",
+            str(input_path),
+        ],
+        client_factory=forbidden_client_factory,
+    )
+
+    assert exit_code == 1
+    assert client_factory_calls == 0
+    captured = capsys.readouterr()
+    assert "paper-recommendation-queue-report failed:" in captured.err
+    assert "bad-paper-recommendation-queue.json" in captured.err
+
+
+def test_paper_recommendation_queue_report_cli_missing_input_returns_one_without_client(
+    tmp_path,
+    capsys,
+):
+    input_path = tmp_path / "missing-paper-recommendation-queue.jsonl"
+    assert not input_path.exists()
+    client_factory_calls = 0
+
+    def forbidden_client_factory():
+        nonlocal client_factory_calls
+        client_factory_calls += 1
+        raise AssertionError("client should not be constructed")
+
+    exit_code = main(
+        [
+            "paper-recommendation-queue-report",
+            "--input",
+            str(input_path),
+        ],
+        client_factory=forbidden_client_factory,
+    )
+
+    assert exit_code == 1
+    assert client_factory_calls == 0
+    assert not input_path.exists()
+    captured = capsys.readouterr()
+    assert "paper-recommendation-queue-report failed:" in captured.err
+    assert "missing-paper-recommendation-queue.jsonl" in captured.err
+
+
+def test_paper_recommendation_risk_budget_report_cli_reads_local_json_without_client(
+    tmp_path,
+    capsys,
+):
+    input_path = tmp_path / "paper-recommendation-risk-budget.json"
+    _write_json(
+        input_path,
+        {"selection_rows": list(_paper_recommendation_risk_budget_sample_rows())},
+    )
+    before = input_path.read_bytes()
+    client_factory_calls = 0
+
+    def forbidden_client_factory():
+        nonlocal client_factory_calls
+        client_factory_calls += 1
+        raise AssertionError("client should not be constructed")
+
+    exit_code = main(
+        [
+            "paper-recommendation-risk-budget-report",
+            "--input",
+            str(input_path),
+            "--nav-notional",
+            "1000.000000",
+        ],
+        client_factory=forbidden_client_factory,
+    )
+
+    assert exit_code == 0
+    assert client_factory_calls == 0
+    assert input_path.read_bytes() == before
+    captured = capsys.readouterr()
+    _assert_paper_recommendation_risk_budget_report_summary(captured.out)
+    assert "risk_budget_passed" in captured.out
+
+
+def test_paper_recommendation_risk_budget_report_cli_empty_input_prints_blocked_without_client(
+    tmp_path,
+    capsys,
+):
+    input_path = tmp_path / "empty-paper-recommendation-risk-budget.jsonl"
+    input_path.write_text("", encoding="utf-8")
+    client_factory_calls = 0
+
+    def forbidden_client_factory():
+        nonlocal client_factory_calls
+        client_factory_calls += 1
+        raise AssertionError("client should not be constructed")
+
+    exit_code = main(
+        [
+            "paper-recommendation-risk-budget-report",
+            "--input",
+            str(input_path),
+        ],
+        client_factory=forbidden_client_factory,
+    )
+
+    assert exit_code == 0
+    assert client_factory_calls == 0
+    assert input_path.read_bytes() == b""
+    captured = capsys.readouterr()
+    _assert_paper_recommendation_risk_budget_report_summary(
+        captured.out,
+        status="blocked",
+        selected_count=0,
+        blocked_count=1,
+        zero_allocation_count=0,
+    )
+    assert "empty_selection" in captured.out
+
+
+def test_paper_recommendation_risk_budget_report_cli_invalid_row_returns_one_without_client(
+    tmp_path,
+    capsys,
+):
+    input_path = tmp_path / "bad-paper-recommendation-risk-budget.json"
+    _write_json(input_path, [{"decision": "selected", "selected_position_notional": 1.0}])
+    client_factory_calls = 0
+
+    def forbidden_client_factory():
+        nonlocal client_factory_calls
+        client_factory_calls += 1
+        raise AssertionError("client should not be constructed")
+
+    exit_code = main(
+        [
+            "paper-recommendation-risk-budget-report",
+            "--input",
+            str(input_path),
+        ],
+        client_factory=forbidden_client_factory,
+    )
+
+    assert exit_code == 1
+    assert client_factory_calls == 0
+    captured = capsys.readouterr()
+    assert "paper-recommendation-risk-budget-report failed:" in captured.err
+    assert "bad-paper-recommendation-risk-budget.json" in captured.err
+    assert "float" in captured.err
+
+
+def test_paper_recommendation_risk_budget_report_cli_invalid_nav_notional_is_argparse_error(
+    tmp_path,
+    capsys,
+):
+    input_path = tmp_path / "paper-recommendation-risk-budget.json"
+    _write_json(
+        input_path,
+        {"selection_rows": list(_paper_recommendation_risk_budget_sample_rows())},
+    )
+    before = input_path.read_bytes()
+    client_factory_calls = 0
+
+    def forbidden_client_factory():
+        nonlocal client_factory_calls
+        client_factory_calls += 1
+        raise AssertionError("client should not be constructed")
+
+    with pytest.raises(SystemExit) as exc_info:
+        main(
+            [
+                "paper-recommendation-risk-budget-report",
+                "--input",
+                str(input_path),
+                "--nav-notional",
+                "not-a-decimal",
+            ],
+            client_factory=forbidden_client_factory,
+        )
+
+    assert exc_info.value.code == 2
+    assert client_factory_calls == 0
+    assert input_path.read_bytes() == before
+    captured = capsys.readouterr()
+    assert "--nav-notional" in captured.err
+    assert "must be a decimal value" in captured.err
+
+
+def test_paper_recommendation_risk_budget_report_cli_missing_input_returns_one_without_client(
+    tmp_path,
+    capsys,
+):
+    input_path = tmp_path / "missing-paper-recommendation-risk-budget.jsonl"
+    assert not input_path.exists()
+    client_factory_calls = 0
+
+    def forbidden_client_factory():
+        nonlocal client_factory_calls
+        client_factory_calls += 1
+        raise AssertionError("client should not be constructed")
+
+    exit_code = main(
+        [
+            "paper-recommendation-risk-budget-report",
+            "--input",
+            str(input_path),
+        ],
+        client_factory=forbidden_client_factory,
+    )
+
+    assert exit_code == 1
+    assert client_factory_calls == 0
+    assert not input_path.exists()
+    captured = capsys.readouterr()
+    assert "paper-recommendation-risk-budget-report failed:" in captured.err
+    assert "missing-paper-recommendation-risk-budget.jsonl" in captured.err
 
 
 def test_cycle_snapshot_db_trend_cli_requires_enabled_db_config(
