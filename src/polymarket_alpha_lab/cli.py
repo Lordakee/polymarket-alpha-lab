@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 import sys
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -80,6 +81,11 @@ from polymarket_alpha_lab.paper_recommendation_cycle_review import (
     PaperRecommendationCycleReviewConfig,
     build_paper_recommendation_cycle_review_report,
 )
+from polymarket_alpha_lab.paper_recommendation_reason_trend import (
+    PaperRecommendationReasonTrendConfig,
+    PaperRecommendationReasonTrendReport,
+    build_paper_recommendation_reason_trend_report,
+)
 from polymarket_alpha_lab.paper_recommendation_cycle_action_gate import (
     PaperRecommendationCycleActionGateConfig,
     build_paper_recommendation_cycle_action_gate_report,
@@ -105,6 +111,9 @@ from polymarket_alpha_lab.strategy_audit_history import (
 from polymarket_alpha_lab.strategy_recommendation_history import (
     PaperStrategyRecommendationHistoryReport,
     build_paper_strategy_recommendation_history_report,
+)
+from polymarket_alpha_lab.strategy_recommendation_bundle import (
+    PaperStrategyRecommendationBundleReport,
 )
 from polymarket_alpha_lab.strategy_recommendation_log import (
     read_paper_strategy_recommendation_bundle_log,
@@ -218,6 +227,26 @@ StrategyCandidateResearchQueueLoader = Callable[..., object]
 StrategyCandidateResearchQueueHistoryBuilder = Callable[..., object]
 StrategyCandidateResearchQueueHistoryDbSink = Callable[..., object]
 _MISSING = object()
+
+
+@dataclass(frozen=True)
+class _PaperRecommendationReasonTrendAdapterRow:
+    market_slug: str
+    side: str
+    action: str
+    reason_codes: tuple[str, ...]
+    paper_only: bool = True
+    report_only: bool = True
+    readonly: bool = True
+
+
+@dataclass(frozen=True)
+class _PaperRecommendationReasonTrendAdapterReport:
+    generated_at: datetime
+    rows: tuple[_PaperRecommendationReasonTrendAdapterRow, ...]
+    paper_only: bool = True
+    report_only: bool = True
+    readonly: bool = True
 
 
 def _redact_db_dsn(text: str, *, dsn: str) -> str:
@@ -560,6 +589,15 @@ def main(
         "strategy-recommendation-history",
     )
     strategy_recommendation_history.add_argument(
+        "--recommendation-log",
+        type=Path,
+        required=True,
+        dest="recommendation_log",
+    )
+    paper_recommendation_reason_trend = subparsers.add_parser(
+        "paper-recommendation-reason-trend",
+    )
+    paper_recommendation_reason_trend.add_argument(
         "--recommendation-log",
         type=Path,
         required=True,
@@ -1355,6 +1393,26 @@ def main(
             return 0
         except Exception as exc:
             print(f"strategy-recommendation-history failed: {exc}", file=sys.stderr)
+            return 1
+
+    if args.command == "paper-recommendation-reason-trend":
+        try:
+            report, action_counts, reason_code_counts = (
+                _run_paper_recommendation_reason_trend(
+                    recommendation_log=args.recommendation_log,
+                )
+            )
+            _print_paper_recommendation_reason_trend_summary(
+                report,
+                action_counts=action_counts,
+                reason_code_counts=reason_code_counts,
+            )
+            return 0
+        except Exception as exc:
+            print(
+                f"paper-recommendation-reason-trend failed: {exc}",
+                file=sys.stderr,
+            )
             return 1
 
     if args.command == "strategy-evidence":
@@ -3025,6 +3083,73 @@ def _run_strategy_recommendation_history(
     )
 
 
+def _run_paper_recommendation_reason_trend(
+    *,
+    recommendation_log: Path,
+) -> tuple[
+    PaperRecommendationReasonTrendReport,
+    Counter[str],
+    Counter[str],
+]:
+    bundles = read_paper_strategy_recommendation_bundle_log(recommendation_log)
+    source_reports = tuple(
+        _paper_recommendation_reason_trend_source_report(bundle)
+        for bundle in bundles
+    )
+    config = PaperRecommendationReasonTrendConfig(
+        config_version="paper-recommendation-reason-trend-v0",
+        window_size=max(1, len(source_reports)),
+    )
+    report = build_paper_recommendation_reason_trend_report(
+        source_reports,
+        config=config,
+        generated_at=datetime.now(UTC),
+    )
+    action_counts: Counter[str] = Counter()
+    for source_report in source_reports:
+        action_counts.update(row.action for row in source_report.rows)
+    reason_code_counts: Counter[str] = Counter()
+    for row in report.reason_trend_rows:
+        reason_code_counts[row.reason_code] += row.count
+    return report, action_counts, reason_code_counts
+
+
+def _paper_recommendation_reason_trend_source_report(
+    bundle: PaperStrategyRecommendationBundleReport,
+) -> _PaperRecommendationReasonTrendAdapterReport:
+    recommendation_report = bundle.recommendation_report
+    return _PaperRecommendationReasonTrendAdapterReport(
+        generated_at=bundle.generated_at,
+        rows=tuple(
+            _paper_recommendation_reason_trend_adapter_row(row)
+            for row in recommendation_report.recommendation_rows
+        ),
+    )
+
+
+def _paper_recommendation_reason_trend_adapter_row(
+    row: object,
+) -> _PaperRecommendationReasonTrendAdapterRow:
+    side = getattr(row, "scoring_side", None)
+    if side not in ("yes", "no"):
+        raise ValueError("recommendation rows must have a yes/no scoring_side")
+    action = getattr(row, "action", None)
+    if action not in ("recommend", "watch", "reject"):
+        raise ValueError("recommendation rows must have an action")
+    market_slug = getattr(row, "market_slug", None)
+    if not isinstance(market_slug, str):
+        raise ValueError("recommendation rows must have a market_slug")
+    reason_codes = getattr(row, "reason_codes", None)
+    if isinstance(reason_codes, (str, bytes)) or reason_codes is None:
+        raise ValueError("recommendation rows must have reason_codes")
+    return _PaperRecommendationReasonTrendAdapterRow(
+        market_slug=market_slug,
+        side=side,
+        action=action,
+        reason_codes=tuple(reason_codes),
+    )
+
+
 def _latest_strategy_recommendation_bundle(bundles):
     ordered = _ordered_strategy_recommendation_bundles(bundles)
     if not ordered:
@@ -3678,6 +3803,57 @@ def _print_strategy_recommendation_history_summary(
         f"latest={_iso_or_none(report.latest_generated_at)}",
     )
     _print_selection_score_trend_metrics(selection_score_metrics or {})
+
+
+def _print_paper_recommendation_reason_trend_summary(
+    report: PaperRecommendationReasonTrendReport,
+    *,
+    action_counts: Counter[str],
+    reason_code_counts: Counter[str],
+) -> None:
+    print(
+        "paper-recommendation-reason-trend: "
+        f"source_reports={report.source_report_count} "
+        f"recommend={action_counts.get('recommend', 0)} "
+        f"watch={action_counts.get('watch', 0)} "
+        f"reject={action_counts.get('reject', 0)} "
+        f"paper_only={report.paper_only} "
+        f"report_only={report.report_only} "
+        f"readonly={report.readonly}",
+    )
+    print(
+        "  top_reason_codes: "
+        f"{_format_reason_code_counts(reason_code_counts)}",
+    )
+    print(
+        "  transitions: "
+        f"{_format_reason_trend_transitions(report.transition_trend_rows)}",
+    )
+
+
+def _format_reason_code_counts(reason_code_counts: Counter[str]) -> str:
+    if not reason_code_counts:
+        return "none"
+    ordered = sorted(reason_code_counts.items(), key=lambda item: (-item[1], item[0]))
+    return " ".join(f"{reason_code}={count}" for reason_code, count in ordered)
+
+
+def _format_reason_trend_transitions(
+    transition_rows: tuple[
+        "PaperRecommendationTransitionTrendRow",
+        ...,
+    ],
+) -> str:
+    if not transition_rows:
+        return "none"
+    return " ".join(
+        (
+            f"{row.market_slug}:{row.side} "
+            f"{row.from_status}->{row.to_status}={row.transition_count} "
+            f"reasons={_csv_or_none(row.reason_codes)}"
+        )
+        for row in transition_rows
+    )
 
 
 def _print_selection_score_trend_metrics(metrics: dict[str, object]) -> None:

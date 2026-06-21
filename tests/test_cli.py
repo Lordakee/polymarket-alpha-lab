@@ -1514,6 +1514,133 @@ def _recommendation_bundle_report(
     )
 
 
+def _paper_reason_trend_recommendation_row(
+    market_slug: str,
+    *,
+    action: str,
+    selected_side: str,
+    score: Decimal,
+    reason_codes: tuple[str, ...],
+    assessment_status: str = "ready",
+) -> PaperStrategyCandidateRecommendationRow:
+    return PaperStrategyCandidateRecommendationRow(
+        market_slug=market_slug,
+        question=f"Will {market_slug} resolve yes?",
+        action=action,
+        assessment_status=assessment_status,
+        readiness_status="pass",
+        selected_side=selected_side,
+        scoring_side="yes",
+        recommendation_score=score,
+        reason_codes=reason_codes,
+    )
+
+
+def _paper_reason_trend_bundle_report(
+    *,
+    generated_at: datetime,
+    rows: tuple[PaperStrategyCandidateRecommendationRow, ...],
+) -> PaperStrategyRecommendationBundleReport:
+    action_rank = {"recommend": 0, "watch": 1, "reject": 2}
+    recommendation_rows = tuple(
+        sorted(
+            rows,
+            key=lambda row: (
+                action_rank[row.action],
+                -row.recommendation_score,
+                row.market_slug,
+            ),
+        ),
+    )
+    recommendation_report = PaperStrategyCandidateRecommendationReport(
+        generated_at=generated_at,
+        config_version="strategy-candidate-recommendation-v1",
+        readiness_overall_status="pass",
+        candidate_count=len(recommendation_rows),
+        recommend_count=sum(
+            1 for row in recommendation_rows if row.action == "recommend"
+        ),
+        watch_count=sum(1 for row in recommendation_rows if row.action == "watch"),
+        reject_count=sum(1 for row in recommendation_rows if row.action == "reject"),
+        recommendation_rows=recommendation_rows,
+    )
+
+    selection_rows = []
+    for row in recommendation_rows:
+        selected = row.action == "recommend"
+        selected_notional = Decimal("5.000000") if selected else Decimal("0.000000")
+        selection_rows.append(
+            PaperStrategySelectionPolicyRow(
+                market_slug=row.market_slug,
+                question=row.question,
+                source_action=row.action,
+                selected_side=row.selected_side,
+                recommendation_score=row.recommendation_score,
+                decision="selected" if selected else "not_selected",
+                suggested_position_notional=selected_notional,
+                selected_position_notional=selected_notional,
+                reason_codes=(
+                    ("selected_by_policy", *row.reason_codes)
+                    if selected
+                    else (f"source_action_{row.action}", *row.reason_codes)
+                ),
+            ),
+        )
+
+    explanation_rows = tuple(
+        PaperStrategyRecommendationExplanationRow(
+            market_slug=row.market_slug,
+            action=row.action,
+            selected_side=row.selected_side,
+            recommendation_score=row.recommendation_score,
+            primary_reason_code=row.reason_codes[0],
+            reason_codes=row.reason_codes,
+            explanation=(
+                f"{row.action} {row.selected_side} because {row.reason_codes[0]} "
+                f"(score {row.recommendation_score})"
+            ),
+        )
+        for row in recommendation_rows
+    )
+    selection_policy_report = PaperStrategySelectionPolicyReport(
+        generated_at=generated_at,
+        config_version="paper-strategy-selection-policy-v1",
+        row_count=len(selection_rows),
+        selected_count=sum(1 for row in selection_rows if row.decision == "selected"),
+        skipped_count=0,
+        not_selected_count=sum(
+            1 for row in selection_rows if row.decision == "not_selected"
+        ),
+        total_selected_notional=sum(
+            (row.selected_position_notional for row in selection_rows),
+            Decimal("0.000000"),
+        ),
+        selection_rows=tuple(selection_rows),
+    )
+    explanation_report = PaperStrategyRecommendationExplanationReport(
+        generated_at=generated_at,
+        source_config_version=recommendation_report.config_version,
+        recommendation_count=len(explanation_rows),
+        recommend_count=sum(
+            1 for row in explanation_rows if row.action == "recommend"
+        ),
+        watch_count=sum(1 for row in explanation_rows if row.action == "watch"),
+        reject_count=sum(1 for row in explanation_rows if row.action == "reject"),
+        explanation_rows=explanation_rows,
+    )
+    return PaperStrategyRecommendationBundleReport(
+        generated_at=generated_at,
+        config_version="strategy-recommendation-bundle-v1",
+        candidate_count=recommendation_report.candidate_count,
+        recommend_count=recommendation_report.recommend_count,
+        selected_count=selection_policy_report.selected_count,
+        total_selected_notional=selection_policy_report.total_selected_notional,
+        recommendation_report=recommendation_report,
+        selection_policy_report=selection_policy_report,
+        explanation_report=explanation_report,
+    )
+
+
 def test_strategy_recommendation_history_cli_reads_log_and_prints_summary_without_client(
     tmp_path,
     capsys,
@@ -1903,6 +2030,166 @@ def test_strategy_recommendation_history_cli_returns_one_when_runner_fails(
         "strategy-recommendation-history failed: recommendation history failed"
         in captured.err
     )
+
+
+def test_paper_recommendation_reason_trend_cli_reads_bundle_log_report_only_without_client(
+    tmp_path,
+    capsys,
+):
+    recommendation_log = tmp_path / "strategy-recommendations.jsonl"
+    append_paper_strategy_recommendation_bundle_log(
+        recommendation_log,
+        _paper_reason_trend_bundle_report(
+            generated_at=datetime(2026, 6, 20, 9, 0, tzinfo=UTC),
+            rows=(
+                _paper_reason_trend_recommendation_row(
+                    "alpha-shift",
+                    action="watch",
+                    selected_side="yes",
+                    score=Decimal("0.200000"),
+                    reason_codes=("assessment_ready",),
+                ),
+                _paper_reason_trend_recommendation_row(
+                    "beta-recommend",
+                    action="recommend",
+                    selected_side="yes",
+                    score=Decimal("0.800000"),
+                    reason_codes=("assessment_ready", "readiness_passed"),
+                ),
+                _paper_reason_trend_recommendation_row(
+                    "gamma-reject",
+                    action="reject",
+                    selected_side="none",
+                    score=Decimal("0.000000"),
+                    assessment_status="blocked",
+                    reason_codes=("assessment_blocked",),
+                ),
+            ),
+        ),
+    )
+    append_paper_strategy_recommendation_bundle_log(
+        recommendation_log,
+        _paper_reason_trend_bundle_report(
+            generated_at=datetime(2026, 6, 20, 10, 0, tzinfo=UTC),
+            rows=(
+                _paper_reason_trend_recommendation_row(
+                    "alpha-shift",
+                    action="recommend",
+                    selected_side="yes",
+                    score=Decimal("0.900000"),
+                    reason_codes=("assessment_ready", "readiness_passed"),
+                ),
+                _paper_reason_trend_recommendation_row(
+                    "delta-watch",
+                    action="watch",
+                    selected_side="yes",
+                    score=Decimal("0.100000"),
+                    reason_codes=("readiness_watch",),
+                ),
+                _paper_reason_trend_recommendation_row(
+                    "epsilon-reject",
+                    action="reject",
+                    selected_side="none",
+                    score=Decimal("0.000000"),
+                    assessment_status="blocked",
+                    reason_codes=("assessment_blocked",),
+                ),
+            ),
+        ),
+    )
+    before = recommendation_log.read_bytes()
+    client_factory_calls = 0
+
+    def forbidden_client_factory():
+        nonlocal client_factory_calls
+        client_factory_calls += 1
+        raise AssertionError("client should not be constructed")
+
+    exit_code = main(
+        [
+            "paper-recommendation-reason-trend",
+            "--recommendation-log",
+            str(recommendation_log),
+        ],
+        client_factory=forbidden_client_factory,
+    )
+
+    assert exit_code == 0
+    assert client_factory_calls == 0
+    assert recommendation_log.read_bytes() == before
+    captured = capsys.readouterr()
+    assert "paper-recommendation-reason-trend:" in captured.out
+    assert "source_reports=2" in captured.out
+    assert "paper_only=True report_only=True readonly=True" in captured.out
+    assert "recommend=2" in captured.out
+    assert "watch=2" in captured.out
+    assert "reject=2" in captured.out
+    assert "assessment_ready" in captured.out
+    assert "readiness_passed" in captured.out
+    assert "transitions:" in captured.out
+    assert "alpha-shift" in captured.out
+    assert "watch->recommend" in captured.out
+
+
+def test_paper_recommendation_reason_trend_cli_empty_log_prints_zero_without_mutation(
+    tmp_path,
+    capsys,
+):
+    recommendation_log = tmp_path / "strategy-recommendations.jsonl"
+    recommendation_log.write_text("", encoding="utf-8")
+    before = recommendation_log.read_bytes()
+    client_factory_calls = 0
+
+    def forbidden_client_factory():
+        nonlocal client_factory_calls
+        client_factory_calls += 1
+        raise AssertionError("client should not be constructed")
+
+    exit_code = main(
+        [
+            "paper-recommendation-reason-trend",
+            "--recommendation-log",
+            str(recommendation_log),
+        ],
+        client_factory=forbidden_client_factory,
+    )
+
+    assert exit_code == 0
+    assert client_factory_calls == 0
+    assert recommendation_log.read_bytes() == before
+    captured = capsys.readouterr()
+    assert "paper-recommendation-reason-trend:" in captured.out
+    assert "source_reports=0" in captured.out
+
+
+def test_paper_recommendation_reason_trend_cli_missing_log_returns_one_without_client(
+    tmp_path,
+    capsys,
+):
+    recommendation_log = tmp_path / "missing-strategy-recommendations.jsonl"
+    assert not recommendation_log.exists()
+    client_factory_calls = 0
+
+    def forbidden_client_factory():
+        nonlocal client_factory_calls
+        client_factory_calls += 1
+        raise AssertionError("client should not be constructed")
+
+    exit_code = main(
+        [
+            "paper-recommendation-reason-trend",
+            "--recommendation-log",
+            str(recommendation_log),
+        ],
+        client_factory=forbidden_client_factory,
+    )
+
+    assert exit_code == 1
+    assert client_factory_calls == 0
+    assert not recommendation_log.exists()
+    captured = capsys.readouterr()
+    assert "paper-recommendation-reason-trend failed:" in captured.err
+    assert "missing-strategy-recommendations.jsonl" in captured.err
 
 
 def test_cycle_snapshot_db_trend_cli_requires_enabled_db_config(

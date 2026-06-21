@@ -143,9 +143,9 @@ trend reporting.
 
 ## Cost-Aware Recommendation
 
-Recommendation must be cost-aware because a positive probability gap can vanish
-after transaction and timing costs. The existing cost-aware strategy report
-models the important paper inputs:
+Recommendation screening must remain cost-aware because a positive probability
+gap can vanish after transaction, timing, risk, and paper capital costs. The
+existing cost-aware strategy report models the important paper inputs:
 
 - taker fee, including the Polymarket-style price-dependent fee calculation
 - spread, because the displayed midpoint is not the executable price
@@ -154,18 +154,21 @@ models the important paper inputs:
 - finalization cost placeholder
 - time cost placeholder
 - risk cost placeholder
+- paper capital carrying-cost input when notional would be locked
 - total cost per share and net edge per share
 
 The recommendation score should therefore use net edge and readiness evidence,
-not gross forecast error alone. A candidate with a higher raw forecast gap but
-poor spread, weak liquidity, stale settlement context, or high risk cost can be
-less attractive than a smaller but cleaner edge.
+not gross forecast error alone. Strategy-level selection should evaluate YES
+and NO as separate probability-event sides before screening. A candidate with a
+higher raw forecast gap but poor spread, weak liquidity, stale settlement
+context, high risk cost, or high paper capital cost can be less attractive than
+a smaller but cleaner edge.
 
 ## Next-Stage Recommendation Loop
 
 The next stage should turn the current bundle/log/history pieces into a
 repeatable paper recommendation loop for probability markets. The loop is still
-paper-only and report-only:
+paper-only, report-only, and readonly:
 
 ```text
 event probability input
@@ -190,7 +193,8 @@ For each candidate side:
   the side, not an optimistic midpoint.
 - `gross_probability_edge` is `side_probability - side_price`.
 - `total_cost_per_share` is the Decimal-only sum of fee, spread, slippage,
-  funding, finalization, time, and risk costs assigned to that side.
+  funding, finalization, time, risk, and paper capital costs assigned to that
+  side.
 - `net_probability_edge` is `gross_probability_edge - total_cost_per_share`.
 - `recommendation_score` should be derived from positive net edge plus
   readiness quality. It must not reward a side whose cost-adjusted edge is zero
@@ -289,6 +293,12 @@ notional.
 
 ### Queue, Risk Budget, and Reason Trends
 
+The queue, risk-budget, and reason-trend modules are paper-only, report-only,
+and readonly reducer surfaces. They read supplied local paper reports and emit
+deterministic summaries only. They do not create clients, authenticate, read
+wallets, inspect accounts, sign payloads, submit orders, cancel orders, or
+mutate live state.
+
 The queue module is a research/recommendation review queue, not an execution
 queue. It should admit ranked paper recommendations under local limits such as
 maximum queue size, minimum net edge, liquidity threshold, market-context
@@ -313,8 +323,8 @@ The reason-trend module should summarize why recommendations change across
 paper runs. It should group by canonical reason codes, not free-form
 explanation text, and report counts and transitions such as
 watch-to-recommend, recommend-to-watch, recommend-to-reject, queued-to-blocked,
-and allocated-to-zero. Trend reports should remain readonly summaries over
-recovered local paper logs.
+and allocated-to-zero. Trend reports are readonly summaries over recovered
+local paper logs.
 
 ### CLI Report Workflow
 
@@ -324,10 +334,23 @@ reducers, and print deterministic summaries. Useful commands would print side
 edge counts, queue counts, risk-budget allocations, top reason codes, and
 latest-run deltas.
 
+The implemented reason-trend slice is:
+
+```bash
+polymarket-alpha-lab paper-recommendation-reason-trend --recommendation-log <path>
+```
+
+This command reads the supplied local JSONL strategy recommendation bundle log,
+recovers bundle entries, builds the paper recommendation reason-trend reducer,
+and prints a deterministic reason/status trend summary. The summary is for
+paper review only: source report count, reason-code counts by source status,
+and status-transition counts for recovered local bundle reports.
+
 CLI commands in this phase must not create live clients, fetch live exchange
 state, authenticate, read wallet or private-key material, sign payloads,
 construct real order payloads, submit orders, cancel orders, or mutate exchange
-or network state.
+or network state. `paper-recommendation-reason-trend` also must not append logs,
+write artifacts, inspect accounts, approve trades, or touch live state.
 
 ### Parallel Development Boundaries
 
@@ -402,10 +425,11 @@ should add readonly metrics that explain why the loop is changing:
 `paper_recommendation_reason_trend` should stay deterministic and stable for
 review. It aggregates canonical reason-code counts by source status and
 transition trends across recovered paper recommendation reports. It is
-paper-only/report-only/readonly: no live trading, no wallet/auth/order
-operations, and no financial advice. Group canonical reason-code strings only,
-preserve source config versions, and avoid free-form explanation text as the
-grouping key. Explanation text can remain a deterministic view over action,
+paper-only/report-only/readonly: no live trading, no authentication, no wallet
+or private-key access, no signing, no order submission or cancellation, no live
+state mutation, and no financial advice. Group canonical reason-code strings
+only, preserve source config versions, and avoid free-form explanation text as
+the grouping key. Explanation text can remain a deterministic view over action,
 side, score, and primary reason code.
 
 ## Readiness Gates for the Loop
@@ -495,6 +519,9 @@ paper trades, append logs, or write artifacts.
 Selected rows and selected notional values are paper sizing suggestions for
 journal analysis. They are not executable instructions, exchange orders, live
 orders, wallet actions, or private-key-backed actions.
+
+The matching reason/status trend CLI reads the same local JSONL bundle-log
+surface and follows the report-only boundary described above.
 
 ## Readiness Before Live Automation
 
