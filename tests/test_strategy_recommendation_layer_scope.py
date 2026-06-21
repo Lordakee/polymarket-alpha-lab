@@ -22,6 +22,7 @@ IMPLEMENTED_RECOMMENDATION_MODULE_NAMES = (
     "paper_capital_cost_model",
     "paper_probability_side_edge",
     "paper_recommendation_risk_budget",
+    "paper_recommendation_reason_trend",
     "paper_strategy_selection_policy",
     "strategy_recommendation_explain",
     "strategy_recommendation_history",
@@ -47,7 +48,6 @@ PLANNED_RECOMMENDATION_MODULE_NAMES = (
     "paper_recommendation_health",
     "paper_recommendation_manifest",
     "paper_recommendation_readiness",
-    "paper_recommendation_reason_trend",
     "paper_recommendation_shadow_nav",
     "paper_recommendation_thresholds",
     "paper_research_packet",
@@ -181,15 +181,6 @@ PLANNED_RECOMMENDATION_PUBLIC_NAMES = {
             "build_paper_recommendation_readiness_report",
         },
     ),
-    "paper_recommendation_reason_trend": frozenset(
-        {
-            "PaperRecommendationReasonTrendConfig",
-            "PaperRecommendationReasonTrendReport",
-            "PaperRecommendationReasonTrendRow",
-            "PaperRecommendationTransitionTrendRow",
-            "build_paper_recommendation_reason_trend_report",
-        },
-    ),
     "paper_recommendation_shadow_nav": frozenset(
         {
             "PaperRecommendationShadowNavAllocationRow",
@@ -309,6 +300,12 @@ RECOMMENDATION_IMPORT_ALLOWLIST: dict[
         "decimal": frozenset({"Context", "Decimal", "localcontext"}),
     },
     "paper_recommendation_risk_budget": {
+        "__future__": frozenset({"annotations"}),
+        "dataclasses": frozenset({"dataclass"}),
+        "datetime": frozenset({"UTC", "datetime"}),
+        "decimal": frozenset({"Decimal"}),
+    },
+    "paper_recommendation_reason_trend": {
         "__future__": frozenset({"annotations"}),
         "dataclasses": frozenset({"dataclass"}),
         "datetime": frozenset({"UTC", "datetime"}),
@@ -580,6 +577,7 @@ def test_recommendation_layer_scope_includes_current_recommendation_modules() ->
         "paper_capital_cost_model",
         "paper_probability_side_edge",
         "paper_recommendation_risk_budget",
+        "paper_recommendation_reason_trend",
         "paper_strategy_selection_policy",
         "strategy_recommendation_explain",
         "strategy_recommendation_history",
@@ -607,7 +605,6 @@ def test_recommendation_layer_scope_lists_planned_recommendation_modules() -> No
         "paper_recommendation_health",
         "paper_recommendation_manifest",
         "paper_recommendation_readiness",
-        "paper_recommendation_reason_trend",
         "paper_recommendation_shadow_nav",
         "paper_recommendation_thresholds",
         "paper_research_packet",

@@ -239,13 +239,17 @@ Reducer modules for this stage are:
 - `paper_recommendation_manifest` for supplied report-presence manifests.
 - `paper_recommendation_consistency` for cross-reducer consistency checks.
 - `paper_recommendation_queue` for a planned generic readonly review queue.
-- `paper_recommendation_reason_trend` for readonly reason-code and transition
-  trend summaries.
+- `paper_recommendation_reason_trend` for implemented
+  paper-only/report-only/readonly aggregation of canonical reason-code counts by
+  source status and transition trends across recovered paper recommendation
+  reports.
 
-Those reducer modules are paper-only/report-only/readonly surfaces. They should
-not be package-root exports, and Phase 2 modules should not import them. Until a
-parallel worker creates a planned module, documentation and boundary tests should
-treat its name as planned scope only rather than importing it.
+Those reducer modules are paper-only/report-only/readonly surfaces.
+`paper_recommendation_reason_trend` is implemented; the remaining reducers are
+planned and should not be package-root exports. Phase 2 modules should not
+import the planned reducers. Until a parallel worker creates one of them,
+documentation and boundary tests should treat each planned reducer name as
+planned scope only rather than importing it.
 
 ### Probability Side Edge
 
@@ -343,8 +347,9 @@ explicit:
   `paper_recommendation_risk_budget`, and `paper_recommendation_shadow_nav`
   paper allocation and risk reports.
 - Node E: `paper_recommendation_gate_summary`,
-  `paper_recommendation_readiness`, `paper_recommendation_health`, and
-  `paper_recommendation_reason_trend` aggregate health/trend reports.
+  `paper_recommendation_readiness`, and `paper_recommendation_health`
+  aggregate health/trend reports. `paper_recommendation_reason_trend` is the
+  implemented recovered-report reason-code and transition trend reducer.
 - Node F: CLI/report-only workflow and documentation after report shapes are
   stable.
 
@@ -394,10 +399,14 @@ should add readonly metrics that explain why the loop is changing:
 - stale-input, liquidity, cost-drag, exposure-cap, and threshold-failure rates
 - latest-run deltas against the prior run and rolling windows
 
-Reason-code trend rows should be deterministic and stable for review. Use
-canonical reason code strings, preserve source config versions, and avoid
-free-form text as the grouping key. Explanation text can remain a deterministic
-view over action, side, score, and primary reason code.
+`paper_recommendation_reason_trend` should stay deterministic and stable for
+review. It aggregates canonical reason-code counts by source status and
+transition trends across recovered paper recommendation reports. It is
+paper-only/report-only/readonly: no live trading, no wallet/auth/order
+operations, and no financial advice. Group canonical reason-code strings only,
+preserve source config versions, and avoid free-form explanation text as the
+grouping key. Explanation text can remain a deterministic view over action,
+side, score, and primary reason code.
 
 ## Readiness Gates for the Loop
 
@@ -538,8 +547,10 @@ The recommendation-layer work is expected to use module-level reducers named:
 - `paper_recommendation_queue` for a planned generic readonly review queue
 - `paper_recommendation_risk_budget` for paper allocation caps and budget
   status
-- `paper_recommendation_reason_trend` for readonly reason-code and transition
-  trend summaries
+- `paper_recommendation_reason_trend` for implemented
+  paper-only/report-only/readonly aggregation of canonical reason-code counts by
+  source status and transition trends across recovered paper recommendation
+  reports
 - `action_gated_strategy_recommendation_queue` for the paper-only reducer that
   requires `build_candidate_research_queue` before building downstream
   candidate assessment, bundle, and strategy queue artifacts

@@ -1,0 +1,282 @@
+from __future__ import annotations
+
+import ast
+from pathlib import Path
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+MODULE_NAME = "paper_recommendation_reason_trend"
+MODULE_PATH = REPO_ROOT / "src" / "polymarket_alpha_lab" / f"{MODULE_NAME}.py"
+PACKAGE_ROOT_PATH = REPO_ROOT / "src" / "polymarket_alpha_lab" / "__init__.py"
+
+EXPECTED_EXPORTS = (
+    "PaperRecommendationReasonTrendConfig",
+    "PaperRecommendationReasonTrendRow",
+    "PaperRecommendationTransitionTrendRow",
+    "PaperRecommendationReasonTrendReport",
+    "build_paper_recommendation_reason_trend_report",
+)
+
+FORBIDDEN_IMPORT_PREFIXES = {
+    "aiohttp",
+    "asyncio",
+    "bs4",
+    "clob_client",
+    "cloudscraper",
+    "curl_cffi",
+    "eth_account",
+    "eth_keys",
+    "http",
+    "httpx",
+    "mechanize",
+    "playwright",
+    "polymarket",
+    "polymarket_alpha_lab.api",
+    "polymarket_alpha_lab.auth",
+    "polymarket_alpha_lab.cli",
+    "polymarket_alpha_lab.execution",
+    "polymarket_alpha_lab.journal",
+    "polymarket_alpha_lab.orders",
+    "polymarket_alpha_lab.paper",
+    "polymarket_alpha_lab.paper_execution",
+    "polymarket_alpha_lab.positions",
+    "polymarket_alpha_lab.runner",
+    "polymarket_alpha_lab.trading",
+    "py_clob_client",
+    "requests",
+    "requests_html",
+    "scrapy",
+    "selenium",
+    "socket",
+    "ssl",
+    "subprocess",
+    "urllib",
+    "urllib3",
+    "web3",
+    "websocket",
+    "websockets",
+}
+
+FORBIDDEN_NAME_FRAGMENTS = {
+    "account",
+    "apikey",
+    "apitoken",
+    "auth",
+    "authenticate",
+    "broker",
+    "browser",
+    "cancelorder",
+    "client",
+    "credential",
+    "executionclient",
+    "fetch",
+    "golive",
+    "http",
+    "liveclient",
+    "liveorder",
+    "network",
+    "orderbook",
+    "orderbuilder",
+    "orderclient",
+    "orderconstruction",
+    "orderinstruction",
+    "orderpayload",
+    "orderplacement",
+    "orderrequest",
+    "placeorder",
+    "postorder",
+    "privatekey",
+    "routeorder",
+    "sdk",
+    "secret",
+    "sendorder",
+    "signorder",
+    "submitorder",
+    "tradeclient",
+    "wallet",
+    "websocket",
+}
+
+FORBIDDEN_CALL_NAMES = {
+    "__import__",
+    "compile",
+    "eval",
+    "exec",
+    "input",
+    "open",
+    "print",
+    "read",
+    "write",
+}
+
+FORBIDDEN_STRING_FRAGMENTS = {
+    "api key",
+    "authenticate",
+    "authorization",
+    "client",
+    "credential",
+    "live order",
+    "order construction",
+    "place order",
+    "private key",
+    "sign order",
+    "submit order",
+    "cancel order",
+    "trade client",
+    "wallet",
+}
+
+ALLOWED_FORBIDDEN_NAME_MATCHES = {
+    "readonly",
+}
+
+
+def parse_module(path: Path = MODULE_PATH) -> ast.Module:
+    return ast.parse(path.read_text(encoding="utf-8"))
+
+
+def normalize_identifier(value: str) -> str:
+    return "".join(character for character in value.lower() if character.isalnum())
+
+
+def module_matches_prefix(module_name: str, prefix: str) -> bool:
+    return module_name == prefix or module_name.startswith(f"{prefix}.")
+
+
+def absolute_import_from_module(imported_from: ast.ImportFrom) -> str:
+    if imported_from.level == 0:
+        return imported_from.module or ""
+    assert imported_from.level == 1, ast.unparse(imported_from)
+    if imported_from.module is None:
+        return "polymarket_alpha_lab"
+    return f"polymarket_alpha_lab.{imported_from.module}"
+
+
+def imported_modules(tree: ast.Module) -> list[str]:
+    modules = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            modules.extend(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            modules.append(absolute_import_from_module(node))
+    return modules
+
+
+def module_exports(tree: ast.Module) -> tuple[str, ...]:
+    assigned_exports = None
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        for target in node.targets:
+            if isinstance(target, ast.Name) and target.id == "__all__":
+                assigned_exports = ast.literal_eval(node.value)
+    assert assigned_exports is not None
+    return tuple(assigned_exports)
+
+
+def package_root_exports() -> set[str]:
+    return set(module_exports(parse_module(PACKAGE_ROOT_PATH)))
+
+
+def package_root_imported_modules() -> set[str]:
+    imported: set[str] = set()
+    for node in ast.walk(parse_module(PACKAGE_ROOT_PATH)):
+        if isinstance(node, ast.Import):
+            imported.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            imported.add(absolute_import_from_module(node))
+    return imported
+
+
+def package_root_bound_names() -> set[str]:
+    bound_names: set[str] = set()
+    for node in ast.walk(parse_module(PACKAGE_ROOT_PATH)):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                bound_names.add(alias.asname or alias.name.split(".", 1)[0])
+        elif isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                bound_names.add(alias.asname or alias.name)
+    return bound_names
+
+
+def collected_names(tree: ast.Module) -> set[str]:
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(node.name)
+        elif isinstance(node, ast.Name):
+            names.add(node.id)
+        elif isinstance(node, ast.Attribute):
+            names.add(node.attr)
+        elif isinstance(node, ast.arg):
+            names.add(node.arg)
+        elif isinstance(node, ast.keyword) and node.arg is not None:
+            names.add(node.arg)
+        elif isinstance(node, ast.alias):
+            names.add(node.name)
+            if node.asname is not None:
+                names.add(node.asname)
+    return names
+
+
+def test_paper_recommendation_reason_trend_exports_only_report_api() -> None:
+    tree = parse_module()
+
+    assert module_exports(tree) == EXPECTED_EXPORTS
+
+
+def test_paper_recommendation_reason_trend_has_no_package_root_exports() -> None:
+    package_exports = package_root_exports()
+    package_bound_names = package_root_bound_names()
+    package_imports = package_root_imported_modules()
+
+    assert f"polymarket_alpha_lab.{MODULE_NAME}" not in package_imports
+    for public_name in EXPECTED_EXPORTS:
+        assert public_name not in package_exports, public_name
+        assert public_name not in package_bound_names, public_name
+
+
+def test_paper_recommendation_reason_trend_does_not_import_live_auth_order_surfaces() -> None:
+    tree = parse_module()
+    for module_name in imported_modules(tree):
+        assert not any(
+            module_matches_prefix(module_name, forbidden)
+            for forbidden in FORBIDDEN_IMPORT_PREFIXES
+        ), module_name
+
+
+def test_paper_recommendation_reason_trend_does_not_define_live_auth_order_names() -> None:
+    tree = parse_module()
+    normalized_names = {
+        normalize_identifier(name)
+        for name in collected_names(tree)
+        if normalize_identifier(name) not in ALLOWED_FORBIDDEN_NAME_MATCHES
+    }
+
+    for fragment in FORBIDDEN_NAME_FRAGMENTS:
+        assert not any(
+            normalize_identifier(fragment) in name for name in normalized_names
+        ), (
+            fragment,
+            normalized_names,
+        )
+
+
+def test_paper_recommendation_reason_trend_does_not_perform_io_or_dynamic_execution() -> None:
+    tree = parse_module()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            assert node.func.id not in FORBIDDEN_CALL_NAMES, node.func.id
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            assert node.func.attr not in FORBIDDEN_CALL_NAMES, node.func.attr
+
+
+def test_paper_recommendation_reason_trend_declares_only_report_boundary_strings() -> None:
+    tree = parse_module()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            lowered = node.value.lower()
+            assert not any(
+                fragment in lowered for fragment in FORBIDDEN_STRING_FRAGMENTS
+            ), node.value
