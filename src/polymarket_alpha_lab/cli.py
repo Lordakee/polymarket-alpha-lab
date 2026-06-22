@@ -230,6 +230,8 @@ ActionGatedQueueDecisionSupportTrendDbHistoryRunner = Callable[..., object]
 StrategyCandidateResearchQueueLoader = Callable[..., object]
 StrategyCandidateResearchQueueHistoryBuilder = Callable[..., object]
 StrategyCandidateResearchQueueHistoryDbSink = Callable[..., object]
+PaperProbabilityRecommendationQueueDbSink = Callable[..., object]
+PaperRecommendationRiskBudgetDbSink = Callable[..., object]
 _MISSING = object()
 
 
@@ -261,8 +263,15 @@ def _redact_db_table_name(text: str, *, table_name: str) -> str:
     return text.replace(table_name, "<redacted-table>")
 
 
-def _raise_redacted_db_sink_error(exc: Exception, *, dsn: str) -> None:
+def _raise_redacted_db_sink_error(
+    exc: Exception,
+    *,
+    dsn: str,
+    table_name: str | None = None,
+) -> None:
     message = _redact_db_dsn(str(exc), dsn=dsn)
+    if table_name:
+        message = _redact_db_table_name(message, table_name=table_name)
     if not message.strip():
         message = exc.__class__.__name__
     raise RuntimeError(message) from None
@@ -418,6 +427,12 @@ def main(
     ) = None,
     strategy_candidate_research_queue_history_db_sink: (
         StrategyCandidateResearchQueueHistoryDbSink | None
+    ) = None,
+    paper_probability_recommendation_queue_db_sink: (
+        PaperProbabilityRecommendationQueueDbSink | None
+    ) = None,
+    paper_recommendation_risk_budget_db_sink: (
+        PaperRecommendationRiskBudgetDbSink | None
     ) = None,
 ) -> int:
     parser = argparse.ArgumentParser(prog="polymarket-alpha-lab")
@@ -635,6 +650,12 @@ def main(
         required=True,
         dest="input_path",
     )
+    paper_recommendation_queue_report.add_argument(
+        "--persist",
+        action="store_true",
+        default=False,
+        dest="persist",
+    )
     paper_recommendation_risk_budget_report = subparsers.add_parser(
         "paper-recommendation-risk-budget-report",
     )
@@ -649,6 +670,12 @@ def main(
         type=_cli_decimal,
         default=None,
         dest="nav_notional",
+    )
+    paper_recommendation_risk_budget_report.add_argument(
+        "--persist",
+        action="store_true",
+        default=False,
+        dest="persist",
     )
 
     strategy_evidence = subparsers.add_parser("strategy-evidence")
@@ -1488,6 +1515,47 @@ def main(
                 report,
                 reason_code_counts=reason_code_counts,
             )
+            if args.persist:
+                from polymarket_alpha_lab.supabase_paper_probability_recommendation_queue_config import (
+                    from_paper_probability_recommendation_queue_db_env,
+                )
+
+                queue_db_config = from_paper_probability_recommendation_queue_db_env()
+                if not queue_db_config.enabled:
+                    raise ValueError(
+                        "paper-recommendation-queue-report persistence requires "
+                        "paper probability recommendation queue DB to be enabled",
+                    )
+                dsn = queue_db_config.dsn
+                if dsn is None:
+                    raise ValueError(
+                        "paper-recommendation-queue-report persistence requires "
+                        "a paper probability recommendation queue DB DSN",
+                    )
+                if paper_probability_recommendation_queue_db_sink is None:
+                    from polymarket_alpha_lab.paper_probability_recommendation_queue_psycopg import (
+                        insert_paper_probability_recommendation_queue_report_with_psycopg,
+                    )
+
+                    resolved_queue_db_sink = (
+                        insert_paper_probability_recommendation_queue_report_with_psycopg
+                    )
+                else:
+                    resolved_queue_db_sink = (
+                        paper_probability_recommendation_queue_db_sink
+                    )
+                try:
+                    resolved_queue_db_sink(
+                        dsn,
+                        report,
+                        table_name=queue_db_config.table_name,
+                    )
+                except Exception as exc:
+                    _raise_redacted_db_sink_error(
+                        exc,
+                        dsn=dsn,
+                        table_name=queue_db_config.table_name,
+                    )
             return 0
         except Exception as exc:
             print(
@@ -1508,6 +1576,47 @@ def main(
                 report,
                 zero_allocation_count=zero_allocation_count,
             )
+            if args.persist:
+                from polymarket_alpha_lab.supabase_paper_recommendation_risk_budget_config import (
+                    from_paper_recommendation_risk_budget_db_env,
+                )
+
+                risk_budget_db_config = from_paper_recommendation_risk_budget_db_env()
+                if not risk_budget_db_config.enabled:
+                    raise ValueError(
+                        "paper-recommendation-risk-budget-report persistence "
+                        "requires paper recommendation risk budget DB to be enabled",
+                    )
+                dsn = risk_budget_db_config.dsn
+                if dsn is None:
+                    raise ValueError(
+                        "paper-recommendation-risk-budget-report persistence "
+                        "requires a paper recommendation risk budget DB DSN",
+                    )
+                if paper_recommendation_risk_budget_db_sink is None:
+                    from polymarket_alpha_lab.paper_recommendation_risk_budget_psycopg import (
+                        insert_paper_recommendation_risk_budget_report_with_psycopg,
+                    )
+
+                    resolved_risk_budget_db_sink = (
+                        insert_paper_recommendation_risk_budget_report_with_psycopg
+                    )
+                else:
+                    resolved_risk_budget_db_sink = (
+                        paper_recommendation_risk_budget_db_sink
+                    )
+                try:
+                    resolved_risk_budget_db_sink(
+                        dsn,
+                        report,
+                        table_name=risk_budget_db_config.table_name,
+                    )
+                except Exception as exc:
+                    _raise_redacted_db_sink_error(
+                        exc,
+                        dsn=dsn,
+                        table_name=risk_budget_db_config.table_name,
+                    )
             return 0
         except Exception as exc:
             print(

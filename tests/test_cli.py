@@ -2459,6 +2459,53 @@ def _assert_paper_recommendation_risk_budget_report_summary(
     assert "reason_codes:" in output
 
 
+def _install_paper_recommendation_queue_report_db_config(
+    monkeypatch,
+    *,
+    enabled: bool = True,
+    dsn: str | None,
+    table_name: str,
+) -> list[str]:
+    config_calls: list[str] = []
+
+    def from_db_env():
+        config_calls.append("from_db_env")
+        return SimpleNamespace(enabled=enabled, dsn=dsn, table_name=table_name)
+
+    monkeypatch.setitem(
+        sys.modules,
+        "polymarket_alpha_lab."
+        "supabase_paper_probability_recommendation_queue_config",
+        SimpleNamespace(
+            from_paper_probability_recommendation_queue_db_env=from_db_env,
+        ),
+    )
+    return config_calls
+
+
+def _install_paper_recommendation_risk_budget_report_db_config(
+    monkeypatch,
+    *,
+    enabled: bool = True,
+    dsn: str | None,
+    table_name: str,
+) -> list[str]:
+    config_calls: list[str] = []
+
+    def from_db_env():
+        config_calls.append("from_db_env")
+        return SimpleNamespace(enabled=enabled, dsn=dsn, table_name=table_name)
+
+    monkeypatch.setitem(
+        sys.modules,
+        "polymarket_alpha_lab.supabase_paper_recommendation_risk_budget_config",
+        SimpleNamespace(
+            from_paper_recommendation_risk_budget_db_env=from_db_env,
+        ),
+    )
+    return config_calls
+
+
 def test_paper_probability_side_edge_report_cli_reads_local_jsonl_without_client(
     tmp_path,
     capsys,
@@ -2754,6 +2801,162 @@ def test_paper_recommendation_queue_report_cli_reads_local_jsonl_without_client(
     assert "queue_reject_seed" in captured.out
 
 
+def test_paper_recommendation_queue_report_cli_defaults_to_no_persist_without_db_config(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    input_path = tmp_path / "paper-recommendation-queue.jsonl"
+    _write_jsonl(input_path, _paper_recommendation_queue_sample_rows())
+    before = input_path.read_bytes()
+    config_calls = []
+    sink_calls = []
+    client_factory_calls = 0
+
+    def forbidden_db_config():
+        config_calls.append("from_db_env")
+        raise AssertionError("queue report DB config should not be read")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "polymarket_alpha_lab."
+        "supabase_paper_probability_recommendation_queue_config",
+        SimpleNamespace(
+            from_paper_probability_recommendation_queue_db_env=forbidden_db_config,
+        ),
+    )
+
+    def forbidden_queue_report_sink(dsn, report, *, table_name):
+        sink_calls.append((dsn, report, table_name))
+        raise AssertionError("queue report DB sink should not run")
+
+    def forbidden_client_factory():
+        nonlocal client_factory_calls
+        client_factory_calls += 1
+        raise AssertionError("client should not be constructed")
+
+    exit_code = main(
+        [
+            "paper-recommendation-queue-report",
+            "--input",
+            str(input_path),
+        ],
+        paper_probability_recommendation_queue_db_sink=forbidden_queue_report_sink,
+        client_factory=forbidden_client_factory,
+    )
+
+    assert exit_code == 0
+    assert client_factory_calls == 0
+    assert config_calls == []
+    assert sink_calls == []
+    assert input_path.read_bytes() == before
+    captured = capsys.readouterr()
+    _assert_paper_recommendation_queue_report_summary(captured.out)
+    assert "persisted=" not in captured.out
+
+
+def test_paper_recommendation_queue_report_cli_persists_built_report_when_requested(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    dsn = "postgresql://queue-secret.example.invalid/reports"
+    table_name = "paper_probability_queue_archive"
+    config_calls = _install_paper_recommendation_queue_report_db_config(
+        monkeypatch,
+        dsn=dsn,
+        table_name=table_name,
+    )
+    input_path = tmp_path / "paper-recommendation-queue.jsonl"
+    _write_jsonl(input_path, _paper_recommendation_queue_sample_rows())
+    before = input_path.read_bytes()
+    sink_calls = []
+    client_factory_calls = 0
+
+    def fake_queue_report_sink(sink_dsn, report, *, table_name):
+        sink_calls.append((sink_dsn, report, table_name))
+        return SimpleNamespace(report_sha256="a" * 64)
+
+    def forbidden_client_factory():
+        nonlocal client_factory_calls
+        client_factory_calls += 1
+        raise AssertionError("client should not be constructed")
+
+    exit_code = main(
+        [
+            "paper-recommendation-queue-report",
+            "--input",
+            str(input_path),
+            "--persist",
+        ],
+        paper_probability_recommendation_queue_db_sink=fake_queue_report_sink,
+        client_factory=forbidden_client_factory,
+    )
+
+    assert exit_code == 0
+    assert client_factory_calls == 0
+    assert config_calls == ["from_db_env"]
+    assert len(sink_calls) == 1
+    sink_dsn, report, sink_table_name = sink_calls[0]
+    assert sink_dsn == dsn
+    assert sink_table_name == table_name
+    assert report.queue_count == 3
+    assert report.paper_only is True
+    assert report.report_only is True
+    assert report.readonly is True
+    assert input_path.read_bytes() == before
+    captured = capsys.readouterr()
+    _assert_paper_recommendation_queue_report_summary(captured.out)
+    assert "persisted=" not in captured.out
+    assert dsn not in captured.out
+    assert dsn not in captured.err
+    assert table_name not in captured.out
+
+
+def test_paper_recommendation_queue_report_cli_redacts_db_sink_error(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    dsn = "postgresql://queue-secret.example.invalid/reports"
+    table_name = "paper_probability_queue_archive"
+    _install_paper_recommendation_queue_report_db_config(
+        monkeypatch,
+        dsn=dsn,
+        table_name=table_name,
+    )
+    input_path = tmp_path / "paper-recommendation-queue.jsonl"
+    _write_jsonl(input_path, _paper_recommendation_queue_sample_rows())
+
+    def broken_queue_report_sink(sink_dsn, report, *, table_name):
+        raise RuntimeError(f"failed to write {sink_dsn} {table_name}")
+
+    exit_code = main(
+        [
+            "paper-recommendation-queue-report",
+            "--input",
+            str(input_path),
+            "--persist",
+        ],
+        paper_probability_recommendation_queue_db_sink=broken_queue_report_sink,
+        client_factory=lambda: (_ for _ in ()).throw(
+            AssertionError("client should not be constructed"),
+        ),
+    )
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert (
+        "paper-recommendation-queue-report failed: "
+        "failed to write <redacted-dsn> <redacted-table>"
+    ) in captured.err
+    _assert_paper_recommendation_queue_report_summary(captured.out)
+    assert dsn not in captured.out
+    assert dsn not in captured.err
+    assert table_name not in captured.out
+    assert table_name not in captured.err
+
+
 def test_paper_recommendation_queue_report_cli_empty_input_prints_zero_without_client(
     tmp_path,
     capsys,
@@ -2884,6 +3087,177 @@ def test_paper_recommendation_risk_budget_report_cli_reads_local_json_without_cl
     captured = capsys.readouterr()
     _assert_paper_recommendation_risk_budget_report_summary(captured.out)
     assert "risk_budget_passed" in captured.out
+
+
+def test_paper_recommendation_risk_budget_report_cli_defaults_to_no_persist_without_db_config(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    input_path = tmp_path / "paper-recommendation-risk-budget.json"
+    _write_json(
+        input_path,
+        {"selection_rows": list(_paper_recommendation_risk_budget_sample_rows())},
+    )
+    before = input_path.read_bytes()
+    config_calls = []
+    sink_calls = []
+    client_factory_calls = 0
+
+    def forbidden_db_config():
+        config_calls.append("from_db_env")
+        raise AssertionError("risk budget report DB config should not be read")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "polymarket_alpha_lab.supabase_paper_recommendation_risk_budget_config",
+        SimpleNamespace(
+            from_paper_recommendation_risk_budget_db_env=forbidden_db_config,
+        ),
+    )
+
+    def forbidden_risk_budget_report_sink(dsn, report, *, table_name):
+        sink_calls.append((dsn, report, table_name))
+        raise AssertionError("risk budget report DB sink should not run")
+
+    def forbidden_client_factory():
+        nonlocal client_factory_calls
+        client_factory_calls += 1
+        raise AssertionError("client should not be constructed")
+
+    exit_code = main(
+        [
+            "paper-recommendation-risk-budget-report",
+            "--input",
+            str(input_path),
+            "--nav-notional",
+            "1000.000000",
+        ],
+        paper_recommendation_risk_budget_db_sink=forbidden_risk_budget_report_sink,
+        client_factory=forbidden_client_factory,
+    )
+
+    assert exit_code == 0
+    assert client_factory_calls == 0
+    assert config_calls == []
+    assert sink_calls == []
+    assert input_path.read_bytes() == before
+    captured = capsys.readouterr()
+    _assert_paper_recommendation_risk_budget_report_summary(captured.out)
+    assert "persisted=" not in captured.out
+
+
+def test_paper_recommendation_risk_budget_report_cli_persists_built_report_when_requested(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    dsn = "postgresql://risk-budget-secret.example.invalid/reports"
+    table_name = "paper_risk_budget_archive"
+    config_calls = _install_paper_recommendation_risk_budget_report_db_config(
+        monkeypatch,
+        dsn=dsn,
+        table_name=table_name,
+    )
+    input_path = tmp_path / "paper-recommendation-risk-budget.json"
+    _write_json(
+        input_path,
+        {"selection_rows": list(_paper_recommendation_risk_budget_sample_rows())},
+    )
+    before = input_path.read_bytes()
+    sink_calls = []
+    client_factory_calls = 0
+
+    def fake_risk_budget_report_sink(sink_dsn, report, *, table_name):
+        sink_calls.append((sink_dsn, report, table_name))
+        return SimpleNamespace(report_sha256="b" * 64)
+
+    def forbidden_client_factory():
+        nonlocal client_factory_calls
+        client_factory_calls += 1
+        raise AssertionError("client should not be constructed")
+
+    exit_code = main(
+        [
+            "paper-recommendation-risk-budget-report",
+            "--input",
+            str(input_path),
+            "--nav-notional",
+            "1000.000000",
+            "--persist",
+        ],
+        paper_recommendation_risk_budget_db_sink=fake_risk_budget_report_sink,
+        client_factory=forbidden_client_factory,
+    )
+
+    assert exit_code == 0
+    assert client_factory_calls == 0
+    assert config_calls == ["from_db_env"]
+    assert len(sink_calls) == 1
+    sink_dsn, report, sink_table_name = sink_calls[0]
+    assert sink_dsn == dsn
+    assert sink_table_name == table_name
+    assert report.status == "pass"
+    assert report.selected_count == 1
+    assert report.paper_only is True
+    assert report.report_only is True
+    assert report.readonly is True
+    assert input_path.read_bytes() == before
+    captured = capsys.readouterr()
+    _assert_paper_recommendation_risk_budget_report_summary(captured.out)
+    assert "persisted=" not in captured.out
+    assert dsn not in captured.out
+    assert dsn not in captured.err
+    assert table_name not in captured.out
+
+
+def test_paper_recommendation_risk_budget_report_cli_redacts_db_sink_error(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    dsn = "postgresql://risk-budget-secret.example.invalid/reports"
+    table_name = "paper_risk_budget_archive"
+    _install_paper_recommendation_risk_budget_report_db_config(
+        monkeypatch,
+        dsn=dsn,
+        table_name=table_name,
+    )
+    input_path = tmp_path / "paper-recommendation-risk-budget.json"
+    _write_json(
+        input_path,
+        {"selection_rows": list(_paper_recommendation_risk_budget_sample_rows())},
+    )
+
+    def broken_risk_budget_report_sink(sink_dsn, report, *, table_name):
+        raise RuntimeError(f"failed to write {sink_dsn} {table_name}")
+
+    exit_code = main(
+        [
+            "paper-recommendation-risk-budget-report",
+            "--input",
+            str(input_path),
+            "--nav-notional",
+            "1000.000000",
+            "--persist",
+        ],
+        paper_recommendation_risk_budget_db_sink=broken_risk_budget_report_sink,
+        client_factory=lambda: (_ for _ in ()).throw(
+            AssertionError("client should not be constructed"),
+        ),
+    )
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert (
+        "paper-recommendation-risk-budget-report failed: "
+        "failed to write <redacted-dsn> <redacted-table>"
+    ) in captured.err
+    _assert_paper_recommendation_risk_budget_report_summary(captured.out)
+    assert dsn not in captured.out
+    assert dsn not in captured.err
+    assert table_name not in captured.out
+    assert table_name not in captured.err
 
 
 def test_paper_recommendation_risk_budget_report_cli_empty_input_prints_blocked_without_client(
