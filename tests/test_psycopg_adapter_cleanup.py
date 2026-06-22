@@ -14,13 +14,18 @@ TRANSACTIONAL_MODULES = (
     "polymarket_alpha_lab.local_observability_trends_psycopg",
     "polymarket_alpha_lab.outcome_tracking_psycopg",
     "polymarket_alpha_lab.paper_nav_snapshot_psycopg",
+    "polymarket_alpha_lab.paper_recommendation_consistency_psycopg",
     "polymarket_alpha_lab.paper_probability_recommendation_queue_psycopg",
+    "polymarket_alpha_lab.paper_recommendation_health_psycopg",
     "polymarket_alpha_lab.paper_recommendation_cycle_snapshot_psycopg",
+    "polymarket_alpha_lab.paper_recommendation_reason_trend_psycopg",
     "polymarket_alpha_lab.paper_recommendation_risk_budget_psycopg",
     "polymarket_alpha_lab.paper_trade_cost_audit_psycopg",
     "polymarket_alpha_lab.paper_trade_journal_psycopg",
     "polymarket_alpha_lab.strategy_candidate_research_queue_history_psycopg",
     "polymarket_alpha_lab.strategy_candidate_research_queue_psycopg",
+    "polymarket_alpha_lab.strategy_recommendation_rank_stability_psycopg",
+    "polymarket_alpha_lab.strategy_recommendation_reason_trend_psycopg",
     "polymarket_alpha_lab.strategy_risk_audit_psycopg",
 )
 

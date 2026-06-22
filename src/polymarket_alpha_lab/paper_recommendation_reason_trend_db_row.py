@@ -1,0 +1,403 @@
+"""Pure row codec for persisted paper recommendation reason trend reports."""
+
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass, fields, is_dataclass
+from datetime import UTC, datetime
+import hashlib
+import json
+import re
+from typing import Any
+
+from polymarket_alpha_lab.json_recovery import from_jsonable
+from polymarket_alpha_lab.paper_recommendation_reason_trend import (
+    PaperRecommendationReasonTrendReport,
+    PaperRecommendationReasonTrendRow,
+    PaperRecommendationTransitionTrendRow,
+)
+
+
+__all__ = (
+    "PaperRecommendationReasonTrendDbRow",
+    "paper_recommendation_reason_trend_from_db_row",
+    "paper_recommendation_reason_trend_report_from_db_row",
+    "paper_recommendation_reason_trend_report_to_db_row",
+    "paper_recommendation_reason_trend_to_db_row",
+    "from_db_row",
+    "to_db_row",
+)
+
+
+_SHA256_PATTERN = re.compile(r"^[a-f0-9]{64}$")
+_REASON_ROW_KEYS = frozenset(
+    (
+        "reason_code",
+        "source_status",
+        "count",
+        "first_seen_at",
+        "latest_seen_at",
+        "paper_only",
+        "report_only",
+        "readonly",
+    ),
+)
+_TRANSITION_ROW_KEYS = frozenset(
+    (
+        "market_slug",
+        "side",
+        "from_status",
+        "to_status",
+        "transition_count",
+        "latest_transition_at",
+        "reason_codes",
+        "paper_only",
+        "report_only",
+        "readonly",
+    ),
+)
+
+
+@dataclass(frozen=True)
+class PaperRecommendationReasonTrendDbRow:
+    report_sha256: str
+    generated_at: datetime
+    config_version: str
+    source_report_count: int
+    reason_trend_rows_json: list[dict[str, Any]]
+    transition_trend_rows_json: list[dict[str, Any]]
+    payload_json: dict[str, Any]
+    paper_only: bool = True
+    report_only: bool = True
+    readonly: bool = True
+
+    def __post_init__(self) -> None:
+        _require_sha256("report_sha256", self.report_sha256)
+        object.__setattr__(
+            self,
+            "generated_at",
+            _as_utc("generated_at", self.generated_at),
+        )
+        _require_canonical_string("config_version", self.config_version)
+        _require_nonnegative_int("source_report_count", self.source_report_count)
+        object.__setattr__(
+            self,
+            "reason_trend_rows_json",
+            _normalize_reason_trend_rows_json(
+                "reason_trend_rows_json",
+                self.reason_trend_rows_json,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "transition_trend_rows_json",
+            _normalize_transition_trend_rows_json(
+                "transition_trend_rows_json",
+                self.transition_trend_rows_json,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "payload_json",
+            _normalize_json_object("payload_json", self.payload_json),
+        )
+        _require_hard_flags("DB row", self)
+
+
+def paper_recommendation_reason_trend_to_db_row(
+    report: PaperRecommendationReasonTrendReport,
+) -> PaperRecommendationReasonTrendDbRow:
+    if type(report) is not PaperRecommendationReasonTrendReport:
+        raise ValueError("report must be a PaperRecommendationReasonTrendReport")
+    _validate_report_tree(report)
+    payload_json = _json_ready(asdict(report))
+    return PaperRecommendationReasonTrendDbRow(
+        report_sha256=_report_sha256(payload_json),
+        generated_at=report.generated_at,
+        config_version=report.config_version,
+        source_report_count=report.source_report_count,
+        reason_trend_rows_json=_json_ready(report.reason_trend_rows),
+        transition_trend_rows_json=_json_ready(report.transition_trend_rows),
+        payload_json=payload_json,
+        paper_only=report.paper_only,
+        report_only=report.report_only,
+        readonly=report.readonly,
+    )
+
+
+def paper_recommendation_reason_trend_from_db_row(
+    row: PaperRecommendationReasonTrendDbRow,
+) -> PaperRecommendationReasonTrendReport:
+    if type(row) is not PaperRecommendationReasonTrendDbRow:
+        raise ValueError("row must be a PaperRecommendationReasonTrendDbRow")
+    _reject_json_floats(row.payload_json)
+    _validate_json_hard_flags(row.payload_json, "payload_json")
+    try:
+        report = from_jsonable(PaperRecommendationReasonTrendReport, row.payload_json)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(
+            f"payload_json is not a valid reason trend report: {exc}",
+        ) from exc
+    if type(report) is not PaperRecommendationReasonTrendReport:
+        raise ValueError("payload_json must recover a PaperRecommendationReasonTrendReport")
+    _validate_report_tree(report)
+    expected_row = paper_recommendation_reason_trend_to_db_row(report)
+    _validate_row_matches_payload(row, expected_row)
+    return report
+
+
+def to_db_row(
+    report: PaperRecommendationReasonTrendReport,
+) -> PaperRecommendationReasonTrendDbRow:
+    return paper_recommendation_reason_trend_to_db_row(report)
+
+
+def from_db_row(
+    row: PaperRecommendationReasonTrendDbRow,
+) -> PaperRecommendationReasonTrendReport:
+    return paper_recommendation_reason_trend_from_db_row(row)
+
+
+def _validate_report_tree(value: Any, field_name: str = "report") -> None:
+    if _has_hard_flag(value):
+        _require_hard_flags(field_name, value)
+    if is_dataclass(value) and not isinstance(value, type):
+        for item_field in fields(value):
+            _validate_report_tree(
+                getattr(value, item_field.name),
+                f"{field_name}.{item_field.name}",
+            )
+    elif isinstance(value, dict):
+        for key, item in value.items():
+            _validate_report_tree(item, f"{field_name}.{key}")
+    elif isinstance(value, (list, tuple)):
+        for index, item in enumerate(value):
+            _validate_report_tree(item, f"{field_name}.{index}")
+
+
+def _validate_row_matches_payload(
+    row: PaperRecommendationReasonTrendDbRow,
+    expected: PaperRecommendationReasonTrendDbRow,
+) -> None:
+    for field_name in (
+        "report_sha256",
+        "generated_at",
+        "config_version",
+        "source_report_count",
+        "reason_trend_rows_json",
+        "transition_trend_rows_json",
+        "payload_json",
+        "paper_only",
+        "report_only",
+        "readonly",
+    ):
+        if getattr(row, field_name) != getattr(expected, field_name):
+            raise ValueError(f"{field_name} must match payload_json")
+
+
+def _report_sha256(payload_json: dict[str, Any]) -> str:
+    encoded = json.dumps(
+        payload_json,
+        allow_nan=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _json_ready(value: Any) -> Any:
+    if value is None:
+        return None
+    if is_dataclass(value) and not isinstance(value, type):
+        return _json_ready(asdict(value))
+    if isinstance(value, datetime):
+        return _as_utc("datetime", value).isoformat()
+    if isinstance(value, float):
+        raise ValueError("JSON value must not be a float")
+    if isinstance(value, (str, int, bool)):
+        return value
+    if isinstance(value, dict):
+        for key in value:
+            if type(key) is not str:
+                raise ValueError("JSON object keys must be strings")
+        return {key: _json_ready(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_ready(item) for item in value]
+    raise ValueError("reason trend DB row values must be JSON serializable")
+
+
+def _normalize_json_object(field_name: str, value: object) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError(f"{field_name} must be a JSON object")
+    try:
+        _reject_json_floats(value)
+        normalized = _json_ready(value)
+    except ValueError as exc:
+        raise ValueError(f"{field_name} {exc}") from exc
+    if not isinstance(normalized, dict):
+        raise ValueError(f"{field_name} must be a JSON object")
+    return normalized
+
+
+def _normalize_reason_trend_rows_json(
+    field_name: str,
+    value: object,
+) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        raise ValueError(f"{field_name} must be a JSON list")
+    try:
+        _reject_json_floats(value)
+        return [_reason_trend_row_json(field_name, item) for item in value]
+    except ValueError as exc:
+        raise ValueError(f"{field_name} {exc}") from exc
+
+
+def _normalize_transition_trend_rows_json(
+    field_name: str,
+    value: object,
+) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        raise ValueError(f"{field_name} must be a JSON list")
+    try:
+        _reject_json_floats(value)
+        return [_transition_trend_row_json(field_name, item) for item in value]
+    except ValueError as exc:
+        raise ValueError(f"{field_name} {exc}") from exc
+
+
+def _reason_trend_row_json(field_name: str, value: object) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError(f"{field_name} entries must be JSON objects")
+    if frozenset(value) != _REASON_ROW_KEYS:
+        raise ValueError(f"{field_name} entries must have canonical keys")
+    row = PaperRecommendationReasonTrendRow(
+        reason_code=value["reason_code"],
+        source_status=value["source_status"],
+        count=value["count"],
+        first_seen_at=_datetime_from_json(
+            f"{field_name} first_seen_at",
+            value["first_seen_at"],
+        ),
+        latest_seen_at=_datetime_from_json(
+            f"{field_name} latest_seen_at",
+            value["latest_seen_at"],
+        ),
+        paper_only=value["paper_only"],
+        report_only=value["report_only"],
+        readonly=value["readonly"],
+    )
+    return _json_ready(asdict(row))
+
+
+def _transition_trend_row_json(field_name: str, value: object) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError(f"{field_name} entries must be JSON objects")
+    if frozenset(value) != _TRANSITION_ROW_KEYS:
+        raise ValueError(f"{field_name} entries must have canonical keys")
+    reason_codes = value["reason_codes"]
+    if not isinstance(reason_codes, list):
+        raise ValueError(f"{field_name} reason_codes must be a JSON list")
+    row = PaperRecommendationTransitionTrendRow(
+        market_slug=value["market_slug"],
+        side=value["side"],
+        from_status=value["from_status"],
+        to_status=value["to_status"],
+        transition_count=value["transition_count"],
+        latest_transition_at=_datetime_from_json(
+            f"{field_name} latest_transition_at",
+            value["latest_transition_at"],
+        ),
+        reason_codes=tuple(reason_codes),
+        paper_only=value["paper_only"],
+        report_only=value["report_only"],
+        readonly=value["readonly"],
+    )
+    return _json_ready(asdict(row))
+
+
+def _datetime_from_json(field_name: str, value: object) -> datetime:
+    if type(value) is datetime:
+        return _as_utc(field_name, value)
+    if type(value) is not str:
+        raise ValueError(f"{field_name} must be a datetime string")
+    try:
+        return _as_utc(field_name, datetime.fromisoformat(value))
+    except ValueError as exc:
+        raise ValueError(f"{field_name} must be a datetime string") from exc
+
+
+def _validate_json_hard_flags(value: Any, field_name: str) -> None:
+    if not isinstance(value, dict):
+        return
+    if any(flag_name in value for flag_name in ("paper_only", "report_only", "readonly")):
+        for flag_name in ("paper_only", "report_only", "readonly"):
+            if value.get(flag_name) is not True:
+                raise ValueError(f"{field_name} {flag_name} must be present and true")
+    for key, item in value.items():
+        child_name = f"{field_name} {key}"
+        if isinstance(item, dict):
+            _validate_json_hard_flags(item, child_name)
+        elif isinstance(item, list):
+            for index, element in enumerate(item):
+                _validate_json_hard_flags(element, f"{child_name} {index}")
+
+
+def _reject_json_floats(value: Any) -> None:
+    if isinstance(value, float):
+        raise ValueError("JSON value must not be a float")
+    if isinstance(value, dict):
+        for item in value.values():
+            _reject_json_floats(item)
+    elif isinstance(value, list):
+        for item in value:
+            _reject_json_floats(item)
+
+
+def _has_hard_flag(value: Any) -> bool:
+    return any(
+        hasattr(value, flag_name)
+        for flag_name in ("paper_only", "report_only", "readonly")
+    )
+
+
+def _require_hard_flags(field_name: str, value: object) -> None:
+    if getattr(value, "paper_only", None) is not True:
+        raise ValueError(f"{field_name} paper_only must be True")
+    if getattr(value, "report_only", None) is not True:
+        raise ValueError(f"{field_name} report_only must be True")
+    if getattr(value, "readonly", None) is not True:
+        raise ValueError(f"{field_name} readonly must be True")
+
+
+def _as_utc(field_name: str, value: object) -> datetime:
+    if type(value) is not datetime:
+        raise ValueError(f"{field_name} must be a datetime")
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
+def _require_sha256(field_name: str, value: object) -> None:
+    if type(value) is not str or _SHA256_PATTERN.fullmatch(value) is None:
+        raise ValueError(f"{field_name} must be a lowercase sha256 hex digest")
+
+
+def _require_canonical_string(field_name: str, value: object) -> None:
+    if type(value) is not str:
+        raise ValueError(f"{field_name} must be a string")
+    if not value or value.strip() != value:
+        raise ValueError(f"{field_name} must be a canonical nonblank string")
+
+
+def _require_nonnegative_int(field_name: str, value: object) -> None:
+    if type(value) is not int:
+        raise ValueError(f"{field_name} must be an int")
+    if value < 0:
+        raise ValueError(f"{field_name} must be nonnegative")
+
+
+paper_recommendation_reason_trend_report_to_db_row = (
+    paper_recommendation_reason_trend_to_db_row
+)
+paper_recommendation_reason_trend_report_from_db_row = (
+    paper_recommendation_reason_trend_from_db_row
+)
