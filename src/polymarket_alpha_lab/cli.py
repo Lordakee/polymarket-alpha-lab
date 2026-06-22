@@ -232,6 +232,7 @@ StrategyCandidateResearchQueueHistoryBuilder = Callable[..., object]
 StrategyCandidateResearchQueueHistoryDbSink = Callable[..., object]
 PaperProbabilityRecommendationQueueDbSink = Callable[..., object]
 PaperRecommendationRiskBudgetDbSink = Callable[..., object]
+PaperRecommendationReasonTrendDbSink = Callable[..., object]
 _MISSING = object()
 
 
@@ -434,6 +435,9 @@ def main(
     paper_recommendation_risk_budget_db_sink: (
         PaperRecommendationRiskBudgetDbSink | None
     ) = None,
+    paper_recommendation_reason_trend_db_sink: (
+        PaperRecommendationReasonTrendDbSink | None
+    ) = None,
 ) -> int:
     parser = argparse.ArgumentParser(prog="polymarket-alpha-lab")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -631,6 +635,12 @@ def main(
         type=Path,
         required=True,
         dest="recommendation_log",
+    )
+    paper_recommendation_reason_trend.add_argument(
+        "--persist",
+        action="store_true",
+        default=False,
+        dest="persist",
     )
     paper_probability_side_edge_report = subparsers.add_parser(
         "paper-probability-side-edge-report",
@@ -1481,6 +1491,47 @@ def main(
                 action_counts=action_counts,
                 reason_code_counts=reason_code_counts,
             )
+            if args.persist:
+                from polymarket_alpha_lab.supabase_paper_recommendation_reason_trend_config import (
+                    from_paper_recommendation_reason_trend_db_env,
+                )
+
+                reason_trend_db_config = from_paper_recommendation_reason_trend_db_env()
+                if not reason_trend_db_config.enabled:
+                    raise ValueError(
+                        "paper-recommendation-reason-trend persistence requires "
+                        "paper recommendation reason trend DB to be enabled",
+                    )
+                dsn = reason_trend_db_config.dsn
+                if dsn is None:
+                    raise ValueError(
+                        "paper-recommendation-reason-trend persistence requires "
+                        "a paper recommendation reason trend DB DSN",
+                    )
+                if paper_recommendation_reason_trend_db_sink is None:
+                    from polymarket_alpha_lab.paper_recommendation_reason_trend_psycopg import (
+                        insert_paper_recommendation_reason_trend_report_with_psycopg,
+                    )
+
+                    resolved_reason_trend_db_sink = (
+                        insert_paper_recommendation_reason_trend_report_with_psycopg
+                    )
+                else:
+                    resolved_reason_trend_db_sink = (
+                        paper_recommendation_reason_trend_db_sink
+                    )
+                try:
+                    resolved_reason_trend_db_sink(
+                        dsn,
+                        report,
+                        table_name=reason_trend_db_config.table_name,
+                    )
+                except Exception as exc:
+                    _raise_redacted_db_sink_error(
+                        exc,
+                        dsn=dsn,
+                        table_name=reason_trend_db_config.table_name,
+                    )
             return 0
         except Exception as exc:
             print(

@@ -2134,6 +2134,255 @@ def test_paper_recommendation_reason_trend_cli_reads_bundle_log_report_only_with
     assert "watch->recommend" in captured.out
 
 
+def _paper_reason_trend_minimal_bundle_report() -> PaperStrategyRecommendationBundleReport:
+    return _paper_reason_trend_bundle_report(
+        generated_at=datetime(2026, 6, 20, 9, 0, tzinfo=UTC),
+        rows=(
+            _paper_reason_trend_recommendation_row(
+                "alpha-recommend",
+                action="recommend",
+                selected_side="yes",
+                score=Decimal("0.800000"),
+                reason_codes=("assessment_ready", "readiness_passed"),
+            ),
+        ),
+    )
+
+
+def test_paper_recommendation_reason_trend_cli_defaults_to_no_persist_without_db_config(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    recommendation_log = tmp_path / "strategy-recommendations.jsonl"
+    append_paper_strategy_recommendation_bundle_log(
+        recommendation_log,
+        _paper_reason_trend_minimal_bundle_report(),
+    )
+    before = recommendation_log.read_bytes()
+    config_calls = []
+    sink_calls = []
+    client_factory_calls = 0
+
+    def forbidden_db_config():
+        config_calls.append("from_db_env")
+        raise AssertionError("reason trend DB config should not be read")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "polymarket_alpha_lab.supabase_paper_recommendation_reason_trend_config",
+        SimpleNamespace(
+            from_paper_recommendation_reason_trend_db_env=forbidden_db_config,
+        ),
+    )
+
+    def forbidden_reason_trend_sink(dsn, report, *, table_name):
+        sink_calls.append((dsn, report, table_name))
+        raise AssertionError("reason trend DB sink should not run")
+
+    def forbidden_client_factory():
+        nonlocal client_factory_calls
+        client_factory_calls += 1
+        raise AssertionError("client should not be constructed")
+
+    exit_code = main(
+        [
+            "paper-recommendation-reason-trend",
+            "--recommendation-log",
+            str(recommendation_log),
+        ],
+        paper_recommendation_reason_trend_db_sink=forbidden_reason_trend_sink,
+        client_factory=forbidden_client_factory,
+    )
+
+    assert exit_code == 0
+    assert client_factory_calls == 0
+    assert config_calls == []
+    assert sink_calls == []
+    assert recommendation_log.read_bytes() == before
+    captured = capsys.readouterr()
+    assert "paper-recommendation-reason-trend:" in captured.out
+    assert "persisted=" not in captured.out
+
+
+def test_paper_recommendation_reason_trend_cli_persists_built_report_when_requested(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    dsn = "postgresql://reason-trend-secret.example.invalid/reports"
+    table_name = "paper_reason_trend_archive"
+    config_calls = _install_paper_recommendation_reason_trend_db_config(
+        monkeypatch,
+        dsn=dsn,
+        table_name=table_name,
+    )
+    recommendation_log = tmp_path / "strategy-recommendations.jsonl"
+    append_paper_strategy_recommendation_bundle_log(
+        recommendation_log,
+        _paper_reason_trend_minimal_bundle_report(),
+    )
+    before = recommendation_log.read_bytes()
+    sink_calls = []
+    client_factory_calls = 0
+
+    def fake_reason_trend_sink(sink_dsn, report, *, table_name):
+        sink_calls.append((sink_dsn, report, table_name))
+        return SimpleNamespace(report_sha256="c" * 64)
+
+    def forbidden_client_factory():
+        nonlocal client_factory_calls
+        client_factory_calls += 1
+        raise AssertionError("client should not be constructed")
+
+    exit_code = main(
+        [
+            "paper-recommendation-reason-trend",
+            "--recommendation-log",
+            str(recommendation_log),
+            "--persist",
+        ],
+        paper_recommendation_reason_trend_db_sink=fake_reason_trend_sink,
+        client_factory=forbidden_client_factory,
+    )
+
+    assert exit_code == 0
+    assert client_factory_calls == 0
+    assert config_calls == ["from_db_env"]
+    assert len(sink_calls) == 1
+    sink_dsn, report, sink_table_name = sink_calls[0]
+    assert sink_dsn == dsn
+    assert sink_table_name == table_name
+    assert report.source_report_count == 1
+    assert report.paper_only is True
+    assert report.report_only is True
+    assert report.readonly is True
+    assert recommendation_log.read_bytes() == before
+    captured = capsys.readouterr()
+    assert "paper-recommendation-reason-trend:" in captured.out
+    assert "persisted=" not in captured.out
+    assert dsn not in captured.out
+    assert dsn not in captured.err
+    assert table_name not in captured.out
+
+
+def test_paper_recommendation_reason_trend_cli_redacts_db_sink_error(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    dsn = "postgresql://reason-trend-secret.example.invalid/reports"
+    table_name = "paper_reason_trend_archive"
+    _install_paper_recommendation_reason_trend_db_config(
+        monkeypatch,
+        dsn=dsn,
+        table_name=table_name,
+    )
+    recommendation_log = tmp_path / "strategy-recommendations.jsonl"
+    append_paper_strategy_recommendation_bundle_log(
+        recommendation_log,
+        _paper_reason_trend_minimal_bundle_report(),
+    )
+
+    def broken_reason_trend_sink(sink_dsn, report, *, table_name):
+        raise RuntimeError(f"failed to write {sink_dsn} {table_name}")
+
+    exit_code = main(
+        [
+            "paper-recommendation-reason-trend",
+            "--recommendation-log",
+            str(recommendation_log),
+            "--persist",
+        ],
+        paper_recommendation_reason_trend_db_sink=broken_reason_trend_sink,
+        client_factory=lambda: (_ for _ in ()).throw(
+            AssertionError("client should not be constructed"),
+        ),
+    )
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert (
+        "paper-recommendation-reason-trend failed: "
+        "failed to write <redacted-dsn> <redacted-table>"
+    ) in captured.err
+    assert "paper-recommendation-reason-trend:" in captured.out
+    assert dsn not in captured.out
+    assert dsn not in captured.err
+    assert table_name not in captured.out
+    assert table_name not in captured.err
+
+
+@pytest.mark.parametrize(
+    ("enabled", "dsn", "expected_message"),
+    (
+        (
+            False,
+            "postgresql://reason-trend-secret.example.invalid/reports",
+            "paper recommendation reason trend DB to be enabled",
+        ),
+        (
+            True,
+            None,
+            "a paper recommendation reason trend DB DSN",
+        ),
+    ),
+)
+def test_paper_recommendation_reason_trend_cli_validates_persist_db_config(
+    monkeypatch,
+    tmp_path,
+    capsys,
+    enabled,
+    dsn,
+    expected_message,
+):
+    table_name = "paper_reason_trend_archive"
+    config_calls = _install_paper_recommendation_reason_trend_db_config(
+        monkeypatch,
+        enabled=enabled,
+        dsn=dsn,
+        table_name=table_name,
+    )
+    recommendation_log = tmp_path / "strategy-recommendations.jsonl"
+    append_paper_strategy_recommendation_bundle_log(
+        recommendation_log,
+        _paper_reason_trend_minimal_bundle_report(),
+    )
+    before = recommendation_log.read_bytes()
+    sink_calls = []
+
+    def forbidden_reason_trend_sink(sink_dsn, report, *, table_name):
+        sink_calls.append((sink_dsn, report, table_name))
+        raise AssertionError("reason trend DB sink should not run")
+
+    exit_code = main(
+        [
+            "paper-recommendation-reason-trend",
+            "--recommendation-log",
+            str(recommendation_log),
+            "--persist",
+        ],
+        paper_recommendation_reason_trend_db_sink=forbidden_reason_trend_sink,
+        client_factory=lambda: (_ for _ in ()).throw(
+            AssertionError("client should not be constructed"),
+        ),
+    )
+
+    assert exit_code == 1
+    assert config_calls == ["from_db_env"]
+    assert sink_calls == []
+    assert recommendation_log.read_bytes() == before
+    captured = capsys.readouterr()
+    assert "paper-recommendation-reason-trend:" in captured.out
+    assert "paper-recommendation-reason-trend failed:" in captured.err
+    assert expected_message in captured.err
+    if dsn is not None:
+        assert dsn not in captured.out
+        assert dsn not in captured.err
+    assert table_name not in captured.out
+    assert table_name not in captured.err
+
+
 def test_paper_recommendation_reason_trend_cli_empty_log_prints_zero_without_mutation(
     tmp_path,
     capsys,
@@ -2501,6 +2750,29 @@ def _install_paper_recommendation_risk_budget_report_db_config(
         "polymarket_alpha_lab.supabase_paper_recommendation_risk_budget_config",
         SimpleNamespace(
             from_paper_recommendation_risk_budget_db_env=from_db_env,
+        ),
+    )
+    return config_calls
+
+
+def _install_paper_recommendation_reason_trend_db_config(
+    monkeypatch,
+    *,
+    enabled: bool = True,
+    dsn: str | None,
+    table_name: str,
+) -> list[str]:
+    config_calls: list[str] = []
+
+    def from_db_env():
+        config_calls.append("from_db_env")
+        return SimpleNamespace(enabled=enabled, dsn=dsn, table_name=table_name)
+
+    monkeypatch.setitem(
+        sys.modules,
+        "polymarket_alpha_lab.supabase_paper_recommendation_reason_trend_config",
+        SimpleNamespace(
+            from_paper_recommendation_reason_trend_db_env=from_db_env,
         ),
     )
     return config_calls
