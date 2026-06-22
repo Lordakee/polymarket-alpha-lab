@@ -2475,10 +2475,16 @@ def _run_nav_snapshot_db_trend(
         connection.commit()
         return report
     except BaseException:
-        connection.rollback()
+        try:
+            connection.rollback()
+        except Exception:
+            pass
         raise
     finally:
-        connection.close()
+        try:
+            connection.close()
+        except Exception:
+            pass
 
 
 def _run_cycle_snapshot_db_trend(
@@ -3848,10 +3854,16 @@ def _run_strategy_audit_db_history(
         connection.commit()
         return report
     except BaseException:
-        connection.rollback()
+        try:
+            connection.rollback()
+        except Exception:
+            pass
         raise
     finally:
-        connection.close()
+        try:
+            connection.close()
+        except Exception:
+            pass
 
 
 def _run_cost_audit_db_trend(
@@ -3902,10 +3914,16 @@ def _run_cost_audit_db_trend(
         connection.commit()
         return report
     except BaseException:
-        connection.rollback()
+        try:
+            connection.rollback()
+        except Exception:
+            pass
         raise
     finally:
-        connection.close()
+        try:
+            connection.close()
+        except Exception:
+            pass
 
 
 def _run_outcome_tracking_db_history(
@@ -3959,10 +3977,16 @@ def _run_outcome_tracking_db_history(
         connection.commit()
         return report
     except BaseException:
-        connection.rollback()
+        try:
+            connection.rollback()
+        except Exception:
+            pass
         raise
     finally:
-        connection.close()
+        try:
+            connection.close()
+        except Exception:
+            pass
 
 
 def _run_local_observability_trends_db_history(
@@ -4015,10 +4039,16 @@ def _run_local_observability_trends_db_history(
         connection.commit()
         return report
     except BaseException:
-        connection.rollback()
+        try:
+            connection.rollback()
+        except Exception:
+            pass
         raise
     finally:
-        connection.close()
+        try:
+            connection.close()
+        except Exception:
+            pass
 
 
 def _print_nav_risk_summary(report: "PaperNavRiskMetricsReport") -> None:

@@ -56,10 +56,16 @@ def _with_owned_connection(dsn: str, operation: Callable[[Any], _T]) -> _T:
         connection.commit()
         return result
     except BaseException:
-        connection.rollback()
+        try:
+            connection.rollback()
+        except Exception:
+            pass
         raise
     finally:
-        connection.close()
+        try:
+            connection.close()
+        except Exception:
+            pass
 
 
 def _connect(dsn: str) -> Any:

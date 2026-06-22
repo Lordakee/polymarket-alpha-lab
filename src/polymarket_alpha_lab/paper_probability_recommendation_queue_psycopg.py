@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from contextlib import suppress
 from dataclasses import dataclass
 from typing import Any, TypeVar
 
@@ -61,12 +60,16 @@ def _with_owned_connection(dsn: str, operation: Callable[[Any], _T]) -> _T:
         connection.commit()
         return result
     except BaseException:
-        with suppress(Exception):
+        try:
             connection.rollback()
+        except Exception:
+            pass
         raise
     finally:
-        with suppress(Exception):
+        try:
             connection.close()
+        except Exception:
+            pass
 
 
 def _connect(dsn: str) -> Any:
