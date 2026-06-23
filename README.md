@@ -218,6 +218,14 @@ Run the persisted packet operator flow:
 - The flow generates and persists a paper research packet, builds and persists the latest packet-quality report, then reads aggregate packet-quality history. It prints one combined operator summary plus the existing packet, quality, and quality-history summaries.
 - This remains paper-only/report-only operator evidence. It does not authenticate, handle wallets or private keys, place/sign/submit/cancel orders, trade live, or provide trade instructions or financial advice.
 
+Operator-flow report persistence is optional, default-disabled, and env-driven. Set
+`POLYMARKET_ALPHA_LAB_PAPER_RESEARCH_PACKET_OPERATOR_FLOW_DB_ENABLED=true`
+and `POLYMARKET_ALPHA_LAB_PAPER_RESEARCH_PACKET_OPERATOR_FLOW_DB_DSN` to persist
+the final operator-flow report after packet, quality, and quality-history steps
+complete. `POLYMARKET_ALPHA_LAB_PAPER_RESEARCH_PACKET_OPERATOR_FLOW_DB_TABLE`
+can override the default table. There are still no DSN/table CLI flags, and the
+command's summary stdout line is unchanged.
+
 ## Level 1B Node 1 Status
 
 Level 1B Node 1 adds configurable paper-only risk gates and append-only rejected-candidate logs. It does not place orders, authenticate, handle private keys, cancel orders, open user WebSockets, run heartbeat logic, or create live-trading proposals.

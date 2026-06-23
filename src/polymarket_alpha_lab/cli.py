@@ -181,6 +181,9 @@ from polymarket_alpha_lab.supabase_paper_research_packet_config import (
 from polymarket_alpha_lab.supabase_paper_research_packet_quality_config import (
     from_paper_research_packet_quality_db_env,
 )
+from polymarket_alpha_lab.supabase_paper_research_packet_operator_flow_config import (
+    from_paper_research_packet_operator_flow_db_env,
+)
 from polymarket_alpha_lab.supabase_paper_trade_cost_audit_config import (
     from_paper_trade_cost_audit_db_env,
 )
@@ -261,6 +264,7 @@ PaperResearchPacketDbSink = Callable[..., object]
 PaperResearchPacketDbHistoryRunner = Callable[..., object]
 PaperResearchPacketQualityRunner = Callable[..., object]
 PaperResearchPacketQualityDbHistoryRunner = Callable[..., object]
+PaperResearchPacketOperatorFlowDbSink = Callable[..., object]
 PaperProbabilityRecommendationQueueDbSink = Callable[..., object]
 PaperRecommendationRiskBudgetDbSink = Callable[..., object]
 PaperRecommendationReasonTrendDbSink = Callable[..., object]
@@ -372,15 +376,18 @@ def _redacted_paper_research_packet_operator_flow_error(
     packet_table_name: str | None,
     quality_dsn: str | None,
     quality_table_name: str | None,
+    operator_flow_dsn: str | None,
+    operator_flow_table_name: str | None,
 ) -> RuntimeError:
     message = str(exc)
-    for dsn in (source_dsn, packet_dsn, quality_dsn):
+    for dsn in (source_dsn, packet_dsn, quality_dsn, operator_flow_dsn):
         if dsn is not None:
             message = _redact_db_dsn(message, dsn=dsn)
     for table_name in (
         source_table_name,
         packet_table_name,
         quality_table_name,
+        operator_flow_table_name,
     ):
         if table_name is not None:
             message = _redact_db_table_name_and_tail(message, table_name=table_name)
@@ -563,6 +570,9 @@ def main(
     paper_research_packet_quality_runner: PaperResearchPacketQualityRunner | None = None,
     paper_research_packet_quality_db_history_runner: (
         PaperResearchPacketQualityDbHistoryRunner | None
+    ) = None,
+    paper_research_packet_operator_flow_db_sink: (
+        PaperResearchPacketOperatorFlowDbSink | None
     ) = None,
     paper_probability_recommendation_queue_db_sink: (
         PaperProbabilityRecommendationQueueDbSink | None
@@ -2458,6 +2468,15 @@ def main(
             source_db_config = from_strategy_candidate_research_queue_db_env()
             packet_db_config = from_paper_research_packet_db_env()
             quality_db_config = from_paper_research_packet_quality_db_env()
+            operator_flow_db_config = (
+                from_paper_research_packet_operator_flow_db_env()
+            )
+            operator_flow_dsn = operator_flow_db_config.dsn
+            if operator_flow_db_config.enabled and operator_flow_dsn is None:
+                raise ValueError(
+                    "POLYMARKET_ALPHA_LAB_PAPER_RESEARCH_PACKET_OPERATOR_FLOW_DB_DSN "
+                    "must be set when DB is enabled",
+                )
             if not source_db_config.enabled:
                 raise ValueError(
                     "paper-research-packet-operator-flow requires "
@@ -2528,6 +2547,22 @@ def main(
                     config=PaperResearchPacketOperatorFlowConfig(),
                     generated_at=datetime.now(UTC),
                 )
+                if operator_flow_db_config.enabled:
+                    if paper_research_packet_operator_flow_db_sink is None:
+                        from polymarket_alpha_lab.paper_research_packet_operator_flow_psycopg import (
+                            insert_paper_research_packet_operator_flow_report_with_psycopg,
+                        )
+
+                        operator_flow_sink = (
+                            insert_paper_research_packet_operator_flow_report_with_psycopg
+                        )
+                    else:
+                        operator_flow_sink = paper_research_packet_operator_flow_db_sink
+                    operator_flow_sink(
+                        dsn=operator_flow_dsn,
+                        report=operator_flow_report,
+                        table_name=operator_flow_db_config.table_name,
+                    )
             except Exception as exc:
                 raise _redacted_paper_research_packet_operator_flow_error(
                     exc,
@@ -2537,6 +2572,8 @@ def main(
                     packet_table_name=packet_db_config.table_name,
                     quality_dsn=quality_dsn,
                     quality_table_name=quality_db_config.table_name,
+                    operator_flow_dsn=operator_flow_dsn,
+                    operator_flow_table_name=operator_flow_db_config.table_name,
                 ) from None
             _print_paper_research_packet_operator_flow_summary(
                 operator_flow_report,

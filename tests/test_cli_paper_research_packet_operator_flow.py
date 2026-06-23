@@ -34,6 +34,11 @@ from polymarket_alpha_lab.supabase_paper_research_packet_quality_config import (
     PAPER_RESEARCH_PACKET_QUALITY_DB_ENABLED_ENV_VAR,
     PAPER_RESEARCH_PACKET_QUALITY_DB_TABLE_ENV_VAR,
 )
+from polymarket_alpha_lab.supabase_paper_research_packet_operator_flow_config import (
+    PAPER_RESEARCH_PACKET_OPERATOR_FLOW_DB_DSN_ENV_VAR,
+    PAPER_RESEARCH_PACKET_OPERATOR_FLOW_DB_ENABLED_ENV_VAR,
+    PAPER_RESEARCH_PACKET_OPERATOR_FLOW_DB_TABLE_ENV_VAR,
+)
 from polymarket_alpha_lab.supabase_strategy_candidate_research_queue_config import (
     STRATEGY_CANDIDATE_RESEARCH_QUEUE_DB_DSN_ENV_VAR,
     STRATEGY_CANDIDATE_RESEARCH_QUEUE_DB_ENABLED_ENV_VAR,
@@ -75,6 +80,20 @@ def _set_quality_db_env(
     monkeypatch.setenv(PAPER_RESEARCH_PACKET_QUALITY_DB_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(PAPER_RESEARCH_PACKET_QUALITY_DB_DSN_ENV_VAR, dsn)
     monkeypatch.setenv(PAPER_RESEARCH_PACKET_QUALITY_DB_TABLE_ENV_VAR, table_name)
+
+
+def _set_operator_flow_db_env(
+    monkeypatch: pytest.MonkeyPatch,
+    dsn: str,
+    *,
+    table_name: str,
+) -> None:
+    monkeypatch.setenv(PAPER_RESEARCH_PACKET_OPERATOR_FLOW_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(PAPER_RESEARCH_PACKET_OPERATOR_FLOW_DB_DSN_ENV_VAR, dsn)
+    monkeypatch.setenv(
+        PAPER_RESEARCH_PACKET_OPERATOR_FLOW_DB_TABLE_ENV_VAR,
+        table_name,
+    )
 
 
 def _source_report(name: str, generated_at: datetime) -> SimpleNamespace:
@@ -452,6 +471,643 @@ def test_operator_flow_cli_uses_injected_helpers_persists_reports_and_prints_sta
         packet_table,
         quality_table,
     ):
+        assert secret not in captured.out
+        assert secret not in captured.err
+
+
+def test_operator_flow_cli_redacts_operator_flow_sink_failure_across_all_databases(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    source_dsn = (
+        "postgresql://source_user:source-secret@"
+        "operator-flow-store-source-secret.example.invalid/db"
+    )
+    packet_dsn = (
+        "postgresql://packet_user:packet-secret@"
+        "operator-flow-store-packet-secret.example.invalid/db"
+    )
+    quality_dsn = (
+        "postgresql://quality_user:quality-secret@"
+        "operator-flow-store-quality-secret.example.invalid/db"
+    )
+    operator_flow_dsn = (
+        "postgresql://flow_user:flow-secret@"
+        "operator-flow-store-flow-secret.example.invalid/db"
+    )
+    source_table = "source_schema.strategy_candidate_research_queue_archive"
+    packet_table = "packet_schema.paper_research_packet_archive"
+    quality_table = "quality_schema.paper_research_packet_quality_archive"
+    operator_flow_table = "flow_schema.paper_research_packet_operator_flow_reports"
+    payload_json = '{"secret":"operator-flow-payload-json-secret"}'
+    question = "Will hidden operator flow market resolve yes?"
+    report_sha256 = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+    bare_sha256 = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
+    _set_source_db_env(monkeypatch, source_dsn, table_name=source_table)
+    _set_packet_db_env(monkeypatch, packet_dsn, table_name=packet_table)
+    _set_quality_db_env(monkeypatch, quality_dsn, table_name=quality_table)
+    _set_operator_flow_db_env(
+        monkeypatch,
+        operator_flow_dsn,
+        table_name=operator_flow_table,
+    )
+    source_report = _source_report("latest", datetime(2026, 6, 23, 11, 0, tzinfo=UTC))
+    packet_report = _packet_report()
+    quality_report = _quality_report()
+    history_report = _history_report()
+    operator_flow_report = SimpleNamespace(
+        packet_persisted=True,
+        packet_row_count=2,
+        quality_status="watch",
+        quality_persisted=True,
+        history_status="pass",
+        history_source_report_count=4,
+    )
+    events: list[str] = []
+
+    class FakeQualityConnection:
+        def commit(self) -> None:
+            events.append("commit-quality")
+
+        def rollback(self) -> None:
+            events.append("rollback-quality")
+
+        def close(self) -> None:
+            events.append("close-quality")
+
+    quality_connection = FakeQualityConnection()
+
+    def fake_loader(dsn: str, *, options: object) -> tuple[object, ...]:
+        events.append("load-source")
+        assert dsn == source_dsn
+        assert isinstance(options, PaperStrategyCandidateResearchQueueReadOptions)
+        return (source_report,)
+
+    def fake_packet_builder(
+        source_report: object,
+        *,
+        config: PaperResearchPacketConfig,
+        generated_at: datetime,
+    ) -> object:
+        events.append("build-packet")
+        assert type(config) is PaperResearchPacketConfig
+        assert generated_at.tzinfo is UTC
+        return packet_report
+
+    def fake_packet_sink(*, dsn: str, report: object, table_name: str) -> object:
+        events.append("persist-packet")
+        assert (dsn, report, table_name) == (packet_dsn, packet_report, packet_table)
+        return SimpleNamespace(report_sha256="c" * 64)
+
+    def fake_quality_runner(**kwargs: object) -> object:
+        events.append("build-quality")
+        assert kwargs["dsn"] == packet_dsn
+        assert kwargs["table_name"] == packet_table
+        return quality_report
+
+    def fake_connect(connect_dsn: str, **kwargs: object) -> FakeQualityConnection:
+        events.append("connect-quality")
+        assert connect_dsn == quality_dsn
+        assert kwargs == {}
+        return quality_connection
+
+    def fake_quality_insert(
+        connection: object,
+        report: object,
+        *,
+        table_name: str,
+    ) -> object:
+        events.append("persist-quality")
+        assert connection is quality_connection
+        assert report is quality_report
+        assert table_name == quality_table
+        return object()
+
+    def fake_history_runner(**kwargs: object) -> object:
+        events.append("history")
+        assert kwargs["dsn"] == quality_dsn
+        assert kwargs["table_name"] == quality_table
+        return history_report
+
+    def fake_operator_flow_builder(**kwargs: object) -> object:
+        events.append("operator-flow")
+        assert kwargs["packet_report"] is packet_report
+        assert kwargs["quality_report"] is quality_report
+        assert kwargs["quality_history_report"] is history_report
+        return operator_flow_report
+
+    def broken_operator_flow_db_sink(
+        *,
+        dsn: str,
+        report: object,
+        table_name: str,
+    ) -> object:
+        events.append("persist-operator-flow")
+        assert (dsn, report, table_name) == (
+            operator_flow_dsn,
+            operator_flow_report,
+            operator_flow_table,
+        )
+        raise RuntimeError(
+            f"operator flow failed source_dsn={source_dsn} source_table={source_table} "
+            f"packet_dsn={packet_dsn} packet_table={packet_table} "
+            f"quality_dsn={quality_dsn} quality_table={quality_table} "
+            f"operator_flow_dsn={operator_flow_dsn} "
+            f"operator_flow_table={operator_flow_table} "
+            "source_schema=source_schema source_tail=strategy_candidate_research_queue_archive "
+            "packet_schema=packet_schema packet_tail=paper_research_packet_archive "
+            "quality_schema=quality_schema quality_tail=paper_research_packet_quality_archive "
+            "flow_schema=flow_schema "
+            "flow_tail=paper_research_packet_operator_flow_reports "
+            f"payload_json={payload_json} question={question} "
+            f"report_sha256={report_sha256} bare_hash={bare_sha256}",
+        )
+
+    monkeypatch.setitem(sys.modules, "psycopg", SimpleNamespace(connect=fake_connect))
+    monkeypatch.setattr(
+        "polymarket_alpha_lab.paper_research_packet_quality_store."
+        "insert_paper_research_packet_quality_report",
+        fake_quality_insert,
+    )
+    monkeypatch.setattr(
+        "polymarket_alpha_lab.cli.build_paper_research_packet_operator_flow_report",
+        fake_operator_flow_builder,
+    )
+
+    exit_code = main(
+        [COMMAND],
+        strategy_candidate_research_queue_loader=fake_loader,
+        paper_research_packet_builder=fake_packet_builder,
+        paper_research_packet_db_sink=fake_packet_sink,
+        paper_research_packet_quality_runner=fake_quality_runner,
+        paper_research_packet_quality_db_history_runner=fake_history_runner,
+        paper_research_packet_operator_flow_db_sink=broken_operator_flow_db_sink,
+    )
+
+    assert exit_code == 1
+    assert events == [
+        "load-source",
+        "build-packet",
+        "persist-packet",
+        "build-quality",
+        "connect-quality",
+        "persist-quality",
+        "commit-quality",
+        "close-quality",
+        "history",
+        "operator-flow",
+        "persist-operator-flow",
+    ]
+    captured = capsys.readouterr()
+    assert f"{COMMAND} failed:" in captured.err
+    assert "source_dsn=<redacted-dsn>" in captured.err
+    assert "packet_dsn=<redacted-dsn>" in captured.err
+    assert "quality_dsn=<redacted-dsn>" in captured.err
+    assert "operator_flow_dsn=<redacted-dsn>" in captured.err
+    assert "source_table=<redacted-table>" in captured.err
+    assert "packet_table=<redacted-table>" in captured.err
+    assert "quality_table=<redacted-table>" in captured.err
+    assert "operator_flow_table=<redacted-table>" in captured.err
+    assert "payload_json=<redacted-payload>" in captured.err
+    assert "question=<redacted-question>" in captured.err
+    assert "report_sha256=<redacted-sha256>" in captured.err
+    assert "bare_hash=<redacted-sha256>" in captured.err
+    assert f"{COMMAND}:" not in captured.out
+    for secret in (
+        source_dsn,
+        "source-secret",
+        packet_dsn,
+        "packet-secret",
+        quality_dsn,
+        "quality-secret",
+        operator_flow_dsn,
+        "flow-secret",
+        source_table,
+        packet_table,
+        quality_table,
+        operator_flow_table,
+        "source_schema",
+        "packet_schema",
+        "quality_schema",
+        "flow_schema",
+        "strategy_candidate_research_queue_archive",
+        "paper_research_packet_archive",
+        "paper_research_packet_quality_archive",
+        "paper_research_packet_operator_flow_reports",
+        payload_json,
+        "operator-flow-payload-json-secret",
+        question,
+        report_sha256,
+        bare_sha256,
+    ):
+        assert secret not in captured.out
+        assert secret not in captured.err
+
+
+def test_operator_flow_cli_persists_operator_flow_report_when_env_enabled_without_changing_stdout(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    source_dsn = "postgresql://operator-flow-persist.example.invalid/source"
+    packet_dsn = "postgresql://operator-flow-persist.example.invalid/packet"
+    quality_dsn = "postgresql://operator-flow-persist.example.invalid/quality"
+    operator_flow_dsn = "postgresql://operator-flow-persist.example.invalid/flow"
+    source_table = "strategy_candidate_research_queue_archive"
+    packet_table = "paper_research_packet_archive"
+    quality_table = "paper_research_packet_quality_archive"
+    operator_flow_table = "paper_research_packet_operator_flow_reports"
+    _set_source_db_env(monkeypatch, source_dsn, table_name=source_table)
+    _set_packet_db_env(monkeypatch, packet_dsn, table_name=packet_table)
+    _set_quality_db_env(monkeypatch, quality_dsn, table_name=quality_table)
+    _set_operator_flow_db_env(
+        monkeypatch,
+        operator_flow_dsn,
+        table_name=operator_flow_table,
+    )
+
+    source_report = _source_report("latest", datetime(2026, 6, 23, 11, 0, tzinfo=UTC))
+    packet_report = _packet_report()
+    quality_report = _quality_report()
+    history_report = _history_report()
+    operator_flow_report = SimpleNamespace(
+        packet_persisted=True,
+        packet_row_count=2,
+        quality_status="watch",
+        quality_persisted=True,
+        history_status="pass",
+        history_source_report_count=4,
+    )
+    events: list[str] = []
+    operator_flow_sink_calls: list[dict[str, object]] = []
+
+    class FakeQualityConnection:
+        def __init__(self) -> None:
+            self.commit_count = 0
+            self.rollback_count = 0
+            self.close_count = 0
+
+        def commit(self) -> None:
+            events.append("commit-quality")
+            self.commit_count += 1
+
+        def rollback(self) -> None:
+            events.append("rollback-quality")
+            self.rollback_count += 1
+
+        def close(self) -> None:
+            events.append("close-quality")
+            self.close_count += 1
+
+    quality_connection = FakeQualityConnection()
+
+    def fake_loader(dsn: str, *, options: object) -> tuple[object, ...]:
+        events.append("load-source")
+        assert dsn == source_dsn
+        assert isinstance(options, PaperStrategyCandidateResearchQueueReadOptions)
+        return (source_report,)
+
+    def fake_packet_builder(
+        source_report: object,
+        *,
+        config: PaperResearchPacketConfig,
+        generated_at: datetime,
+    ) -> object:
+        events.append("build-packet")
+        assert type(config) is PaperResearchPacketConfig
+        assert generated_at.tzinfo is UTC
+        return packet_report
+
+    def fake_packet_sink(*, dsn: str, report: object, table_name: str) -> object:
+        events.append("persist-packet")
+        assert (dsn, report, table_name) == (packet_dsn, packet_report, packet_table)
+        return SimpleNamespace(report_sha256="a" * 64)
+
+    def fake_quality_runner(**kwargs: object) -> object:
+        events.append("build-quality")
+        assert kwargs["dsn"] == packet_dsn
+        assert kwargs["table_name"] == packet_table
+        return quality_report
+
+    def fake_connect(connect_dsn: str, **kwargs: object) -> FakeQualityConnection:
+        events.append("connect-quality")
+        assert connect_dsn == quality_dsn
+        assert kwargs == {}
+        return quality_connection
+
+    def fake_quality_insert(
+        connection: object,
+        report: object,
+        *,
+        table_name: str,
+    ) -> object:
+        events.append("persist-quality")
+        assert connection is quality_connection
+        assert report is quality_report
+        assert table_name == quality_table
+        return object()
+
+    def fake_history_runner(**kwargs: object) -> object:
+        events.append("history")
+        assert kwargs["dsn"] == quality_dsn
+        assert kwargs["table_name"] == quality_table
+        return history_report
+
+    def fake_operator_flow_builder(**kwargs: object) -> object:
+        events.append("operator-flow")
+        assert kwargs["packet_report"] is packet_report
+        assert kwargs["packet_persisted"] is True
+        assert kwargs["quality_report"] is quality_report
+        assert kwargs["quality_persisted"] is True
+        assert kwargs["quality_history_report"] is history_report
+        assert kwargs["config"] == PaperResearchPacketOperatorFlowConfig()
+        generated_at = kwargs["generated_at"]
+        assert isinstance(generated_at, datetime)
+        assert generated_at.tzinfo is UTC
+        return operator_flow_report
+
+    def fake_operator_flow_db_sink(
+        *,
+        dsn: str,
+        report: object,
+        table_name: str,
+    ) -> object:
+        events.append("persist-operator-flow")
+        operator_flow_sink_calls.append(
+            {"dsn": dsn, "report": report, "table_name": table_name},
+        )
+        return object()
+
+    monkeypatch.setitem(sys.modules, "psycopg", SimpleNamespace(connect=fake_connect))
+    monkeypatch.setattr(
+        "polymarket_alpha_lab.paper_research_packet_quality_store."
+        "insert_paper_research_packet_quality_report",
+        fake_quality_insert,
+    )
+    monkeypatch.setattr(
+        "polymarket_alpha_lab.cli.build_paper_research_packet_operator_flow_report",
+        fake_operator_flow_builder,
+    )
+
+    exit_code = main(
+        [COMMAND],
+        strategy_candidate_research_queue_loader=fake_loader,
+        paper_research_packet_builder=fake_packet_builder,
+        paper_research_packet_db_sink=fake_packet_sink,
+        paper_research_packet_quality_runner=fake_quality_runner,
+        paper_research_packet_quality_db_history_runner=fake_history_runner,
+        paper_research_packet_operator_flow_db_sink=fake_operator_flow_db_sink,
+    )
+
+    assert exit_code == 0
+    assert events == [
+        "load-source",
+        "build-packet",
+        "persist-packet",
+        "build-quality",
+        "connect-quality",
+        "persist-quality",
+        "commit-quality",
+        "close-quality",
+        "history",
+        "operator-flow",
+        "persist-operator-flow",
+    ]
+    assert operator_flow_sink_calls == [
+        {
+            "dsn": operator_flow_dsn,
+            "report": operator_flow_report,
+            "table_name": operator_flow_table,
+        },
+    ]
+    captured = capsys.readouterr()
+    assert captured.out.splitlines()[0] == (
+        "paper-research-packet-operator-flow: "
+        "packet_persisted=True "
+        "packet_row_count=2 "
+        "quality_status=watch "
+        "quality_persisted=True "
+        "history_status=pass "
+        "history_source_report_count=4"
+    )
+    for secret in (
+        source_dsn,
+        packet_dsn,
+        quality_dsn,
+        operator_flow_dsn,
+        source_table,
+        packet_table,
+        quality_table,
+        operator_flow_table,
+    ):
+        assert secret not in captured.out
+        assert secret not in captured.err
+
+
+def test_operator_flow_cli_skips_operator_flow_sink_when_env_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    source_dsn = "postgresql://operator-flow-disabled.example.invalid/source"
+    packet_dsn = "postgresql://operator-flow-disabled.example.invalid/packet"
+    quality_dsn = "postgresql://operator-flow-disabled.example.invalid/quality"
+    source_table = "strategy_candidate_research_queue_archive"
+    packet_table = "paper_research_packet_archive"
+    quality_table = "paper_research_packet_quality_archive"
+    _set_source_db_env(monkeypatch, source_dsn, table_name=source_table)
+    _set_packet_db_env(monkeypatch, packet_dsn, table_name=packet_table)
+    _set_quality_db_env(monkeypatch, quality_dsn, table_name=quality_table)
+
+    source_report = _source_report("latest", datetime(2026, 6, 23, 11, 0, tzinfo=UTC))
+    packet_report = _packet_report()
+    quality_report = _quality_report()
+    history_report = _history_report()
+    operator_flow_report = SimpleNamespace(
+        packet_persisted=True,
+        packet_row_count=2,
+        quality_status="watch",
+        quality_persisted=True,
+        history_status="pass",
+        history_source_report_count=4,
+    )
+    events: list[str] = []
+
+    class FakeQualityConnection:
+        def commit(self) -> None:
+            events.append("commit-quality")
+
+        def rollback(self) -> None:
+            events.append("rollback-quality")
+
+        def close(self) -> None:
+            events.append("close-quality")
+
+    quality_connection = FakeQualityConnection()
+
+    def fake_loader(dsn: str, *, options: object) -> tuple[object, ...]:
+        events.append("load-source")
+        assert dsn == source_dsn
+        assert isinstance(options, PaperStrategyCandidateResearchQueueReadOptions)
+        return (source_report,)
+
+    def fake_packet_builder(
+        source_report: object,
+        *,
+        config: PaperResearchPacketConfig,
+        generated_at: datetime,
+    ) -> object:
+        events.append("build-packet")
+        assert type(config) is PaperResearchPacketConfig
+        assert generated_at.tzinfo is UTC
+        return packet_report
+
+    def fake_packet_sink(*, dsn: str, report: object, table_name: str) -> object:
+        events.append("persist-packet")
+        assert (dsn, report, table_name) == (packet_dsn, packet_report, packet_table)
+        return SimpleNamespace(report_sha256="a" * 64)
+
+    def fake_quality_runner(**kwargs: object) -> object:
+        events.append("build-quality")
+        assert kwargs["dsn"] == packet_dsn
+        assert kwargs["table_name"] == packet_table
+        return quality_report
+
+    def fake_connect(connect_dsn: str, **kwargs: object) -> FakeQualityConnection:
+        events.append("connect-quality")
+        assert connect_dsn == quality_dsn
+        assert kwargs == {}
+        return quality_connection
+
+    def fake_quality_insert(
+        connection: object,
+        report: object,
+        *,
+        table_name: str,
+    ) -> object:
+        events.append("persist-quality")
+        assert connection is quality_connection
+        assert report is quality_report
+        assert table_name == quality_table
+        return object()
+
+    def fake_history_runner(**kwargs: object) -> object:
+        events.append("history")
+        assert kwargs["dsn"] == quality_dsn
+        assert kwargs["table_name"] == quality_table
+        return history_report
+
+    def fake_operator_flow_builder(**kwargs: object) -> object:
+        events.append("operator-flow")
+        assert kwargs["packet_report"] is packet_report
+        assert kwargs["quality_report"] is quality_report
+        assert kwargs["quality_history_report"] is history_report
+        return operator_flow_report
+
+    def forbidden_operator_flow_db_sink(**kwargs: object) -> object:
+        events.append("persist-operator-flow")
+        raise AssertionError("operator-flow sink should not run when env is disabled")
+
+    monkeypatch.setitem(sys.modules, "psycopg", SimpleNamespace(connect=fake_connect))
+    monkeypatch.setattr(
+        "polymarket_alpha_lab.paper_research_packet_quality_store."
+        "insert_paper_research_packet_quality_report",
+        fake_quality_insert,
+    )
+    monkeypatch.setattr(
+        "polymarket_alpha_lab.cli.build_paper_research_packet_operator_flow_report",
+        fake_operator_flow_builder,
+    )
+
+    exit_code = main(
+        [COMMAND],
+        strategy_candidate_research_queue_loader=fake_loader,
+        paper_research_packet_builder=fake_packet_builder,
+        paper_research_packet_db_sink=fake_packet_sink,
+        paper_research_packet_quality_runner=fake_quality_runner,
+        paper_research_packet_quality_db_history_runner=fake_history_runner,
+        paper_research_packet_operator_flow_db_sink=forbidden_operator_flow_db_sink,
+    )
+
+    assert exit_code == 0
+    assert events == [
+        "load-source",
+        "build-packet",
+        "persist-packet",
+        "build-quality",
+        "connect-quality",
+        "persist-quality",
+        "commit-quality",
+        "close-quality",
+        "history",
+        "operator-flow",
+    ]
+    captured = capsys.readouterr()
+    assert captured.out.splitlines()[0] == (
+        "paper-research-packet-operator-flow: "
+        "packet_persisted=True "
+        "packet_row_count=2 "
+        "quality_status=watch "
+        "quality_persisted=True "
+        "history_status=pass "
+        "history_source_report_count=4"
+    )
+
+
+def test_operator_flow_cli_requires_operator_flow_dsn_before_upstream_persistence_when_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    source_dsn = "postgresql://preflight-source-secret.example.invalid/source"
+    packet_dsn = "postgresql://preflight-packet-secret.example.invalid/packet"
+    quality_dsn = "postgresql://preflight-quality-secret.example.invalid/quality"
+    source_table = "strategy_candidate_research_queue_archive"
+    packet_table = "paper_research_packet_archive"
+    quality_table = "paper_research_packet_quality_archive"
+    _set_source_db_env(monkeypatch, source_dsn, table_name=source_table)
+    _set_packet_db_env(monkeypatch, packet_dsn, table_name=packet_table)
+    _set_quality_db_env(monkeypatch, quality_dsn, table_name=quality_table)
+    monkeypatch.setenv(PAPER_RESEARCH_PACKET_OPERATOR_FLOW_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.delenv(PAPER_RESEARCH_PACKET_OPERATOR_FLOW_DB_DSN_ENV_VAR, raising=False)
+    events: list[str] = []
+
+    def forbidden_loader(*args: object, **kwargs: object) -> tuple[object, ...]:
+        events.append("load-source")
+        raise AssertionError("source loader should not run after preflight failure")
+
+    def forbidden_packet_builder(*args: object, **kwargs: object) -> object:
+        events.append("build-packet")
+        raise AssertionError("packet builder should not run after preflight failure")
+
+    def forbidden_packet_sink(*args: object, **kwargs: object) -> object:
+        events.append("persist-packet")
+        raise AssertionError("packet sink should not run after preflight failure")
+
+    def forbidden_quality_runner(*args: object, **kwargs: object) -> object:
+        events.append("build-quality")
+        raise AssertionError("quality runner should not run after preflight failure")
+
+    def forbidden_history_runner(*args: object, **kwargs: object) -> object:
+        events.append("history")
+        raise AssertionError("history runner should not run after preflight failure")
+
+    def forbidden_operator_flow_sink(*args: object, **kwargs: object) -> object:
+        events.append("persist-operator-flow")
+        raise AssertionError("operator-flow sink should not run after preflight failure")
+
+    exit_code = main(
+        [COMMAND],
+        strategy_candidate_research_queue_loader=forbidden_loader,
+        paper_research_packet_builder=forbidden_packet_builder,
+        paper_research_packet_db_sink=forbidden_packet_sink,
+        paper_research_packet_quality_runner=forbidden_quality_runner,
+        paper_research_packet_quality_db_history_runner=forbidden_history_runner,
+        paper_research_packet_operator_flow_db_sink=forbidden_operator_flow_sink,
+    )
+
+    assert exit_code == 1
+    assert events == []
+    captured = capsys.readouterr()
+    assert PAPER_RESEARCH_PACKET_OPERATOR_FLOW_DB_DSN_ENV_VAR in captured.err
+    for secret in (source_dsn, packet_dsn, quality_dsn):
         assert secret not in captured.out
         assert secret not in captured.err
 
