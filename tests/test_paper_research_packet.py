@@ -1,10 +1,13 @@
-from dataclasses import FrozenInstanceError, replace
+from dataclasses import FrozenInstanceError, fields, replace
 from datetime import UTC, datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest
 
 from polymarket_alpha_lab.paper_research_packet import (
+    DEFAULT_PAPER_RESEARCH_PACKET_CONFIG_VERSION,
+    DEFAULT_PAPER_RESEARCH_PACKET_MAX_PACKET_ROWS,
+    DEFAULT_PAPER_RESEARCH_PACKET_MIN_SCORE,
     PaperResearchPacketConfig,
     PaperResearchPacketInputRow,
     PaperResearchPacketReport,
@@ -52,6 +55,38 @@ def _row(
         requested_notional=requested_notional,
         reason_codes=reason_codes,
     )
+
+
+def test_research_packet_config_defaults_match_exported_constants():
+    import polymarket_alpha_lab.paper_research_packet as packet
+
+    assert {
+        "DEFAULT_PAPER_RESEARCH_PACKET_CONFIG_VERSION",
+        "DEFAULT_PAPER_RESEARCH_PACKET_MAX_PACKET_ROWS",
+        "DEFAULT_PAPER_RESEARCH_PACKET_MIN_SCORE",
+    } <= set(packet.__all__)
+    assert DEFAULT_PAPER_RESEARCH_PACKET_CONFIG_VERSION == "paper-research-packet-v0"
+    assert DEFAULT_PAPER_RESEARCH_PACKET_MAX_PACKET_ROWS == 25
+    assert DEFAULT_PAPER_RESEARCH_PACKET_MIN_SCORE == Decimal("0.600000")
+
+    field_defaults = {
+        field.name: field.default
+        for field in fields(PaperResearchPacketConfig)
+    }
+    assert field_defaults["config_version"] == DEFAULT_PAPER_RESEARCH_PACKET_CONFIG_VERSION
+    assert field_defaults["max_packet_rows"] == DEFAULT_PAPER_RESEARCH_PACKET_MAX_PACKET_ROWS
+    assert field_defaults["min_score"] == DEFAULT_PAPER_RESEARCH_PACKET_MIN_SCORE
+    assert field_defaults["paper_only"] is True
+    assert field_defaults["report_only"] is True
+    assert field_defaults["readonly"] is True
+
+    config = PaperResearchPacketConfig()
+    assert config.config_version == DEFAULT_PAPER_RESEARCH_PACKET_CONFIG_VERSION
+    assert config.max_packet_rows == DEFAULT_PAPER_RESEARCH_PACKET_MAX_PACKET_ROWS
+    assert config.min_score == DEFAULT_PAPER_RESEARCH_PACKET_MIN_SCORE
+    assert config.paper_only is True
+    assert config.report_only is True
+    assert config.readonly is True
 
 
 def test_research_packet_orders_priority_rows_and_counts_deterministically():

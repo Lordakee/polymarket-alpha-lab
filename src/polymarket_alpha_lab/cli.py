@@ -51,6 +51,12 @@ from polymarket_alpha_lab.paper_nav_snapshot_psycopg import (
     insert_paper_nav_snapshot_with_psycopg,
 )
 from polymarket_alpha_lab.paper_portfolio_nav import mark_paper_portfolio_nav
+from polymarket_alpha_lab.paper_research_packet import (
+    DEFAULT_PAPER_RESEARCH_PACKET_CONFIG_VERSION,
+    DEFAULT_PAPER_RESEARCH_PACKET_MAX_PACKET_ROWS,
+    DEFAULT_PAPER_RESEARCH_PACKET_MIN_SCORE,
+    PaperResearchPacketConfig,
+)
 from polymarket_alpha_lab.paper_trade_journal_psycopg import (
     insert_paper_trade_record_with_psycopg,
 )
@@ -155,6 +161,9 @@ from polymarket_alpha_lab.supabase_outcome_tracking_config import (
 from polymarket_alpha_lab.supabase_paper_nav_snapshot_config import (
     from_paper_nav_snapshot_db_env,
 )
+from polymarket_alpha_lab.supabase_paper_research_packet_config import (
+    from_paper_research_packet_db_env,
+)
 from polymarket_alpha_lab.supabase_paper_trade_cost_audit_config import (
     from_paper_trade_cost_audit_db_env,
 )
@@ -230,6 +239,8 @@ ActionGatedQueueDecisionSupportTrendDbHistoryRunner = Callable[..., object]
 StrategyCandidateResearchQueueLoader = Callable[..., object]
 StrategyCandidateResearchQueueHistoryBuilder = Callable[..., object]
 StrategyCandidateResearchQueueHistoryDbSink = Callable[..., object]
+PaperResearchPacketBuilder = Callable[..., object]
+PaperResearchPacketDbSink = Callable[..., object]
 PaperProbabilityRecommendationQueueDbSink = Callable[..., object]
 PaperRecommendationRiskBudgetDbSink = Callable[..., object]
 PaperRecommendationReasonTrendDbSink = Callable[..., object]
@@ -429,6 +440,8 @@ def main(
     strategy_candidate_research_queue_history_db_sink: (
         StrategyCandidateResearchQueueHistoryDbSink | None
     ) = None,
+    paper_research_packet_builder: PaperResearchPacketBuilder | None = None,
+    paper_research_packet_db_sink: PaperResearchPacketDbSink | None = None,
     paper_probability_recommendation_queue_db_sink: (
         PaperProbabilityRecommendationQueueDbSink | None
     ) = None,
@@ -966,6 +979,48 @@ def main(
         default=100,
     )
     strategy_candidate_research_queue_history.add_argument(
+        "--persist",
+        action="store_true",
+        default=False,
+        dest="persist",
+    )
+    paper_research_packet = subparsers.add_parser("paper-research-packet")
+    paper_research_packet.add_argument(
+        "--source-config-version",
+        default=None,
+        dest="source_config_version",
+    )
+    paper_research_packet.add_argument(
+        "--action-status",
+        choices=("research_ready", "watch", "blocked"),
+        default=None,
+        dest="action_status",
+    )
+    paper_research_packet.add_argument(
+        "--research-status",
+        choices=("ready", "watch", "blocked"),
+        default=None,
+        dest="research_status",
+    )
+    paper_research_packet.add_argument("--limit", type=int, default=100)
+    paper_research_packet.add_argument(
+        "--packet-config-version",
+        default=DEFAULT_PAPER_RESEARCH_PACKET_CONFIG_VERSION,
+        dest="packet_config_version",
+    )
+    paper_research_packet.add_argument(
+        "--max-packet-rows",
+        type=int,
+        default=DEFAULT_PAPER_RESEARCH_PACKET_MAX_PACKET_ROWS,
+        dest="max_packet_rows",
+    )
+    paper_research_packet.add_argument(
+        "--min-score",
+        type=_cli_decimal,
+        default=DEFAULT_PAPER_RESEARCH_PACKET_MIN_SCORE,
+        dest="min_score",
+    )
+    paper_research_packet.add_argument(
         "--persist",
         action="store_true",
         default=False,
@@ -2028,6 +2083,30 @@ def main(
             )
             return 1
 
+    if args.command == "paper-research-packet":
+        try:
+            report, persisted = _run_paper_research_packet(
+                source_config_version=args.source_config_version,
+                action_status=args.action_status,
+                research_status=args.research_status,
+                limit=args.limit,
+                packet_config_version=args.packet_config_version,
+                max_packet_rows=args.max_packet_rows,
+                min_score=args.min_score,
+                persist=args.persist,
+                loader=strategy_candidate_research_queue_loader,
+                packet_builder=paper_research_packet_builder,
+                packet_db_sink=paper_research_packet_db_sink,
+            )
+            _print_paper_research_packet_summary(report, persisted=persisted)
+            return 0
+        except Exception as exc:
+            print(
+                f"paper-research-packet failed: {exc}",
+                file=sys.stderr,
+            )
+            return 1
+
     if args.command == "run":
         try:
             cycle_snapshot_db_config = from_cycle_snapshot_db_env()
@@ -2978,6 +3057,135 @@ def _run_strategy_candidate_research_queue_history(
             message,
             table_name=history_db_config.table_name,
         )
+        message = _redact_db_table_name(message, table_name=db_config.table_name)
+        if not message.strip():
+            message = exc.__class__.__name__
+        raise RuntimeError(message) from None
+    return report, True
+
+
+def _run_paper_research_packet(
+    *,
+    source_config_version: str | None,
+    action_status: str | None,
+    research_status: str | None,
+    limit: int,
+    packet_config_version: str,
+    max_packet_rows: int,
+    min_score: Decimal,
+    persist: bool,
+    loader: StrategyCandidateResearchQueueLoader | None,
+    packet_builder: PaperResearchPacketBuilder | None,
+    packet_db_sink: PaperResearchPacketDbSink | None,
+) -> tuple[object, bool]:
+    from polymarket_alpha_lab.strategy_candidate_research_packet_source import (
+        build_paper_research_packet_report_from_strategy_candidate_research_queue_report,
+    )
+    from polymarket_alpha_lab.strategy_candidate_research_queue_psycopg_read import (
+        PaperStrategyCandidateResearchQueueReadOptions,
+        load_paper_strategy_candidate_research_queue_reports_with_psycopg,
+    )
+
+    db_config = from_strategy_candidate_research_queue_db_env()
+    if not db_config.enabled:
+        raise ValueError(
+            "paper-research-packet requires strategy candidate research queue "
+            "read-only DB config to be enabled",
+        )
+    if not db_config.dsn:
+        raise ValueError("paper-research-packet requires a source DB DSN")
+    packet_db_config = from_paper_research_packet_db_env() if persist else None
+    if persist:
+        if packet_db_config is None:
+            raise ValueError(
+                "paper-research-packet persistence requires packet DB config",
+            )
+        if not packet_db_config.enabled:
+            raise ValueError(
+                "paper-research-packet persistence requires packet DB to be enabled",
+            )
+        if not packet_db_config.dsn:
+            raise ValueError(
+                "paper-research-packet persistence requires a packet DB DSN",
+            )
+
+    read_options = PaperStrategyCandidateResearchQueueReadOptions(
+        source_config_version=source_config_version,
+        action_status=action_status,
+        research_status=research_status,
+        limit=limit,
+        table_name=db_config.table_name,
+    )
+    packet_config = PaperResearchPacketConfig(
+        config_version=packet_config_version,
+        max_packet_rows=max_packet_rows,
+        min_score=min_score,
+    )
+    resolved_loader = (
+        loader
+        if loader is not None
+        else load_paper_strategy_candidate_research_queue_reports_with_psycopg
+    )
+    resolved_packet_builder = (
+        packet_builder
+        if packet_builder is not None
+        else build_paper_research_packet_report_from_strategy_candidate_research_queue_report
+    )
+
+    try:
+        queue_reports = resolved_loader(db_config.dsn, options=read_options)
+    except Exception as exc:
+        message = _redact_db_dsn(str(exc), dsn=db_config.dsn)
+        message = _redact_db_table_name(message, table_name=db_config.table_name)
+        if not message.strip():
+            message = exc.__class__.__name__
+        raise RuntimeError(message) from None
+    if not queue_reports:
+        raise ValueError("paper-research-packet requires at least one source report")
+    latest_source_report = max(
+        queue_reports,
+        key=lambda source_report: source_report.generated_at,
+    )
+
+    generated_at = datetime.now(UTC)
+    try:
+        report = resolved_packet_builder(
+            latest_source_report,
+            config=packet_config,
+            generated_at=generated_at,
+        )
+    except Exception as exc:
+        message = _redact_db_dsn(str(exc), dsn=db_config.dsn)
+        message = _redact_db_table_name(message, table_name=db_config.table_name)
+        if packet_db_config is not None:
+            message = _redact_db_dsn(message, dsn=packet_db_config.dsn)
+            message = _redact_db_table_name(
+                message,
+                table_name=packet_db_config.table_name,
+            )
+        if not message.strip():
+            message = exc.__class__.__name__
+        raise RuntimeError(message) from None
+    if not persist:
+        return report, False
+    if packet_db_sink is None:
+        from polymarket_alpha_lab.paper_research_packet_psycopg import (
+            insert_paper_research_packet_report_with_psycopg,
+        )
+
+        resolved_packet_db_sink = insert_paper_research_packet_report_with_psycopg
+    else:
+        resolved_packet_db_sink = packet_db_sink
+    try:
+        resolved_packet_db_sink(
+            dsn=packet_db_config.dsn,
+            report=report,
+            table_name=packet_db_config.table_name,
+        )
+    except Exception as exc:
+        message = _redact_db_dsn(str(exc), dsn=packet_db_config.dsn)
+        message = _redact_db_dsn(message, dsn=db_config.dsn)
+        message = _redact_db_table_name(message, table_name=packet_db_config.table_name)
         message = _redact_db_table_name(message, table_name=db_config.table_name)
         if not message.strip():
             message = exc.__class__.__name__
@@ -4902,6 +5110,43 @@ def _print_strategy_candidate_research_queue_history_summary(
         f"latest_primary_reason_code_counts={latest_primary_reason_code_counts or 'none'} "
         f"latest_reason_codes={latest_reason_codes or 'none'} "
         f"persisted={persisted}",
+    )
+
+
+def _print_paper_research_packet_summary(
+    report: object,
+    *,
+    persisted: bool = False,
+) -> None:
+    print(
+        "paper-research-packet: "
+        f"generated_at={report.generated_at.isoformat()} "
+        f"config_version={report.config_version} "
+        f"input_row_count={report.input_row_count} "
+        f"packet_row_count={report.packet_row_count} "
+        f"included_count={report.included_count} "
+        f"skipped_count={report.skipped_count} "
+        f"high_priority_count={report.high_priority_count} "
+        f"medium_priority_count={report.medium_priority_count} "
+        f"low_priority_count={report.low_priority_count} "
+        f"persisted={persisted}",
+    )
+    if not report.packet_rows:
+        print("top_packet: none")
+        return
+    top_row = report.packet_rows[0]
+    reason_codes = ",".join(top_row.reason_codes)
+    print(
+        "top_packet: "
+        f"rank={top_row.packet_rank} "
+        f"market_slug={top_row.market_slug} "
+        f"side={top_row.side} "
+        f"research_priority={top_row.research_priority} "
+        f"recommendation_score={top_row.recommendation_score} "
+        f"net_edge={top_row.net_edge} "
+        f"allocated_notional={_none_or_value(top_row.allocated_notional)} "
+        f"requested_notional={_none_or_value(top_row.requested_notional)} "
+        f"reason_codes={reason_codes or 'none'}",
     )
 
 

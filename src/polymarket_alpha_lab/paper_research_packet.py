@@ -9,6 +9,9 @@ from typing import Iterable
 
 
 __all__ = (
+    "DEFAULT_PAPER_RESEARCH_PACKET_CONFIG_VERSION",
+    "DEFAULT_PAPER_RESEARCH_PACKET_MAX_PACKET_ROWS",
+    "DEFAULT_PAPER_RESEARCH_PACKET_MIN_SCORE",
     "PaperResearchPacketConfig",
     "PaperResearchPacketInputRow",
     "PaperResearchPacketRow",
@@ -25,6 +28,9 @@ HIGH_SCORE = Decimal("0.800000")
 MEDIUM_EDGE = Decimal("0.025000")
 HIGH_EDGE = Decimal("0.050000")
 QUANTUM = Decimal("0.000001")
+DEFAULT_PAPER_RESEARCH_PACKET_CONFIG_VERSION = "paper-research-packet-v0"
+DEFAULT_PAPER_RESEARCH_PACKET_MAX_PACKET_ROWS = 25
+DEFAULT_PAPER_RESEARCH_PACKET_MIN_SCORE = Decimal("0.600000")
 
 ACTIONS = ("recommend", "watch", "reject")
 QUEUE_STATUSES = ("ready", "watch", "blocked")
@@ -42,9 +48,9 @@ NO_REASON_CODE = "no_reason_code"
 
 @dataclass(frozen=True)
 class PaperResearchPacketConfig:
-    config_version: str
-    max_packet_rows: int
-    min_score: Decimal
+    config_version: str = DEFAULT_PAPER_RESEARCH_PACKET_CONFIG_VERSION
+    max_packet_rows: int = DEFAULT_PAPER_RESEARCH_PACKET_MAX_PACKET_ROWS
+    min_score: Decimal = DEFAULT_PAPER_RESEARCH_PACKET_MIN_SCORE
     paper_only: bool = True
     report_only: bool = True
     readonly: bool = True
