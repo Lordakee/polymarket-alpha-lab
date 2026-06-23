@@ -358,6 +358,33 @@ def _redacted_paper_research_packet_quality_error(
     return RuntimeError(message)
 
 
+def _redacted_paper_research_packet_operator_flow_error(
+    exc: Exception,
+    *,
+    source_dsn: str | None,
+    source_table_name: str | None,
+    packet_dsn: str | None,
+    packet_table_name: str | None,
+    quality_dsn: str | None,
+    quality_table_name: str | None,
+) -> RuntimeError:
+    message = str(exc)
+    for dsn in (source_dsn, packet_dsn, quality_dsn):
+        if dsn is not None:
+            message = _redact_db_dsn(message, dsn=dsn)
+    for table_name in (
+        source_table_name,
+        packet_table_name,
+        quality_table_name,
+    ):
+        if table_name is not None:
+            message = _redact_db_table_name_and_tail(message, table_name=table_name)
+    message = _redact_paper_research_packet_sensitive_fields(message)
+    if not message.strip():
+        message = exc.__class__.__name__
+    return RuntimeError(message)
+
+
 def _raise_redacted_db_sink_error(
     exc: Exception,
     *,
@@ -1142,6 +1169,55 @@ def main(
         type=int,
         default=100,
         dest="limit",
+    )
+    paper_research_packet_operator_flow = subparsers.add_parser(
+        "paper-research-packet-operator-flow",
+    )
+    paper_research_packet_operator_flow.add_argument(
+        "--source-config-version",
+        default=None,
+        dest="source_config_version",
+    )
+    paper_research_packet_operator_flow.add_argument(
+        "--action-status",
+        choices=("research_ready", "watch", "blocked"),
+        default=None,
+        dest="action_status",
+    )
+    paper_research_packet_operator_flow.add_argument(
+        "--research-status",
+        choices=("ready", "watch", "blocked"),
+        default=None,
+        dest="research_status",
+    )
+    paper_research_packet_operator_flow.add_argument(
+        "--limit",
+        type=int,
+        default=100,
+        dest="limit",
+    )
+    paper_research_packet_operator_flow.add_argument(
+        "--packet-config-version",
+        default=DEFAULT_PAPER_RESEARCH_PACKET_CONFIG_VERSION,
+        dest="packet_config_version",
+    )
+    paper_research_packet_operator_flow.add_argument(
+        "--max-packet-rows",
+        type=int,
+        default=DEFAULT_PAPER_RESEARCH_PACKET_MAX_PACKET_ROWS,
+        dest="max_packet_rows",
+    )
+    paper_research_packet_operator_flow.add_argument(
+        "--min-score",
+        type=_cli_decimal,
+        default=DEFAULT_PAPER_RESEARCH_PACKET_MIN_SCORE,
+        dest="min_score",
+    )
+    paper_research_packet_operator_flow.add_argument(
+        "--quality-history-limit",
+        type=int,
+        default=100,
+        dest="quality_history_limit",
     )
 
     # Stage 17 market search: search Polymarket markets by keyword.
@@ -2355,6 +2431,119 @@ def main(
         except Exception as exc:
             print(
                 f"paper-research-packet-quality-db-history failed: {exc}",
+                file=sys.stderr,
+            )
+            return 1
+
+    if args.command == "paper-research-packet-operator-flow":
+        try:
+            if isinstance(args.limit, bool) or type(args.limit) is not int or args.limit < 1:
+                raise ValueError(
+                    "paper-research-packet-operator-flow limit must be positive",
+                )
+            if (
+                isinstance(args.quality_history_limit, bool)
+                or type(args.quality_history_limit) is not int
+                or args.quality_history_limit < 1
+            ):
+                raise ValueError(
+                    "paper-research-packet-operator-flow quality history "
+                    "limit must be positive",
+                )
+            source_db_config = from_strategy_candidate_research_queue_db_env()
+            packet_db_config = from_paper_research_packet_db_env()
+            quality_db_config = from_paper_research_packet_quality_db_env()
+            if not source_db_config.enabled:
+                raise ValueError(
+                    "paper-research-packet-operator-flow requires "
+                    "strategy candidate research queue read-only DB config "
+                    "to be enabled",
+                )
+            source_dsn = source_db_config.dsn
+            if source_dsn is None:
+                raise ValueError(
+                    "paper-research-packet-operator-flow requires "
+                    "a source DB DSN",
+                )
+            if not packet_db_config.enabled:
+                raise ValueError(
+                    "paper-research-packet-operator-flow requires "
+                    "paper research packet DB to be enabled",
+                )
+            packet_dsn = packet_db_config.dsn
+            if packet_dsn is None:
+                raise ValueError(
+                    "paper-research-packet-operator-flow requires "
+                    "a paper research packet DB DSN",
+                )
+            if not quality_db_config.enabled:
+                raise ValueError(
+                    "paper-research-packet-operator-flow requires "
+                    "paper research packet quality DB to be enabled",
+                )
+            quality_dsn = quality_db_config.dsn
+            if quality_dsn is None:
+                raise ValueError(
+                    "paper-research-packet-operator-flow requires "
+                    "a paper research packet quality DB DSN",
+                )
+            try:
+                packet_report, packet_persisted = _run_paper_research_packet(
+                    source_config_version=args.source_config_version,
+                    action_status=args.action_status,
+                    research_status=args.research_status,
+                    limit=args.limit,
+                    packet_config_version=args.packet_config_version,
+                    max_packet_rows=args.max_packet_rows,
+                    min_score=args.min_score,
+                    persist=True,
+                    loader=strategy_candidate_research_queue_loader,
+                    packet_builder=paper_research_packet_builder,
+                    packet_db_sink=paper_research_packet_db_sink,
+                )
+                quality_report = _run_paper_research_packet_quality(
+                    dsn=packet_dsn,
+                    table_name=packet_db_config.table_name,
+                    persist=True,
+                    quality_db_config=quality_db_config,
+                    runner=paper_research_packet_quality_runner,
+                )
+                history_report = _run_paper_research_packet_quality_db_history(
+                    dsn=quality_dsn,
+                    table_name=quality_db_config.table_name,
+                    limit=args.quality_history_limit,
+                    runner=paper_research_packet_quality_db_history_runner,
+                )
+            except Exception as exc:
+                raise _redacted_paper_research_packet_operator_flow_error(
+                    exc,
+                    source_dsn=source_dsn,
+                    source_table_name=source_db_config.table_name,
+                    packet_dsn=packet_dsn,
+                    packet_table_name=packet_db_config.table_name,
+                    quality_dsn=quality_dsn,
+                    quality_table_name=quality_db_config.table_name,
+                ) from None
+            _print_paper_research_packet_operator_flow_summary(
+                packet_report,
+                packet_persisted=packet_persisted,
+                quality_report=quality_report,
+                quality_persisted=True,
+                history_report=history_report,
+            )
+            _print_paper_research_packet_summary(
+                packet_report,
+                persisted=packet_persisted,
+            )
+            _print_paper_research_packet_quality_summary(
+                quality_report,
+                persisted=True,
+            )
+            _print_paper_research_packet_quality_db_history_summary(history_report)
+            return 0
+        except Exception as exc:
+            print(
+                f"paper-research-packet-operator-flow failed: {exc}",
                 file=sys.stderr,
             )
             return 1
@@ -5643,6 +5832,25 @@ def _print_strategy_candidate_research_queue_history_summary(
         f"latest_primary_reason_code_counts={latest_primary_reason_code_counts or 'none'} "
         f"latest_reason_codes={latest_reason_codes or 'none'} "
         f"persisted={persisted}",
+    )
+
+
+def _print_paper_research_packet_operator_flow_summary(
+    packet_report: object,
+    *,
+    packet_persisted: bool,
+    quality_report: object,
+    quality_persisted: bool,
+    history_report: object,
+) -> None:
+    print(
+        "paper-research-packet-operator-flow: "
+        f"packet_persisted={packet_persisted} "
+        f"packet_row_count={packet_report.packet_row_count} "
+        f"quality_status={quality_report.quality_status} "
+        f"quality_persisted={quality_persisted} "
+        f"history_status={history_report.history_status} "
+        f"history_source_report_count={history_report.source_report_count}",
     )
 
 

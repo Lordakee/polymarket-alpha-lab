@@ -208,6 +208,16 @@ Read persisted packet-quality history:
 
 Quality history is also available through the pure reducer `build_paper_research_packet_quality_history_report(...)` and the DB-API helper `load_paper_research_packet_quality_history_report(...)`.
 
+Run the persisted packet operator flow:
+
+```bash
+.venv/bin/polymarket-alpha-lab paper-research-packet-operator-flow --limit 100 --quality-history-limit 100
+```
+
+- Required env combines the three configs above: strategy candidate research queue DB, paper research packet DB, and paper research packet quality DB. All DSN/table settings remain env-driven; the command does not expose DSN or table CLI flags.
+- The flow generates and persists a paper research packet, builds and persists the latest packet-quality report, then reads aggregate packet-quality history. It prints one combined operator summary plus the existing packet, quality, and quality-history summaries.
+- This remains paper-only/report-only operator evidence. It does not authenticate, handle wallets or private keys, place/sign/submit/cancel orders, trade live, or provide trade instructions or financial advice.
+
 ## Level 1B Node 1 Status
 
 Level 1B Node 1 adds configurable paper-only risk gates and append-only rejected-candidate logs. It does not place orders, authenticate, handle private keys, cancel orders, open user WebSockets, run heartbeat logic, or create live-trading proposals.
