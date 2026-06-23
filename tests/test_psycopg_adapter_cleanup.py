@@ -17,6 +17,7 @@ TRANSACTIONAL_MODULES = (
     "polymarket_alpha_lab.paper_recommendation_consistency_psycopg",
     "polymarket_alpha_lab.paper_probability_recommendation_queue_psycopg",
     "polymarket_alpha_lab.paper_recommendation_health_psycopg",
+    "polymarket_alpha_lab.paper_recommendation_reason_trend_health_psycopg",
     "polymarket_alpha_lab.paper_recommendation_cycle_snapshot_psycopg",
     "polymarket_alpha_lab.paper_recommendation_reason_trend_psycopg",
     "polymarket_alpha_lab.paper_recommendation_risk_budget_psycopg",
