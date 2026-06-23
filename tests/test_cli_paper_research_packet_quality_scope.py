@@ -24,7 +24,6 @@ COMMAND = "paper-research-packet-quality"
         "--packet-config-version",
         "--max-packet-rows",
         "--min-score",
-        "--persist",
         "--config-version",
         "--max-source-age-seconds",
         "--blocked-source-age-seconds",
@@ -54,3 +53,14 @@ def test_packet_quality_cli_rejects_source_db_generation_persistence_and_live_fl
     assert exc_info.value.code == 2
     captured = capsys.readouterr()
     assert f"unrecognized arguments: {flag}" in captured.err
+
+
+def test_packet_quality_cli_accepts_persist_flag_at_parser_boundary(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    exit_code = main([COMMAND, "--persist"])
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert "unrecognized arguments: --persist" not in captured.err
+    assert f"{COMMAND} failed:" in captured.err

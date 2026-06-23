@@ -26,6 +26,11 @@ from polymarket_alpha_lab.supabase_paper_research_packet_config import (
     PAPER_RESEARCH_PACKET_DB_ENABLED_ENV_VAR,
     PAPER_RESEARCH_PACKET_DB_TABLE_ENV_VAR,
 )
+from polymarket_alpha_lab.supabase_paper_research_packet_quality_config import (
+    PAPER_RESEARCH_PACKET_QUALITY_DB_DSN_ENV_VAR,
+    PAPER_RESEARCH_PACKET_QUALITY_DB_ENABLED_ENV_VAR,
+    PAPER_RESEARCH_PACKET_QUALITY_DB_TABLE_ENV_VAR,
+)
 
 
 COMMAND = "paper-research-packet-quality"
@@ -41,6 +46,17 @@ def _set_packet_db_env(
     monkeypatch.setenv(PAPER_RESEARCH_PACKET_DB_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(PAPER_RESEARCH_PACKET_DB_DSN_ENV_VAR, dsn)
     monkeypatch.setenv(PAPER_RESEARCH_PACKET_DB_TABLE_ENV_VAR, table_name)
+
+
+def _set_quality_db_env(
+    monkeypatch: pytest.MonkeyPatch,
+    dsn: str,
+    *,
+    table_name: str = "paper_research_packet_quality_archive",
+) -> None:
+    monkeypatch.setenv(PAPER_RESEARCH_PACKET_QUALITY_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(PAPER_RESEARCH_PACKET_QUALITY_DB_DSN_ENV_VAR, dsn)
+    monkeypatch.setenv(PAPER_RESEARCH_PACKET_QUALITY_DB_TABLE_ENV_VAR, table_name)
 
 
 def _quality_report() -> PaperResearchPacketQualityReport:
@@ -193,6 +209,231 @@ def test_packet_quality_cli_uses_injected_runner_and_prints_summary(
     assert dsn not in captured.err
     assert table_name not in captured.out
     assert table_name not in captured.err
+
+
+def test_packet_quality_cli_persist_uses_quality_db_env_and_prints_marker(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    source_dsn = "postgresql://paper-quality-source.example.invalid/db"
+    source_table = "paper_research_packet_archive"
+    quality_dsn = "postgresql://paper-quality-target.example.invalid/db"
+    quality_table = "paper_research_packet_quality_archive"
+    _set_packet_db_env(monkeypatch, source_dsn, table_name=source_table)
+    _set_quality_db_env(monkeypatch, quality_dsn, table_name=quality_table)
+    report = _quality_report()
+    runner_calls = 0
+    connect_calls: list[tuple[str, dict[str, object]]] = []
+    insert_calls: list[dict[str, object]] = []
+
+    class FakeConnection:
+        def __init__(self) -> None:
+            self.commit_count = 0
+            self.rollback_count = 0
+            self.close_count = 0
+
+        def commit(self) -> None:
+            self.commit_count += 1
+
+        def rollback(self) -> None:
+            self.rollback_count += 1
+
+        def close(self) -> None:
+            self.close_count += 1
+
+    connection = FakeConnection()
+
+    def fake_runner(**kwargs: Any) -> object:
+        nonlocal runner_calls
+        runner_calls += 1
+        assert kwargs["dsn"] == source_dsn
+        assert kwargs["table_name"] == source_table
+        assert "limit" not in kwargs
+        return report
+
+    def fake_connect(connect_dsn: str, **kwargs: object) -> FakeConnection:
+        connect_calls.append((connect_dsn, dict(kwargs)))
+        return connection
+
+    def fake_insert(
+        received_connection: object,
+        received_report: object,
+        *,
+        table_name: str,
+    ) -> object:
+        insert_calls.append(
+            {
+                "connection": received_connection,
+                "report": received_report,
+                "table_name": table_name,
+            },
+        )
+        return object()
+
+    monkeypatch.setitem(sys.modules, "psycopg", SimpleNamespace(connect=fake_connect))
+    monkeypatch.setattr(
+        "polymarket_alpha_lab.paper_research_packet_quality_store."
+        "insert_paper_research_packet_quality_report",
+        fake_insert,
+    )
+
+    exit_code = main(
+        [COMMAND, "--persist"],
+        paper_research_packet_quality_runner=fake_runner,
+    )
+
+    assert exit_code == 0
+    assert runner_calls == 1
+    assert connect_calls == [(quality_dsn, {})]
+    assert insert_calls == [
+        {
+            "connection": connection,
+            "report": report,
+            "table_name": quality_table,
+        },
+    ]
+    assert connection.commit_count == 1
+    assert connection.rollback_count == 0
+    assert connection.close_count == 1
+    captured = capsys.readouterr()
+    assert f"{COMMAND}:" in captured.out
+    assert "quality_status=pass" in captured.out
+    assert "persisted=True" in captured.out
+    for secret in (source_dsn, source_table, quality_dsn, quality_table):
+        assert secret not in captured.out
+        assert secret not in captured.err
+
+
+def test_packet_quality_cli_persist_requires_enabled_quality_db_before_runner_or_connect(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _set_packet_db_env(
+        monkeypatch,
+        "postgresql://paper-quality-source.example.invalid/db",
+    )
+    monkeypatch.delenv(
+        PAPER_RESEARCH_PACKET_QUALITY_DB_ENABLED_ENV_VAR,
+        raising=False,
+    )
+    monkeypatch.delenv(PAPER_RESEARCH_PACKET_QUALITY_DB_DSN_ENV_VAR, raising=False)
+    monkeypatch.delenv(PAPER_RESEARCH_PACKET_QUALITY_DB_TABLE_ENV_VAR, raising=False)
+    runner_calls = 0
+    connect_calls = 0
+
+    def forbidden_runner(**kwargs: Any) -> object:
+        nonlocal runner_calls
+        runner_calls += 1
+        raise AssertionError("paper research packet quality runner should not run")
+
+    def forbidden_connect(*args: Any, **kwargs: Any) -> object:
+        nonlocal connect_calls
+        connect_calls += 1
+        raise AssertionError("quality DB connect should not run")
+
+    monkeypatch.setitem(sys.modules, "psycopg", SimpleNamespace(connect=forbidden_connect))
+
+    exit_code = main(
+        [COMMAND, "--persist"],
+        paper_research_packet_quality_runner=forbidden_runner,
+    )
+
+    assert exit_code == 1
+    assert runner_calls == 0
+    assert connect_calls == 0
+    captured = capsys.readouterr()
+    assert f"{COMMAND} failed:" in captured.err
+    assert f"{COMMAND} --persist requires paper research packet quality DB to be enabled" in (
+        captured.err
+    )
+
+
+def test_packet_quality_cli_persist_failure_redacts_source_and_quality_db_secrets(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    source_dsn = (
+        "postgresql://source_user:source-secret@"
+        "paper-quality-source-secret.example.invalid/db"
+    )
+    source_table = "source_schema.paper_research_packet_archive"
+    quality_dsn = (
+        "postgresql://quality_user:quality-secret@"
+        "paper-quality-target-secret.example.invalid/db"
+    )
+    quality_table = "quality_schema.paper_research_packet_quality_archive"
+    payload_json = '{"secret":"payload-json-secret"}'
+    question = "Will secret market resolve yes?"
+    report_sha256 = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+    _set_packet_db_env(monkeypatch, source_dsn, table_name=source_table)
+    _set_quality_db_env(monkeypatch, quality_dsn, table_name=quality_table)
+    report = _quality_report()
+
+    class FakeConnection:
+        def __init__(self) -> None:
+            self.commit_count = 0
+            self.rollback_count = 0
+            self.close_count = 0
+
+        def commit(self) -> None:
+            self.commit_count += 1
+
+        def rollback(self) -> None:
+            self.rollback_count += 1
+
+        def close(self) -> None:
+            self.close_count += 1
+
+    connection = FakeConnection()
+
+    def fake_connect(connect_dsn: str, **kwargs: object) -> FakeConnection:
+        assert connect_dsn == quality_dsn
+        assert kwargs == {}
+        return connection
+
+    def broken_insert(*args: Any, **kwargs: Any) -> object:
+        raise RuntimeError(
+            f"insert failed source_dsn={source_dsn} source_table={source_table} "
+            f"dsn={quality_dsn} table={quality_table} "
+            "schema=quality_schema tail=paper_research_packet_quality_archive "
+            f"payload_json={payload_json} question={question} "
+            f"report_sha256={report_sha256}",
+        )
+
+    monkeypatch.setitem(sys.modules, "psycopg", SimpleNamespace(connect=fake_connect))
+    monkeypatch.setattr(
+        "polymarket_alpha_lab.paper_research_packet_quality_store."
+        "insert_paper_research_packet_quality_report",
+        broken_insert,
+    )
+
+    exit_code = main(
+        [COMMAND, "--persist"],
+        paper_research_packet_quality_runner=lambda **kwargs: report,
+    )
+
+    assert exit_code == 1
+    assert connection.commit_count == 0
+    assert connection.rollback_count == 1
+    assert connection.close_count == 1
+    captured = capsys.readouterr()
+    assert f"{COMMAND} failed:" in captured.err
+    assert "dsn=<redacted-dsn>" in captured.err
+    assert "table=<redacted-table>" in captured.err
+    assert source_dsn not in captured.err
+    assert "source-secret" not in captured.err
+    assert source_table not in captured.err
+    assert "source_schema" not in captured.err
+    assert quality_dsn not in captured.err
+    assert "quality-secret" not in captured.err
+    assert quality_table not in captured.err
+    assert "quality_schema" not in captured.err
+    assert "paper_research_packet_archive" not in captured.err
+    assert "paper_research_packet_quality_archive" not in captured.err
+    assert payload_json not in captured.err
+    assert "payload-json-secret" not in captured.err
+    assert question not in captured.err
+    assert report_sha256 not in captured.err
 
 
 def test_packet_quality_helper_default_load_path_builds_report_and_closes_only(

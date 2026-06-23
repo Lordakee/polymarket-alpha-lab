@@ -193,10 +193,20 @@ Inspect the latest persisted packet's quality:
 - Required env is the same persisted packet DB config: `POLYMARKET_ALPHA_LAB_PAPER_RESEARCH_PACKET_DB_ENABLED=true` and `POLYMARKET_ALPHA_LAB_PAPER_RESEARCH_PACKET_DB_DSN`; optional table override: `POLYMARKET_ALPHA_LAB_PAPER_RESEARCH_PACKET_DB_TABLE`.
 - The command intentionally reads only the latest persisted packet report and builds one `PaperResearchPacketQualityReport`. It prints `quality_status`, source freshness, included/skipped shares, check statuses, and top reason codes.
 - There is no `--limit` for this command because the quality reducer evaluates one source packet report at a time.
+- `--persist` additionally requires `POLYMARKET_ALPHA_LAB_PAPER_RESEARCH_PACKET_QUALITY_DB_ENABLED=true` and `POLYMARKET_ALPHA_LAB_PAPER_RESEARCH_PACKET_QUALITY_DB_DSN`; optional table override: `POLYMARKET_ALPHA_LAB_PAPER_RESEARCH_PACKET_QUALITY_DB_TABLE`. When enabled, the derived quality report is appended to the quality reports table after it is built.
 
 Packet quality persistence also ships as Python/DB-API infrastructure. Use `build_paper_research_packet_quality_report(packet_report, config=..., generated_at=...)` to create the report, `paper_research_packet_quality_report_to_db_row(...)` for canonical payload/hash encoding, and `insert_paper_research_packet_quality_report(...)` / `load_paper_research_packet_quality_reports(...)` for DB-API persistence. The optional quality DB env config uses `POLYMARKET_ALPHA_LAB_PAPER_RESEARCH_PACKET_QUALITY_DB_ENABLED`, `POLYMARKET_ALPHA_LAB_PAPER_RESEARCH_PACKET_QUALITY_DB_DSN`, and `POLYMARKET_ALPHA_LAB_PAPER_RESEARCH_PACKET_QUALITY_DB_TABLE`.
 
-Quality history is available through the pure reducer `build_paper_research_packet_quality_history_report(...)` and the DB-API helper `load_paper_research_packet_quality_history_report(...)`. No `paper-research-packet-quality-db-history` CLI command is shipped at this time.
+Read persisted packet-quality history:
+
+```bash
+.venv/bin/polymarket-alpha-lab paper-research-packet-quality-db-history --limit 100
+```
+
+- Required env is the quality DB config: `POLYMARKET_ALPHA_LAB_PAPER_RESEARCH_PACKET_QUALITY_DB_ENABLED=true` and `POLYMARKET_ALPHA_LAB_PAPER_RESEARCH_PACKET_QUALITY_DB_DSN`; optional table override: `POLYMARKET_ALPHA_LAB_PAPER_RESEARCH_PACKET_QUALITY_DB_TABLE`.
+- The command prints aggregate quality history: history status, source report count, first/latest source timestamps, latest quality status, source age, included/skipped shares, status rows, duplicate timestamp count, recurring reason rows, and reason codes.
+
+Quality history is also available through the pure reducer `build_paper_research_packet_quality_history_report(...)` and the DB-API helper `load_paper_research_packet_quality_history_report(...)`.
 
 ## Level 1B Node 1 Status
 

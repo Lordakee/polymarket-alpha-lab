@@ -62,6 +62,10 @@ from polymarket_alpha_lab.paper_research_packet_db_history import (
     DEFAULT_PAPER_RESEARCH_PACKET_DB_HISTORY_CONFIG_VERSION,
     PaperResearchPacketDbHistoryConfig,
 )
+from polymarket_alpha_lab.paper_research_packet_quality_history import (
+    DEFAULT_PAPER_RESEARCH_PACKET_QUALITY_HISTORY_CONFIG_VERSION,
+    PaperResearchPacketQualityHistoryConfig,
+)
 from polymarket_alpha_lab.paper_trade_journal_psycopg import (
     insert_paper_trade_record_with_psycopg,
 )
@@ -169,6 +173,9 @@ from polymarket_alpha_lab.supabase_paper_nav_snapshot_config import (
 from polymarket_alpha_lab.supabase_paper_research_packet_config import (
     from_paper_research_packet_db_env,
 )
+from polymarket_alpha_lab.supabase_paper_research_packet_quality_config import (
+    from_paper_research_packet_quality_db_env,
+)
 from polymarket_alpha_lab.supabase_paper_trade_cost_audit_config import (
     from_paper_trade_cost_audit_db_env,
 )
@@ -248,6 +255,7 @@ PaperResearchPacketBuilder = Callable[..., object]
 PaperResearchPacketDbSink = Callable[..., object]
 PaperResearchPacketDbHistoryRunner = Callable[..., object]
 PaperResearchPacketQualityRunner = Callable[..., object]
+PaperResearchPacketQualityDbHistoryRunner = Callable[..., object]
 PaperProbabilityRecommendationQueueDbSink = Callable[..., object]
 PaperRecommendationRiskBudgetDbSink = Callable[..., object]
 PaperRecommendationReasonTrendDbSink = Callable[..., object]
@@ -318,6 +326,32 @@ def _redacted_paper_research_packet_db_history_error(
 ) -> RuntimeError:
     message = _redact_db_dsn(str(exc), dsn=dsn)
     message = _redact_db_table_name_and_tail(message, table_name=table_name)
+    message = _redact_paper_research_packet_sensitive_fields(message)
+    if not message.strip():
+        message = exc.__class__.__name__
+    return RuntimeError(message)
+
+
+def _redacted_paper_research_packet_quality_error(
+    exc: Exception,
+    *,
+    source_dsn: str,
+    source_table_name: str,
+    quality_dsn: str | None = None,
+    quality_table_name: str | None = None,
+) -> RuntimeError:
+    message = _redact_db_dsn(str(exc), dsn=source_dsn)
+    message = _redact_db_table_name_and_tail(
+        message,
+        table_name=source_table_name,
+    )
+    if quality_dsn is not None:
+        message = _redact_db_dsn(message, dsn=quality_dsn)
+    if quality_table_name is not None:
+        message = _redact_db_table_name_and_tail(
+            message,
+            table_name=quality_table_name,
+        )
     message = _redact_paper_research_packet_sensitive_fields(message)
     if not message.strip():
         message = exc.__class__.__name__
@@ -495,6 +529,9 @@ def main(
         PaperResearchPacketDbHistoryRunner | None
     ) = None,
     paper_research_packet_quality_runner: PaperResearchPacketQualityRunner | None = None,
+    paper_research_packet_quality_db_history_runner: (
+        PaperResearchPacketQualityDbHistoryRunner | None
+    ) = None,
     paper_probability_recommendation_queue_db_sink: (
         PaperProbabilityRecommendationQueueDbSink | None
     ) = None,
@@ -1090,6 +1127,21 @@ def main(
     )
     paper_research_packet_quality = subparsers.add_parser(
         "paper-research-packet-quality",
+    )
+    paper_research_packet_quality.add_argument(
+        "--persist",
+        action="store_true",
+        default=False,
+        dest="persist",
+    )
+    paper_research_packet_quality_db_history = subparsers.add_parser(
+        "paper-research-packet-quality-db-history",
+    )
+    paper_research_packet_quality_db_history.add_argument(
+        "--limit",
+        type=int,
+        default=100,
+        dest="limit",
     )
 
     # Stage 17 market search: search Polymarket markets by keyword.
@@ -2215,6 +2267,11 @@ def main(
     if args.command == "paper-research-packet-quality":
         try:
             packet_db_config = from_paper_research_packet_db_env()
+            quality_db_config = (
+                from_paper_research_packet_quality_db_env()
+                if args.persist
+                else None
+            )
             if not packet_db_config.enabled:
                 raise ValueError(
                     "paper-research-packet-quality requires "
@@ -2230,19 +2287,74 @@ def main(
                 report = _run_paper_research_packet_quality(
                     dsn=dsn,
                     table_name=packet_db_config.table_name,
+                    persist=args.persist,
+                    quality_db_config=quality_db_config,
                     runner=paper_research_packet_quality_runner,
+                )
+            except Exception as exc:
+                raise _redacted_paper_research_packet_quality_error(
+                    exc,
+                    source_dsn=dsn,
+                    source_table_name=packet_db_config.table_name,
+                    quality_dsn=(
+                        quality_db_config.dsn
+                        if quality_db_config is not None
+                        else None
+                    ),
+                    quality_table_name=(
+                        quality_db_config.table_name
+                        if quality_db_config is not None
+                        else None
+                    ),
+                ) from None
+            _print_paper_research_packet_quality_summary(
+                report,
+                persisted=args.persist,
+            )
+            return 0
+        except Exception as exc:
+            print(
+                f"paper-research-packet-quality failed: {exc}",
+                file=sys.stderr,
+            )
+            return 1
+
+    if args.command == "paper-research-packet-quality-db-history":
+        try:
+            if isinstance(args.limit, bool) or type(args.limit) is not int or args.limit < 1:
+                raise ValueError(
+                    "paper-research-packet-quality-db-history limit must be positive",
+                )
+            quality_db_config = from_paper_research_packet_quality_db_env()
+            if not quality_db_config.enabled:
+                raise ValueError(
+                    "paper-research-packet-quality-db-history requires "
+                    "paper research packet quality DB to be enabled",
+                )
+            dsn = quality_db_config.dsn
+            if dsn is None:
+                raise ValueError(
+                    "paper-research-packet-quality-db-history requires "
+                    "a paper research packet quality DB DSN",
+                )
+            try:
+                report = _run_paper_research_packet_quality_db_history(
+                    dsn=dsn,
+                    table_name=quality_db_config.table_name,
+                    limit=args.limit,
+                    runner=paper_research_packet_quality_db_history_runner,
                 )
             except Exception as exc:
                 raise _redacted_paper_research_packet_db_history_error(
                     exc,
                     dsn=dsn,
-                    table_name=packet_db_config.table_name,
+                    table_name=quality_db_config.table_name,
                 ) from None
-            _print_paper_research_packet_quality_summary(report)
+            _print_paper_research_packet_quality_db_history_summary(report)
             return 0
         except Exception as exc:
             print(
-                f"paper-research-packet-quality failed: {exc}",
+                f"paper-research-packet-quality-db-history failed: {exc}",
                 file=sys.stderr,
             )
             return 1
@@ -4398,19 +4510,164 @@ def _run_paper_research_packet_quality(
     *,
     dsn: str,
     table_name: str,
+    persist: bool = False,
+    quality_db_config: Any | None = None,
     runner: PaperResearchPacketQualityRunner | None,
 ) -> object:
     from polymarket_alpha_lab.paper_research_packet_quality import (
         PaperResearchPacketQualityConfig,
     )
 
+    if persist and quality_db_config is None:
+        quality_db_config = from_paper_research_packet_quality_db_env()
+    quality_dsn: str | None = None
+    quality_table_name: str | None = None
+    if persist:
+        if quality_db_config is None:
+            raise ValueError(
+                "paper-research-packet-quality --persist requires "
+                "paper research packet quality DB config",
+            )
+        if not quality_db_config.enabled:
+            raise ValueError(
+                "paper-research-packet-quality --persist requires "
+                "paper research packet quality DB to be enabled",
+            )
+        quality_dsn = quality_db_config.dsn
+        if quality_dsn is None:
+            raise ValueError(
+                "paper-research-packet-quality --persist requires "
+                "a paper research packet quality DB DSN",
+            )
+        quality_table_name = quality_db_config.table_name
+
+    def redacted_error(exc: Exception) -> RuntimeError:
+        return _redacted_paper_research_packet_quality_error(
+            exc,
+            source_dsn=dsn,
+            source_table_name=table_name,
+            quality_dsn=quality_dsn,
+            quality_table_name=quality_table_name,
+        )
+
     generated_at = datetime.now(UTC)
     config = PaperResearchPacketQualityConfig()
+    if runner is not None:
+        try:
+            report = runner(
+                dsn=dsn,
+                table_name=table_name,
+                config=config,
+                generated_at=generated_at,
+            )
+        except Exception as exc:
+            raise redacted_error(exc) from None
+    else:
+        from polymarket_alpha_lab.paper_research_packet_quality import (
+            build_paper_research_packet_quality_report,
+        )
+        from polymarket_alpha_lab.paper_research_packet_store import (
+            load_paper_research_packet_reports,
+        )
+
+        try:
+            import psycopg
+        except ModuleNotFoundError as exc:
+            if exc.name != "psycopg":
+                raise
+            raise RuntimeError(
+                "psycopg is required to use the paper research packet quality "
+                "read adapter; install the postgres extra.",
+            ) from exc
+        try:
+            connection = psycopg.connect(dsn, autocommit=True)
+        except Exception:
+            raise RuntimeError(
+                "failed to connect to the paper research packet database",
+            ) from None
+        try:
+            packet_reports = load_paper_research_packet_reports(
+                connection,
+                limit=1,
+                table_name=table_name,
+            )
+            if not packet_reports:
+                raise ValueError("no persisted paper research packet reports found")
+            report = build_paper_research_packet_quality_report(
+                packet_reports[0],
+                config=config,
+                generated_at=generated_at,
+            )
+        except Exception as exc:
+            raise redacted_error(exc) from None
+        finally:
+            try:
+                connection.close()
+            except Exception:
+                pass
+
+    if not persist:
+        return report
+
+    from polymarket_alpha_lab.paper_research_packet_quality_store import (
+        insert_paper_research_packet_quality_report,
+    )
+
+    try:
+        import psycopg
+    except ModuleNotFoundError as exc:
+        if exc.name != "psycopg":
+            raise
+        raise RuntimeError(
+            "psycopg is required to use the paper research packet quality "
+            "write adapter; install the postgres extra.",
+        ) from exc
+    try:
+        connection = psycopg.connect(quality_dsn)
+    except Exception:
+        raise RuntimeError(
+            "failed to connect to the paper research packet quality database",
+        ) from None
+    try:
+        insert_paper_research_packet_quality_report(
+            connection,
+            report,
+            table_name=quality_table_name,
+        )
+        connection.commit()
+        return report
+    except BaseException as exc:
+        try:
+            connection.rollback()
+        except Exception:
+            pass
+        raise redacted_error(exc) from None
+    finally:
+        try:
+            connection.close()
+        except Exception:
+            pass
+
+
+def _run_paper_research_packet_quality_db_history(
+    *,
+    dsn: str,
+    table_name: str,
+    limit: int,
+    runner: PaperResearchPacketQualityDbHistoryRunner | None,
+) -> object:
+    if isinstance(limit, bool) or type(limit) is not int or limit < 1:
+        raise ValueError("paper-research-packet-quality-db-history limit must be positive")
+    generated_at = datetime.now(UTC)
+    config = PaperResearchPacketQualityHistoryConfig(
+        config_version=DEFAULT_PAPER_RESEARCH_PACKET_QUALITY_HISTORY_CONFIG_VERSION,
+    )
     if runner is not None:
         try:
             return runner(
                 dsn=dsn,
                 table_name=table_name,
+                limit=limit,
                 config=config,
                 generated_at=generated_at,
             )
@@ -4421,11 +4678,8 @@ def _run_paper_research_packet_quality(
                 table_name=table_name,
             ) from None
 
-    from polymarket_alpha_lab.paper_research_packet_quality import (
-        build_paper_research_packet_quality_report,
-    )
-    from polymarket_alpha_lab.paper_research_packet_store import (
-        load_paper_research_packet_reports,
+    from polymarket_alpha_lab.paper_research_packet_quality_history_load import (
+        load_paper_research_packet_quality_history_report,
     )
 
     try:
@@ -4435,24 +4689,19 @@ def _run_paper_research_packet_quality(
             raise
         raise RuntimeError(
             "psycopg is required to use the paper research packet quality "
-            "read adapter; install the postgres extra.",
+            "DB history read adapter; install the postgres extra.",
         ) from exc
     try:
         connection = psycopg.connect(dsn, autocommit=True)
     except Exception:
         raise RuntimeError(
-            "failed to connect to the paper research packet database",
+            "failed to connect to the paper research packet quality database",
         ) from None
     try:
-        packet_reports = load_paper_research_packet_reports(
+        return load_paper_research_packet_quality_history_report(
             connection,
-            limit=1,
+            limit=limit,
             table_name=table_name,
-        )
-        if not packet_reports:
-            raise ValueError("no persisted paper research packet reports found")
-        return build_paper_research_packet_quality_report(
-            packet_reports[0],
             config=config,
             generated_at=generated_at,
         )
@@ -5434,7 +5683,11 @@ def _print_paper_research_packet_summary(
     )
 
 
-def _print_paper_research_packet_quality_summary(report: object) -> None:
+def _print_paper_research_packet_quality_summary(
+    report: object,
+    *,
+    persisted: bool = False,
+) -> None:
     print(
         "paper-research-packet-quality: "
         f"generated_at={report.generated_at.isoformat()} "
@@ -5446,7 +5699,8 @@ def _print_paper_research_packet_quality_summary(report: object) -> None:
         f"check_count={report.check_count} "
         f"pass_count={report.pass_count} "
         f"watch_count={report.watch_count} "
-        f"blocked_count={report.blocked_count}",
+        f"blocked_count={report.blocked_count} "
+        f"persisted={persisted}",
     )
     checks = " ".join(
         f"{row.check_name}={row.status}" for row in report.check_rows
@@ -5456,6 +5710,39 @@ def _print_paper_research_packet_quality_summary(report: object) -> None:
         f"{row.reason_code}={row.count}" for row in report.reason_code_counts[:5]
     )
     print(f"top_reason_codes: {top_reasons or 'none'}")
+
+
+def _print_paper_research_packet_quality_db_history_summary(report: object) -> None:
+    print(
+        "paper-research-packet-quality-db-history: "
+        f"history_status={report.history_status} "
+        f"source_report_count={report.source_report_count} "
+        "first_source_generated_at="
+        f"{_iso_or_none(report.first_source_generated_at)} "
+        "latest_source_generated_at="
+        f"{_iso_or_none(report.latest_source_generated_at)} "
+        f"latest_quality_status={_none_or_value(report.latest_quality_status)} "
+        f"latest_source_age_seconds={_none_or_value(report.latest_source_age_seconds)} "
+        f"latest_included_share={_none_or_value(report.latest_included_share)} "
+        f"latest_skipped_share={_none_or_value(report.latest_skipped_share)} "
+        f"duplicate_generated_at_count={report.duplicate_generated_at_count}",
+    )
+    print(
+        "status_rows: "
+        f"{_format_quality_history_status_row_counts(report.quality_status_rows) or 'none'}",
+    )
+    latest_checks = " ".join(
+        f"{row.check_name}={row.status}"
+        for row in report.latest_check_rows
+    )
+    print(f"latest_checks: {latest_checks or 'none'}")
+    recurring_reason_rows = " ".join(
+        f"{row.check_status}:{row.reason_code}={row.report_count}"
+        for row in report.recurring_reason_code_rows
+    )
+    print(f"recurring_reason_rows: {recurring_reason_rows or 'none'}")
+    reason_codes = " ".join(report.reason_codes)
+    print(f"reason_codes: {reason_codes or 'none'}")
 
 
 def _print_paper_research_packet_db_history_summary(report: object) -> None:
@@ -5509,6 +5796,13 @@ def _none_or_value(value: object | None) -> str:
 def _format_history_status_row_counts(rows: tuple[object, ...]) -> str:
     return ",".join(
         f"{row.status}:{row.report_count}"
+        for row in rows
+    )
+
+
+def _format_quality_history_status_row_counts(rows: tuple[object, ...]) -> str:
+    return " ".join(
+        f"{row.quality_status}={row.status_count}"
         for row in rows
     )
 
