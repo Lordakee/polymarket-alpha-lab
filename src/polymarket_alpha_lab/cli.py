@@ -66,6 +66,11 @@ from polymarket_alpha_lab.paper_research_packet_quality_history import (
     DEFAULT_PAPER_RESEARCH_PACKET_QUALITY_HISTORY_CONFIG_VERSION,
     PaperResearchPacketQualityHistoryConfig,
 )
+from polymarket_alpha_lab.paper_research_packet_operator_flow import (
+    PaperResearchPacketOperatorFlowConfig,
+    PaperResearchPacketOperatorFlowReport,
+    build_paper_research_packet_operator_flow_report,
+)
 from polymarket_alpha_lab.paper_trade_journal_psycopg import (
     insert_paper_trade_record_with_psycopg,
 )
@@ -2514,6 +2519,15 @@ def main(
                     limit=args.quality_history_limit,
                     runner=paper_research_packet_quality_db_history_runner,
                 )
+                operator_flow_report = build_paper_research_packet_operator_flow_report(
+                    packet_report=packet_report,
+                    packet_persisted=packet_persisted,
+                    quality_report=quality_report,
+                    quality_persisted=True,
+                    quality_history_report=history_report,
+                    config=PaperResearchPacketOperatorFlowConfig(),
+                    generated_at=datetime.now(UTC),
+                )
             except Exception as exc:
                 raise _redacted_paper_research_packet_operator_flow_error(
                     exc,
@@ -2525,11 +2539,7 @@ def main(
                     quality_table_name=quality_db_config.table_name,
                 ) from None
             _print_paper_research_packet_operator_flow_summary(
-                packet_report,
-                packet_persisted=packet_persisted,
-                quality_report=quality_report,
-                quality_persisted=True,
-                history_report=history_report,
+                operator_flow_report,
             )
             _print_paper_research_packet_summary(
                 packet_report,
@@ -5836,21 +5846,16 @@ def _print_strategy_candidate_research_queue_history_summary(
 
 
 def _print_paper_research_packet_operator_flow_summary(
-    packet_report: object,
-    *,
-    packet_persisted: bool,
-    quality_report: object,
-    quality_persisted: bool,
-    history_report: object,
+    report: PaperResearchPacketOperatorFlowReport,
 ) -> None:
     print(
         "paper-research-packet-operator-flow: "
-        f"packet_persisted={packet_persisted} "
-        f"packet_row_count={packet_report.packet_row_count} "
-        f"quality_status={quality_report.quality_status} "
-        f"quality_persisted={quality_persisted} "
-        f"history_status={history_report.history_status} "
-        f"history_source_report_count={history_report.source_report_count}",
+        f"packet_persisted={report.packet_persisted} "
+        f"packet_row_count={report.packet_row_count} "
+        f"quality_status={report.quality_status} "
+        f"quality_persisted={report.quality_persisted} "
+        f"history_status={report.history_status} "
+        f"history_source_report_count={report.history_source_report_count}",
     )
 
 

@@ -18,6 +18,9 @@ from polymarket_alpha_lab.paper_research_packet_quality import (
 from polymarket_alpha_lab.paper_research_packet_quality_history import (
     PaperResearchPacketQualityHistoryConfig,
 )
+from polymarket_alpha_lab.paper_research_packet_operator_flow import (
+    PaperResearchPacketOperatorFlowConfig,
+)
 from polymarket_alpha_lab.strategy_candidate_research_queue_psycopg_read import (
     PaperStrategyCandidateResearchQueueReadOptions,
 )
@@ -191,6 +194,7 @@ def test_operator_flow_cli_uses_injected_helpers_persists_reports_and_prints_sta
     quality_runner_calls: list[dict[str, object]] = []
     quality_insert_calls: list[dict[str, object]] = []
     history_runner_calls: list[dict[str, object]] = []
+    operator_flow_builder_calls: list[dict[str, object]] = []
 
     class FakeQualityConnection:
         def __init__(self) -> None:
@@ -268,11 +272,46 @@ def test_operator_flow_cli_uses_injected_helpers_persists_reports_and_prints_sta
         history_runner_calls.append(dict(kwargs))
         return history_report
 
+    def fake_operator_flow_builder(
+        *,
+        packet_report: object,
+        packet_persisted: bool,
+        quality_report: object,
+        quality_persisted: bool,
+        quality_history_report: object,
+        config: PaperResearchPacketOperatorFlowConfig,
+        generated_at: datetime,
+    ) -> object:
+        events.append("operator-flow")
+        operator_flow_builder_calls.append(
+            {
+                "packet_report": packet_report,
+                "packet_persisted": packet_persisted,
+                "quality_report": quality_report,
+                "quality_persisted": quality_persisted,
+                "quality_history_report": quality_history_report,
+                "config": config,
+                "generated_at": generated_at,
+            },
+        )
+        return SimpleNamespace(
+            packet_persisted=True,
+            packet_row_count=2,
+            quality_status="watch",
+            quality_persisted=True,
+            history_status="pass",
+            history_source_report_count=4,
+        )
+
     monkeypatch.setitem(sys.modules, "psycopg", SimpleNamespace(connect=fake_connect))
     monkeypatch.setattr(
         "polymarket_alpha_lab.paper_research_packet_quality_store."
         "insert_paper_research_packet_quality_report",
         fake_quality_insert,
+    )
+    monkeypatch.setattr(
+        "polymarket_alpha_lab.cli.build_paper_research_packet_operator_flow_report",
+        fake_operator_flow_builder,
     )
 
     exit_code = main(
@@ -375,7 +414,29 @@ def test_operator_flow_cli_uses_injected_helpers_persists_reports_and_prints_sta
 
     assert events.index("persist-packet") < events.index("build-quality")
     assert events.index("persist-quality") < events.index("history")
+    assert events.index("history") < events.index("operator-flow")
+    assert len(operator_flow_builder_calls) == 1
+    operator_flow_call = operator_flow_builder_calls[0]
+    assert operator_flow_call["packet_report"] is packet_report
+    assert operator_flow_call["packet_persisted"] is True
+    assert operator_flow_call["quality_report"] is quality_report
+    assert operator_flow_call["quality_persisted"] is True
+    assert operator_flow_call["quality_history_report"] is history_report
+    assert operator_flow_call["config"] == PaperResearchPacketOperatorFlowConfig()
+    operator_flow_generated_at = operator_flow_call["generated_at"]
+    assert isinstance(operator_flow_generated_at, datetime)
+    assert operator_flow_generated_at.tzinfo is UTC
+
     captured = capsys.readouterr()
+    assert captured.out.splitlines()[0] == (
+        "paper-research-packet-operator-flow: "
+        "packet_persisted=True "
+        "packet_row_count=2 "
+        "quality_status=watch "
+        "quality_persisted=True "
+        "history_status=pass "
+        "history_source_report_count=4"
+    )
     assert f"{COMMAND}:" in captured.out
     assert "packet_persisted=True" in captured.out
     assert "packet_row_count=2" in captured.out
