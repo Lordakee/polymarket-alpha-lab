@@ -57,6 +57,10 @@ from polymarket_alpha_lab.paper_research_packet import (
     DEFAULT_PAPER_RESEARCH_PACKET_MIN_SCORE,
     PaperResearchPacketConfig,
 )
+from polymarket_alpha_lab.paper_research_packet_db_history import (
+    DEFAULT_PAPER_RESEARCH_PACKET_DB_HISTORY_CONFIG_VERSION,
+    PaperResearchPacketDbHistoryConfig,
+)
 from polymarket_alpha_lab.paper_trade_journal_psycopg import (
     insert_paper_trade_record_with_psycopg,
 )
@@ -241,6 +245,7 @@ StrategyCandidateResearchQueueHistoryBuilder = Callable[..., object]
 StrategyCandidateResearchQueueHistoryDbSink = Callable[..., object]
 PaperResearchPacketBuilder = Callable[..., object]
 PaperResearchPacketDbSink = Callable[..., object]
+PaperResearchPacketDbHistoryRunner = Callable[..., object]
 PaperProbabilityRecommendationQueueDbSink = Callable[..., object]
 PaperRecommendationRiskBudgetDbSink = Callable[..., object]
 PaperRecommendationReasonTrendDbSink = Callable[..., object]
@@ -273,6 +278,27 @@ def _redact_db_dsn(text: str, *, dsn: str) -> str:
 
 def _redact_db_table_name(text: str, *, table_name: str) -> str:
     return text.replace(table_name, "<redacted-table>")
+
+
+def _redact_db_table_name_and_tail(text: str, *, table_name: str) -> str:
+    message = _redact_db_table_name(text, table_name=table_name)
+    if "." not in table_name:
+        return message
+    tail = table_name.rsplit(".", 1)[1]
+    return _redact_db_table_name(message, table_name=tail)
+
+
+def _redacted_paper_research_packet_db_history_error(
+    exc: Exception,
+    *,
+    dsn: str,
+    table_name: str,
+) -> RuntimeError:
+    message = _redact_db_dsn(str(exc), dsn=dsn)
+    message = _redact_db_table_name_and_tail(message, table_name=table_name)
+    if not message.strip():
+        message = exc.__class__.__name__
+    return RuntimeError(message)
 
 
 def _raise_redacted_db_sink_error(
@@ -442,6 +468,9 @@ def main(
     ) = None,
     paper_research_packet_builder: PaperResearchPacketBuilder | None = None,
     paper_research_packet_db_sink: PaperResearchPacketDbSink | None = None,
+    paper_research_packet_db_history_runner: (
+        PaperResearchPacketDbHistoryRunner | None
+    ) = None,
     paper_probability_recommendation_queue_db_sink: (
         PaperProbabilityRecommendationQueueDbSink | None
     ) = None,
@@ -1025,6 +1054,15 @@ def main(
         action="store_true",
         default=False,
         dest="persist",
+    )
+    paper_research_packet_db_history = subparsers.add_parser(
+        "paper-research-packet-db-history",
+    )
+    paper_research_packet_db_history.add_argument(
+        "--limit",
+        type=int,
+        default=100,
+        dest="limit",
     )
 
     # Stage 17 market search: search Polymarket markets by keyword.
@@ -2103,6 +2141,46 @@ def main(
         except Exception as exc:
             print(
                 f"paper-research-packet failed: {exc}",
+                file=sys.stderr,
+            )
+            return 1
+
+    if args.command == "paper-research-packet-db-history":
+        try:
+            if isinstance(args.limit, bool) or type(args.limit) is not int or args.limit < 1:
+                raise ValueError(
+                    "paper-research-packet-db-history limit must be positive",
+                )
+            packet_db_config = from_paper_research_packet_db_env()
+            if not packet_db_config.enabled:
+                raise ValueError(
+                    "paper-research-packet-db-history requires "
+                    "paper research packet DB to be enabled",
+                )
+            dsn = packet_db_config.dsn
+            if dsn is None:
+                raise ValueError(
+                    "paper-research-packet-db-history requires "
+                    "a paper research packet DB DSN",
+                )
+            try:
+                report = _run_paper_research_packet_db_history(
+                    dsn=dsn,
+                    table_name=packet_db_config.table_name,
+                    limit=args.limit,
+                    runner=paper_research_packet_db_history_runner,
+                )
+            except Exception as exc:
+                raise _redacted_paper_research_packet_db_history_error(
+                    exc,
+                    dsn=dsn,
+                    table_name=packet_db_config.table_name,
+                ) from None
+            _print_paper_research_packet_db_history_summary(report)
+            return 0
+        except Exception as exc:
+            print(
+                f"paper-research-packet-db-history failed: {exc}",
                 file=sys.stderr,
             )
             return 1
@@ -3191,6 +3269,75 @@ def _run_paper_research_packet(
             message = exc.__class__.__name__
         raise RuntimeError(message) from None
     return report, True
+
+
+def _run_paper_research_packet_db_history(
+    *,
+    dsn: str,
+    table_name: str,
+    limit: int,
+    runner: PaperResearchPacketDbHistoryRunner | None,
+) -> object:
+    if isinstance(limit, bool) or type(limit) is not int or limit < 1:
+        raise ValueError("paper-research-packet-db-history limit must be positive")
+    generated_at = datetime.now(UTC)
+    config = PaperResearchPacketDbHistoryConfig(
+        config_version=DEFAULT_PAPER_RESEARCH_PACKET_DB_HISTORY_CONFIG_VERSION,
+    )
+    if runner is not None:
+        try:
+            return runner(
+                dsn=dsn,
+                table_name=table_name,
+                limit=limit,
+                config=config,
+                generated_at=generated_at,
+            )
+        except Exception as exc:
+            raise _redacted_paper_research_packet_db_history_error(
+                exc,
+                dsn=dsn,
+                table_name=table_name,
+            ) from None
+
+    from polymarket_alpha_lab.paper_research_packet_db_history_load import (
+        load_paper_research_packet_db_history_report,
+    )
+
+    try:
+        import psycopg
+    except ModuleNotFoundError as exc:
+        if exc.name != "psycopg":
+            raise
+        raise RuntimeError(
+            "psycopg is required to use the paper research packet DB history "
+            "read adapter; install the postgres extra.",
+        ) from exc
+    try:
+        connection = psycopg.connect(dsn, autocommit=True)
+    except Exception:
+        raise RuntimeError(
+            "failed to connect to the paper research packet database",
+        ) from None
+    try:
+        return load_paper_research_packet_db_history_report(
+            connection,
+            limit=limit,
+            table_name=table_name,
+            config=config,
+            generated_at=generated_at,
+        )
+    except Exception as exc:
+        raise _redacted_paper_research_packet_db_history_error(
+            exc,
+            dsn=dsn,
+            table_name=table_name,
+        ) from None
+    finally:
+        try:
+            connection.close()
+        except Exception:
+            pass
 
 
 def _run_action_gated_queue_decision_support_trend(
@@ -5146,6 +5293,42 @@ def _print_paper_research_packet_summary(
         f"net_edge={top_row.net_edge} "
         f"allocated_notional={_none_or_value(top_row.allocated_notional)} "
         f"requested_notional={_none_or_value(top_row.requested_notional)} "
+        f"reason_codes={reason_codes or 'none'}",
+    )
+
+
+def _print_paper_research_packet_db_history_summary(report: object) -> None:
+    print(
+        "paper-research-packet-db-history: "
+        f"report_count={report.report_count} "
+        "first_report_generated_at="
+        f"{_iso_or_none(report.first_report_generated_at)} "
+        "latest_report_generated_at="
+        f"{_iso_or_none(report.latest_report_generated_at)} "
+        f"duplicate_generated_at_count={report.duplicate_generated_at_count} "
+        f"latest_packet_config_version={_none_or_value(report.latest_packet_config_version)} "
+        f"latest_input_row_count={_none_or_value(report.latest_input_row_count)} "
+        f"latest_packet_row_count={_none_or_value(report.latest_packet_row_count)} "
+        f"latest_included_count={_none_or_value(report.latest_included_count)} "
+        f"latest_skipped_count={_none_or_value(report.latest_skipped_count)} "
+        f"latest_high_priority_count={_none_or_value(report.latest_high_priority_count)} "
+        f"latest_medium_priority_count={_none_or_value(report.latest_medium_priority_count)} "
+        f"latest_low_priority_count={_none_or_value(report.latest_low_priority_count)}",
+    )
+    if report.latest_top_packet_rank is None:
+        print("top_packet: none")
+        return
+    reason_codes = ",".join(report.latest_top_packet_reason_codes or ())
+    print(
+        "top_packet: "
+        f"rank={report.latest_top_packet_rank} "
+        f"market_slug={report.latest_top_packet_market_slug} "
+        f"side={report.latest_top_packet_side} "
+        f"research_priority={report.latest_top_packet_research_priority} "
+        f"recommendation_score={report.latest_top_packet_recommendation_score} "
+        f"net_edge={report.latest_top_packet_net_edge} "
+        f"allocated_notional={_none_or_value(report.latest_top_packet_allocated_notional)} "
+        f"requested_notional={_none_or_value(report.latest_top_packet_requested_notional)} "
         f"reason_codes={reason_codes or 'none'}",
     )
 

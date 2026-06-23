@@ -41,6 +41,10 @@ CLI_DB_HELPERS = (
         "loader": "load_local_observability_trends_db_history_report",
         "extra_kwargs": {},
     },
+    # `paper-research-packet-db-history` is intentionally excluded here.
+    # It uses an autocommit-only read path with dedicated cleanup tests in
+    # tests/test_cli_paper_research_packet_db_history.py, so it does not share
+    # the commit/rollback contract exercised by the other DB history helpers.
 )
 
 
