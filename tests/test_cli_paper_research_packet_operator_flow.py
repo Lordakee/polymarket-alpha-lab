@@ -516,6 +516,242 @@ def test_operator_flow_cli_redacts_packet_builder_failure_across_all_databases(
         assert secret not in captured.err
 
 
+def test_operator_flow_cli_redacts_source_loader_failure_across_all_databases(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    source_dsn = (
+        "postgresql://source_user:source-secret@"
+        "operator-flow-loader-source-secret.example.invalid/db"
+    )
+    packet_dsn = (
+        "postgresql://packet_user:packet-secret@"
+        "operator-flow-loader-packet-secret.example.invalid/db"
+    )
+    quality_dsn = (
+        "postgresql://quality_user:quality-secret@"
+        "operator-flow-loader-quality-secret.example.invalid/db"
+    )
+    source_table = "source_schema.strategy_candidate_research_queue_archive"
+    packet_table = "packet_schema.paper_research_packet_archive"
+    quality_table = "quality_schema.paper_research_packet_quality_archive"
+    payload_json = '{"secret":"loader-payload-json-secret"}'
+    question = "Will hidden loader market resolve yes?"
+    report_sha256 = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+    bare_sha256 = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
+    _set_source_db_env(monkeypatch, source_dsn, table_name=source_table)
+    _set_packet_db_env(monkeypatch, packet_dsn, table_name=packet_table)
+    _set_quality_db_env(monkeypatch, quality_dsn, table_name=quality_table)
+    builder_calls = 0
+    packet_sink_calls = 0
+    quality_calls = 0
+    history_calls = 0
+
+    def broken_loader(dsn: str, *, options: object) -> tuple[object, ...]:
+        assert dsn == source_dsn
+        assert isinstance(options, PaperStrategyCandidateResearchQueueReadOptions)
+        raise RuntimeError(
+            f"loader failed source_dsn={source_dsn} source_table={source_table} "
+            f"packet_dsn={packet_dsn} packet_table={packet_table} "
+            f"quality_dsn={quality_dsn} quality_table={quality_table} "
+            "source_schema=source_schema source_tail=strategy_candidate_research_queue_archive "
+            "packet_schema=packet_schema packet_tail=paper_research_packet_archive "
+            "quality_schema=quality_schema quality_tail=paper_research_packet_quality_archive "
+            f"payload_json={payload_json} question={question} "
+            f"report_sha256={report_sha256} bare_hash={bare_sha256}",
+        )
+
+    def forbidden_packet_builder(*args: object, **kwargs: object) -> object:
+        nonlocal builder_calls
+        builder_calls += 1
+        raise AssertionError("packet builder should not run after loader failure")
+
+    def forbidden_packet_sink(**kwargs: object) -> object:
+        nonlocal packet_sink_calls
+        packet_sink_calls += 1
+        raise AssertionError("packet sink should not run after loader failure")
+
+    def forbidden_quality_runner(**kwargs: object) -> object:
+        nonlocal quality_calls
+        quality_calls += 1
+        raise AssertionError("quality runner should not run after loader failure")
+
+    def forbidden_history_runner(**kwargs: object) -> object:
+        nonlocal history_calls
+        history_calls += 1
+        raise AssertionError("history runner should not run after loader failure")
+
+    exit_code = main(
+        [COMMAND],
+        strategy_candidate_research_queue_loader=broken_loader,
+        paper_research_packet_builder=forbidden_packet_builder,
+        paper_research_packet_db_sink=forbidden_packet_sink,
+        paper_research_packet_quality_runner=forbidden_quality_runner,
+        paper_research_packet_quality_db_history_runner=forbidden_history_runner,
+    )
+
+    assert exit_code == 1
+    assert builder_calls == 0
+    assert packet_sink_calls == 0
+    assert quality_calls == 0
+    assert history_calls == 0
+    captured = capsys.readouterr()
+    assert f"{COMMAND} failed:" in captured.err
+    assert "source_dsn=<redacted-dsn>" in captured.err
+    assert "packet_dsn=<redacted-dsn>" in captured.err
+    assert "quality_dsn=<redacted-dsn>" in captured.err
+    assert "source_table=<redacted-table>" in captured.err
+    assert "packet_table=<redacted-table>" in captured.err
+    assert "quality_table=<redacted-table>" in captured.err
+    assert "payload_json=<redacted-payload>" in captured.err
+    assert "question=<redacted-question>" in captured.err
+    assert "report_sha256=<redacted-sha256>" in captured.err
+    assert "bare_hash=<redacted-sha256>" in captured.err
+    for secret in (
+        source_dsn,
+        "source-secret",
+        packet_dsn,
+        "packet-secret",
+        quality_dsn,
+        "quality-secret",
+        source_table,
+        packet_table,
+        quality_table,
+        "source_schema",
+        "packet_schema",
+        "quality_schema",
+        "strategy_candidate_research_queue_archive",
+        "paper_research_packet_archive",
+        "paper_research_packet_quality_archive",
+        payload_json,
+        "loader-payload-json-secret",
+        question,
+        report_sha256,
+        bare_sha256,
+    ):
+        assert secret not in captured.out
+        assert secret not in captured.err
+
+
+def test_operator_flow_cli_redacts_packet_sink_failure_across_all_databases(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    source_dsn = (
+        "postgresql://source_user:source-secret@"
+        "operator-flow-sink-source-secret.example.invalid/db"
+    )
+    packet_dsn = (
+        "postgresql://packet_user:packet-secret@"
+        "operator-flow-sink-packet-secret.example.invalid/db"
+    )
+    quality_dsn = (
+        "postgresql://quality_user:quality-secret@"
+        "operator-flow-sink-quality-secret.example.invalid/db"
+    )
+    source_table = "source_schema.strategy_candidate_research_queue_archive"
+    packet_table = "packet_schema.paper_research_packet_archive"
+    quality_table = "quality_schema.paper_research_packet_quality_archive"
+    payload_json = '{"secret":"sink-payload-json-secret"}'
+    question = "Will hidden sink market resolve yes?"
+    report_sha256 = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+    bare_sha256 = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
+    _set_source_db_env(monkeypatch, source_dsn, table_name=source_table)
+    _set_packet_db_env(monkeypatch, packet_dsn, table_name=packet_table)
+    _set_quality_db_env(monkeypatch, quality_dsn, table_name=quality_table)
+    source_report = _source_report("latest", datetime(2026, 6, 23, 11, 0, tzinfo=UTC))
+    packet_report = _packet_report()
+    quality_calls = 0
+    history_calls = 0
+
+    def fake_loader(dsn: str, *, options: object) -> tuple[object, ...]:
+        assert dsn == source_dsn
+        assert isinstance(options, PaperStrategyCandidateResearchQueueReadOptions)
+        return (source_report,)
+
+    def fake_packet_builder(
+        source_report: object,
+        *,
+        config: PaperResearchPacketConfig,
+        generated_at: datetime,
+    ) -> object:
+        assert type(config) is PaperResearchPacketConfig
+        assert generated_at.tzinfo is UTC
+        return packet_report
+
+    def broken_packet_sink(*, dsn: str, report: object, table_name: str) -> object:
+        assert (dsn, report, table_name) == (packet_dsn, packet_report, packet_table)
+        raise RuntimeError(
+            f"sink failed source_dsn={source_dsn} source_table={source_table} "
+            f"packet_dsn={packet_dsn} packet_table={packet_table} "
+            f"quality_dsn={quality_dsn} quality_table={quality_table} "
+            "source_schema=source_schema source_tail=strategy_candidate_research_queue_archive "
+            "packet_schema=packet_schema packet_tail=paper_research_packet_archive "
+            "quality_schema=quality_schema quality_tail=paper_research_packet_quality_archive "
+            f"payload_json={payload_json} question={question} "
+            f"report_sha256={report_sha256} bare_hash={bare_sha256}",
+        )
+
+    def forbidden_quality_runner(**kwargs: object) -> object:
+        nonlocal quality_calls
+        quality_calls += 1
+        raise AssertionError("quality runner should not run after packet sink failure")
+
+    def forbidden_history_runner(**kwargs: object) -> object:
+        nonlocal history_calls
+        history_calls += 1
+        raise AssertionError("history runner should not run after packet sink failure")
+
+    exit_code = main(
+        [COMMAND],
+        strategy_candidate_research_queue_loader=fake_loader,
+        paper_research_packet_builder=fake_packet_builder,
+        paper_research_packet_db_sink=broken_packet_sink,
+        paper_research_packet_quality_runner=forbidden_quality_runner,
+        paper_research_packet_quality_db_history_runner=forbidden_history_runner,
+    )
+
+    assert exit_code == 1
+    assert quality_calls == 0
+    assert history_calls == 0
+    captured = capsys.readouterr()
+    assert f"{COMMAND} failed:" in captured.err
+    assert "source_dsn=<redacted-dsn>" in captured.err
+    assert "packet_dsn=<redacted-dsn>" in captured.err
+    assert "quality_dsn=<redacted-dsn>" in captured.err
+    assert "source_table=<redacted-table>" in captured.err
+    assert "packet_table=<redacted-table>" in captured.err
+    assert "quality_table=<redacted-table>" in captured.err
+    assert "payload_json=<redacted-payload>" in captured.err
+    assert "question=<redacted-question>" in captured.err
+    assert "report_sha256=<redacted-sha256>" in captured.err
+    assert "bare_hash=<redacted-sha256>" in captured.err
+    for secret in (
+        source_dsn,
+        "source-secret",
+        packet_dsn,
+        "packet-secret",
+        quality_dsn,
+        "quality-secret",
+        source_table,
+        packet_table,
+        quality_table,
+        "source_schema",
+        "packet_schema",
+        "quality_schema",
+        "strategy_candidate_research_queue_archive",
+        "paper_research_packet_archive",
+        "paper_research_packet_quality_archive",
+        payload_json,
+        "sink-payload-json-secret",
+        question,
+        report_sha256,
+        bare_sha256,
+    ):
+        assert secret not in captured.out
+        assert secret not in captured.err
+
+
 def test_operator_flow_cli_redacts_quality_runner_failure_across_all_databases(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
