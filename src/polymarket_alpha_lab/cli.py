@@ -188,6 +188,9 @@ from polymarket_alpha_lab.supabase_paper_research_packet_quality_config import (
 from polymarket_alpha_lab.supabase_paper_research_packet_operator_flow_config import (
     from_paper_research_packet_operator_flow_db_env,
 )
+from polymarket_alpha_lab.supabase_paper_project_screening_rank_stability_config import (
+    from_paper_project_screening_rank_stability_db_env,
+)
 from polymarket_alpha_lab.supabase_paper_trade_cost_audit_config import (
     from_paper_trade_cost_audit_db_env,
 )
@@ -273,6 +276,7 @@ PaperResearchPacketOperatorFlowDbHistoryRunner = Callable[
     PaperResearchPacketOperatorFlowDbHistoryReport,
 ]
 PaperResearchPacketOperatorFlowDbHistoryGateRunner = Callable[..., object]
+PaperAutonomousScreeningDecisionSupportGateRunner = Callable[..., object]
 PaperResearchPacketOperatorFlowDbSink = Callable[..., object]
 PaperProbabilityRecommendationQueueDbSink = Callable[..., object]
 PaperRecommendationRiskBudgetDbSink = Callable[..., object]
@@ -295,6 +299,14 @@ class _PaperRecommendationReasonTrendAdapterRow:
 class _PaperRecommendationReasonTrendAdapterReport:
     generated_at: datetime
     rows: tuple[_PaperRecommendationReasonTrendAdapterRow, ...]
+    paper_only: bool = True
+    report_only: bool = True
+    readonly: bool = True
+
+
+@dataclass(frozen=True)
+class _PaperAutonomousScreeningDecisionSupportGateConfig:
+    config_version: str
     paper_only: bool = True
     report_only: bool = True
     readonly: bool = True
@@ -397,6 +409,33 @@ def _redacted_paper_research_packet_operator_flow_error(
         packet_table_name,
         quality_table_name,
         operator_flow_table_name,
+    ):
+        if table_name is not None:
+            message = _redact_db_table_name_and_tail(message, table_name=table_name)
+    message = _redact_paper_research_packet_sensitive_fields(message)
+    if not message.strip():
+        message = exc.__class__.__name__
+    return RuntimeError(message)
+
+
+def _redacted_paper_autonomous_screening_gate_error(
+    exc: Exception,
+    *,
+    rank_stability_dsn: str | None,
+    rank_stability_table_name: str | None,
+    operator_flow_dsn: str,
+    operator_flow_table_name: str,
+    action_queue_dsn: str | None = None,
+    action_queue_table_name: str | None = None,
+) -> RuntimeError:
+    message = str(exc)
+    for dsn in (rank_stability_dsn, operator_flow_dsn, action_queue_dsn):
+        if dsn is not None:
+            message = _redact_db_dsn(message, dsn=dsn)
+    for table_name in (
+        rank_stability_table_name,
+        operator_flow_table_name,
+        action_queue_table_name,
     ):
         if table_name is not None:
             message = _redact_db_table_name_and_tail(message, table_name=table_name)
@@ -588,6 +627,9 @@ def main(
     ) = None,
     paper_research_packet_operator_flow_db_history_gate_runner: (
         PaperResearchPacketOperatorFlowDbHistoryGateRunner | None
+    ) = None,
+    paper_autonomous_screening_decision_support_gate_runner: (
+        PaperAutonomousScreeningDecisionSupportGateRunner | None
     ) = None,
     paper_probability_recommendation_queue_db_sink: (
         PaperProbabilityRecommendationQueueDbSink | None
@@ -1213,6 +1255,15 @@ def main(
         "paper-research-packet-operator-flow-db-history-gate",
     )
     paper_research_packet_operator_flow_db_history_gate.add_argument(
+        "--limit",
+        type=int,
+        default=25,
+        dest="limit",
+    )
+    paper_autonomous_screening_decision_support_gate = subparsers.add_parser(
+        "paper-autonomous-screening-decision-support-gate",
+    )
+    paper_autonomous_screening_decision_support_gate.add_argument(
         "--limit",
         type=int,
         default=25,
@@ -2561,6 +2612,85 @@ def main(
         except Exception as exc:
             print(
                 f"paper-research-packet-operator-flow-db-history-gate failed: {exc}",
+                file=sys.stderr,
+            )
+            return 1
+
+    if args.command == "paper-autonomous-screening-decision-support-gate":
+        try:
+            if isinstance(args.limit, bool) or type(args.limit) is not int or args.limit < 1:
+                raise ValueError(
+                    "paper-autonomous-screening-decision-support-gate limit "
+                    "must be positive",
+                )
+            operator_flow_db_config = from_paper_research_packet_operator_flow_db_env()
+            if not operator_flow_db_config.enabled:
+                raise ValueError(
+                    "paper-autonomous-screening-decision-support-gate requires "
+                    "paper research packet operator-flow DB to be enabled",
+                )
+            operator_flow_dsn = operator_flow_db_config.dsn
+            if operator_flow_dsn is None:
+                raise ValueError(
+                    "paper-autonomous-screening-decision-support-gate requires "
+                    "a paper research packet operator-flow DB DSN",
+                )
+            action_queue_db_config = (
+                from_action_gated_strategy_recommendation_queue_decision_support_db_env()
+            )
+            if not action_queue_db_config.enabled:
+                raise ValueError(
+                    "paper-autonomous-screening-decision-support-gate requires "
+                    "action-gated queue decision-support DB to be enabled",
+                )
+            action_queue_dsn = action_queue_db_config.dsn
+            if action_queue_dsn is None:
+                raise ValueError(
+                    "paper-autonomous-screening-decision-support-gate requires "
+                    "an action-gated queue decision-support DB DSN",
+                )
+            rank_stability_db_config = (
+                from_paper_project_screening_rank_stability_db_env()
+            )
+            rank_stability_dsn = None
+            rank_stability_table_name = None
+            if rank_stability_db_config.enabled:
+                rank_stability_dsn = rank_stability_db_config.dsn
+                if rank_stability_dsn is None:
+                    raise ValueError(
+                        "paper-autonomous-screening-decision-support-gate requires "
+                        "a paper project screening rank stability DB DSN when "
+                        "rank-stability DB is enabled",
+                    )
+                rank_stability_table_name = rank_stability_db_config.table_name
+            try:
+                report = _run_paper_autonomous_screening_decision_support_gate(
+                    rank_stability_dsn=rank_stability_dsn,
+                    rank_stability_table_name=rank_stability_table_name,
+                    operator_flow_dsn=operator_flow_dsn,
+                    operator_flow_table_name=operator_flow_db_config.table_name,
+                    action_queue_dsn=action_queue_dsn,
+                    action_queue_table_name=action_queue_db_config.table_name,
+                    limit=args.limit,
+                    runner=(
+                        paper_autonomous_screening_decision_support_gate_runner
+                    ),
+                )
+            except Exception as exc:
+                raise _redacted_paper_autonomous_screening_gate_error(
+                    exc,
+                    rank_stability_dsn=rank_stability_dsn,
+                    rank_stability_table_name=rank_stability_table_name,
+                    operator_flow_dsn=operator_flow_dsn,
+                    operator_flow_table_name=operator_flow_db_config.table_name,
+                    action_queue_dsn=action_queue_dsn,
+                    action_queue_table_name=action_queue_db_config.table_name,
+                ) from None
+            _print_paper_autonomous_screening_decision_support_gate_summary(report)
+            return 0
+        except Exception as exc:
+            print(
+                f"paper-autonomous-screening-decision-support-gate failed: {exc}",
                 file=sys.stderr,
             )
             return 1
@@ -5223,6 +5353,141 @@ def _run_paper_research_packet_operator_flow_db_history_gate(
             pass
 
 
+def _run_paper_autonomous_screening_decision_support_gate(
+    *,
+    rank_stability_dsn: str | None,
+    rank_stability_table_name: str | None,
+    operator_flow_dsn: str,
+    operator_flow_table_name: str,
+    action_queue_dsn: str,
+    action_queue_table_name: str,
+    limit: int,
+    runner: PaperAutonomousScreeningDecisionSupportGateRunner | None,
+) -> object:
+    if isinstance(limit, bool) or type(limit) is not int or limit < 1:
+        raise ValueError(
+            "paper-autonomous-screening-decision-support-gate limit must be positive",
+        )
+    generated_at = datetime.now(UTC)
+
+    from polymarket_alpha_lab.paper_autonomous_screening_decision_support_gate import (
+        DEFAULT_PAPER_AUTONOMOUS_SCREENING_DECISION_SUPPORT_GATE_CONFIG_VERSION,
+    )
+    from polymarket_alpha_lab.paper_research_packet_operator_flow_db_history import (
+        PaperResearchPacketOperatorFlowDbHistoryConfig,
+    )
+    from polymarket_alpha_lab.paper_research_packet_operator_flow_db_history_gate import (
+        PaperResearchPacketOperatorFlowDbHistoryGateConfig,
+    )
+
+    gate_config = _PaperAutonomousScreeningDecisionSupportGateConfig(
+        config_version=(
+            DEFAULT_PAPER_AUTONOMOUS_SCREENING_DECISION_SUPPORT_GATE_CONFIG_VERSION
+        ),
+    )
+    if runner is not None:
+        runner_kwargs = {
+            "operator_flow_dsn": operator_flow_dsn,
+            "operator_flow_table_name": operator_flow_table_name,
+            "action_queue_dsn": action_queue_dsn,
+            "action_queue_table_name": action_queue_table_name,
+            "limit": limit,
+            "gate_config": gate_config,
+            "generated_at": generated_at,
+        }
+        if rank_stability_dsn is not None:
+            runner_kwargs["rank_stability_dsn"] = rank_stability_dsn
+            runner_kwargs["rank_stability_table_name"] = rank_stability_table_name
+        try:
+            return runner(**runner_kwargs)
+        except Exception as exc:
+            raise _redacted_paper_autonomous_screening_gate_error(
+                exc,
+                rank_stability_dsn=rank_stability_dsn,
+                rank_stability_table_name=rank_stability_table_name,
+                operator_flow_dsn=operator_flow_dsn,
+                operator_flow_table_name=operator_flow_table_name,
+                action_queue_dsn=action_queue_dsn,
+                action_queue_table_name=action_queue_table_name,
+            ) from None
+
+    from polymarket_alpha_lab.paper_autonomous_screening_decision_support_gate_load import (
+        load_paper_autonomous_screening_decision_support_gate_report,
+    )
+
+    try:
+        import psycopg
+    except ModuleNotFoundError as exc:
+        if exc.name != "psycopg":
+            raise
+        raise RuntimeError(
+            "psycopg is required to use the paper autonomous screening "
+            "decision-support gate read adapter; install the postgres extra.",
+        ) from exc
+    if operator_flow_dsn != action_queue_dsn:
+        raise RuntimeError(
+            "paper-autonomous-screening-decision-support-gate read adapter "
+            "requires operator-flow and action-gated queue decision-support "
+            "DB DSNs to use the same DSN",
+        )
+    if rank_stability_dsn is not None and rank_stability_dsn != operator_flow_dsn:
+        raise RuntimeError(
+            "paper-autonomous-screening-decision-support-gate read adapter "
+            "requires enabled rank-stability DB DSN to use the same DSN",
+        )
+    connection = None
+    try:
+        connection = psycopg.connect(operator_flow_dsn, autocommit=True)
+    except Exception:
+        raise RuntimeError(
+            "failed to connect to the paper autonomous screening gate "
+            "upstream databases",
+        ) from None
+    try:
+        loader_kwargs = {
+            "operator_flow_history_limit": limit,
+            "operator_flow_table_name": operator_flow_table_name,
+            "operator_flow_history_config": PaperResearchPacketOperatorFlowDbHistoryConfig(),
+            "operator_flow_gate_config": PaperResearchPacketOperatorFlowDbHistoryGateConfig(),
+            "action_gated_queue_limit": limit,
+            "action_gated_queue_table_name": action_queue_table_name,
+            "action_gated_queue_risk_status": None,
+            "action_gated_queue_risk_config_version": None,
+            "include_action_gated_queue_trend_report": True,
+            "gate_config": gate_config,
+            "generated_at": generated_at,
+        }
+        if rank_stability_dsn is not None:
+            loader_kwargs.update(
+                {
+                    "project_screening_rank_stability_limit": limit,
+                    "project_screening_rank_stability_table_name": rank_stability_table_name,
+                    "project_screening_rank_stability_config_version": None,
+                    "project_screening_rank_stability_status": None,
+                },
+            )
+        return load_paper_autonomous_screening_decision_support_gate_report(
+            connection,
+            **loader_kwargs,
+        )
+    except Exception as exc:
+        raise _redacted_paper_autonomous_screening_gate_error(
+            exc,
+            rank_stability_dsn=rank_stability_dsn,
+            rank_stability_table_name=rank_stability_table_name,
+            operator_flow_dsn=operator_flow_dsn,
+            operator_flow_table_name=operator_flow_table_name,
+            action_queue_dsn=action_queue_dsn,
+            action_queue_table_name=action_queue_table_name,
+        ) from None
+    finally:
+        if connection is not None:
+            try:
+                connection.close()
+            except Exception:
+                pass
+
+
 def _run_outcome_tracking_db_history(
     *,
     dsn: str,
@@ -6321,6 +6586,95 @@ def _print_paper_research_packet_operator_flow_db_history_gate_summary(
         for row in report.reason_code_counts
     )
     print(f"reason_code_counts: {reason_code_counts or 'none'}")
+
+
+def _print_paper_autonomous_screening_decision_support_gate_summary(
+    report: object,
+) -> None:
+    summary_parts = [
+        "paper-autonomous-screening-decision-support-gate:",
+        f"gate_status={report.gate_status}",
+        f"recommended_next_step={report.recommended_next_step}",
+    ]
+    if hasattr(report, "queue_source_report_count"):
+        summary_parts.append(
+            f"source_report_count={report.queue_source_report_count}",
+        )
+    elif hasattr(report, "source_report_count"):
+        summary_parts.append(f"source_report_count={report.source_report_count}")
+    if hasattr(report, "operator_flow_gate_status"):
+        summary_parts.append(
+            f"operator_flow_gate_status={report.operator_flow_gate_status}",
+        )
+    if hasattr(report, "queue_risk_status"):
+        summary_parts.append(f"queue_risk_status={report.queue_risk_status}")
+    if hasattr(report, "queue_research_ready_count"):
+        summary_parts.append(
+            f"queue_research_ready_count={report.queue_research_ready_count}",
+        )
+    summary_parts.append(f"trend_present={_autonomous_gate_trend_present(report)}")
+    summary_parts.append(
+        f"rank_stability_present={_autonomous_gate_rank_present(report)}",
+    )
+    print(
+        " ".join(summary_parts),
+    )
+    gate_signal_counts = _format_autonomous_screening_gate_signal_counts(report)
+    print(f"gate_signal_counts: {gate_signal_counts or 'none'}")
+    reason_code_counts = " ".join(
+        f"{row.reason_code}={row.report_count}"
+        for row in report.reason_code_counts
+    )
+    print(f"reason_code_counts: {reason_code_counts or 'none'}")
+
+
+def _format_autonomous_screening_gate_signal_counts(report: object) -> str:
+    if hasattr(report, "gate_signal_counts"):
+        return " ".join(
+            f"{row.gate_signal}={row.report_count}"
+            for row in report.gate_signal_counts
+        )
+    counts: Counter[str] = Counter()
+    for status in (
+        getattr(report, "operator_flow_gate_status", None),
+        getattr(report, "queue_risk_status", None),
+        getattr(report, "trend_latest_risk_status", None),
+    ):
+        if status is not None:
+            counts[str(status)] += 1
+    rank_status = getattr(report, "rank_stability_status", None)
+    if rank_status is not None:
+        counts["pass" if rank_status == "stable" else str(rank_status)] += 1
+    return " ".join(
+        f"{status}={counts[status]}"
+        for status in ("pass", "watch", "blocked")
+        if counts[status] > 0
+    )
+
+
+def _autonomous_gate_trend_present(report: object) -> bool:
+    return any(
+        getattr(report, field_name, None) is not None
+        for field_name in (
+            "trend_source_snapshot_count",
+            "trend_latest_risk_status",
+            "trend_consecutive_latest_watch_count",
+            "trend_consecutive_latest_blocked_count",
+            "trend_duplicate_generated_at_count",
+        )
+    )
+
+
+def _autonomous_gate_rank_present(report: object) -> bool:
+    return any(
+        getattr(report, field_name, None) is not None
+        for field_name in (
+            "rank_stability_status",
+            "rank_stable_ready_count",
+            "rank_unstable_ready_count",
+            "rank_blocked_count",
+        )
+    )
 
 
 def _print_paper_research_packet_db_history_summary(report: object) -> None:

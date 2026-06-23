@@ -248,7 +248,25 @@ The command prints aggregate gate signals such as `gate_status`, `recommended_ne
 
 The gate is a paper-only/read-only decision-support signal. It does not place orders, sign messages, read wallets/accounts, or mutate exchange state. Only a `pass` gate should be treated by downstream paper automation as eligible to advance.
 
+Operator scope details: [Paper Autonomous Screening Decision Support Gate](docs/paper-autonomous-screening-decision-support-gate.md).
+
 It does not accept DSN/table/persist flags; DB access remains env-only through `POLYMARKET_ALPHA_LAB_PAPER_RESEARCH_PACKET_OPERATOR_FLOW_DB_ENABLED`, `POLYMARKET_ALPHA_LAB_PAPER_RESEARCH_PACKET_OPERATOR_FLOW_DB_DSN`, and optional `POLYMARKET_ALPHA_LAB_PAPER_RESEARCH_PACKET_OPERATOR_FLOW_DB_TABLE`.
+
+Paper Autonomous Screening Decision Support Gate combines the operator-flow DB
+history gate and action-gated queue decision-support DB into a final paper-only
+read-only screening signal:
+
+```bash
+POLYMARKET_ALPHA_LAB_PAPER_RESEARCH_PACKET_OPERATOR_FLOW_DB_ENABLED=true \
+POLYMARKET_ALPHA_LAB_ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_ENABLED=true \
+.venv/bin/polymarket-alpha-lab paper-autonomous-screening-decision-support-gate --limit 25
+```
+
+The operator-flow DB and action-gated queue decision-support DB are required.
+The rank-stability DB is optional; when it is enabled, the default single
+connection read helper expects it to use the same DSN as the required upstream
+DBs. The command is env-only and accepts only `--limit`; it does not accept
+DSN/table/persist flags and does not write reports.
 
 ## Level 1B Node 1 Status
 

@@ -281,6 +281,12 @@ from polymarket_alpha_lab.paper_research_packet_operator_flow_db_history_gate im
     PaperResearchPacketOperatorFlowDbHistoryGateReport,
     build_paper_research_packet_operator_flow_db_history_gate_report,
 )
+from polymarket_alpha_lab.paper_autonomous_screening_decision_support_gate import (
+    DEFAULT_PAPER_AUTONOMOUS_SCREENING_DECISION_SUPPORT_GATE_CONFIG_VERSION,
+    PaperAutonomousScreeningDecisionSupportGateReasonCodeCount,
+    PaperAutonomousScreeningDecisionSupportGateReport,
+    build_paper_autonomous_screening_decision_support_gate_report,
+)
 from polymarket_alpha_lab.paper_portfolio_nav import mark_paper_portfolio_nav
 from polymarket_alpha_lab.outcome_tracker import (
     OutcomeTrackingConfig,
@@ -707,6 +713,41 @@ def test_paper_research_packet_operator_flow_db_history_gate_public_api_exports(
     assert (
         lab.build_paper_research_packet_operator_flow_db_history_gate_report
         is build_paper_research_packet_operator_flow_db_history_gate_report
+    )
+    for name in forbidden_exports:
+        assert not hasattr(lab, name)
+
+
+def test_paper_autonomous_screening_decision_support_gate_public_api_exports():
+    expected_exports = {
+        "DEFAULT_PAPER_AUTONOMOUS_SCREENING_DECISION_SUPPORT_GATE_CONFIG_VERSION",
+        "PaperAutonomousScreeningDecisionSupportGateReasonCodeCount",
+        "PaperAutonomousScreeningDecisionSupportGateReport",
+        "build_paper_autonomous_screening_decision_support_gate_report",
+    }
+    forbidden_exports = {
+        "PaperAutonomousScreeningDecisionSupportGateConfig",
+        "PaperAutonomousScreeningDecisionSupportGateRunner",
+        "_PaperAutonomousScreeningDecisionSupportGateConfig",
+    }
+
+    assert expected_exports <= set(lab.__all__)
+    assert not (forbidden_exports & set(lab.__all__))
+    assert (
+        lab.DEFAULT_PAPER_AUTONOMOUS_SCREENING_DECISION_SUPPORT_GATE_CONFIG_VERSION
+        is DEFAULT_PAPER_AUTONOMOUS_SCREENING_DECISION_SUPPORT_GATE_CONFIG_VERSION
+    )
+    assert (
+        lab.PaperAutonomousScreeningDecisionSupportGateReasonCodeCount
+        is PaperAutonomousScreeningDecisionSupportGateReasonCodeCount
+    )
+    assert (
+        lab.PaperAutonomousScreeningDecisionSupportGateReport
+        is PaperAutonomousScreeningDecisionSupportGateReport
+    )
+    assert (
+        lab.build_paper_autonomous_screening_decision_support_gate_report
+        is build_paper_autonomous_screening_decision_support_gate_report
     )
     for name in forbidden_exports:
         assert not hasattr(lab, name)

@@ -287,6 +287,12 @@ from polymarket_alpha_lab.paper_research_packet_operator_flow_db_history_gate im
     PaperResearchPacketOperatorFlowDbHistoryGateReport,
     build_paper_research_packet_operator_flow_db_history_gate_report,
 )
+from polymarket_alpha_lab.paper_autonomous_screening_decision_support_gate import (
+    DEFAULT_PAPER_AUTONOMOUS_SCREENING_DECISION_SUPPORT_GATE_CONFIG_VERSION,
+    PaperAutonomousScreeningDecisionSupportGateReasonCodeCount,
+    PaperAutonomousScreeningDecisionSupportGateReport,
+    build_paper_autonomous_screening_decision_support_gate_report,
+)
 from polymarket_alpha_lab.positions import (
     PaperNavLog,
     PaperNavSnapshot,
@@ -330,6 +336,9 @@ __all__ = [
     "PaperAnalyticsHistoryLog",
     "PaperAnalyticsHistoryReport",
     "PaperAnalyticsHistoryTrend",
+    "DEFAULT_PAPER_AUTONOMOUS_SCREENING_DECISION_SUPPORT_GATE_CONFIG_VERSION",
+    "PaperAutonomousScreeningDecisionSupportGateReasonCodeCount",
+    "PaperAutonomousScreeningDecisionSupportGateReport",
     "PaperCostAwareEventCostAssumptions",
     "PaperCostAwareEventMarketSnapshot",
     "PaperCostAwareEventSideResult",
@@ -513,6 +522,7 @@ __all__ = [
     "TradeProposalReviewSummaryReport",
     "build_paper_analytics_history_report",
     "build_paper_analytics_report",
+    "build_paper_autonomous_screening_decision_support_gate_report",
     "build_paper_book_imbalance_forecast",
     "build_paper_llm_forecast",
     "build_paper_cost_aware_event_strategy_report",

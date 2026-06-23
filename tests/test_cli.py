@@ -146,6 +146,21 @@ from polymarket_alpha_lab.supabase_paper_nav_snapshot_config import (
     PAPER_NAV_SNAPSHOT_DB_ENABLED_ENV_VAR,
     PAPER_NAV_SNAPSHOT_DB_TABLE_ENV_VAR,
 )
+from polymarket_alpha_lab.supabase_action_gated_strategy_recommendation_queue_decision_support_config import (
+    ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_DSN_ENV_VAR,
+    ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_ENABLED_ENV_VAR,
+    ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_TABLE_ENV_VAR,
+)
+from polymarket_alpha_lab.supabase_paper_project_screening_rank_stability_config import (
+    PAPER_PROJECT_SCREENING_RANK_STABILITY_DB_DSN_ENV_VAR,
+    PAPER_PROJECT_SCREENING_RANK_STABILITY_DB_ENABLED_ENV_VAR,
+    PAPER_PROJECT_SCREENING_RANK_STABILITY_DB_TABLE_ENV_VAR,
+)
+from polymarket_alpha_lab.supabase_paper_research_packet_operator_flow_config import (
+    PAPER_RESEARCH_PACKET_OPERATOR_FLOW_DB_DSN_ENV_VAR,
+    PAPER_RESEARCH_PACKET_OPERATOR_FLOW_DB_ENABLED_ENV_VAR,
+    PAPER_RESEARCH_PACKET_OPERATOR_FLOW_DB_TABLE_ENV_VAR,
+)
 from polymarket_alpha_lab.supabase_paper_trade_journal_config import (
     PAPER_TRADE_JOURNAL_DB_DSN_ENV_VAR,
     PAPER_TRADE_JOURNAL_DB_ENABLED_ENV_VAR,
@@ -553,6 +568,109 @@ def test_strategy_cycle_cli_default_forecast_provider_is_naive(tmp_path):
     assert exit_code == 0
     assert calls[0].forecast_provider == "naive"
     assert calls[0].llm_transport is None
+
+
+def test_paper_autonomous_screening_decision_support_gate_cli_prints_concise_summary(
+    monkeypatch,
+    capsys,
+):
+    command = "paper-autonomous-screening-decision-support-gate"
+    rank_stability_dsn = "postgresql://rank-stability-gate.example.invalid/db"
+    operator_flow_dsn = "postgresql://operator-flow-gate.example.invalid/db"
+    action_queue_dsn = "postgresql://action-queue-gate.example.invalid/db"
+    monkeypatch.setenv(
+        PAPER_PROJECT_SCREENING_RANK_STABILITY_DB_ENABLED_ENV_VAR,
+        "true",
+    )
+    monkeypatch.setenv(
+        PAPER_PROJECT_SCREENING_RANK_STABILITY_DB_DSN_ENV_VAR,
+        rank_stability_dsn,
+    )
+    monkeypatch.setenv(
+        PAPER_PROJECT_SCREENING_RANK_STABILITY_DB_TABLE_ENV_VAR,
+        "paper_project_screening_rank_stability_reports",
+    )
+    monkeypatch.setenv(PAPER_RESEARCH_PACKET_OPERATOR_FLOW_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(
+        PAPER_RESEARCH_PACKET_OPERATOR_FLOW_DB_DSN_ENV_VAR,
+        operator_flow_dsn,
+    )
+    monkeypatch.setenv(
+        PAPER_RESEARCH_PACKET_OPERATOR_FLOW_DB_TABLE_ENV_VAR,
+        "paper_research_packet_operator_flow_reports",
+    )
+    monkeypatch.setenv(
+        ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_ENABLED_ENV_VAR,
+        "true",
+    )
+    monkeypatch.setenv(
+        ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_DSN_ENV_VAR,
+        action_queue_dsn,
+    )
+    monkeypatch.setenv(
+        ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_TABLE_ENV_VAR,
+        "paper_action_gated_strategy_recommendation_queue_decision_support_reports",
+    )
+    calls = []
+
+    def fake_gate_runner(**kwargs):
+        calls.append(kwargs)
+        assert kwargs["limit"] == 5
+        gate_config = kwargs["gate_config"]
+        assert (
+            gate_config.config_version
+            == "paper-autonomous-screening-decision-support-gate-v0"
+        )
+        assert gate_config.paper_only is True
+        assert gate_config.report_only is True
+        assert gate_config.readonly is True
+        return SimpleNamespace(
+            gate_status="pass",
+            recommended_next_step=(
+                "advance_paper_autonomous_screening_recommendations"
+            ),
+            queue_source_report_count=4,
+            operator_flow_gate_status="pass",
+            queue_risk_status="pass",
+            queue_research_ready_count=4,
+            trend_source_snapshot_count=None,
+            rank_stability_status=None,
+            gate_signal_counts=(
+                SimpleNamespace(gate_signal="pass", report_count=4),
+            ),
+            reason_code_counts=(),
+        )
+
+    exit_code = main(
+        [command, "--limit", "5"],
+        paper_autonomous_screening_decision_support_gate_runner=fake_gate_runner,
+        client_factory=lambda: (_ for _ in ()).throw(
+            AssertionError("client should not be constructed"),
+        ),
+    )
+
+    assert exit_code == 0
+    assert len(calls) == 1
+    captured = capsys.readouterr()
+    assert captured.out.splitlines() == [
+        (
+            f"{command}: gate_status=pass "
+            "recommended_next_step="
+            "advance_paper_autonomous_screening_recommendations "
+            "source_report_count=4 "
+            "operator_flow_gate_status=pass "
+            "queue_risk_status=pass "
+            "queue_research_ready_count=4 "
+            "trend_present=False "
+            "rank_stability_present=False"
+        ),
+        "gate_signal_counts: pass=4",
+        "reason_code_counts: none",
+    ]
+    assert captured.err == ""
+    assert rank_stability_dsn not in captured.out
+    assert operator_flow_dsn not in captured.out
+    assert action_queue_dsn not in captured.out
 
 
 def _empty_nav_snapshot() -> PaperNavSnapshot:
