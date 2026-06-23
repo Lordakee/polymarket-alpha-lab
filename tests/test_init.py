@@ -275,6 +275,12 @@ from polymarket_alpha_lab.paper_trade_cost_audit import (
     PaperTradeCostAuditReport,
     build_paper_trade_cost_audit_report,
 )
+from polymarket_alpha_lab.paper_research_packet_operator_flow_db_history_gate import (
+    PaperResearchPacketOperatorFlowDbHistoryGateConfig,
+    PaperResearchPacketOperatorFlowDbHistoryGateReasonCodeCount,
+    PaperResearchPacketOperatorFlowDbHistoryGateReport,
+    build_paper_research_packet_operator_flow_db_history_gate_report,
+)
 from polymarket_alpha_lab.paper_portfolio_nav import mark_paper_portfolio_nav
 from polymarket_alpha_lab.outcome_tracker import (
     OutcomeTrackingConfig,
@@ -666,6 +672,44 @@ def test_paper_trade_cost_audit_public_api_exports():
         lab.build_paper_trade_cost_audit_report
         is build_paper_trade_cost_audit_report
     )
+
+
+def test_paper_research_packet_operator_flow_db_history_gate_public_api_exports():
+    expected_exports = {
+        "PaperResearchPacketOperatorFlowDbHistoryGateConfig",
+        "PaperResearchPacketOperatorFlowDbHistoryGateReasonCodeCount",
+        "PaperResearchPacketOperatorFlowDbHistoryGateReport",
+        "build_paper_research_packet_operator_flow_db_history_gate_report",
+    }
+    forbidden_exports = {
+        "DEFAULT_PAPER_RESEARCH_PACKET_OPERATOR_FLOW_DB_HISTORY_GATE_CONFIG_VERSION",
+        "NEXT_STEP_BY_STATUS",
+        "load_paper_research_packet_operator_flow_db_history_gate_report",
+        "PaperResearchPacketOperatorFlowDbHistoryGateRunner",
+        "_run_paper_research_packet_operator_flow_db_history_gate",
+        "_print_paper_research_packet_operator_flow_db_history_gate_summary",
+    }
+
+    assert expected_exports <= set(lab.__all__)
+    assert not (forbidden_exports & set(lab.__all__))
+    assert (
+        lab.PaperResearchPacketOperatorFlowDbHistoryGateConfig
+        is PaperResearchPacketOperatorFlowDbHistoryGateConfig
+    )
+    assert (
+        lab.PaperResearchPacketOperatorFlowDbHistoryGateReasonCodeCount
+        is PaperResearchPacketOperatorFlowDbHistoryGateReasonCodeCount
+    )
+    assert (
+        lab.PaperResearchPacketOperatorFlowDbHistoryGateReport
+        is PaperResearchPacketOperatorFlowDbHistoryGateReport
+    )
+    assert (
+        lab.build_paper_research_packet_operator_flow_db_history_gate_report
+        is build_paper_research_packet_operator_flow_db_history_gate_report
+    )
+    for name in forbidden_exports:
+        assert not hasattr(lab, name)
 
 
 def test_outcome_tracker_public_api_exports():

@@ -236,6 +236,20 @@ POLYMARKET_ALPHA_LAB_PAPER_RESEARCH_PACKET_OPERATOR_FLOW_DB_DSN=postgresql://...
 
 The command prints persisted operator-flow stability signals such as pass/watch/blocked counts, duplicate report timestamps, latest consecutive status streaks, latest reason codes, and threshold reason codes. It does not accept DSN/table/persist flags and does not perform live trading or DB writes.
 
+Operator-flow DB history gate is read-only and uses the same env-only operator-flow DB configuration as operator-flow DB history:
+
+```bash
+POLYMARKET_ALPHA_LAB_PAPER_RESEARCH_PACKET_OPERATOR_FLOW_DB_ENABLED=true \
+POLYMARKET_ALPHA_LAB_PAPER_RESEARCH_PACKET_OPERATOR_FLOW_DB_DSN=postgresql://... \
+.venv/bin/polymarket-alpha-lab paper-research-packet-operator-flow-db-history-gate --limit 25
+```
+
+The command prints aggregate gate signals such as `gate_status`, `recommended_next_step`, source report count/history status, latest operator-flow status, duplicate timestamp count, latest source age, reason-code counts, and reason codes.
+
+The gate is a paper-only/read-only decision-support signal. It does not place orders, sign messages, read wallets/accounts, or mutate exchange state. Only a `pass` gate should be treated by downstream paper automation as eligible to advance.
+
+It does not accept DSN/table/persist flags; DB access remains env-only through `POLYMARKET_ALPHA_LAB_PAPER_RESEARCH_PACKET_OPERATOR_FLOW_DB_ENABLED`, `POLYMARKET_ALPHA_LAB_PAPER_RESEARCH_PACKET_OPERATOR_FLOW_DB_DSN`, and optional `POLYMARKET_ALPHA_LAB_PAPER_RESEARCH_PACKET_OPERATOR_FLOW_DB_TABLE`.
+
 ## Level 1B Node 1 Status
 
 Level 1B Node 1 adds configurable paper-only risk gates and append-only rejected-candidate logs. It does not place orders, authenticate, handle private keys, cancel orders, open user WebSockets, run heartbeat logic, or create live-trading proposals.
