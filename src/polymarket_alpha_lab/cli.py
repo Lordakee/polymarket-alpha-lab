@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
+import re
 import sys
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
@@ -246,6 +247,7 @@ StrategyCandidateResearchQueueHistoryDbSink = Callable[..., object]
 PaperResearchPacketBuilder = Callable[..., object]
 PaperResearchPacketDbSink = Callable[..., object]
 PaperResearchPacketDbHistoryRunner = Callable[..., object]
+PaperResearchPacketQualityRunner = Callable[..., object]
 PaperProbabilityRecommendationQueueDbSink = Callable[..., object]
 PaperRecommendationRiskBudgetDbSink = Callable[..., object]
 PaperRecommendationReasonTrendDbSink = Callable[..., object]
@@ -284,8 +286,28 @@ def _redact_db_table_name_and_tail(text: str, *, table_name: str) -> str:
     message = _redact_db_table_name(text, table_name=table_name)
     if "." not in table_name:
         return message
-    tail = table_name.rsplit(".", 1)[1]
+    schema, tail = table_name.split(".", 1)
+    message = message.replace(schema, "<redacted-table>")
     return _redact_db_table_name(message, table_name=tail)
+
+
+def _redact_paper_research_packet_sensitive_fields(text: str) -> str:
+    message = re.sub(
+        r"\b(payload_json|payload)=.*?(?=\s+[A-Za-z_][A-Za-z0-9_]*=|$)",
+        r"\1=<redacted-payload>",
+        text,
+    )
+    message = re.sub(
+        r"\bquestion=.*?(?=\s+[A-Za-z_][A-Za-z0-9_]*=|$)",
+        "question=<redacted-question>",
+        message,
+    )
+    message = re.sub(
+        r"\breport_sha256=[A-Fa-f0-9]{64}\b",
+        "report_sha256=<redacted-sha256>",
+        message,
+    )
+    return re.sub(r"\b[A-Fa-f0-9]{64}\b", "<redacted-sha256>", message)
 
 
 def _redacted_paper_research_packet_db_history_error(
@@ -296,6 +318,7 @@ def _redacted_paper_research_packet_db_history_error(
 ) -> RuntimeError:
     message = _redact_db_dsn(str(exc), dsn=dsn)
     message = _redact_db_table_name_and_tail(message, table_name=table_name)
+    message = _redact_paper_research_packet_sensitive_fields(message)
     if not message.strip():
         message = exc.__class__.__name__
     return RuntimeError(message)
@@ -471,6 +494,7 @@ def main(
     paper_research_packet_db_history_runner: (
         PaperResearchPacketDbHistoryRunner | None
     ) = None,
+    paper_research_packet_quality_runner: PaperResearchPacketQualityRunner | None = None,
     paper_probability_recommendation_queue_db_sink: (
         PaperProbabilityRecommendationQueueDbSink | None
     ) = None,
@@ -1063,6 +1087,9 @@ def main(
         type=int,
         default=100,
         dest="limit",
+    )
+    paper_research_packet_quality = subparsers.add_parser(
+        "paper-research-packet-quality",
     )
 
     # Stage 17 market search: search Polymarket markets by keyword.
@@ -2181,6 +2208,41 @@ def main(
         except Exception as exc:
             print(
                 f"paper-research-packet-db-history failed: {exc}",
+                file=sys.stderr,
+            )
+            return 1
+
+    if args.command == "paper-research-packet-quality":
+        try:
+            packet_db_config = from_paper_research_packet_db_env()
+            if not packet_db_config.enabled:
+                raise ValueError(
+                    "paper-research-packet-quality requires "
+                    "paper research packet DB to be enabled",
+                )
+            dsn = packet_db_config.dsn
+            if dsn is None:
+                raise ValueError(
+                    "paper-research-packet-quality requires "
+                    "a paper research packet DB DSN",
+                )
+            try:
+                report = _run_paper_research_packet_quality(
+                    dsn=dsn,
+                    table_name=packet_db_config.table_name,
+                    runner=paper_research_packet_quality_runner,
+                )
+            except Exception as exc:
+                raise _redacted_paper_research_packet_db_history_error(
+                    exc,
+                    dsn=dsn,
+                    table_name=packet_db_config.table_name,
+                ) from None
+            _print_paper_research_packet_quality_summary(report)
+            return 0
+        except Exception as exc:
+            print(
+                f"paper-research-packet-quality failed: {exc}",
                 file=sys.stderr,
             )
             return 1
@@ -4332,6 +4394,81 @@ def _run_cost_audit_db_trend(
             pass
 
 
+def _run_paper_research_packet_quality(
+    *,
+    dsn: str,
+    table_name: str,
+    runner: PaperResearchPacketQualityRunner | None,
+) -> object:
+    from polymarket_alpha_lab.paper_research_packet_quality import (
+        PaperResearchPacketQualityConfig,
+    )
+
+    generated_at = datetime.now(UTC)
+    config = PaperResearchPacketQualityConfig()
+    if runner is not None:
+        try:
+            return runner(
+                dsn=dsn,
+                table_name=table_name,
+                config=config,
+                generated_at=generated_at,
+            )
+        except Exception as exc:
+            raise _redacted_paper_research_packet_db_history_error(
+                exc,
+                dsn=dsn,
+                table_name=table_name,
+            ) from None
+
+    from polymarket_alpha_lab.paper_research_packet_quality import (
+        build_paper_research_packet_quality_report,
+    )
+    from polymarket_alpha_lab.paper_research_packet_store import (
+        load_paper_research_packet_reports,
+    )
+
+    try:
+        import psycopg
+    except ModuleNotFoundError as exc:
+        if exc.name != "psycopg":
+            raise
+        raise RuntimeError(
+            "psycopg is required to use the paper research packet quality "
+            "read adapter; install the postgres extra.",
+        ) from exc
+    try:
+        connection = psycopg.connect(dsn, autocommit=True)
+    except Exception:
+        raise RuntimeError(
+            "failed to connect to the paper research packet database",
+        ) from None
+    try:
+        packet_reports = load_paper_research_packet_reports(
+            connection,
+            limit=1,
+            table_name=table_name,
+        )
+        if not packet_reports:
+            raise ValueError("no persisted paper research packet reports found")
+        return build_paper_research_packet_quality_report(
+            packet_reports[0],
+            config=config,
+            generated_at=generated_at,
+        )
+    except Exception as exc:
+        raise _redacted_paper_research_packet_db_history_error(
+            exc,
+            dsn=dsn,
+            table_name=table_name,
+        ) from None
+    finally:
+        try:
+            connection.close()
+        except Exception:
+            pass
+
+
 def _run_outcome_tracking_db_history(
     *,
     dsn: str,
@@ -5295,6 +5432,30 @@ def _print_paper_research_packet_summary(
         f"requested_notional={_none_or_value(top_row.requested_notional)} "
         f"reason_codes={reason_codes or 'none'}",
     )
+
+
+def _print_paper_research_packet_quality_summary(report: object) -> None:
+    print(
+        "paper-research-packet-quality: "
+        f"generated_at={report.generated_at.isoformat()} "
+        f"quality_status={report.quality_status} "
+        f"source_generated_at={report.source_generated_at.isoformat()} "
+        f"source_age_seconds={report.source_age_seconds} "
+        f"included_share={_none_or_value(report.included_share)} "
+        f"skipped_share={_none_or_value(report.skipped_share)} "
+        f"check_count={report.check_count} "
+        f"pass_count={report.pass_count} "
+        f"watch_count={report.watch_count} "
+        f"blocked_count={report.blocked_count}",
+    )
+    checks = " ".join(
+        f"{row.check_name}={row.status}" for row in report.check_rows
+    )
+    print(f"checks: {checks or 'none'}")
+    top_reasons = " ".join(
+        f"{row.reason_code}={row.count}" for row in report.reason_code_counts[:5]
+    )
+    print(f"top_reason_codes: {top_reasons or 'none'}")
 
 
 def _print_paper_research_packet_db_history_summary(report: object) -> None:

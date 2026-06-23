@@ -291,6 +291,38 @@ def test_skipped_share_over_threshold_returns_watch_without_floats():
         api.PaperResearchPacketQualityConfig(max_skipped_share=0.25)
 
 
+def test_decimal_inputs_must_already_use_six_place_precision():
+    api = _api()
+
+    with pytest.raises(
+        ValueError,
+        match="max_skipped_share must use 0.000001 precision",
+    ):
+        api.PaperResearchPacketQualityConfig(max_skipped_share=d("0.2500001"))
+
+    with pytest.raises(
+        ValueError,
+        match="observed_value must use 0.000001 precision",
+    ):
+        api.PaperResearchPacketQualityCheckRow(
+            check_name="skip_pressure",
+            status="watch",
+            observed_value=d("0.3333333"),
+            threshold=d("0.500000"),
+            reason_codes=("skipped_share_above_threshold",),
+        )
+
+
+def test_source_age_seconds_truncates_sub_second_deltas():
+    source_at = GENERATED_AT - timedelta(seconds=299, microseconds=999_999)
+    report = _quality_report(
+        _packet_report((_input_row("sub-second-age"),), generated_at=source_at),
+    )
+
+    assert report.source_age_seconds == 299
+    assert report.check_rows[0].observed_value == 299
+
+
 def test_reason_code_counts_are_sorted_by_count_descending_then_code():
     api = _api()
     report = _quality_report(
@@ -333,6 +365,14 @@ def test_reason_code_counts_are_sorted_by_count_descending_then_code():
             count=1,
         ),
     )
+
+
+def test_reducer_rejects_tampered_packet_rows_before_reason_counting():
+    packet_report = _packet_report((_input_row("tampered-packet-row"),))
+    object.__setattr__(packet_report, "packet_rows", (object(),))
+
+    with pytest.raises(ValueError, match="packet_rows must contain research packet rows"):
+        _quality_report(packet_report)
 
 
 def test_quality_dataclasses_are_frozen_and_validate_hard_flags():

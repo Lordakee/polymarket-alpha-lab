@@ -2,7 +2,7 @@
 
 Polymarket Alpha Lab is a research-first project for finding, scoring, and validating Polymarket markets before any capital is committed.
 
-The long-term goal is an automated system that can screen markets, research candidates, propose trades, and eventually execute only after validation gates and risk controls have been proven. The first version is intentionally not a trading bot. It is a planning and research workspace for:
+The long-term research direction is a system that can screen markets, research candidates, and prepare proposals while treating execution as a later, separately validated phase. The first version is intentionally not a trading bot. It is a planning and research workspace for:
 
 - market discovery and metadata normalization
 - order book and liquidity quality scoring
@@ -12,7 +12,7 @@ The long-term goal is an automated system that can screen markets, research cand
 
 ## Phase 1 Scope
 
-This repository currently contains the project design, research notes, implementation plans, a read-only market scanner, research packet assembly, bid/ask paper-fill simulation, JSONL paper-trade journaling, paper-only risk gates, rejected-candidate logs, paper position ledgers, executable NAV marks, paper-only portfolio analytics, exposure reports, executable-NAV drawdown reports, paper-only analytics history validation, paper-only forecast evidence reports, paper-only outcome-tracking report logs, local-only strategy risk audit CLI reports with a cost discipline gate over paper logs, optional local Strategy Risk Audit logs and history summaries, local-only strategy evidence snapshot summaries over paper logs and local reports, local-only paper trade cost audit reports over paper logs, paper-only cost-aware event strategy reports, paper-only project screening research queues, paper-only manual-review queues, paper-only strategy recommendation bundle and bundle-log artifacts with a read-only history CLI summary, human-review proposal packet artifacts, append-only proposal-review record artifacts, proposal-review summary report artifacts, proposal-review quality gate artifacts, proposal-review diagnostic artifacts, proposal-review coverage report artifacts, proposal-review dossier artifacts, proposal-review dossier batch health artifacts, proposal evidence comparison artifacts, proposal evidence comparison history artifacts, proposal evidence comparison history batch-health artifacts, proposal evidence comparison history batch-health trend artifacts, proposal evidence comparison history batch-health trend-batch artifacts, proposal evidence comparison history batch-health trend-batch health artifacts, and proposal evidence comparison history batch-health trend-batch health trend artifacts.
+This repository currently contains the project design, research notes, implementation plans, a read-only market scanner, research packet assembly, paper research packet generation and DB-history readback, pure paper research packet quality reports, bid/ask paper-fill simulation, JSONL paper-trade journaling, paper-only risk gates, rejected-candidate logs, paper position ledgers, executable NAV marks, paper-only portfolio analytics, exposure reports, executable-NAV drawdown reports, paper-only analytics history validation, paper-only forecast evidence reports, paper-only outcome-tracking report logs, local-only strategy risk audit CLI reports with a cost discipline gate over paper logs, optional local Strategy Risk Audit logs and history summaries, local-only strategy evidence snapshot summaries over paper logs and local reports, local-only paper trade cost audit reports over paper logs, paper-only cost-aware event strategy reports, paper-only project screening research queues, paper-only manual-review queues, paper-only strategy recommendation bundle and bundle-log artifacts with a read-only history CLI summary, human-review proposal packet artifacts, append-only proposal-review record artifacts, proposal-review summary report artifacts, proposal-review quality gate artifacts, proposal-review diagnostic artifacts, proposal-review coverage report artifacts, proposal-review dossier artifacts, proposal-review dossier batch health artifacts, proposal evidence comparison artifacts, proposal evidence comparison history artifacts, proposal evidence comparison history batch-health artifacts, proposal evidence comparison history batch-health trend artifacts, proposal evidence comparison history batch-health trend-batch artifacts, proposal evidence comparison history batch-health trend-batch health artifacts, and proposal evidence comparison history batch-health trend-batch health trend artifacts.
 
 It also includes an optional local-only Strategy Risk Audit preflight for continuous paper runs, optional Strategy Risk Audit logging, and a local history summary over that optional log; the preflight reads existing paper logs and can pause the next paper run before any public client is constructed, audit logging is explicit opt-in local append-only JSONL evidence, and the history summary reads that evidence without changing run behavior.
 
@@ -160,6 +160,43 @@ Node 3 is exposed through Python APIs rather than new CLI commands:
 - Build research packets with `build_research_packet(...)`, which returns `ResearchPacket`.
 - Simulate bid/ask paper fills with `PaperOrder(...)` and `simulate_order_book_fill(...)`, which returns `PaperFill`.
 - Persist JSONL journal entries with `PaperTradeRecord.from_packet_and_fill(...)` and `PaperTradeJournal(path).append(record)`.
+
+## Paper Research Packet Operator Commands
+
+Current paper research packet surfaces are Phase 1 paper-only, report-only, and readonly. They do not authenticate, handle wallets or private keys, read accounts, place/sign/submit/cancel orders, trade live, provide trade instructions, or provide financial advice. DB-backed commands read env-driven local Supabase/Postgres config; there are no DSN CLI flags.
+
+Generate a packet from the latest persisted strategy candidate research queue report:
+
+```bash
+.venv/bin/polymarket-alpha-lab paper-research-packet --limit 100
+```
+
+- Required source env: `POLYMARKET_ALPHA_LAB_STRATEGY_CANDIDATE_RESEARCH_QUEUE_DB_ENABLED=true` and `POLYMARKET_ALPHA_LAB_STRATEGY_CANDIDATE_RESEARCH_QUEUE_DB_DSN`; optional table override: `POLYMARKET_ALPHA_LAB_STRATEGY_CANDIDATE_RESEARCH_QUEUE_DB_TABLE`.
+- Useful filters: `--source-config-version <version>`, `--action-status research_ready|watch|blocked`, `--research-status ready|watch|blocked`, `--packet-config-version <version>`, `--max-packet-rows <count>`, and `--min-score <decimal>`.
+- Default behavior prints the generated packet summary and top packet only. `--persist` additionally requires `POLYMARKET_ALPHA_LAB_PAPER_RESEARCH_PACKET_DB_ENABLED=true` and `POLYMARKET_ALPHA_LAB_PAPER_RESEARCH_PACKET_DB_DSN`; optional table override: `POLYMARKET_ALPHA_LAB_PAPER_RESEARCH_PACKET_DB_TABLE`.
+
+Read persisted packet history:
+
+```bash
+.venv/bin/polymarket-alpha-lab paper-research-packet-db-history --limit 100
+```
+
+- Required env: `POLYMARKET_ALPHA_LAB_PAPER_RESEARCH_PACKET_DB_ENABLED=true` and `POLYMARKET_ALPHA_LAB_PAPER_RESEARCH_PACKET_DB_DSN`; optional table override: `POLYMARKET_ALPHA_LAB_PAPER_RESEARCH_PACKET_DB_TABLE`.
+- The command prints report count, first/latest report times, duplicate timestamp count, latest packet counts, and the latest top packet.
+
+Inspect the latest persisted packet's quality:
+
+```bash
+.venv/bin/polymarket-alpha-lab paper-research-packet-quality
+```
+
+- Required env is the same persisted packet DB config: `POLYMARKET_ALPHA_LAB_PAPER_RESEARCH_PACKET_DB_ENABLED=true` and `POLYMARKET_ALPHA_LAB_PAPER_RESEARCH_PACKET_DB_DSN`; optional table override: `POLYMARKET_ALPHA_LAB_PAPER_RESEARCH_PACKET_DB_TABLE`.
+- The command intentionally reads only the latest persisted packet report and builds one `PaperResearchPacketQualityReport`. It prints `quality_status`, source freshness, included/skipped shares, check statuses, and top reason codes.
+- There is no `--limit` for this command because the quality reducer evaluates one source packet report at a time.
+
+Packet quality persistence also ships as Python/DB-API infrastructure. Use `build_paper_research_packet_quality_report(packet_report, config=..., generated_at=...)` to create the report, `paper_research_packet_quality_report_to_db_row(...)` for canonical payload/hash encoding, and `insert_paper_research_packet_quality_report(...)` / `load_paper_research_packet_quality_reports(...)` for DB-API persistence. The optional quality DB env config uses `POLYMARKET_ALPHA_LAB_PAPER_RESEARCH_PACKET_QUALITY_DB_ENABLED`, `POLYMARKET_ALPHA_LAB_PAPER_RESEARCH_PACKET_QUALITY_DB_DSN`, and `POLYMARKET_ALPHA_LAB_PAPER_RESEARCH_PACKET_QUALITY_DB_TABLE`.
+
+Quality history is available through the pure reducer `build_paper_research_packet_quality_history_report(...)` and the DB-API helper `load_paper_research_packet_quality_history_report(...)`. No `paper-research-packet-quality-db-history` CLI command is shipped at this time.
 
 ## Level 1B Node 1 Status
 
@@ -702,7 +739,7 @@ The recommended staged path is:
 2. Level 1: automated research packets and bid/ask paper trading.
 3. Level 2: AI-generated trade proposals with explicit human approval.
 4. Level 3: small, risk-limited live pilots for whitelisted strategies.
-5. Level 4: strategy-specific automated execution after live pilot gates are met.
+5. Level 4: strategy-specific execution research only after separate pilot gates are met.
 
 See:
 

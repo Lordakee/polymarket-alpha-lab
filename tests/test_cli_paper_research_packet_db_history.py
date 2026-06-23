@@ -275,12 +275,17 @@ def test_packet_db_history_cli_runner_failure_redacts_dsn_schema_table_and_tail(
 ) -> None:
     dsn = "postgresql://packet-db-history-secret.example.invalid/db"
     table_name = "analytics.paper_research_packet_archive"
+    payload_json = '{"secret":"payload-json-secret"}'
+    question = "Will secret market resolve yes?"
+    report_sha256 = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
     _set_packet_db_env(monkeypatch, dsn, table_name=table_name)
 
     def broken_runner(**kwargs: Any) -> object:
         raise RuntimeError(
             f"read failed dsn={dsn} table={table_name} "
-            "tail=paper_research_packet_archive",
+            "tail=paper_research_packet_archive "
+            f"payload_json={payload_json} question={question} "
+            f"report_sha256={report_sha256}",
         )
 
     exit_code = main(
@@ -299,6 +304,10 @@ def test_packet_db_history_cli_runner_failure_redacts_dsn_schema_table_and_tail(
     assert table_name not in captured.out
     assert table_name not in captured.err
     assert "paper_research_packet_archive" not in captured.err
+    assert payload_json not in captured.err
+    assert "payload-json-secret" not in captured.err
+    assert question not in captured.err
+    assert report_sha256 not in captured.err
 
 
 def test_packet_db_history_helper_default_load_path_uses_autocommit_and_closes_only(
@@ -382,6 +391,70 @@ def test_packet_db_history_helper_default_load_path_uses_autocommit_and_closes_o
     assert connection.commit_count == 0
     assert connection.rollback_count == 0
     assert connection.close_count == 1
+
+
+def test_packet_db_history_helper_connect_failure_raises_static_redacted_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dsn = (
+        "postgresql://packet_user:super-secret-password@"
+        "packet-db-history-secret.example.invalid/db?sslmode=require"
+    )
+    table_name = "secret_schema.paper_research_packet_archive"
+    table_tail = "paper_research_packet_archive"
+    payload_json = '{"secret":"payload-json-secret"}'
+    question = "Will secret market resolve yes?"
+    report_sha256 = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+    connect_calls: list[tuple[str, bool]] = []
+    loader_calls = 0
+
+    def fake_connect(connect_dsn: str, *, autocommit: bool = False) -> object:
+        connect_calls.append((connect_dsn, autocommit))
+        raise RuntimeError(
+            f"connect failed dsn={dsn} table={table_name} tail={table_tail} "
+            f"schema=secret_schema payload={payload_json} question={question} "
+            f"report_sha256={report_sha256}",
+        )
+
+    def forbidden_load(*args: Any, **kwargs: Any) -> object:
+        nonlocal loader_calls
+        loader_calls += 1
+        raise AssertionError("loader should not run when connect fails")
+
+    monkeypatch.setitem(sys.modules, "psycopg", SimpleNamespace(connect=fake_connect))
+    monkeypatch.setattr(
+        "polymarket_alpha_lab.paper_research_packet_db_history_load."
+        "load_paper_research_packet_db_history_report",
+        forbidden_load,
+    )
+
+    helper = getattr(cli, "_run_paper_research_packet_db_history")
+    with pytest.raises(RuntimeError) as exc_info:
+        helper(
+            dsn=dsn,
+            table_name=table_name,
+            limit=7,
+            runner=None,
+        )
+
+    message = str(exc_info.value)
+    assert message == "failed to connect to the paper research packet database"
+    assert exc_info.value.__cause__ is None
+    assert exc_info.value.__suppress_context__ is True
+    assert connect_calls == [(dsn, True)]
+    assert loader_calls == 0
+    for leaked_fragment in (
+        dsn,
+        "super-secret-password",
+        table_name,
+        table_tail,
+        "secret_schema",
+        payload_json,
+        "payload-json-secret",
+        question,
+        report_sha256,
+    ):
+        assert leaked_fragment not in message
 
 
 def test_packet_db_history_helper_default_read_failure_redacts_and_closes_only(

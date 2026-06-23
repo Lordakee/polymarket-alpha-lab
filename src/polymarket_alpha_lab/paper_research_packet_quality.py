@@ -8,7 +8,10 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
-from polymarket_alpha_lab.paper_research_packet import PaperResearchPacketReport
+from polymarket_alpha_lab.paper_research_packet import (
+    PaperResearchPacketReport,
+    PaperResearchPacketRow,
+)
 
 
 __all__ = (
@@ -344,13 +347,17 @@ def _skip_pressure_check(
 
 def _reason_code_counts(
     check_rows: tuple[PaperResearchPacketQualityCheckRow, ...],
-    packet_rows: tuple[object, ...],
+    packet_rows: tuple[PaperResearchPacketRow, ...],
 ) -> tuple[PaperResearchPacketQualityReasonCodeCount, ...]:
     counts: Counter[str] = Counter()
     for row in check_rows:
+        if type(row) is not PaperResearchPacketQualityCheckRow:
+            raise ValueError("check_rows must contain quality check rows")
         for reason_code in row.reason_codes:
             counts[reason_code] += 1
     for row in packet_rows:
+        if type(row) is not PaperResearchPacketRow:
+            raise ValueError("packet_rows must contain research packet rows")
         for reason_code in row.reason_codes:
             counts[reason_code] += 1
     return tuple(
@@ -525,7 +532,10 @@ def _require_decimal(field_name: str, value: object) -> None:
 
 def _quantize_decimal(field_name: str, value: object) -> Decimal:
     _require_decimal(field_name, value)
-    return value.quantize(QUANTUM)
+    quantized = value.quantize(QUANTUM)
+    if value != quantized:
+        raise ValueError(f"{field_name} must use 0.000001 precision")
+    return quantized
 
 
 def _normalize_probability(field_name: str, value: object) -> Decimal:
