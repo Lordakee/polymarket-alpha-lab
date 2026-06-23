@@ -66,6 +66,10 @@ from polymarket_alpha_lab.paper_research_packet_quality_history import (
     DEFAULT_PAPER_RESEARCH_PACKET_QUALITY_HISTORY_CONFIG_VERSION,
     PaperResearchPacketQualityHistoryConfig,
 )
+from polymarket_alpha_lab.paper_research_packet_operator_flow_db_history import (
+    PaperResearchPacketOperatorFlowDbHistoryConfig,
+    PaperResearchPacketOperatorFlowDbHistoryReport,
+)
 from polymarket_alpha_lab.paper_research_packet_operator_flow import (
     PaperResearchPacketOperatorFlowConfig,
     PaperResearchPacketOperatorFlowReport,
@@ -264,6 +268,10 @@ PaperResearchPacketDbSink = Callable[..., object]
 PaperResearchPacketDbHistoryRunner = Callable[..., object]
 PaperResearchPacketQualityRunner = Callable[..., object]
 PaperResearchPacketQualityDbHistoryRunner = Callable[..., object]
+PaperResearchPacketOperatorFlowDbHistoryRunner = Callable[
+    ...,
+    PaperResearchPacketOperatorFlowDbHistoryReport,
+]
 PaperResearchPacketOperatorFlowDbSink = Callable[..., object]
 PaperProbabilityRecommendationQueueDbSink = Callable[..., object]
 PaperRecommendationRiskBudgetDbSink = Callable[..., object]
@@ -573,6 +581,9 @@ def main(
     ) = None,
     paper_research_packet_operator_flow_db_sink: (
         PaperResearchPacketOperatorFlowDbSink | None
+    ) = None,
+    paper_research_packet_operator_flow_db_history_runner: (
+        PaperResearchPacketOperatorFlowDbHistoryRunner | None
     ) = None,
     paper_probability_recommendation_queue_db_sink: (
         PaperProbabilityRecommendationQueueDbSink | None
@@ -1183,6 +1194,15 @@ def main(
         "--limit",
         type=int,
         default=100,
+        dest="limit",
+    )
+    paper_research_packet_operator_flow_db_history = subparsers.add_parser(
+        "paper-research-packet-operator-flow-db-history",
+    )
+    paper_research_packet_operator_flow_db_history.add_argument(
+        "--limit",
+        type=int,
+        default=25,
         dest="limit",
     )
     paper_research_packet_operator_flow = subparsers.add_parser(
@@ -2446,6 +2466,47 @@ def main(
         except Exception as exc:
             print(
                 f"paper-research-packet-quality-db-history failed: {exc}",
+                file=sys.stderr,
+            )
+            return 1
+
+    if args.command == "paper-research-packet-operator-flow-db-history":
+        try:
+            if isinstance(args.limit, bool) or type(args.limit) is not int or args.limit < 1:
+                raise ValueError(
+                    "paper-research-packet-operator-flow-db-history limit "
+                    "must be positive",
+                )
+            operator_flow_db_config = from_paper_research_packet_operator_flow_db_env()
+            if not operator_flow_db_config.enabled:
+                raise ValueError(
+                    "paper-research-packet-operator-flow-db-history requires "
+                    "paper research packet operator-flow DB to be enabled",
+                )
+            dsn = operator_flow_db_config.dsn
+            if dsn is None:
+                raise ValueError(
+                    "paper-research-packet-operator-flow-db-history requires "
+                    "a paper research packet operator-flow DB DSN",
+                )
+            try:
+                report = _run_paper_research_packet_operator_flow_db_history(
+                    dsn=dsn,
+                    table_name=operator_flow_db_config.table_name,
+                    limit=args.limit,
+                    runner=paper_research_packet_operator_flow_db_history_runner,
+                )
+            except Exception as exc:
+                raise _redacted_paper_research_packet_db_history_error(
+                    exc,
+                    dsn=dsn,
+                    table_name=operator_flow_db_config.table_name,
+                ) from None
+            _print_paper_research_packet_operator_flow_db_history_summary(report)
+            return 0
+        except Exception as exc:
+            print(
+                f"paper-research-packet-operator-flow-db-history failed: {exc}",
                 file=sys.stderr,
             )
             return 1
@@ -4954,6 +5015,80 @@ def _run_paper_research_packet_quality_db_history(
             pass
 
 
+def _run_paper_research_packet_operator_flow_db_history(
+    *,
+    dsn: str,
+    table_name: str,
+    limit: int,
+    runner: PaperResearchPacketOperatorFlowDbHistoryRunner | None,
+) -> object:
+    if isinstance(limit, bool) or type(limit) is not int or limit < 1:
+        raise ValueError(
+            "paper-research-packet-operator-flow-db-history limit must be positive",
+        )
+    generated_at = datetime.now(UTC)
+
+    from polymarket_alpha_lab.paper_research_packet_operator_flow_db_history import (
+        PaperResearchPacketOperatorFlowDbHistoryConfig,
+    )
+
+    config = PaperResearchPacketOperatorFlowDbHistoryConfig()
+    if runner is not None:
+        try:
+            return runner(
+                dsn=dsn,
+                table_name=table_name,
+                limit=limit,
+                config=config,
+                generated_at=generated_at,
+            )
+        except Exception as exc:
+            raise _redacted_paper_research_packet_db_history_error(
+                exc,
+                dsn=dsn,
+                table_name=table_name,
+            ) from None
+
+    from polymarket_alpha_lab.paper_research_packet_operator_flow_db_history_load import (
+        load_paper_research_packet_operator_flow_db_history_report,
+    )
+
+    try:
+        import psycopg
+    except ModuleNotFoundError as exc:
+        if exc.name != "psycopg":
+            raise
+        raise RuntimeError(
+            "psycopg is required to use the paper research packet operator-flow "
+            "DB history read adapter; install the postgres extra.",
+        ) from exc
+    try:
+        connection = psycopg.connect(dsn, autocommit=True)
+    except Exception:
+        raise RuntimeError(
+            "failed to connect to the paper research packet operator-flow database",
+        ) from None
+    try:
+        return load_paper_research_packet_operator_flow_db_history_report(
+            connection,
+            limit=limit,
+            table_name=table_name,
+            config=config,
+            generated_at=generated_at,
+        )
+    except Exception as exc:
+        raise _redacted_paper_research_packet_db_history_error(
+            exc,
+            dsn=dsn,
+            table_name=table_name,
+        ) from None
+    finally:
+        try:
+            connection.close()
+        except Exception:
+            pass
+
+
 def _run_outcome_tracking_db_history(
     *,
     dsn: str,
@@ -5995,6 +6130,45 @@ def _print_paper_research_packet_quality_db_history_summary(report: object) -> N
     print(f"reason_codes: {reason_codes or 'none'}")
 
 
+def _print_paper_research_packet_operator_flow_db_history_summary(
+    report: object,
+) -> None:
+    status_counts = _operator_flow_history_status_counts(report.flow_status_rows)
+    print(
+        "paper-research-packet-operator-flow-db-history: "
+        f"history_status={report.history_status} "
+        f"report_count={report.report_count} "
+        "first_report_generated_at="
+        f"{_iso_or_none(report.first_report_generated_at)} "
+        "latest_report_generated_at="
+        f"{_iso_or_none(report.latest_report_generated_at)} "
+        f"latest_flow_status={_none_or_value(report.latest_flow_status)} "
+        f"latest_packet_row_count={_none_or_value(report.latest_packet_row_count)} "
+        f"latest_quality_status={_none_or_value(report.latest_quality_status)} "
+        f"latest_history_status={_none_or_value(report.latest_history_status)} "
+        f"pass={status_counts['pass']} "
+        f"watch={status_counts['watch']} "
+        f"blocked={status_counts['blocked']} "
+        f"duplicate_generated_at_count={report.duplicate_generated_at_count} "
+        f"consecutive_latest_pass_count={report.consecutive_latest_pass_count} "
+        f"consecutive_latest_watch_count={report.consecutive_latest_watch_count} "
+        f"consecutive_latest_blocked_count={report.consecutive_latest_blocked_count}",
+    )
+    print(
+        "flow_status_rows: "
+        f"{_format_operator_flow_history_status_row_counts(report.flow_status_rows) or 'none'}",
+    )
+    latest_reason_codes = " ".join(report.latest_reason_codes)
+    print(f"latest_reason_codes: {latest_reason_codes or 'none'}")
+    reason_code_rows = " ".join(
+        f"{row.reason_code}={row.report_count}"
+        for row in report.reason_code_rows
+    )
+    print(f"reason_code_rows: {reason_code_rows or 'none'}")
+    reason_codes = " ".join(report.reason_codes)
+    print(f"reason_codes: {reason_codes or 'none'}")
+
+
 def _print_paper_research_packet_db_history_summary(report: object) -> None:
     print(
         "paper-research-packet-db-history: "
@@ -6054,6 +6228,23 @@ def _format_quality_history_status_row_counts(rows: tuple[object, ...]) -> str:
     return " ".join(
         f"{row.quality_status}={row.status_count}"
         for row in rows
+    )
+
+
+def _operator_flow_history_status_counts(rows: tuple[object, ...]) -> dict[str, int]:
+    counts = {"pass": 0, "watch": 0, "blocked": 0}
+    for row in rows:
+        flow_status = row.flow_status
+        if flow_status in counts:
+            counts[flow_status] = row.status_count
+    return counts
+
+
+def _format_operator_flow_history_status_row_counts(rows: tuple[object, ...]) -> str:
+    counts = _operator_flow_history_status_counts(rows)
+    return " ".join(
+        f"{flow_status}={counts[flow_status]}"
+        for flow_status in ("pass", "watch", "blocked")
     )
 
 

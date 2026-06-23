@@ -10,7 +10,9 @@ from polymarket_alpha_lab.cli import main
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CLI_PATH = REPO_ROOT / "src" / "polymarket_alpha_lab" / "cli.py"
+README_PATH = REPO_ROOT / "README.md"
 COMMAND = "paper-research-packet-operator-flow"
+DB_HISTORY_COMMAND = "paper-research-packet-operator-flow-db-history"
 
 EXPECTED_PARSER_ARGUMENT_SURFACE = {
     "--source-config-version",
@@ -140,6 +142,21 @@ RUNTIME_FORBIDDEN_FLAGS = (
     "--wallet",
 )
 
+DB_HISTORY_FORBIDDEN_PARSER_ARGUMENT_SURFACE = {
+    "--dsn",
+    "dsn",
+    "--table",
+    "table",
+    "--persist",
+    "persist",
+}
+
+DB_HISTORY_RUNTIME_FORBIDDEN_FLAGS = (
+    "--dsn",
+    "--table",
+    "--persist",
+)
+
 
 def normalize_identifier(value: str) -> str:
     return "".join(character for character in value.lower() if character.isalnum())
@@ -260,3 +277,32 @@ def test_operator_flow_cli_rejects_db_auth_fast_and_live_trading_flags(
         assert exc_info.value.code == 2
         captured = capsys.readouterr()
         assert f"unrecognized arguments: {flag}" in captured.err
+
+
+def test_operator_flow_db_history_parser_does_not_expose_direct_db_or_persist_flags() -> None:
+    tree = parse_cli()
+    parser_variable = _command_parser_variable(tree, DB_HISTORY_COMMAND)
+    surface = _parser_argument_surface(tree, parser_variable)
+
+    assert not (surface & DB_HISTORY_FORBIDDEN_PARSER_ARGUMENT_SURFACE)
+
+
+def test_operator_flow_db_history_cli_rejects_direct_db_and_persist_flags(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    for flag in DB_HISTORY_RUNTIME_FORBIDDEN_FLAGS:
+        with pytest.raises(SystemExit) as exc_info:
+            main([DB_HISTORY_COMMAND, flag, "forbidden-value"])
+
+        assert exc_info.value.code == 2
+        captured = capsys.readouterr()
+        assert f"unrecognized arguments: {flag}" in captured.err
+
+
+def test_operator_flow_db_history_readme_documents_readonly_env_only_scope() -> None:
+    readme = README_PATH.read_text(encoding="utf-8")
+
+    assert "paper-research-packet-operator-flow-db-history --limit 25" in readme
+    assert "same env-only operator-flow DB configuration" in readme
+    assert "does not accept DSN/table/persist flags" in readme
+    assert "does not perform live trading or DB writes" in readme

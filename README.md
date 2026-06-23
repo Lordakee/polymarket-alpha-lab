@@ -226,6 +226,16 @@ complete. `POLYMARKET_ALPHA_LAB_PAPER_RESEARCH_PACKET_OPERATOR_FLOW_DB_TABLE`
 can override the default table. There are still no DSN/table CLI flags, and the
 command's summary stdout line is unchanged.
 
+Operator-flow DB history is read-only and uses the same env-only operator-flow DB configuration as persistence:
+
+```bash
+POLYMARKET_ALPHA_LAB_PAPER_RESEARCH_PACKET_OPERATOR_FLOW_DB_ENABLED=true \
+POLYMARKET_ALPHA_LAB_PAPER_RESEARCH_PACKET_OPERATOR_FLOW_DB_DSN=postgresql://... \
+.venv/bin/polymarket-alpha-lab paper-research-packet-operator-flow-db-history --limit 25
+```
+
+The command prints persisted operator-flow stability signals such as pass/watch/blocked counts, duplicate report timestamps, latest consecutive status streaks, latest reason codes, and threshold reason codes. It does not accept DSN/table/persist flags and does not perform live trading or DB writes.
+
 ## Level 1B Node 1 Status
 
 Level 1B Node 1 adds configurable paper-only risk gates and append-only rejected-candidate logs. It does not place orders, authenticate, handle private keys, cancel orders, open user WebSockets, run heartbeat logic, or create live-trading proposals.
