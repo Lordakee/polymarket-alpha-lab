@@ -17,6 +17,11 @@ from polymarket_alpha_lab.supabase_paper_autonomous_allocation_proposal_config i
     PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_ENABLED_ENV_VAR,
     PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_TABLE_ENV_VAR,
 )
+from polymarket_alpha_lab.supabase_paper_autonomous_allocation_proposal_db_history_health_config import (
+    PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_HISTORY_HEALTH_DB_DSN_ENV_VAR,
+    PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_HISTORY_HEALTH_DB_ENABLED_ENV_VAR,
+    PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_HISTORY_HEALTH_DB_TABLE_ENV_VAR,
+)
 
 
 COMMAND = "paper-autonomous-allocation-proposal-db-history-health"
@@ -28,6 +33,9 @@ HEALTH_MODULE = (
 )
 HEALTH_LOADER_MODULE = (
     "polymarket_alpha_lab.paper_autonomous_allocation_proposal_db_history_health_load"
+)
+HEALTH_PSYCOPG_MODULE = (
+    "polymarket_alpha_lab.paper_autonomous_allocation_proposal_db_history_health_psycopg"
 )
 
 
@@ -44,6 +52,26 @@ def _set_allocation_proposal_db_env(
     monkeypatch.setenv(PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_DSN_ENV_VAR, dsn)
     monkeypatch.setenv(
         PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_TABLE_ENV_VAR,
+        table_name,
+    )
+
+
+def _set_allocation_proposal_db_history_health_db_env(
+    monkeypatch: pytest.MonkeyPatch,
+    dsn: str,
+    *,
+    table_name: str = "paper_autonomous_allocation_proposal_db_history_health_reports",
+) -> None:
+    monkeypatch.setenv(
+        PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_HISTORY_HEALTH_DB_ENABLED_ENV_VAR,
+        "true",
+    )
+    monkeypatch.setenv(
+        PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_HISTORY_HEALTH_DB_DSN_ENV_VAR,
+        dsn,
+    )
+    monkeypatch.setenv(
+        PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_HISTORY_HEALTH_DB_TABLE_ENV_VAR,
         table_name,
     )
 
@@ -377,6 +405,472 @@ def test_allocation_proposal_db_history_health_cli_uses_injected_runner_and_prin
         table_name,
         "analytics",
         "paper_autonomous_allocation_proposal_reports",
+    ):
+        assert secret not in captured.out
+        assert secret not in captured.err
+
+
+def test_allocation_proposal_db_history_health_cli_without_persist_does_not_read_health_db_env_or_sink(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _install_or_get_history_api(monkeypatch)
+    _install_or_get_health_api(monkeypatch)
+    dsn = "postgresql://allocation-proposal-history-health.example.invalid/db"
+    table_name = "analytics.paper_autonomous_allocation_proposal_reports"
+    tempting_health_dsn = "postgresql://unused-health-target.example.invalid/db"
+    tempting_health_table_name = "audit.db_history_health_archive"
+    _set_allocation_proposal_db_env(monkeypatch, dsn, table_name=table_name)
+    _set_allocation_proposal_db_history_health_db_env(
+        monkeypatch,
+        tempting_health_dsn,
+        table_name=tempting_health_table_name,
+    )
+    env_calls = 0
+    sink_calls = 0
+    report = _health_report()
+
+    def forbidden_health_db_env() -> object:
+        nonlocal env_calls
+        env_calls += 1
+        raise AssertionError("health DB env should not be read without --persist")
+
+    def forbidden_sink(**_kwargs: Any) -> object:
+        nonlocal sink_calls
+        sink_calls += 1
+        raise AssertionError("health DB sink should not run without --persist")
+
+    monkeypatch.setattr(
+        cli,
+        "from_paper_autonomous_allocation_proposal_db_history_health_db_env",
+        forbidden_health_db_env,
+    )
+
+    exit_code = main(
+        [COMMAND, "--limit", "7"],
+        paper_autonomous_allocation_proposal_db_history_health_runner=(
+            lambda **_kwargs: report
+        ),
+        paper_autonomous_allocation_proposal_db_history_health_db_sink=forbidden_sink,
+    )
+
+    assert exit_code == 0
+    assert env_calls == 0
+    assert sink_calls == 0
+    captured = capsys.readouterr()
+    assert "persisted=" not in captured.out
+    for secret in (
+        tempting_health_dsn,
+        tempting_health_table_name,
+        "audit",
+        "db_history_health_archive",
+    ):
+        assert secret not in captured.out
+        assert secret not in captured.err
+
+
+def test_allocation_proposal_db_history_health_cli_persist_uses_health_db_env_and_prints_marker(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _install_or_get_history_api(monkeypatch)
+    _install_or_get_health_api(monkeypatch)
+    source_dsn = "postgresql://allocation-proposal-history-health.example.invalid/db"
+    source_table_name = "analytics.paper_autonomous_allocation_proposal_reports"
+    health_dsn = "postgresql://allocation-proposal-history-health-target.example.invalid/db"
+    health_table_name = "audit.db_history_health_archive"
+    _set_allocation_proposal_db_env(
+        monkeypatch,
+        source_dsn,
+        table_name=source_table_name,
+    )
+    _set_allocation_proposal_db_history_health_db_env(
+        monkeypatch,
+        health_dsn,
+        table_name=health_table_name,
+    )
+    report = _health_report()
+    runner_calls: list[dict[str, object]] = []
+    sink_calls: list[dict[str, object]] = []
+
+    def fake_runner(**kwargs: Any) -> object:
+        runner_calls.append(dict(kwargs))
+        return report
+
+    def fake_sink(**kwargs: Any) -> object:
+        sink_calls.append(dict(kwargs))
+        return SimpleNamespace(inserted=True)
+
+    exit_code = main(
+        [COMMAND, "--limit", "9", "--persist"],
+        paper_autonomous_allocation_proposal_db_history_health_runner=fake_runner,
+        paper_autonomous_allocation_proposal_db_history_health_db_sink=fake_sink,
+    )
+
+    assert exit_code == 0
+    assert len(runner_calls) == 1
+    assert runner_calls[0]["dsn"] == source_dsn
+    assert runner_calls[0]["table_name"] == source_table_name
+    assert runner_calls[0]["limit"] == 9
+    assert sink_calls == [
+        {
+            "dsn": health_dsn,
+            "report": report,
+            "table_name": health_table_name,
+        },
+    ]
+    captured = capsys.readouterr()
+    assert captured.out.splitlines()[-1] == f"{COMMAND}: persisted=True"
+    assert captured.err == ""
+    for secret in (
+        source_dsn,
+        source_table_name,
+        health_dsn,
+        health_table_name,
+        "analytics",
+        "paper_autonomous_allocation_proposal_reports",
+        "audit",
+        "db_history_health_archive",
+    ):
+        assert secret not in captured.out
+        assert secret not in captured.err
+
+
+def test_allocation_proposal_db_history_health_cli_persist_uses_default_health_db_sink(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _install_or_get_history_api(monkeypatch)
+    _install_or_get_health_api(monkeypatch)
+    source_dsn = "postgresql://allocation-proposal-history-health.example.invalid/db"
+    source_table_name = "analytics.paper_autonomous_allocation_proposal_reports"
+    health_dsn = "postgresql://allocation-proposal-history-health-target.example.invalid/db"
+    health_table_name = "audit.db_history_health_archive"
+    _set_allocation_proposal_db_env(
+        monkeypatch,
+        source_dsn,
+        table_name=source_table_name,
+    )
+    _set_allocation_proposal_db_history_health_db_env(
+        monkeypatch,
+        health_dsn,
+        table_name=health_table_name,
+    )
+    report = _health_report()
+    sink_calls: list[dict[str, object]] = []
+    fake_psycopg_module = ModuleType(HEALTH_PSYCOPG_MODULE)
+
+    def fake_default_sink(**kwargs: Any) -> object:
+        sink_calls.append(dict(kwargs))
+        return SimpleNamespace(inserted=True)
+
+    fake_psycopg_module.insert_paper_autonomous_allocation_proposal_db_history_health_report_with_psycopg = (
+        fake_default_sink
+    )
+    monkeypatch.setitem(sys.modules, HEALTH_PSYCOPG_MODULE, fake_psycopg_module)
+
+    exit_code = main(
+        [COMMAND, "--persist"],
+        paper_autonomous_allocation_proposal_db_history_health_runner=(
+            lambda **_kwargs: report
+        ),
+    )
+
+    assert exit_code == 0
+    assert sink_calls == [
+        {
+            "dsn": health_dsn,
+            "report": report,
+            "table_name": health_table_name,
+        },
+    ]
+    captured = capsys.readouterr()
+    assert captured.out.splitlines()[-1] == f"{COMMAND}: persisted=True"
+    assert captured.err == ""
+
+
+def test_allocation_proposal_db_history_health_cli_persist_prints_false_for_duplicate_sink_noop(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _install_or_get_history_api(monkeypatch)
+    _install_or_get_health_api(monkeypatch)
+    _set_allocation_proposal_db_env(
+        monkeypatch,
+        "postgresql://allocation-proposal-history-health.example.invalid/db",
+        table_name="analytics.paper_autonomous_allocation_proposal_reports",
+    )
+    _set_allocation_proposal_db_history_health_db_env(
+        monkeypatch,
+        "postgresql://allocation-proposal-history-health-target.example.invalid/db",
+        table_name="audit.db_history_health_archive",
+    )
+    report = _health_report()
+
+    exit_code = main(
+        [COMMAND, "--persist"],
+        paper_autonomous_allocation_proposal_db_history_health_runner=(
+            lambda **_kwargs: report
+        ),
+        paper_autonomous_allocation_proposal_db_history_health_db_sink=(
+            lambda **_kwargs: SimpleNamespace(inserted=False)
+        ),
+    )
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    assert captured.out.splitlines()[-1] == f"{COMMAND}: persisted=False"
+    assert captured.err == ""
+
+
+def test_allocation_proposal_db_history_health_cli_persist_requires_enabled_health_db_before_runner_or_sink(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    source_dsn = "postgresql://allocation-proposal-history-health.example.invalid/db"
+    source_table_name = "analytics.paper_autonomous_allocation_proposal_reports"
+    _set_allocation_proposal_db_env(
+        monkeypatch,
+        source_dsn,
+        table_name=source_table_name,
+    )
+    monkeypatch.delenv(
+        PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_HISTORY_HEALTH_DB_ENABLED_ENV_VAR,
+        raising=False,
+    )
+    monkeypatch.delenv(
+        PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_HISTORY_HEALTH_DB_DSN_ENV_VAR,
+        raising=False,
+    )
+    runner_calls = 0
+    sink_calls = 0
+
+    def forbidden_runner(**_kwargs: Any) -> object:
+        nonlocal runner_calls
+        runner_calls += 1
+        raise AssertionError("runner should not run without enabled health DB")
+
+    def forbidden_sink(**_kwargs: Any) -> object:
+        nonlocal sink_calls
+        sink_calls += 1
+        raise AssertionError("sink should not run without enabled health DB")
+
+    exit_code = main(
+        [COMMAND, "--persist"],
+        paper_autonomous_allocation_proposal_db_history_health_runner=forbidden_runner,
+        paper_autonomous_allocation_proposal_db_history_health_db_sink=forbidden_sink,
+    )
+
+    assert exit_code == 1
+    assert runner_calls == 0
+    assert sink_calls == 0
+    captured = capsys.readouterr()
+    assert (
+        f"{COMMAND} failed: {COMMAND} --persist requires DB-history health DB "
+        "to be enabled"
+    ) in captured.err
+    for secret in (source_dsn, source_table_name, "analytics"):
+        assert secret not in captured.out
+        assert secret not in captured.err
+
+
+def test_allocation_proposal_db_history_health_cli_persist_requires_health_db_dsn_before_runner_or_sink(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    source_dsn = "postgresql://allocation-proposal-history-health.example.invalid/db"
+    source_table_name = "analytics.paper_autonomous_allocation_proposal_reports"
+    _set_allocation_proposal_db_env(
+        monkeypatch,
+        source_dsn,
+        table_name=source_table_name,
+    )
+    monkeypatch.setenv(
+        PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_HISTORY_HEALTH_DB_ENABLED_ENV_VAR,
+        "true",
+    )
+    monkeypatch.delenv(
+        PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_HISTORY_HEALTH_DB_DSN_ENV_VAR,
+        raising=False,
+    )
+    runner_calls = 0
+    sink_calls = 0
+
+    def forbidden_runner(**_kwargs: Any) -> object:
+        nonlocal runner_calls
+        runner_calls += 1
+        raise AssertionError("runner should not run without health DB DSN")
+
+    def forbidden_sink(**_kwargs: Any) -> object:
+        nonlocal sink_calls
+        sink_calls += 1
+        raise AssertionError("sink should not run without health DB DSN")
+
+    exit_code = main(
+        [COMMAND, "--persist"],
+        paper_autonomous_allocation_proposal_db_history_health_runner=forbidden_runner,
+        paper_autonomous_allocation_proposal_db_history_health_db_sink=forbidden_sink,
+    )
+
+    assert exit_code == 1
+    assert runner_calls == 0
+    assert sink_calls == 0
+    captured = capsys.readouterr()
+    assert (
+        PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_HISTORY_HEALTH_DB_DSN_ENV_VAR
+        in captured.err
+    )
+    assert "must be set when DB-history health DB is enabled" in captured.err
+    for secret in (source_dsn, source_table_name, "analytics"):
+        assert secret not in captured.out
+        assert secret not in captured.err
+
+
+def test_allocation_proposal_db_history_health_cli_persist_runner_failure_redacts_source_and_health_db_secrets_without_sink(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _install_or_get_history_api(monkeypatch)
+    _install_or_get_health_api(monkeypatch)
+    source_dsn = "postgresql://allocation-proposal-history-health-secret.example.invalid/db"
+    source_table_name = "analytics.paper_autonomous_allocation_proposal_reports"
+    health_dsn = "postgresql://allocation-proposal-health-target-secret.example.invalid/db"
+    health_table_name = "audit.db_history_health_archive"
+    payload_json = '{"market_slug":"secret-market-slug","question":"nested secret"}'
+    question = "Will hidden allocation proposal market resolve yes?"
+    report_sha256 = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+    bare_sha256 = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
+    _set_allocation_proposal_db_env(
+        monkeypatch,
+        source_dsn,
+        table_name=source_table_name,
+    )
+    _set_allocation_proposal_db_history_health_db_env(
+        monkeypatch,
+        health_dsn,
+        table_name=health_table_name,
+    )
+    sink_calls = 0
+
+    def broken_runner(**_kwargs: Any) -> object:
+        raise RuntimeError(
+            f"read failed source_dsn={source_dsn} source_table={source_table_name} "
+            f"dsn={health_dsn} table={health_table_name} "
+            f"payload_json={payload_json} question={question} "
+            f"report_sha256={report_sha256} bare_hash={bare_sha256}",
+        )
+
+    def forbidden_sink(**_kwargs: Any) -> object:
+        nonlocal sink_calls
+        sink_calls += 1
+        raise AssertionError("sink should not run after runner failure")
+
+    exit_code = main(
+        [COMMAND, "--persist"],
+        paper_autonomous_allocation_proposal_db_history_health_runner=broken_runner,
+        paper_autonomous_allocation_proposal_db_history_health_db_sink=forbidden_sink,
+    )
+
+    assert exit_code == 1
+    assert sink_calls == 0
+    captured = capsys.readouterr()
+    assert f"{COMMAND} failed:" in captured.err
+    assert "source_dsn=<redacted-dsn>" in captured.err
+    assert "source_table=<redacted-table>" in captured.err
+    assert "dsn=<redacted-dsn>" in captured.err
+    assert "table=<redacted-table>" in captured.err
+    assert "payload_json=<redacted-payload>" in captured.err
+    assert "question=<redacted-question>" in captured.err
+    assert "report_sha256=<redacted-sha256>" in captured.err
+    assert "bare_hash=<redacted-sha256>" in captured.err
+    for secret in (
+        source_dsn,
+        source_table_name,
+        health_dsn,
+        health_table_name,
+        "analytics",
+        "paper_autonomous_allocation_proposal_reports",
+        "audit",
+        "db_history_health_archive",
+        payload_json,
+        "secret-market-slug",
+        "nested secret",
+        question,
+        report_sha256,
+        bare_sha256,
+    ):
+        assert secret not in captured.out
+        assert secret not in captured.err
+
+
+def test_allocation_proposal_db_history_health_cli_persist_sink_failure_redacts_source_and_health_db_secrets(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _install_or_get_history_api(monkeypatch)
+    _install_or_get_health_api(monkeypatch)
+    source_dsn = "postgresql://allocation-proposal-history-health-secret.example.invalid/db"
+    source_table_name = "analytics.paper_autonomous_allocation_proposal_reports"
+    health_dsn = "postgresql://allocation-proposal-health-target-secret.example.invalid/db"
+    health_table_name = "audit.db_history_health_archive"
+    payload_json = '{"market_slug":"secret-market-slug","question":"nested secret"}'
+    question = "Will hidden allocation proposal market resolve yes?"
+    report_sha256 = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+    bare_sha256 = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
+    _set_allocation_proposal_db_env(
+        monkeypatch,
+        source_dsn,
+        table_name=source_table_name,
+    )
+    _set_allocation_proposal_db_history_health_db_env(
+        monkeypatch,
+        health_dsn,
+        table_name=health_table_name,
+    )
+    report = _health_report()
+
+    def broken_sink(**_kwargs: Any) -> object:
+        raise RuntimeError(
+            f"write failed source_dsn={source_dsn} source_table={source_table_name} "
+            f"dsn={health_dsn} table={health_table_name} "
+            f"payload_json={payload_json} question={question} "
+            f"report_sha256={report_sha256} bare_hash={bare_sha256}",
+        )
+
+    exit_code = main(
+        [COMMAND, "--persist"],
+        paper_autonomous_allocation_proposal_db_history_health_runner=(
+            lambda **_kwargs: report
+        ),
+        paper_autonomous_allocation_proposal_db_history_health_db_sink=broken_sink,
+    )
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert f"{COMMAND} failed:" in captured.err
+    assert "source_dsn=<redacted-dsn>" in captured.err
+    assert "source_table=<redacted-table>" in captured.err
+    assert "dsn=<redacted-dsn>" in captured.err
+    assert "table=<redacted-table>" in captured.err
+    assert "payload_json=<redacted-payload>" in captured.err
+    assert "question=<redacted-question>" in captured.err
+    assert "report_sha256=<redacted-sha256>" in captured.err
+    assert "bare_hash=<redacted-sha256>" in captured.err
+    for secret in (
+        source_dsn,
+        source_table_name,
+        health_dsn,
+        health_table_name,
+        "analytics",
+        "paper_autonomous_allocation_proposal_reports",
+        "audit",
+        "db_history_health_archive",
+        payload_json,
+        "secret-market-slug",
+        "nested secret",
+        question,
+        report_sha256,
+        bare_sha256,
     ):
         assert secret not in captured.out
         assert secret not in captured.err

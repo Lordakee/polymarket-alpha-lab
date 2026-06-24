@@ -188,6 +188,9 @@ from polymarket_alpha_lab.supabase_paper_autonomous_screening_decision_support_g
 from polymarket_alpha_lab.supabase_paper_autonomous_allocation_proposal_config import (
     from_paper_autonomous_allocation_proposal_db_env,
 )
+from polymarket_alpha_lab.supabase_paper_autonomous_allocation_proposal_db_history_health_config import (
+    from_paper_autonomous_allocation_proposal_db_history_health_db_env,
+)
 from polymarket_alpha_lab.supabase_paper_research_packet_config import (
     from_paper_research_packet_db_env,
 )
@@ -291,6 +294,7 @@ PaperAutonomousAllocationProposalRunner = Callable[..., object]
 PaperAutonomousAllocationProposalDbHistoryRunner = Callable[..., object]
 PaperAutonomousAllocationProposalDbHistoryGateRunner = Callable[..., object]
 PaperAutonomousAllocationProposalDbHistoryHealthRunner = Callable[..., object]
+PaperAutonomousAllocationProposalDbHistoryHealthDbSink = Callable[..., object]
 PaperAutonomousAllocationProposalDbHistoryHealthTrendRunner = Callable[..., object]
 PaperAutonomousAllocationProposalDbHistoryHealthTrendGateRunner = Callable[
     ...,
@@ -643,6 +647,25 @@ def _redacted_paper_research_packet_quality_error(
     return RuntimeError(message)
 
 
+def _redacted_paper_autonomous_allocation_proposal_db_history_health_persistence_error(
+    exc: Exception,
+    *,
+    source_dsn: str,
+    source_table_name: str,
+    health_dsn: str,
+    health_table_name: str,
+) -> RuntimeError:
+    message = str(exc)
+    for dsn in (source_dsn, health_dsn):
+        message = _redact_db_dsn(message, dsn=dsn)
+    for table_name in (source_table_name, health_table_name):
+        message = _redact_db_table_name_and_tail(message, table_name=table_name)
+    message = _redact_paper_research_packet_sensitive_fields(message)
+    if not message.strip():
+        message = exc.__class__.__name__
+    return RuntimeError(message)
+
+
 def _redacted_paper_research_packet_operator_flow_error(
     exc: Exception,
     *,
@@ -945,6 +968,9 @@ def main(
     ) = None,
     paper_autonomous_allocation_proposal_db_history_health_runner: (
         PaperAutonomousAllocationProposalDbHistoryHealthRunner | None
+    ) = None,
+    paper_autonomous_allocation_proposal_db_history_health_db_sink: (
+        PaperAutonomousAllocationProposalDbHistoryHealthDbSink | None
     ) = None,
     paper_autonomous_allocation_proposal_db_history_health_trend_runner: (
         PaperAutonomousAllocationProposalDbHistoryHealthTrendRunner | None
@@ -1640,12 +1666,19 @@ def main(
     )
     paper_autonomous_allocation_proposal_db_history_health = subparsers.add_parser(
         "paper-autonomous-allocation-proposal-db-history-health",
+        allow_abbrev=False,
     )
     paper_autonomous_allocation_proposal_db_history_health.add_argument(
         "--limit",
         type=int,
         default=25,
         dest="limit",
+    )
+    paper_autonomous_allocation_proposal_db_history_health.add_argument(
+        "--persist",
+        action="store_true",
+        default=False,
+        dest="persist",
     )
     paper_autonomous_allocation_proposal_db_history_health_trend = subparsers.add_parser(
         "paper-autonomous-allocation-proposal-db-history-health-trend",
@@ -3253,6 +3286,22 @@ def main(
                 raise ValueError(
                     f"{command_name} requires an autonomous allocation proposal DB DSN",
                 )
+            health_db_config = None
+            health_dsn = None
+            if args.persist:
+                health_db_config = (
+                    from_paper_autonomous_allocation_proposal_db_history_health_db_env()
+                )
+                if not health_db_config.enabled:
+                    raise ValueError(
+                        f"{command_name} --persist requires DB-history health DB "
+                        "to be enabled",
+                    )
+                health_dsn = health_db_config.dsn
+                if health_dsn is None:
+                    raise ValueError(
+                        f"{command_name} --persist requires a DB-history health DB DSN",
+                    )
             try:
                 report = (
                     _run_paper_autonomous_allocation_proposal_db_history_health(
@@ -3265,6 +3314,14 @@ def main(
                     )
                 )
             except Exception as exc:
+                if args.persist:
+                    raise _redacted_paper_autonomous_allocation_proposal_db_history_health_persistence_error(
+                        exc,
+                        source_dsn=dsn,
+                        source_table_name=allocation_proposal_db_config.table_name,
+                        health_dsn=health_dsn,
+                        health_table_name=health_db_config.table_name,
+                    ) from None
                 raise _redacted_paper_research_packet_db_history_error(
                     exc,
                     dsn=dsn,
@@ -3273,6 +3330,38 @@ def main(
             _print_paper_autonomous_allocation_proposal_db_history_health_summary(
                 report,
             )
+            if args.persist:
+                if (
+                    paper_autonomous_allocation_proposal_db_history_health_db_sink
+                    is None
+                ):
+                    from polymarket_alpha_lab.paper_autonomous_allocation_proposal_db_history_health_psycopg import (
+                        insert_paper_autonomous_allocation_proposal_db_history_health_report_with_psycopg,
+                    )
+
+                    health_sink = (
+                        insert_paper_autonomous_allocation_proposal_db_history_health_report_with_psycopg
+                    )
+                else:
+                    health_sink = (
+                        paper_autonomous_allocation_proposal_db_history_health_db_sink
+                    )
+                try:
+                    sink_result = health_sink(
+                        dsn=health_dsn,
+                        report=report,
+                        table_name=health_db_config.table_name,
+                    )
+                except Exception as exc:
+                    raise _redacted_paper_autonomous_allocation_proposal_db_history_health_persistence_error(
+                        exc,
+                        source_dsn=dsn,
+                        source_table_name=allocation_proposal_db_config.table_name,
+                        health_dsn=health_dsn,
+                        health_table_name=health_db_config.table_name,
+                    ) from None
+                persisted = bool(getattr(sink_result, "inserted", sink_result))
+                print(f"{command_name}: persisted={persisted}")
             return 0
         except Exception as exc:
             print(

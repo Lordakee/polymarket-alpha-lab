@@ -7,6 +7,10 @@ import pytest
 
 from polymarket_alpha_lab import cli
 from polymarket_alpha_lab.cli import main
+from polymarket_alpha_lab.supabase_paper_autonomous_allocation_proposal_config import (
+    PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_DSN_ENV_VAR,
+    PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_ENABLED_ENV_VAR,
+)
 
 
 COMMAND = "paper-autonomous-allocation-proposal-db-history-health"
@@ -21,7 +25,6 @@ def _reason_count(reason_code: str, report_count: int) -> SimpleNamespace:
     (
         [COMMAND, "--dsn", "postgresql://allocation-proposal.example.invalid/db"],
         [COMMAND, "--table", "paper_autonomous_allocation_proposal_reports"],
-        [COMMAND, "--persist"],
         [COMMAND, "--fast"],
         [COMMAND, "--live"],
         [COMMAND, "--auth", "token"],
@@ -36,7 +39,7 @@ def _reason_count(reason_code: str, report_count: int) -> SimpleNamespace:
         [COMMAND, "--approve"],
     ),
 )
-def test_allocation_proposal_db_history_health_cli_rejects_db_persist_fast_live_auth_wallet_account_order_and_execution_flags(
+def test_allocation_proposal_db_history_health_cli_rejects_db_fast_live_auth_wallet_account_order_and_execution_flags(
     argv: list[str],
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -46,6 +49,26 @@ def test_allocation_proposal_db_history_health_cli_rejects_db_persist_fast_live_
     assert exc_info.value.code == 2
     captured = capsys.readouterr()
     assert "unrecognized arguments" in captured.err
+
+
+def test_allocation_proposal_db_history_health_cli_accepts_persist_flag_at_parser_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.delenv(
+        PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_ENABLED_ENV_VAR,
+        raising=False,
+    )
+    monkeypatch.delenv(PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_DSN_ENV_VAR, raising=False)
+
+    exit_code = main([COMMAND, "--persist"])
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert "unrecognized arguments" not in captured.err
+    assert f"{COMMAND} requires autonomous allocation proposal DB to be enabled" in (
+        captured.err
+    )
 
 
 def test_allocation_proposal_db_history_health_summary_prints_only_aggregate_fields(

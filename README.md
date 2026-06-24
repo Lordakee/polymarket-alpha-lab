@@ -352,12 +352,21 @@ DB History Health:
 .venv/bin/polymarket-alpha-lab paper-autonomous-allocation-proposal-db-history-health --limit 25
 ```
 
-The DB history health command is env-only, read-only,
-paper-only/report-only/readonly, and no-write. It accepts only `--limit`. It
-reads the final allocation proposal DB configured by env and reads only
-persisted final allocation proposal history through DB history readback.
+The DB history health command is env-only, read-only by default, and
+paper-only/report-only/readonly. It accepts only `--limit` and optional
+default-off `--persist`; it does not accept DSN/table flags. It reads the final
+allocation proposal DB configured by env and reads only persisted final
+allocation proposal history through DB history readback.
 
-It does not write reports and does not read upstream screening/queue tables.
+Without `--persist`, it does not write reports and does not read upstream
+screening/queue tables. With `--persist`, it requires the separate DB-history
+health DB environment config, stores only the already-built health report, and
+prints `persisted=True/False`:
+
+```bash
+.venv/bin/polymarket-alpha-lab paper-autonomous-allocation-proposal-db-history-health --limit 25 --persist
+```
+
 It does not place orders, approve execution, read accounts, or mutate exchange state.
 The health status is not permission to trade.
 It is not financial advice, not investment ranking, and not an approval workflow.
