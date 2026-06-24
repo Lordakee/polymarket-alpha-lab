@@ -572,6 +572,61 @@ def test_allocation_persist_cli_requires_output_db_dsn_before_runner_or_sink(
     )
 
 
+def test_allocation_persist_cli_requires_output_db_table_before_runner_or_sink(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _set_upstream_db_env(
+        monkeypatch,
+        screening_gate_dsn="postgresql://screening.example.invalid/db",
+        decision_support_dsn="postgresql://decision.example.invalid/db",
+        source_queue_dsn="postgresql://source.example.invalid/db",
+    )
+    proposal_dsn = "postgresql://allocation-proposal.example.invalid/db"
+    runner_calls = 0
+    sink_calls = 0
+
+    def fake_output_db_env() -> SimpleNamespace:
+        return SimpleNamespace(
+            enabled=True,
+            dsn=proposal_dsn,
+            table_name=None,
+        )
+
+    def forbidden_runner(**_kwargs: object) -> object:
+        nonlocal runner_calls
+        runner_calls += 1
+        raise AssertionError("runner should not run")
+
+    def forbidden_sink(**_kwargs: object) -> object:
+        nonlocal sink_calls
+        sink_calls += 1
+        raise AssertionError("sink should not run")
+
+    monkeypatch.setattr(
+        cli,
+        "from_paper_autonomous_allocation_proposal_db_env",
+        fake_output_db_env,
+        raising=False,
+    )
+
+    exit_code = main(
+        [PERSIST_COMMAND],
+        paper_autonomous_allocation_proposal_runner=forbidden_runner,
+        paper_autonomous_allocation_proposal_db_sink=forbidden_sink,
+    )
+
+    assert exit_code == 1
+    assert runner_calls == 0
+    assert sink_calls == 0
+    captured = capsys.readouterr()
+    assert (
+        f"{PERSIST_COMMAND} requires an autonomous allocation proposal DB table"
+        in captured.err
+    )
+    assert proposal_dsn not in captured.err
+
+
 def test_allocation_persist_cli_sink_failure_redacts_dsns_tables_and_payloads(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],

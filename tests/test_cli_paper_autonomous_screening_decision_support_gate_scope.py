@@ -332,6 +332,59 @@ def test_gate_persist_cli_requires_enabled_gate_db_before_runner_or_sink(
     )
 
 
+def test_gate_persist_cli_requires_gate_db_table_before_runner_or_sink(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    dsn = "postgresql://screening-gate.example.invalid/db"
+    _set_upstream_db_env(
+        monkeypatch,
+        operator_flow_dsn=dsn,
+        action_queue_dsn=dsn,
+    )
+    runner_calls = 0
+    sink_calls = 0
+
+    def fake_gate_db_env() -> SimpleNamespace:
+        return SimpleNamespace(
+            enabled=True,
+            dsn=dsn,
+            table_name=None,
+        )
+
+    def forbidden_runner(**kwargs: Any) -> object:
+        nonlocal runner_calls
+        runner_calls += 1
+        raise AssertionError("paper autonomous screening gate runner should not run")
+
+    def forbidden_sink(**kwargs: Any) -> object:
+        nonlocal sink_calls
+        sink_calls += 1
+        raise AssertionError("screening gate DB sink should not run")
+
+    monkeypatch.setattr(
+        cli,
+        "from_paper_autonomous_screening_decision_support_gate_db_env",
+        fake_gate_db_env,
+        raising=False,
+    )
+
+    exit_code = main(
+        [PERSIST_COMMAND],
+        paper_autonomous_screening_decision_support_gate_runner=forbidden_runner,
+        paper_autonomous_screening_decision_support_gate_db_sink=forbidden_sink,
+    )
+
+    assert exit_code == 1
+    assert runner_calls == 0
+    assert sink_calls == 0
+    captured = capsys.readouterr()
+    assert f"{PERSIST_COMMAND} requires an autonomous screening gate DB table" in (
+        captured.err
+    )
+    assert dsn not in captured.err
+
+
 def test_gate_cli_requires_enabled_action_queue_decision_support_db(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],

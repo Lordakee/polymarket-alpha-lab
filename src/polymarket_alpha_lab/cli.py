@@ -2969,6 +2969,11 @@ def main(
                         f"{command_name} requires an autonomous screening gate DB DSN",
                     )
                 screening_gate_table_name = screening_gate_db_config.table_name
+                if screening_gate_table_name is None:
+                    raise ValueError(
+                        f"{command_name} requires an autonomous screening gate "
+                        "DB table",
+                    )
             try:
                 report = _run_paper_autonomous_screening_decision_support_gate(
                     rank_stability_dsn=rank_stability_dsn,
@@ -2994,8 +2999,11 @@ def main(
                 ) from None
             _print_paper_autonomous_screening_decision_support_gate_summary(report)
             if persist_gate_report:
-                assert screening_gate_dsn is not None
-                assert screening_gate_table_name is not None
+                if screening_gate_dsn is None or screening_gate_table_name is None:
+                    raise RuntimeError(
+                        f"{command_name} output DB config was not validated "
+                        "before persistence",
+                    )
                 try:
                     if paper_autonomous_screening_decision_support_gate_db_sink is None:
                         from polymarket_alpha_lab.paper_autonomous_screening_decision_support_gate_psycopg import (
@@ -3111,6 +3119,11 @@ def main(
                         "proposal DB DSN",
                     )
                 proposal_table_name = proposal_db_config.table_name
+                if proposal_table_name is None:
+                    raise ValueError(
+                        f"{command_name} requires an autonomous allocation "
+                        "proposal DB table",
+                    )
             try:
                 report = _run_paper_autonomous_allocation_proposal(
                     screening_gate_dsn=screening_gate_dsn,
@@ -3141,8 +3154,11 @@ def main(
                 command_name=command_name,
             )
             if persist_proposal_report:
-                assert proposal_dsn is not None
-                assert proposal_table_name is not None
+                if proposal_dsn is None or proposal_table_name is None:
+                    raise RuntimeError(
+                        f"{command_name} output DB config was not validated "
+                        "before persistence",
+                    )
                 try:
                     if paper_autonomous_allocation_proposal_db_sink is None:
                         from polymarket_alpha_lab.paper_autonomous_allocation_proposal_psycopg import (
