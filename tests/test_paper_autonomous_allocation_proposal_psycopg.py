@@ -24,6 +24,12 @@ class FakeRow:
     report_sha256: str
 
 
+@dataclass(frozen=True)
+class FakeResult:
+    row: FakeRow
+    inserted: bool
+
+
 class FakeConnection:
     def __init__(self) -> None:
         self.commit_count = 0
@@ -44,6 +50,7 @@ class FakeCursor:
     def __init__(self) -> None:
         self.calls: list[tuple[str, tuple[Any, ...]]] = []
         self.close_count = 0
+        self.rowcount = 1
 
     def execute(self, sql: str, params: tuple[Any, ...] = ()) -> None:
         self.calls.append((sql, params))
@@ -89,6 +96,7 @@ def _install_fake_store(
     monkeypatch: pytest.MonkeyPatch,
     *,
     insert: Any | None = None,
+    insert_with_result: Any | None = None,
     load: Any | None = None,
 ) -> None:
     store_module = types.ModuleType(STORE_MODULE_NAME)
@@ -97,6 +105,11 @@ def _install_fake_store(
     )
     store_module.insert_paper_autonomous_allocation_proposal_report = (
         insert if insert is not None else _unexpected_store_call("insert")
+    )
+    store_module.insert_paper_autonomous_allocation_proposal_report_with_result = (
+        insert_with_result
+        if insert_with_result is not None
+        else _unexpected_store_call("insert_with_result")
     )
     store_module.load_paper_autonomous_allocation_proposal_reports = (
         load if load is not None else _unexpected_store_call("load")
@@ -173,6 +186,7 @@ def test_successful_insert_delegates_to_store_commits_and_closes(
     connection = FakeConnection()
     report = FakeReport(proposal_status="pass")
     row = FakeRow(report_sha256="a" * 64)
+    result = FakeResult(row=row, inserted=True)
     connect_calls: list[str] = []
     store_calls: list[tuple[Any, Any, str]] = []
 
@@ -181,11 +195,16 @@ def test_successful_insert_delegates_to_store_commits_and_closes(
         connect=lambda dsn: connect_calls.append(dsn) or connection,
     )
 
-    def fake_insert(connection_arg: Any, report_arg: Any, *, table_name: str) -> FakeRow:
+    def fake_insert_with_result(
+        connection_arg: Any,
+        report_arg: Any,
+        *,
+        table_name: str,
+    ) -> FakeResult:
         store_calls.append((connection_arg, report_arg, table_name))
-        return row
+        return result
 
-    _install_fake_store(monkeypatch, insert=fake_insert)
+    _install_fake_store(monkeypatch, insert_with_result=fake_insert_with_result)
     sys.modules.pop(ADAPTER_MODULE_NAME, None)
     adapter_module = importlib.import_module(ADAPTER_MODULE_NAME)
 
@@ -197,7 +216,7 @@ def test_successful_insert_delegates_to_store_commits_and_closes(
         )
     )
 
-    assert inserted == row
+    assert inserted == result
     assert connect_calls == [SECRET_DSN]
     store_connection, store_report, store_table_name = store_calls[0]
     assert store_connection is not connection
@@ -291,10 +310,15 @@ def test_failure_rolls_back_closes_reraises_and_does_not_echo_dsn(
     connection = FakeConnection()
     _install_fake_psycopg(monkeypatch, connect=lambda dsn: connection)
 
-    def fake_insert(connection_arg: Any, report_arg: Any, *, table_name: str) -> FakeRow:
+    def fake_insert_with_result(
+        connection_arg: Any,
+        report_arg: Any,
+        *,
+        table_name: str,
+    ) -> FakeResult:
         raise ValueError("store failed without dsn")
 
-    _install_fake_store(monkeypatch, insert=fake_insert)
+    _install_fake_store(monkeypatch, insert_with_result=fake_insert_with_result)
     sys.modules.pop(ADAPTER_MODULE_NAME, None)
     adapter_module = importlib.import_module(ADAPTER_MODULE_NAME)
 
@@ -390,7 +414,12 @@ def test_dict_and_list_params_are_wrapped_in_jsonb(
         connect=lambda dsn: connect_calls.append(dsn) or connection,
     )
 
-    def fake_insert(connection_arg: Any, report_arg: Any, *, table_name: str) -> FakeRow:
+    def fake_insert_with_result(
+        connection_arg: Any,
+        report_arg: Any,
+        *,
+        table_name: str,
+    ) -> FakeResult:
         cursor = connection_arg.cursor()
         try:
             cursor.execute(
@@ -404,9 +433,9 @@ def test_dict_and_list_params_are_wrapped_in_jsonb(
             )
         finally:
             cursor.close()
-        return FakeRow(report_sha256="a" * 64)
+        return FakeResult(row=FakeRow(report_sha256="a" * 64), inserted=True)
 
-    _install_fake_store(monkeypatch, insert=fake_insert)
+    _install_fake_store(monkeypatch, insert_with_result=fake_insert_with_result)
     sys.modules.pop(ADAPTER_MODULE_NAME, None)
     adapter_module = importlib.import_module(ADAPTER_MODULE_NAME)
 
@@ -425,6 +454,47 @@ def test_dict_and_list_params_are_wrapped_in_jsonb(
     assert params[1].value == [{"market_slug": "alpha"}]
     assert params[2] == "scalar"
     assert params[3] == 2
+    assert connection.commit_count == 1
+    assert connection.rollback_count == 0
+    assert connection.close_count == 1
+
+
+def test_json_cursor_exposes_rowcount_for_duplicate_detection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    connection = FakeCursorConnection()
+    connection.cursor_instance.rowcount = 0
+
+    _install_fake_psycopg(monkeypatch, connect=lambda dsn: connection)
+
+    def fake_insert_with_result(
+        connection_arg: Any,
+        report_arg: Any,
+        *,
+        table_name: str,
+    ) -> FakeResult:
+        cursor = connection_arg.cursor()
+        try:
+            cursor.execute("insert", ())
+            return FakeResult(
+                row=FakeRow(report_sha256="a" * 64),
+                inserted=cursor.rowcount == 1,
+            )
+        finally:
+            cursor.close()
+
+    _install_fake_store(monkeypatch, insert_with_result=fake_insert_with_result)
+    sys.modules.pop(ADAPTER_MODULE_NAME, None)
+    adapter_module = importlib.import_module(ADAPTER_MODULE_NAME)
+
+    result = (
+        adapter_module.insert_paper_autonomous_allocation_proposal_report_with_psycopg(
+            SECRET_DSN,
+            FakeReport(proposal_status="pass"),
+        )
+    )
+
+    assert result.inserted is False
     assert connection.commit_count == 1
     assert connection.rollback_count == 0
     assert connection.close_count == 1

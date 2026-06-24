@@ -298,6 +298,20 @@ The command is env-only and reads already-persisted upstream reports. It
 accepts only `--limit`; it does not accept DSN/table/persist flags, does not
 write reports, and stays no-write. It is not a live-execution signal, not
 execution authorization, not order instruction, and not financial advice.
+
+To persist the final paper allocation proposal for later local review, use the
+sibling env-only producer command:
+
+```bash
+POLYMARKET_ALPHA_LAB_PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_ENABLED=true \
+.venv/bin/polymarket-alpha-lab paper-autonomous-allocation-proposal-persist --limit 25
+```
+
+The producer builds the same paper-only/report-only/readonly proposal, writes
+only that final proposal report to the autonomous allocation proposal DB, prints
+the usual aggregate summary plus `persisted=True/False`, and does not create
+live instructions or mutate exchange state.
+
 Boundary: no live trading, no auth, no key handling, no wallet handling, no account handling, no account reads, no order construction, no order signing, no order submission, no order cancellation, no order replacement, no exchange mutation, no investment ranking, not automatic live investing, and not an approval workflow.
 
 ## Level 1B Node 1 Status

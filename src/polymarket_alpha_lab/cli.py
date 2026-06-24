@@ -185,6 +185,9 @@ from polymarket_alpha_lab.supabase_paper_nav_snapshot_config import (
 from polymarket_alpha_lab.supabase_paper_autonomous_screening_decision_support_gate_config import (
     from_paper_autonomous_screening_decision_support_gate_db_env,
 )
+from polymarket_alpha_lab.supabase_paper_autonomous_allocation_proposal_config import (
+    from_paper_autonomous_allocation_proposal_db_env,
+)
 from polymarket_alpha_lab.supabase_paper_research_packet_config import (
     from_paper_research_packet_db_env,
 )
@@ -285,6 +288,7 @@ PaperResearchPacketOperatorFlowDbHistoryGateRunner = Callable[..., object]
 PaperAutonomousScreeningDecisionSupportGateRunner = Callable[..., object]
 PaperAutonomousScreeningDecisionSupportGateDbSink = Callable[..., object]
 PaperAutonomousAllocationProposalRunner = Callable[..., object]
+PaperAutonomousAllocationProposalDbSink = Callable[..., object]
 PaperResearchPacketOperatorFlowDbSink = Callable[..., object]
 PaperProbabilityRecommendationQueueDbSink = Callable[..., object]
 PaperRecommendationRiskBudgetDbSink = Callable[..., object]
@@ -673,12 +677,16 @@ def _redacted_paper_autonomous_allocation_proposal_error(
     return RuntimeError(message)
 
 
-def _require_paper_autonomous_allocation_proposal_limit(limit: object) -> None:
+def _require_paper_autonomous_allocation_proposal_limit(
+    limit: object,
+    *,
+    command_name: str = "paper-autonomous-allocation-proposal",
+) -> None:
     if isinstance(limit, bool) or type(limit) is not int or limit < 1:
-        raise ValueError("paper-autonomous-allocation-proposal limit must be positive")
+        raise ValueError(f"{command_name} limit must be positive")
     if limit > MAX_PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_READ_LIMIT:
         raise ValueError(
-            "paper-autonomous-allocation-proposal limit must be less than or equal to "
+            f"{command_name} limit must be less than or equal to "
             f"{MAX_PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_READ_LIMIT}",
         )
 
@@ -874,6 +882,9 @@ def main(
     ) = None,
     paper_autonomous_allocation_proposal_runner: (
         PaperAutonomousAllocationProposalRunner | None
+    ) = None,
+    paper_autonomous_allocation_proposal_db_sink: (
+        PaperAutonomousAllocationProposalDbSink | None
     ) = None,
     paper_probability_recommendation_queue_db_sink: (
         PaperProbabilityRecommendationQueueDbSink | None
@@ -1526,6 +1537,15 @@ def main(
         "paper-autonomous-allocation-proposal",
     )
     paper_autonomous_allocation_proposal.add_argument(
+        "--limit",
+        type=int,
+        default=25,
+        dest="limit",
+    )
+    paper_autonomous_allocation_proposal_persist = subparsers.add_parser(
+        "paper-autonomous-allocation-proposal-persist",
+    )
+    paper_autonomous_allocation_proposal_persist.add_argument(
         "--limit",
         type=int,
         default=25,
@@ -3010,21 +3030,31 @@ def main(
             )
             return 1
 
-    if args.command == "paper-autonomous-allocation-proposal":
+    if args.command in (
+        "paper-autonomous-allocation-proposal",
+        "paper-autonomous-allocation-proposal-persist",
+    ):
+        command_name = args.command
+        persist_proposal_report = (
+            command_name == "paper-autonomous-allocation-proposal-persist"
+        )
         try:
-            _require_paper_autonomous_allocation_proposal_limit(args.limit)
+            _require_paper_autonomous_allocation_proposal_limit(
+                args.limit,
+                command_name=command_name,
+            )
             screening_gate_db_config = (
                 from_paper_autonomous_screening_decision_support_gate_db_env()
             )
             if not screening_gate_db_config.enabled:
                 raise ValueError(
-                    "paper-autonomous-allocation-proposal requires "
+                    f"{command_name} requires "
                     "autonomous screening gate DB to be enabled",
                 )
             screening_gate_dsn = screening_gate_db_config.dsn
             if screening_gate_dsn is None:
                 raise ValueError(
-                    "paper-autonomous-allocation-proposal requires an "
+                    f"{command_name} requires an "
                     "autonomous screening gate DB DSN",
                 )
             decision_support_db_config = (
@@ -3032,13 +3062,13 @@ def main(
             )
             if not decision_support_db_config.enabled:
                 raise ValueError(
-                    "paper-autonomous-allocation-proposal requires "
+                    f"{command_name} requires "
                     "action-gated queue decision-support DB to be enabled",
                 )
             decision_support_dsn = decision_support_db_config.dsn
             if decision_support_dsn is None:
                 raise ValueError(
-                    "paper-autonomous-allocation-proposal requires an "
+                    f"{command_name} requires an "
                     "action-gated queue decision-support DB DSN",
                 )
             source_queue_db_config = (
@@ -3046,15 +3076,41 @@ def main(
             )
             if not source_queue_db_config.enabled:
                 raise ValueError(
-                    "paper-autonomous-allocation-proposal requires "
+                    f"{command_name} requires "
                     "action-gated queue DB to be enabled",
                 )
             source_queue_dsn = source_queue_db_config.dsn
             if source_queue_dsn is None:
                 raise ValueError(
-                    "paper-autonomous-allocation-proposal requires an "
+                    f"{command_name} requires an "
                     "action-gated queue DB DSN",
                 )
+            proposal_dsn = None
+            proposal_table_name = None
+            if persist_proposal_report:
+                try:
+                    proposal_db_config = (
+                        from_paper_autonomous_allocation_proposal_db_env()
+                    )
+                except ValueError as exc:
+                    if "must be set when DB is enabled" in str(exc):
+                        raise ValueError(
+                            f"{command_name} requires an autonomous allocation "
+                            "proposal DB DSN",
+                        ) from None
+                    raise
+                if not proposal_db_config.enabled:
+                    raise ValueError(
+                        f"{command_name} requires autonomous allocation proposal DB "
+                        "to be enabled",
+                    )
+                proposal_dsn = proposal_db_config.dsn
+                if proposal_dsn is None:
+                    raise ValueError(
+                        f"{command_name} requires an autonomous allocation "
+                        "proposal DB DSN",
+                    )
+                proposal_table_name = proposal_db_config.table_name
             try:
                 report = _run_paper_autonomous_allocation_proposal(
                     screening_gate_dsn=screening_gate_dsn,
@@ -3080,11 +3136,43 @@ def main(
                     source_queue_dsn=source_queue_dsn,
                     source_queue_table_name=source_queue_db_config.table_name,
                 ) from None
-            _print_paper_autonomous_allocation_proposal_summary(report)
+            _print_paper_autonomous_allocation_proposal_summary(
+                report,
+                command_name=command_name,
+            )
+            if persist_proposal_report:
+                assert proposal_dsn is not None
+                assert proposal_table_name is not None
+                try:
+                    if paper_autonomous_allocation_proposal_db_sink is None:
+                        from polymarket_alpha_lab.paper_autonomous_allocation_proposal_psycopg import (
+                            insert_paper_autonomous_allocation_proposal_report_with_psycopg,
+                        )
+
+                        paper_autonomous_allocation_proposal_db_sink = (
+                            insert_paper_autonomous_allocation_proposal_report_with_psycopg
+                        )
+                    sink_result = paper_autonomous_allocation_proposal_db_sink(
+                        dsn=proposal_dsn,
+                        report=report,
+                        table_name=proposal_table_name,
+                    )
+                except Exception as exc:
+                    message = _redact_db_dsn(str(exc), dsn=proposal_dsn)
+                    message = _redact_db_table_name_and_tail(
+                        message,
+                        table_name=proposal_table_name,
+                    )
+                    message = _redact_paper_research_packet_sensitive_fields(message)
+                    if not message.strip():
+                        message = exc.__class__.__name__
+                    raise RuntimeError(message) from None
+                persisted = bool(getattr(sink_result, "inserted", sink_result))
+                print(f"{command_name}: persisted={persisted}")
             return 0
         except Exception as exc:
             print(
-                f"paper-autonomous-allocation-proposal failed: {exc}",
+                f"{command_name} failed: {exc}",
                 file=sys.stderr,
             )
             return 1
@@ -7141,10 +7229,14 @@ def _print_paper_autonomous_screening_decision_support_gate_summary(
     print(f"reason_code_counts: {reason_code_counts or 'none'}")
 
 
-def _print_paper_autonomous_allocation_proposal_summary(report: object) -> None:
+def _print_paper_autonomous_allocation_proposal_summary(
+    report: object,
+    *,
+    command_name: str = "paper-autonomous-allocation-proposal",
+) -> None:
     allocation_report = getattr(report, "allocation_report", None)
     summary_parts = [
-        "paper-autonomous-allocation-proposal:",
+        f"{command_name}:",
         f"proposal_status={getattr(report, 'proposal_status')}",
         f"recommended_next_step={getattr(report, 'recommended_next_step')}",
     ]

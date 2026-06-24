@@ -58,6 +58,7 @@ REQUIRED_README_PHRASES = (
     "Paper Autonomous Allocation Proposal",
     "docs/paper-autonomous-allocation-proposal.md",
     ".venv/bin/polymarket-alpha-lab paper-autonomous-allocation-proposal --limit 25",
+    "paper-autonomous-allocation-proposal-persist --limit 25",
     "paper-only/report-only/read-only",
     "env-only",
     "already-persisted upstream reports",
@@ -65,6 +66,10 @@ REQUIRED_README_PHRASES = (
     "does not accept DSN/table/persist flags",
     "does not write reports",
     "no-write",
+    "sibling env-only producer command",
+    "writes only that final proposal report",
+    "persisted=True/False",
+    "does not create live instructions or mutate exchange state",
     "no live trading",
     "no auth",
     "no key handling",
@@ -212,20 +217,33 @@ def test_readme_places_allocation_section_after_screening_gate_block() -> None:
     readme_text = _readme_text()
     gate_closing_line = "DSN/table/persist flags and does not write reports."
     producer_marker = "paper-autonomous-screening-decision-support-gate-persist"
+    default_command_marker = "paper-autonomous-allocation-proposal --limit 25"
+    persist_command_marker = "paper-autonomous-allocation-proposal-persist --limit 25"
     section_marker = "Paper Autonomous Allocation Proposal"
     next_section_marker = "## Level 1B Node 1 Status"
 
     assert gate_closing_line in readme_text
     assert producer_marker in readme_text
     assert section_marker in readme_text
+    assert default_command_marker in readme_text
+    assert persist_command_marker in readme_text
     assert next_section_marker in readme_text
 
     gate_end = readme_text.index(gate_closing_line) + len(gate_closing_line)
     producer_start = readme_text.index(producer_marker, gate_end)
     section_start = readme_text.index(section_marker, producer_start)
+    default_command_start = readme_text.index(default_command_marker, section_start)
+    persist_command_start = readme_text.index(persist_command_marker, default_command_start)
     next_section_start = readme_text.index(next_section_marker)
 
-    assert gate_end < producer_start < section_start < next_section_start
+    assert (
+        gate_end
+        < producer_start
+        < section_start
+        < default_command_start
+        < persist_command_start
+        < next_section_start
+    )
 
 
 def test_readme_links_operator_doc_and_states_cli_contract() -> None:
@@ -233,4 +251,20 @@ def test_readme_links_operator_doc_and_states_cli_contract() -> None:
     normalized = _normalized(section_text)
 
     for phrase in REQUIRED_README_PHRASES:
+        assert phrase in normalized
+
+
+def test_doc_describes_separate_persisted_handoff_producer() -> None:
+    normalized = _normalized(_doc_text())
+
+    for phrase in (
+        "The persisted handoff is a separate sibling producer command",
+        "paper-autonomous-allocation-proposal-persist --limit 25",
+        "POLYMARKET_ALPHA_LAB_PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_ENABLED",
+        "POLYMARKET_ALPHA_LAB_PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_DSN",
+        "POLYMARKET_ALPHA_LAB_PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_TABLE",
+        "persists only the final proposal report",
+        "persisted=True/False",
+        "does not write upstream reports",
+    ):
         assert phrase in normalized

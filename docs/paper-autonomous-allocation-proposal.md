@@ -72,6 +72,22 @@ The operator command is env-only, report-only, read-only, and no-write:
 
 The command reads already-persisted upstream reports from environment-configured paper report stores. It accepts only `--limit`; it does not accept DSN/table/persist flags, does not write reports, and does not create missing upstream inputs.
 
+The persisted handoff is a separate sibling producer command:
+
+```bash
+.venv/bin/polymarket-alpha-lab paper-autonomous-allocation-proposal-persist --limit 25
+```
+
+It additionally requires:
+
+- `POLYMARKET_ALPHA_LAB_PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_ENABLED`
+- `POLYMARKET_ALPHA_LAB_PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_DSN`
+- `POLYMARKET_ALPHA_LAB_PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_TABLE`
+
+It accepts only `--limit`, persists only the final proposal report, and remains paper-only/report-only/read-only. It prints the usual aggregate summary plus `persisted=True/False`.
+
+It does not write upstream reports, place orders, approve execution, read accounts, or mutate exchange state.
+
 The CLI does not accept live/auth/wallet/private-key/api-key/account/order/trade/execute/submit/approve flags. It prints aggregate paper proposal status, recommended next step, counts, reason-code summaries, and redacted operator evidence only.
 
 Do not put secret values, credentials, DSN values, wallet material, private keys, account identifiers, table names, payload JSON, hashes, market questions, or market slugs in operator examples or runbook output.

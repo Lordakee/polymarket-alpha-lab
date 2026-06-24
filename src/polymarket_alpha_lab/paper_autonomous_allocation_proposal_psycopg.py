@@ -8,7 +8,7 @@ from typing import Any, TypeVar
 
 from polymarket_alpha_lab.paper_autonomous_allocation_proposal_store import (
     DEFAULT_PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_REPORTS_TABLE,
-    insert_paper_autonomous_allocation_proposal_report,
+    insert_paper_autonomous_allocation_proposal_report_with_result,
     load_paper_autonomous_allocation_proposal_reports,
 )
 
@@ -24,7 +24,7 @@ def insert_paper_autonomous_allocation_proposal_report_with_psycopg(
 ) -> Any:
     return _with_owned_connection(
         dsn,
-        lambda connection: insert_paper_autonomous_allocation_proposal_report(
+        lambda connection: insert_paper_autonomous_allocation_proposal_report_with_result(
             connection,
             report,
             table_name=table_name,
@@ -140,6 +140,10 @@ class _PsycopgJsonCursor:
 
     def fetchall(self) -> Any:
         return self.cursor.fetchall()
+
+    @property
+    def rowcount(self) -> int:
+        return self.cursor.rowcount
 
     def close(self) -> None:
         self.cursor.close()
