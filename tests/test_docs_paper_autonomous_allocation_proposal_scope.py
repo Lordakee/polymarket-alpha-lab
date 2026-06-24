@@ -19,6 +19,7 @@ REQUIRED_HEADINGS = (
     "## Transaction and Cost Awareness",
     "## CLI Contract",
     "## DB History Health",
+    "## DB History Health Trend",
     "## Review Boundaries",
 )
 
@@ -56,6 +57,7 @@ REQUIRED_PHRASES = (
     "paper-autonomous-allocation-proposal-db-history --limit 25",
     "paper-autonomous-allocation-proposal-db-history-gate --limit 25",
     "paper-autonomous-allocation-proposal-db-history-health --limit 25",
+    "paper-autonomous-allocation-proposal-db-history-health-trend --limit 25",
     "reads only persisted final allocation proposal reports",
     "reads only persisted final allocation proposal reports through the DB history readback",
     "reads only persisted final allocation proposal history through DB history readback",
@@ -66,9 +68,11 @@ REQUIRED_PHRASES = (
     "does not place orders, approve execution, read accounts, or mutate exchange state",
     "gate status is not permission to trade",
     "health status is not permission to trade",
+    "trend status is not permission to trade",
     "prints aggregate history status, proposal-status counts, latest aggregate allocation counts, duplicate timestamp count, and reason-code summaries",
     "prints aggregate gate status, recommended next step, source history status, latest aggregate allocation counts, duplicate timestamp count, latest source age, and reason-code counts",
     "prints aggregate health status, source history status, latest aggregate allocation counts, duplicate timestamp count, and reason-code counts",
+    "prints aggregate health-status trend counts, latest health status, delta summaries, duplicate timestamp count, streak counts, and latest reason-code counts",
 )
 
 REQUIRED_README_PHRASES = (
@@ -105,6 +109,7 @@ REQUIRED_README_PHRASES = (
     ".venv/bin/polymarket-alpha-lab paper-autonomous-allocation-proposal-db-history --limit 25",
     ".venv/bin/polymarket-alpha-lab paper-autonomous-allocation-proposal-db-history-gate --limit 25",
     ".venv/bin/polymarket-alpha-lab paper-autonomous-allocation-proposal-db-history-health --limit 25",
+    ".venv/bin/polymarket-alpha-lab paper-autonomous-allocation-proposal-db-history-health-trend --limit 25",
     "reads only persisted final allocation proposal reports",
     "reads only persisted final allocation proposal reports through the DB history readback",
     "reads only persisted final allocation proposal history through DB history readback",
@@ -114,9 +119,11 @@ REQUIRED_README_PHRASES = (
     "does not place orders, approve execution, read accounts, or mutate exchange state",
     "gate status is not permission to trade",
     "health status is not permission to trade",
+    "trend status is not permission to trade",
     "prints aggregate history status, proposal-status counts, latest aggregate allocation counts, duplicate timestamp count, and reason-code summaries",
     "prints aggregate gate status, recommended next step, source history status, latest aggregate allocation counts, duplicate timestamp count, latest source age, and reason-code counts",
     "prints aggregate health status, source history status, latest aggregate allocation counts, duplicate timestamp count, and reason-code counts",
+    "prints aggregate health-status trend counts, latest health status, delta summaries, duplicate timestamp count, streak counts, and latest reason-code counts",
 )
 
 SECRET_VALUE_PATTERNS = (

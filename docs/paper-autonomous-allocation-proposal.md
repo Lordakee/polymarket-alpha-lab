@@ -141,6 +141,39 @@ The health status is not permission to trade. It is not financial advice, not in
 
 It prints aggregate health status, source history status, latest aggregate allocation counts, duplicate timestamp count, and reason-code counts.
 
+## DB History Health Trend
+
+The DB history health trend command is env-only, read-only, paper-only/report-only/readonly, and no-write:
+
+```bash
+.venv/bin/polymarket-alpha-lab paper-autonomous-allocation-proposal-db-history-health-trend --limit 25
+```
+
+It accepts only `--limit`. It reads the final allocation proposal DB configured by env and reads only persisted final allocation proposal history through DB history readback before building one read-only trend report over that caller-selected window.
+
+When fewer persisted proposal reports than the DB-history minimum are available, the loader emits one blocked boundary health snapshot so insufficient history remains visible in the trend output.
+
+It does not write reports and does not read upstream screening/queue tables.
+It does not place orders, approve execution, read accounts, or mutate exchange state.
+
+The trend status is not permission to trade. It is not financial advice, not investment ranking, and not an approval workflow.
+
+It prints aggregate health-status trend counts, latest health status, delta summaries, duplicate timestamp count, streak counts, and latest reason-code counts.
+
+Its package-root Python API exposes:
+
+- `PaperAutonomousAllocationProposalDbHistoryHealthTrendConfig`
+- `PaperAutonomousAllocationProposalDbHistoryHealthTrendReasonCodeRow`
+- `PaperAutonomousAllocationProposalDbHistoryHealthTrendSnapshotSummary`
+- `PaperAutonomousAllocationProposalDbHistoryHealthTrendReport`
+- `build_paper_autonomous_allocation_proposal_db_history_health_trend_report(...)`
+
+The reducer summarizes already-produced DB history health reports across a caller-selected persisted window. It is trend reporting over existing paper artifacts only.
+
+It must not write reports, must not read upstream screening or queue tables directly, and must not fetch, authenticate, handle wallets or private keys, read accounts, place orders, approve execution, or mutate exchange state.
+
+The trend summary remains negative-boundary first: no live trading, no auth, no wallet, no key handling, no account reads, no order instruction, no execution authorization, no approval workflow, and no exchange mutation.
+
 ## Review Boundaries
 
 The Phase 1 boundary is explicit:

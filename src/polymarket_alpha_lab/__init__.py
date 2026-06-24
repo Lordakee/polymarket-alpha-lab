@@ -321,6 +321,13 @@ from polymarket_alpha_lab.paper_autonomous_allocation_proposal_db_history_health
     PaperAutonomousAllocationProposalDbHistoryHealthReport,
     build_paper_autonomous_allocation_proposal_db_history_health_report,
 )
+from polymarket_alpha_lab.paper_autonomous_allocation_proposal_db_history_health_trend import (
+    PaperAutonomousAllocationProposalDbHistoryHealthTrendConfig,
+    PaperAutonomousAllocationProposalDbHistoryHealthTrendReasonCodeRow,
+    PaperAutonomousAllocationProposalDbHistoryHealthTrendReport,
+    PaperAutonomousAllocationProposalDbHistoryHealthTrendSnapshotSummary,
+    build_paper_autonomous_allocation_proposal_db_history_health_trend_report,
+)
 from polymarket_alpha_lab.positions import (
     PaperNavLog,
     PaperNavSnapshot,
@@ -375,6 +382,10 @@ __all__ = [
     "PaperAutonomousAllocationProposalDbHistoryHealthConfig",
     "PaperAutonomousAllocationProposalDbHistoryHealthReasonCodeCount",
     "PaperAutonomousAllocationProposalDbHistoryHealthReport",
+    "PaperAutonomousAllocationProposalDbHistoryHealthTrendConfig",
+    "PaperAutonomousAllocationProposalDbHistoryHealthTrendReasonCodeRow",
+    "PaperAutonomousAllocationProposalDbHistoryHealthTrendSnapshotSummary",
+    "PaperAutonomousAllocationProposalDbHistoryHealthTrendReport",
     "PaperAutonomousAllocationProposalDbHistoryReasonCodeRow",
     "PaperAutonomousAllocationProposalDbHistoryReport",
     "PaperAutonomousAllocationProposalDbHistoryStatusRow",
@@ -568,6 +579,7 @@ __all__ = [
     "build_paper_analytics_report",
     "build_paper_autonomous_allocation_proposal_db_history_gate_report",
     "build_paper_autonomous_allocation_proposal_db_history_health_report",
+    "build_paper_autonomous_allocation_proposal_db_history_health_trend_report",
     "build_paper_autonomous_allocation_proposal_db_history_report",
     "build_paper_autonomous_allocation_proposal_report",
     "build_paper_autonomous_screening_decision_support_gate_report",

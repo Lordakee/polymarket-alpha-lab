@@ -315,6 +315,13 @@ from polymarket_alpha_lab.paper_autonomous_allocation_proposal_db_history_health
     PaperAutonomousAllocationProposalDbHistoryHealthReport,
     build_paper_autonomous_allocation_proposal_db_history_health_report,
 )
+from polymarket_alpha_lab.paper_autonomous_allocation_proposal_db_history_health_trend import (
+    PaperAutonomousAllocationProposalDbHistoryHealthTrendConfig,
+    PaperAutonomousAllocationProposalDbHistoryHealthTrendReasonCodeRow,
+    PaperAutonomousAllocationProposalDbHistoryHealthTrendReport,
+    PaperAutonomousAllocationProposalDbHistoryHealthTrendSnapshotSummary,
+    build_paper_autonomous_allocation_proposal_db_history_health_trend_report,
+)
 from polymarket_alpha_lab.paper_portfolio_nav import mark_paper_portfolio_nav
 from polymarket_alpha_lab.outcome_tracker import (
     OutcomeTrackingConfig,
@@ -882,7 +889,12 @@ def test_paper_autonomous_allocation_proposal_db_history_health_public_api_expor
         "PaperAutonomousAllocationProposalDbHistoryHealthConfig",
         "PaperAutonomousAllocationProposalDbHistoryHealthReasonCodeCount",
         "PaperAutonomousAllocationProposalDbHistoryHealthReport",
+        "PaperAutonomousAllocationProposalDbHistoryHealthTrendConfig",
+        "PaperAutonomousAllocationProposalDbHistoryHealthTrendReasonCodeRow",
+        "PaperAutonomousAllocationProposalDbHistoryHealthTrendSnapshotSummary",
+        "PaperAutonomousAllocationProposalDbHistoryHealthTrendReport",
         "build_paper_autonomous_allocation_proposal_db_history_health_report",
+        "build_paper_autonomous_allocation_proposal_db_history_health_trend_report",
     }
     forbidden_exports = {
         "DEFAULT_PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_HISTORY_HEALTH_CONFIG_VERSION",
@@ -907,8 +919,28 @@ def test_paper_autonomous_allocation_proposal_db_history_health_public_api_expor
         is PaperAutonomousAllocationProposalDbHistoryHealthReport
     )
     assert (
+        lab.PaperAutonomousAllocationProposalDbHistoryHealthTrendConfig
+        is PaperAutonomousAllocationProposalDbHistoryHealthTrendConfig
+    )
+    assert (
+        lab.PaperAutonomousAllocationProposalDbHistoryHealthTrendReasonCodeRow
+        is PaperAutonomousAllocationProposalDbHistoryHealthTrendReasonCodeRow
+    )
+    assert (
+        lab.PaperAutonomousAllocationProposalDbHistoryHealthTrendSnapshotSummary
+        is PaperAutonomousAllocationProposalDbHistoryHealthTrendSnapshotSummary
+    )
+    assert (
+        lab.PaperAutonomousAllocationProposalDbHistoryHealthTrendReport
+        is PaperAutonomousAllocationProposalDbHistoryHealthTrendReport
+    )
+    assert (
         lab.build_paper_autonomous_allocation_proposal_db_history_health_report
         is build_paper_autonomous_allocation_proposal_db_history_health_report
+    )
+    assert (
+        lab.build_paper_autonomous_allocation_proposal_db_history_health_trend_report
+        is build_paper_autonomous_allocation_proposal_db_history_health_trend_report
     )
     for name in forbidden_exports:
         assert not hasattr(lab, name)
