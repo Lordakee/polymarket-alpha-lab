@@ -52,6 +52,13 @@ REQUIRED_PHRASES = (
     "no exchange mutation",
     "transaction/cost awareness is upstream evidence",
     "no live fee estimation",
+    "paper-autonomous-allocation-proposal-db-history --limit 25",
+    "reads only persisted final allocation proposal reports",
+    "reads the final allocation proposal DB configured by env",
+    "does not write reports",
+    "does not read upstream tables",
+    "does not place orders, approve execution, read accounts, or mutate exchange state",
+    "prints aggregate history status, proposal-status counts, latest aggregate allocation counts, duplicate timestamp count, and reason-code summaries",
 )
 
 REQUIRED_README_PHRASES = (
@@ -85,6 +92,12 @@ REQUIRED_README_PHRASES = (
     "no investment ranking",
     "not automatic live investing",
     "not an approval workflow",
+    ".venv/bin/polymarket-alpha-lab paper-autonomous-allocation-proposal-db-history --limit 25",
+    "reads only persisted final allocation proposal reports",
+    "reads the final allocation proposal DB configured by env",
+    "does not read upstream tables",
+    "does not place orders, approve execution, read accounts, or mutate exchange state",
+    "prints aggregate history status, proposal-status counts, latest aggregate allocation counts, duplicate timestamp count, and reason-code summaries",
 )
 
 SECRET_VALUE_PATTERNS = (
@@ -111,6 +124,9 @@ GUARDED_TERM_PATTERNS = (
     r"\bsubmit(?:s|ted|ting|mission)?\b",
     r"\bcancel(?:s|led|lation)?\b",
     r"\breplac(?:e|es|ed|ement)\b",
+    r"\bapprov(?:e|es|ed|ing|al|als)?\b",
+    r"\bexecut(?:e|es|ed|ing|ion)\b",
+    r"\bmutat(?:e|es|ed|ing|ion)\b",
     r"\bexchange mutation\b",
     r"\bfinancial advice\b",
     r"\binvestment ranking\b",
@@ -219,6 +235,9 @@ def test_readme_places_allocation_section_after_screening_gate_block() -> None:
     producer_marker = "paper-autonomous-screening-decision-support-gate-persist"
     default_command_marker = "paper-autonomous-allocation-proposal --limit 25"
     persist_command_marker = "paper-autonomous-allocation-proposal-persist --limit 25"
+    db_history_command_marker = (
+        "paper-autonomous-allocation-proposal-db-history --limit 25"
+    )
     section_marker = "Paper Autonomous Allocation Proposal"
     next_section_marker = "## Level 1B Node 1 Status"
 
@@ -227,6 +246,7 @@ def test_readme_places_allocation_section_after_screening_gate_block() -> None:
     assert section_marker in readme_text
     assert default_command_marker in readme_text
     assert persist_command_marker in readme_text
+    assert db_history_command_marker in readme_text
     assert next_section_marker in readme_text
 
     gate_end = readme_text.index(gate_closing_line) + len(gate_closing_line)
@@ -234,6 +254,10 @@ def test_readme_places_allocation_section_after_screening_gate_block() -> None:
     section_start = readme_text.index(section_marker, producer_start)
     default_command_start = readme_text.index(default_command_marker, section_start)
     persist_command_start = readme_text.index(persist_command_marker, default_command_start)
+    db_history_command_start = readme_text.index(
+        db_history_command_marker,
+        persist_command_start,
+    )
     next_section_start = readme_text.index(next_section_marker)
 
     assert (
@@ -242,6 +266,7 @@ def test_readme_places_allocation_section_after_screening_gate_block() -> None:
         < section_start
         < default_command_start
         < persist_command_start
+        < db_history_command_start
         < next_section_start
     )
 

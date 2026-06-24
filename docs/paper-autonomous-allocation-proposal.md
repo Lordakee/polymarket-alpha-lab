@@ -92,6 +92,21 @@ The CLI does not accept live/auth/wallet/private-key/api-key/account/order/trade
 
 Do not put secret values, credentials, DSN values, wallet material, private keys, account identifiers, table names, payload JSON, hashes, market questions, or market slugs in operator examples or runbook output.
 
+## DB History Readback
+
+The DB history readback command is env-only, read-only, paper-only/report-only/readonly, and no-write:
+
+```bash
+.venv/bin/polymarket-alpha-lab paper-autonomous-allocation-proposal-db-history --limit 25
+```
+
+It accepts only `--limit`. It reads the final allocation proposal DB configured by env and reads only persisted final allocation proposal reports.
+
+It does not write reports and does not read upstream tables.
+It does not place orders, approve execution, read accounts, or mutate exchange state.
+
+It prints aggregate history status, proposal-status counts, latest aggregate allocation counts, duplicate timestamp count, and reason-code summaries.
+
 ## Review Boundaries
 
 The Phase 1 boundary is explicit:

@@ -163,11 +163,17 @@ EXPECTED_PROPOSAL_EVIDENCE_COMPARISON_HISTORY_BATCH_HEALTH_TREND_BATCH_HEALTH_TR
 }
 EXPECTED_PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_EXPORTS = {
     "DEFAULT_PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_CONFIG_VERSION",
+    "DEFAULT_PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_HISTORY_CONFIG_VERSION",
     "PaperAutonomousAllocationProposalConfig",
+    "PaperAutonomousAllocationProposalDbHistoryConfig",
+    "PaperAutonomousAllocationProposalDbHistoryReasonCodeRow",
+    "PaperAutonomousAllocationProposalDbHistoryReport",
+    "PaperAutonomousAllocationProposalDbHistoryStatusRow",
     "PaperAutonomousAllocationProposalReasonCodeCount",
     "PaperAutonomousAllocationProposalReport",
     "PaperAutonomousAllocationProposalSourceQueueSummary",
     "build_paper_autonomous_allocation_proposal_report",
+    "build_paper_autonomous_allocation_proposal_db_history_report",
 }
 EXPECTED_LEVEL_2_ARTIFACT_EXPORTS = (
     EXPECTED_PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_EXPORTS

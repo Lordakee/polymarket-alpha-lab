@@ -288,6 +288,7 @@ PaperResearchPacketOperatorFlowDbHistoryGateRunner = Callable[..., object]
 PaperAutonomousScreeningDecisionSupportGateRunner = Callable[..., object]
 PaperAutonomousScreeningDecisionSupportGateDbSink = Callable[..., object]
 PaperAutonomousAllocationProposalRunner = Callable[..., object]
+PaperAutonomousAllocationProposalDbHistoryRunner = Callable[..., object]
 PaperAutonomousAllocationProposalDbSink = Callable[..., object]
 PaperResearchPacketOperatorFlowDbSink = Callable[..., object]
 PaperProbabilityRecommendationQueueDbSink = Callable[..., object]
@@ -882,6 +883,9 @@ def main(
     ) = None,
     paper_autonomous_allocation_proposal_runner: (
         PaperAutonomousAllocationProposalRunner | None
+    ) = None,
+    paper_autonomous_allocation_proposal_db_history_runner: (
+        PaperAutonomousAllocationProposalDbHistoryRunner | None
     ) = None,
     paper_autonomous_allocation_proposal_db_sink: (
         PaperAutonomousAllocationProposalDbSink | None
@@ -1546,6 +1550,15 @@ def main(
         "paper-autonomous-allocation-proposal-persist",
     )
     paper_autonomous_allocation_proposal_persist.add_argument(
+        "--limit",
+        type=int,
+        default=25,
+        dest="limit",
+    )
+    paper_autonomous_allocation_proposal_db_history = subparsers.add_parser(
+        "paper-autonomous-allocation-proposal-db-history",
+    )
+    paper_autonomous_allocation_proposal_db_history.add_argument(
         "--limit",
         type=int,
         default=25,
@@ -3030,6 +3043,46 @@ def main(
                     raise RuntimeError(message) from None
                 inserted = getattr(sink_result, "inserted", True)
                 print(f"{command_name}: persisted={inserted}")
+            return 0
+        except Exception as exc:
+            print(
+                f"{command_name} failed: {exc}",
+                file=sys.stderr,
+            )
+            return 1
+
+    if args.command == "paper-autonomous-allocation-proposal-db-history":
+        command_name = "paper-autonomous-allocation-proposal-db-history"
+        try:
+            if isinstance(args.limit, bool) or type(args.limit) is not int or args.limit < 1:
+                raise ValueError(f"{command_name} limit must be positive")
+            allocation_proposal_db_config = (
+                from_paper_autonomous_allocation_proposal_db_env()
+            )
+            if not allocation_proposal_db_config.enabled:
+                raise ValueError(
+                    f"{command_name} requires autonomous allocation proposal DB "
+                    "to be enabled",
+                )
+            dsn = allocation_proposal_db_config.dsn
+            if dsn is None:
+                raise ValueError(
+                    f"{command_name} requires an autonomous allocation proposal DB DSN",
+                )
+            try:
+                report = _run_paper_autonomous_allocation_proposal_db_history(
+                    dsn=dsn,
+                    table_name=allocation_proposal_db_config.table_name,
+                    limit=args.limit,
+                    runner=paper_autonomous_allocation_proposal_db_history_runner,
+                )
+            except Exception as exc:
+                raise _redacted_paper_research_packet_db_history_error(
+                    exc,
+                    dsn=dsn,
+                    table_name=allocation_proposal_db_config.table_name,
+                ) from None
+            _print_paper_autonomous_allocation_proposal_db_history_summary(report)
             return 0
         except Exception as exc:
             print(
@@ -5771,6 +5824,79 @@ def _run_paper_research_packet_operator_flow_db_history(
             pass
 
 
+def _run_paper_autonomous_allocation_proposal_db_history(
+    *,
+    dsn: str,
+    table_name: str,
+    limit: int,
+    runner: PaperAutonomousAllocationProposalDbHistoryRunner | None,
+) -> object:
+    command_name = "paper-autonomous-allocation-proposal-db-history"
+    if isinstance(limit, bool) or type(limit) is not int or limit < 1:
+        raise ValueError(f"{command_name} limit must be positive")
+    generated_at = datetime.now(UTC)
+
+    from polymarket_alpha_lab.paper_autonomous_allocation_proposal_db_history import (
+        PaperAutonomousAllocationProposalDbHistoryConfig,
+    )
+
+    config = PaperAutonomousAllocationProposalDbHistoryConfig()
+    if runner is not None:
+        try:
+            return runner(
+                dsn=dsn,
+                table_name=table_name,
+                limit=limit,
+                config=config,
+                generated_at=generated_at,
+            )
+        except Exception as exc:
+            raise _redacted_paper_research_packet_db_history_error(
+                exc,
+                dsn=dsn,
+                table_name=table_name,
+            ) from None
+
+    from polymarket_alpha_lab.paper_autonomous_allocation_proposal_db_history_load import (
+        load_paper_autonomous_allocation_proposal_db_history_report,
+    )
+
+    try:
+        import psycopg
+    except ModuleNotFoundError as exc:
+        if exc.name != "psycopg":
+            raise
+        raise RuntimeError(
+            "psycopg is required to use the paper autonomous allocation proposal "
+            "DB history read adapter; install the postgres extra.",
+        ) from exc
+    try:
+        connection = psycopg.connect(dsn, autocommit=True)
+    except Exception:
+        raise RuntimeError(
+            "failed to connect to the paper autonomous allocation proposal database",
+        ) from None
+    try:
+        return load_paper_autonomous_allocation_proposal_db_history_report(
+            connection,
+            limit=limit,
+            table_name=table_name,
+            config=config,
+            generated_at=generated_at,
+        )
+    except Exception as exc:
+        raise _redacted_paper_research_packet_db_history_error(
+            exc,
+            dsn=dsn,
+            table_name=table_name,
+        ) from None
+    finally:
+        try:
+            connection.close()
+        except Exception:
+            pass
+
+
 def _run_paper_research_packet_operator_flow_db_history_gate(
     *,
     dsn: str,
@@ -7185,6 +7311,54 @@ def _print_paper_research_packet_operator_flow_db_history_summary(
     print(f"reason_codes: {reason_codes or 'none'}")
 
 
+def _print_paper_autonomous_allocation_proposal_db_history_summary(
+    report: object,
+) -> None:
+    status_counts = _allocation_proposal_history_status_counts(
+        report.proposal_status_rows,
+    )
+    print(
+        "paper-autonomous-allocation-proposal-db-history: "
+        f"history_status={report.history_status} "
+        f"report_count={report.report_count} "
+        "first_report_generated_at="
+        f"{_iso_or_none(report.first_report_generated_at)} "
+        "latest_report_generated_at="
+        f"{_iso_or_none(report.latest_report_generated_at)} "
+        f"latest_proposal_status={_none_or_value(report.latest_proposal_status)} "
+        "latest_screening_gate_status="
+        f"{_none_or_value(report.latest_screening_gate_status)} "
+        f"latest_queue_risk_status={_none_or_value(report.latest_queue_risk_status)} "
+        "latest_allocation_input_count="
+        f"{_none_or_value(report.latest_allocation_input_count)} "
+        "latest_allocation_row_count="
+        f"{_none_or_value(report.latest_allocation_row_count)} "
+        f"latest_allocated_count={_none_or_value(report.latest_allocated_count)} "
+        "latest_total_allocated_paper_notional="
+        f"{_none_or_value(report.latest_total_allocated_paper_notional)} "
+        f"pass={status_counts['pass']} "
+        f"watch={status_counts['watch']} "
+        f"blocked={status_counts['blocked']} "
+        f"duplicate_generated_at_count={report.duplicate_generated_at_count} "
+        f"consecutive_latest_pass_count={report.consecutive_latest_pass_count} "
+        f"consecutive_latest_watch_count={report.consecutive_latest_watch_count} "
+        f"consecutive_latest_blocked_count={report.consecutive_latest_blocked_count}",
+    )
+    print(
+        "proposal_status_rows: "
+        f"{_format_allocation_proposal_history_status_row_counts(report.proposal_status_rows) or 'none'}",
+    )
+    latest_reason_codes = " ".join(report.latest_reason_codes)
+    print(f"latest_reason_codes: {latest_reason_codes or 'none'}")
+    reason_code_rows = " ".join(
+        f"{row.reason_code}={row.report_count}"
+        for row in report.reason_code_rows
+    )
+    print(f"reason_code_rows: {reason_code_rows or 'none'}")
+    reason_codes = " ".join(report.reason_codes)
+    print(f"reason_codes: {reason_codes or 'none'}")
+
+
 def _print_paper_research_packet_operator_flow_db_history_gate_summary(
     report: object,
 ) -> None:
@@ -7418,6 +7592,23 @@ def _format_operator_flow_history_status_row_counts(rows: tuple[object, ...]) ->
     return " ".join(
         f"{flow_status}={counts[flow_status]}"
         for flow_status in ("pass", "watch", "blocked")
+    )
+
+
+def _allocation_proposal_history_status_counts(rows: tuple[object, ...]) -> dict[str, int]:
+    counts = {"pass": 0, "watch": 0, "blocked": 0}
+    for row in rows:
+        proposal_status = row.proposal_status
+        if proposal_status in counts:
+            counts[proposal_status] = row.status_count
+    return counts
+
+
+def _format_allocation_proposal_history_status_row_counts(rows: tuple[object, ...]) -> str:
+    counts = _allocation_proposal_history_status_counts(rows)
+    return " ".join(
+        f"{proposal_status}={counts[proposal_status]}"
+        for proposal_status in ("pass", "watch", "blocked")
     )
 
 

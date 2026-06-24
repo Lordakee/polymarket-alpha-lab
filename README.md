@@ -281,7 +281,7 @@ POLYMARKET_ALPHA_LAB_PAPER_AUTONOMOUS_SCREENING_DECISION_SUPPORT_GATE_DB_ENABLED
 The producer first builds the same paper-only/report-only/readonly screening
 gate report, then writes that final report to the autonomous screening gate DB.
 It remains env-only, accepts only `--limit`, prints aggregate status plus
-`persisted=True/False`, and does not create live instructions or mutate
+`persisted=True/False`, does not create live instructions, and does not mutate
 exchange state.
 
 Paper Autonomous Allocation Proposal combines a passed autonomous screening
@@ -309,8 +309,23 @@ POLYMARKET_ALPHA_LAB_PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_ENABLED=true \
 
 The producer builds the same paper-only/report-only/readonly proposal, writes
 only that final proposal report to the autonomous allocation proposal DB, prints
-the usual aggregate summary plus `persisted=True/False`, and does not create
-live instructions or mutate exchange state.
+the usual aggregate summary plus `persisted=True/False`.
+It does not create live instructions or mutate exchange state.
+
+DB History Readback:
+
+```bash
+.venv/bin/polymarket-alpha-lab paper-autonomous-allocation-proposal-db-history --limit 25
+```
+
+The DB history readback is env-only, read-only, paper-only/report-only/readonly,
+and accepts only `--limit`. It reads the final allocation proposal DB configured
+by env and reads only persisted final allocation proposal reports.
+
+It does not write reports and does not read upstream tables.
+It does not place orders, approve execution, read accounts, or mutate exchange state.
+It prints aggregate history status, proposal-status counts, latest aggregate
+allocation counts, duplicate timestamp count, and reason-code summaries.
 
 Boundary: no live trading, no auth, no key handling, no wallet handling, no account handling, no account reads, no order construction, no order signing, no order submission, no order cancellation, no order replacement, no exchange mutation, no investment ranking, not automatic live investing, and not an approval workflow.
 
