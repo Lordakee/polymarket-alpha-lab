@@ -19,6 +19,7 @@ REQUIRED_HEADINGS = (
     "## Transaction and Cost Awareness",
     "## CLI Contract",
     "## DB History Health",
+    "## DB History Health Persistence",
     "## DB History Health Trend",
     "## DB History Health Trend Gate",
     "## Review Boundaries",
@@ -58,6 +59,18 @@ REQUIRED_PHRASES = (
     "paper-autonomous-allocation-proposal-db-history --limit 25",
     "paper-autonomous-allocation-proposal-db-history-gate --limit 25",
     "paper-autonomous-allocation-proposal-db-history-health --limit 25",
+    "DB history health persistence stores already-built DB history health reports as local DB audit evidence",
+    "local DB persistence for DB history health reports is optional, default-off, env-driven, and separate from the read-only health command",
+    "persists only already-built health reports",
+    "does not recompute proposal history, run trend or gate logic, read upstream tables, fetch market data, or mutate exchange state",
+    "persisted health rows are audit evidence only",
+    "not approval workflow records",
+    "not order intents",
+    "not execution requests",
+    "not strategy promotion signals",
+    "not trade instructions",
+    "not recommendations",
+    "not rankings",
     "paper-autonomous-allocation-proposal-db-history-health-trend --limit 25",
     "paper-autonomous-allocation-proposal-db-history-health-trend-gate --limit 25",
     "reads only persisted final allocation proposal reports",
@@ -133,6 +146,11 @@ REQUIRED_README_PHRASES = (
     "prints aggregate health-trend gate status, recommended next step, latest health status, sample counts, duplicate timestamp count, latest streak counts, health-delta signals, and reason-code counts",
 )
 
+REQUIRED_README_PHASE_1_PHRASES = (
+    "paper autonomous allocation proposal DB-history health-trend gate artifacts",
+    "local DB persistence for DB-history health reports",
+)
+
 SECRET_VALUE_PATTERNS = (
     r"postgres(?:ql)?://",
     r"\b(?:database_url|dsn|supabase_[a-z_]*key|pgpassword)\s*=",
@@ -199,6 +217,18 @@ def _readme_allocation_section() -> str:
     readme_text = _readme_text()
     section_marker = "Paper Autonomous Allocation Proposal"
     next_section_marker = "## Level 1B Node 1 Status"
+    assert section_marker in readme_text
+    assert next_section_marker in readme_text
+    start = readme_text.index(section_marker)
+    end = readme_text.index(next_section_marker)
+    assert start < end
+    return readme_text[start:end]
+
+
+def _readme_phase_1_scope_section() -> str:
+    readme_text = _readme_text()
+    section_marker = "## Phase 1 Scope"
+    next_section_marker = "## Phase 1 Operational Freeze"
     assert section_marker in readme_text
     assert next_section_marker in readme_text
     start = readme_text.index(section_marker)
@@ -345,6 +375,14 @@ def test_readme_links_operator_doc_and_states_cli_contract() -> None:
     normalized = _normalized(section_text)
 
     for phrase in REQUIRED_README_PHRASES:
+        assert phrase in normalized
+
+
+def test_readme_phase_1_scope_mentions_health_trend_gate_and_health_persistence() -> None:
+    section_text = _readme_phase_1_scope_section()
+    normalized = _normalized(section_text)
+
+    for phrase in REQUIRED_README_PHASE_1_PHRASES:
         assert phrase in normalized
 
 

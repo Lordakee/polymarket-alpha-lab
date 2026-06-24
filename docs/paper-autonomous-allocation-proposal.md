@@ -141,6 +141,16 @@ The health status is not permission to trade. It is not financial advice, not in
 
 It prints aggregate health status, source history status, latest aggregate allocation counts, duplicate timestamp count, and reason-code counts.
 
+## DB History Health Persistence
+
+DB history health persistence stores already-built DB history health reports as local DB audit evidence.
+
+Local DB persistence for DB history health reports is optional, default-off, env-driven, and separate from the read-only health command.
+
+It persists only already-built health reports. It does not recompute proposal history, run trend or gate logic, read upstream tables, fetch market data, or mutate exchange state.
+
+Persisted health rows are audit evidence only. They are not approval workflow records, not order intents, not execution requests, not strategy promotion signals, not trade instructions, not recommendations, not rankings, and not financial advice.
+
 ## DB History Health Trend
 
 The DB history health trend command is env-only, read-only, paper-only/report-only/readonly, and no-write:
