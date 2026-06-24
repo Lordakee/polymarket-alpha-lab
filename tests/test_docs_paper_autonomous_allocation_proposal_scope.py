@@ -60,6 +60,7 @@ REQUIRED_PHRASES = (
     "paper-autonomous-allocation-proposal-db-history --limit 25",
     "paper-autonomous-allocation-proposal-db-history-gate --limit 25",
     "paper-autonomous-allocation-proposal-db-history-metrics --limit 25",
+    "paper-autonomous-allocation-proposal-db-history-metrics-evaluation --limit 25",
     "paper-autonomous-allocation-proposal-db-history-health --limit 25",
     "DB history health persistence stores already-built DB history health reports as local DB audit evidence",
     "local DB persistence for DB history health reports is optional, default-off, env-driven, and available only through the health command's explicit `--persist` flag",
@@ -140,6 +141,7 @@ REQUIRED_README_PHRASES = (
     ".venv/bin/polymarket-alpha-lab paper-autonomous-allocation-proposal-db-history --limit 25",
     ".venv/bin/polymarket-alpha-lab paper-autonomous-allocation-proposal-db-history-gate --limit 25",
     ".venv/bin/polymarket-alpha-lab paper-autonomous-allocation-proposal-db-history-metrics --limit 25",
+    ".venv/bin/polymarket-alpha-lab paper-autonomous-allocation-proposal-db-history-metrics-evaluation --limit 25",
     ".venv/bin/polymarket-alpha-lab paper-autonomous-allocation-proposal-db-history-health --limit 25",
     ".venv/bin/polymarket-alpha-lab paper-autonomous-allocation-proposal-db-history-health --limit 25 --persist",
     ".venv/bin/polymarket-alpha-lab paper-autonomous-allocation-proposal-db-history-health-trend --limit 25",
@@ -331,6 +333,9 @@ def test_readme_places_allocation_section_after_screening_gate_block() -> None:
     db_history_metrics_command_marker = (
         "paper-autonomous-allocation-proposal-db-history-metrics --limit 25"
     )
+    db_history_metrics_evaluation_command_marker = (
+        "paper-autonomous-allocation-proposal-db-history-metrics-evaluation --limit 25"
+    )
     db_history_health_command_marker = (
         "paper-autonomous-allocation-proposal-db-history-health --limit 25"
     )
@@ -351,6 +356,7 @@ def test_readme_places_allocation_section_after_screening_gate_block() -> None:
     assert db_history_command_marker in readme_text
     assert db_history_gate_command_marker in readme_text
     assert db_history_metrics_command_marker in readme_text
+    assert db_history_metrics_evaluation_command_marker in readme_text
     assert db_history_health_command_marker in readme_text
     assert db_history_health_trend_command_marker in readme_text
     assert db_history_health_trend_gate_command_marker in readme_text
@@ -373,9 +379,13 @@ def test_readme_places_allocation_section_after_screening_gate_block() -> None:
         db_history_metrics_command_marker,
         db_history_gate_command_start,
     )
+    db_history_metrics_evaluation_command_start = readme_text.index(
+        db_history_metrics_evaluation_command_marker,
+        db_history_metrics_command_start,
+    )
     db_history_health_command_start = readme_text.index(
         db_history_health_command_marker,
-        db_history_metrics_command_start,
+        db_history_metrics_evaluation_command_start,
     )
     db_history_health_trend_command_start = readme_text.index(
         db_history_health_trend_command_marker,
@@ -396,6 +406,7 @@ def test_readme_places_allocation_section_after_screening_gate_block() -> None:
         < db_history_command_start
         < db_history_gate_command_start
         < db_history_metrics_command_start
+        < db_history_metrics_evaluation_command_start
         < db_history_health_command_start
         < db_history_health_trend_command_start
         < db_history_health_trend_gate_command_start

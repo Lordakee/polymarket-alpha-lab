@@ -295,6 +295,7 @@ PaperAutonomousAllocationProposalDbHistoryRunner = Callable[..., object]
 PaperAutonomousAllocationProposalDbHistoryGateRunner = Callable[..., object]
 PaperAutonomousAllocationProposalDbHistoryHealthRunner = Callable[..., object]
 PaperAutonomousAllocationProposalDbHistoryMetricsRunner = Callable[..., object]
+PaperAutonomousAllocationProposalDbHistoryMetricsEvaluationRunner = Callable[..., object]
 PaperAutonomousAllocationProposalDbHistoryHealthDbSink = Callable[..., object]
 PaperAutonomousAllocationProposalDbHistoryHealthTrendRunner = Callable[..., object]
 PaperAutonomousAllocationProposalDbHistoryHealthTrendGateRunner = Callable[
@@ -972,6 +973,9 @@ def main(
     ) = None,
     paper_autonomous_allocation_proposal_db_history_metrics_runner: (
         PaperAutonomousAllocationProposalDbHistoryMetricsRunner | None
+    ) = None,
+    paper_autonomous_allocation_proposal_db_history_metrics_evaluation_runner: (
+        PaperAutonomousAllocationProposalDbHistoryMetricsEvaluationRunner | None
     ) = None,
     paper_autonomous_allocation_proposal_db_history_health_db_sink: (
         PaperAutonomousAllocationProposalDbHistoryHealthDbSink | None
@@ -1673,6 +1677,16 @@ def main(
         allow_abbrev=False,
     )
     paper_autonomous_allocation_proposal_db_history_metrics.add_argument(
+        "--limit",
+        type=int,
+        default=25,
+        dest="limit",
+    )
+    paper_autonomous_allocation_proposal_db_history_metrics_evaluation = subparsers.add_parser(
+        "paper-autonomous-allocation-proposal-db-history-metrics-evaluation",
+        allow_abbrev=False,
+    )
+    paper_autonomous_allocation_proposal_db_history_metrics_evaluation.add_argument(
         "--limit",
         type=int,
         default=25,
@@ -3279,6 +3293,48 @@ def main(
         except Exception as exc:
             print(
                 f"{command_name} failed: {exc}",
+                file=sys.stderr,
+            )
+            return 1
+
+    if args.command == "paper-autonomous-allocation-proposal-db-history-metrics-evaluation":
+        command_name = "paper-autonomous-allocation-proposal-db-history-metrics-evaluation"
+        try:
+            if isinstance(args.limit, bool) or type(args.limit) is not int or args.limit < 1:
+                raise ValueError(f"{command_name} limit must be positive")
+            allocation_proposal_db_config = (
+                from_paper_autonomous_allocation_proposal_db_env()
+            )
+            if not allocation_proposal_db_config.enabled:
+                raise ValueError(
+                    f"{command_name} requires autonomous allocation proposal DB "
+                    "to be enabled",
+                )
+            dsn = allocation_proposal_db_config.dsn
+            if dsn is None:
+                raise ValueError(
+                    f"{command_name} requires an autonomous allocation proposal DB DSN",
+                )
+            try:
+                report = _run_paper_autonomous_allocation_proposal_db_history_metrics_evaluation(
+                    dsn=dsn,
+                    table_name=allocation_proposal_db_config.table_name,
+                    limit=args.limit,
+                    runner=paper_autonomous_allocation_proposal_db_history_metrics_evaluation_runner,
+                )
+            except Exception as exc:
+                raise _redacted_paper_research_packet_db_history_error(
+                    exc,
+                    dsn=dsn,
+                    table_name=allocation_proposal_db_config.table_name,
+                ) from None
+            _print_paper_autonomous_allocation_proposal_db_history_metrics_evaluation_summary(
+                report,
+            )
+            return 0
+        except Exception as exc:
+            print(
+                f"error: {command_name}: {exc}",
                 file=sys.stderr,
             )
             return 1
@@ -6407,6 +6463,81 @@ def _run_paper_autonomous_allocation_proposal_db_history_gate(
             pass
 
 
+def _run_paper_autonomous_allocation_proposal_db_history_metrics_evaluation(
+    *,
+    dsn: str,
+    table_name: str,
+    limit: int,
+    runner: PaperAutonomousAllocationProposalDbHistoryMetricsEvaluationRunner | None,
+) -> object:
+    command_name = "paper-autonomous-allocation-proposal-db-history-metrics-evaluation"
+    if isinstance(limit, bool) or type(limit) is not int or limit < 1:
+        raise ValueError(f"{command_name} limit must be positive")
+    generated_at = datetime.now(UTC)
+
+    from polymarket_alpha_lab.paper_autonomous_allocation_proposal_db_history_metrics_evaluation import (
+        PaperAutonomousAllocationProposalDbHistoryMetricsEvaluationConfig,
+    )
+
+    config = PaperAutonomousAllocationProposalDbHistoryMetricsEvaluationConfig()
+    if runner is not None:
+        try:
+            return runner(
+                dsn=dsn,
+                table_name=table_name,
+                limit=limit,
+                config=config,
+                generated_at=generated_at,
+            )
+        except Exception as exc:
+            raise _redacted_paper_research_packet_db_history_error(
+                exc,
+                dsn=dsn,
+                table_name=table_name,
+            ) from None
+
+    from polymarket_alpha_lab.paper_autonomous_allocation_proposal_db_history_metrics_evaluation_load import (
+        load_paper_autonomous_allocation_proposal_db_history_metrics_evaluation_report,
+    )
+
+    try:
+        import psycopg
+    except ModuleNotFoundError as exc:
+        if exc.name != "psycopg":
+            raise
+        raise RuntimeError(
+            "psycopg is required to use the paper autonomous allocation proposal "
+            "DB history metrics evaluation read adapter; install the postgres extra.",
+        ) from exc
+    try:
+        connection = psycopg.connect(dsn, autocommit=True)
+    except Exception as exc:
+        raise _redacted_paper_research_packet_db_history_error(
+            exc,
+            dsn=dsn,
+            table_name=table_name,
+        ) from None
+    try:
+        return load_paper_autonomous_allocation_proposal_db_history_metrics_evaluation_report(
+            connection,
+            limit=limit,
+            table_name=table_name,
+            config=config,
+            generated_at=generated_at,
+        )
+    except Exception as exc:
+        raise _redacted_paper_research_packet_db_history_error(
+            exc,
+            dsn=dsn,
+            table_name=table_name,
+        ) from None
+    finally:
+        try:
+            connection.close()
+        except Exception:
+            pass
+
+
 def _run_paper_autonomous_allocation_proposal_db_history_metrics(
     *,
     dsn: str,
@@ -8219,6 +8350,43 @@ def _print_paper_autonomous_allocation_proposal_db_history_gate_summary(
         for row in report.reason_code_counts
     )
     print(f"reason_code_counts: {reason_code_counts or 'none'}")
+
+
+def _print_paper_autonomous_allocation_proposal_db_history_metrics_evaluation_summary(
+    report: object,
+) -> None:
+    top_reason_codes = "none"
+    if getattr(report, "diagnostics", None) is not None and getattr(
+        report.diagnostics, "top_reason_codes", None
+    ):
+        top_reason_codes = ",".join(report.diagnostics.top_reason_codes)
+    largest_concentration_group_type = "none"
+    largest_concentration_share = "none"
+    if getattr(report, "diagnostics", None) is not None:
+        largest_concentration_group_type = _none_or_value(
+            report.diagnostics.largest_concentration_group_type,
+        )
+        largest_concentration_share = _none_or_value(
+            report.diagnostics.largest_concentration_share,
+        )
+    summary_parts = [
+        "paper-autonomous-allocation-proposal-db-history-metrics-evaluation:",
+        f"evaluation_status={report.evaluation_status}",
+        f"recommended_next_step={report.recommended_next_step}",
+        f"source_report_count={report.source_report_count}",
+        f"latest_report_generated_at={_none_or_value(report.latest_report_generated_at)}",
+        f"top_reason_codes={top_reason_codes}",
+        f"top_reason_code_limit={report.diagnostics.top_reason_code_limit}",
+        f"evaluated_budget_utilization={report.diagnostics.evaluated_budget_utilization}",
+        f"evaluated_requested_fill_ratio={report.diagnostics.evaluated_requested_fill_ratio}",
+        f"evaluated_concentration={report.diagnostics.evaluated_concentration}",
+        f"evaluated_churn={report.diagnostics.evaluated_churn}",
+        f"evaluated_edge_coverage={report.diagnostics.evaluated_edge_coverage}",
+        f"evaluated_edge_quality={report.diagnostics.evaluated_edge_quality}",
+        f"largest_concentration_group_type={largest_concentration_group_type}",
+        f"largest_concentration_share={largest_concentration_share}",
+    ]
+    print(" ".join(summary_parts))
 
 
 def _print_paper_autonomous_allocation_proposal_db_history_metrics_summary(

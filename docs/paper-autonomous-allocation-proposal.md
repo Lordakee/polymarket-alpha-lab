@@ -143,6 +143,21 @@ It does not place orders, approve execution, read accounts, or mutate exchange s
 
 It is not financial advice, not investment ranking, not automatic live investing, not order instruction, and not execution authorization.
 
+## DB History Metrics Evaluation
+
+The DB history metrics evaluation command is env-only, read-only, paper-only/report-only/readonly, and no-write:
+
+```bash
+.venv/bin/polymarket-alpha-lab paper-autonomous-allocation-proposal-db-history-metrics-evaluation --limit 25
+```
+
+It accepts only `--limit`. It reads the final allocation proposal DB configured by env, reads only persisted final allocation proposal reports, builds metrics from them, and evaluates the resulting aggregate allocation diagnostics. In v0 it evaluates persisted metrics built from the same DB-selected proposal history selected by the table and `--limit`.
+
+It does not write reports and does not read upstream screening/queue tables.
+It does not place orders, approve execution, read accounts, or mutate exchange state.
+
+It is not financial advice, not investment ranking, not automatic live investing, not order instruction, and not execution authorization.
+
 ## DB History Health
 
 The DB history health command is env-only, read-only by default, and paper-only/report-only/readonly:
