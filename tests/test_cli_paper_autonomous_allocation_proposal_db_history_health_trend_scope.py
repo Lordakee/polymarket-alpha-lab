@@ -16,8 +16,13 @@ COMMAND = "paper-autonomous-allocation-proposal-db-history-health-trend"
     "argv",
     (
         [COMMAND, "--dsn", "postgresql://allocation-proposal.example.invalid/db"],
-        [COMMAND, "--table", "paper_autonomous_allocation_proposal_reports"],
+        [
+            COMMAND,
+            "--table",
+            "paper_autonomous_allocation_proposal_db_history_health_reports",
+        ],
         [COMMAND, "--persist"],
+        [COMMAND, "--lim", "7"],
         [COMMAND, "--fast"],
         [COMMAND, "--live"],
         [COMMAND, "--auth", "token"],

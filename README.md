@@ -381,13 +381,13 @@ DB History Health Trend:
 
 The DB history health trend command is env-only, read-only,
 paper-only/report-only/readonly, and no-write. It accepts only `--limit`. It
-reads the final allocation proposal DB configured by env and reads only
-persisted final allocation proposal history through DB history readback before
-building one read-only trend report over that caller-selected window.
+reads the separate DB-history health DB configured by env and reads only
+persisted DB-history health reports before building one read-only trend report
+over that caller-selected window.
 
-When fewer persisted proposal reports than the DB-history minimum are
-available, the loader emits one blocked boundary health snapshot so
-insufficient history remains visible in the trend output.
+When no persisted health reports are available, the loader builds an empty
+trend report. Boundary health snapshots are produced by the health command,
+then optionally persisted with `--persist`.
 
 It does not write reports and does not read upstream screening/queue tables.
 It does not place orders, approve execution, read accounts, or mutate exchange state.
@@ -403,9 +403,9 @@ Command: `.venv/bin/polymarket-alpha-lab paper-autonomous-allocation-proposal-db
 
 The DB history health trend gate command is env-only, read-only,
 paper-only/report-only/readonly, and no-write. It accepts only `--limit`.
-It reads the final allocation proposal DB configured by env, derives the DB
-history health trend from persisted final allocation proposal history, and
-prints one aggregate gate report.
+It reads the separate DB-history health DB configured by env, derives the DB
+history health trend from persisted DB-history health reports, and prints one
+aggregate gate report.
 
 It does not write reports and does not read upstream screening/queue tables.
 It does not place orders, approve execution, read accounts, or mutate exchange state.

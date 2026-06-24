@@ -1682,6 +1682,7 @@ def main(
     )
     paper_autonomous_allocation_proposal_db_history_health_trend = subparsers.add_parser(
         "paper-autonomous-allocation-proposal-db-history-health-trend",
+        allow_abbrev=False,
     )
     paper_autonomous_allocation_proposal_db_history_health_trend.add_argument(
         "--limit",
@@ -3375,24 +3376,23 @@ def main(
         try:
             if isinstance(args.limit, bool) or type(args.limit) is not int or args.limit < 1:
                 raise ValueError(f"{command_name} limit must be positive")
-            allocation_proposal_db_config = (
-                from_paper_autonomous_allocation_proposal_db_env()
+            health_db_config = (
+                from_paper_autonomous_allocation_proposal_db_history_health_db_env()
             )
-            if not allocation_proposal_db_config.enabled:
+            if not health_db_config.enabled:
                 raise ValueError(
-                    f"{command_name} requires autonomous allocation proposal DB "
-                    "to be enabled",
+                    f"{command_name} requires DB-history health DB to be enabled",
                 )
-            dsn = allocation_proposal_db_config.dsn
+            dsn = health_db_config.dsn
             if dsn is None:
                 raise ValueError(
-                    f"{command_name} requires an autonomous allocation proposal DB DSN",
+                    f"{command_name} requires a DB-history health DB DSN",
                 )
             try:
                 report = (
                     _run_paper_autonomous_allocation_proposal_db_history_health_trend(
                         dsn=dsn,
-                        table_name=allocation_proposal_db_config.table_name,
+                        table_name=health_db_config.table_name,
                         limit=args.limit,
                         runner=(
                             paper_autonomous_allocation_proposal_db_history_health_trend_runner
@@ -3403,7 +3403,7 @@ def main(
                 raise _redacted_paper_research_packet_db_history_error(
                     exc,
                     dsn=dsn,
-                    table_name=allocation_proposal_db_config.table_name,
+                    table_name=health_db_config.table_name,
                 ) from None
             _print_paper_autonomous_allocation_proposal_db_history_health_trend_summary(
                 report,
@@ -3426,24 +3426,23 @@ def main(
         try:
             if isinstance(args.limit, bool) or type(args.limit) is not int or args.limit < 1:
                 raise ValueError(f"{command_name} limit must be positive")
-            allocation_proposal_db_config = (
-                from_paper_autonomous_allocation_proposal_db_env()
+            health_db_config = (
+                from_paper_autonomous_allocation_proposal_db_history_health_db_env()
             )
-            if not allocation_proposal_db_config.enabled:
+            if not health_db_config.enabled:
                 raise ValueError(
-                    f"{command_name} requires autonomous allocation proposal DB "
-                    "to be enabled",
+                    f"{command_name} requires DB-history health DB to be enabled",
                 )
-            dsn = allocation_proposal_db_config.dsn
+            dsn = health_db_config.dsn
             if dsn is None:
                 raise ValueError(
-                    f"{command_name} requires an autonomous allocation proposal DB DSN",
+                    f"{command_name} requires a DB-history health DB DSN",
                 )
             try:
                 report = (
                     _run_paper_autonomous_allocation_proposal_db_history_health_trend_gate(
                         dsn=dsn,
-                        table_name=allocation_proposal_db_config.table_name,
+                        table_name=health_db_config.table_name,
                         limit=args.limit,
                         runner=(
                             paper_autonomous_allocation_proposal_db_history_health_trend_gate_runner
@@ -3454,7 +3453,7 @@ def main(
                 raise _redacted_paper_research_packet_db_history_error(
                     exc,
                     dsn=dsn,
-                    table_name=allocation_proposal_db_config.table_name,
+                    table_name=health_db_config.table_name,
                 ) from None
             _print_paper_autonomous_allocation_proposal_db_history_health_trend_gate_summary(
                 report,
@@ -6443,9 +6442,6 @@ def _run_paper_autonomous_allocation_proposal_db_history_health_trend(
         raise ValueError(f"{command_name} limit must be positive")
     generated_at = datetime.now(UTC)
 
-    from polymarket_alpha_lab.paper_autonomous_allocation_proposal_db_history import (
-        PaperAutonomousAllocationProposalDbHistoryConfig,
-    )
     from polymarket_alpha_lab.paper_autonomous_allocation_proposal_db_history_health import (
         PaperAutonomousAllocationProposalDbHistoryHealthConfig,
     )
@@ -6453,7 +6449,6 @@ def _run_paper_autonomous_allocation_proposal_db_history_health_trend(
         PaperAutonomousAllocationProposalDbHistoryHealthTrendConfig,
     )
 
-    history_config = PaperAutonomousAllocationProposalDbHistoryConfig()
     health_config = PaperAutonomousAllocationProposalDbHistoryHealthConfig()
     trend_config = PaperAutonomousAllocationProposalDbHistoryHealthTrendConfig()
     if runner is not None:
@@ -6462,7 +6457,6 @@ def _run_paper_autonomous_allocation_proposal_db_history_health_trend(
                 dsn=dsn,
                 table_name=table_name,
                 limit=limit,
-                history_config=history_config,
                 health_config=health_config,
                 trend_config=trend_config,
                 generated_at=generated_at,
@@ -6498,7 +6492,6 @@ def _run_paper_autonomous_allocation_proposal_db_history_health_trend(
             connection,
             limit=limit,
             table_name=table_name,
-            history_config=history_config,
             health_config=health_config,
             trend_config=trend_config,
             generated_at=generated_at,
@@ -6532,9 +6525,6 @@ def _run_paper_autonomous_allocation_proposal_db_history_health_trend_gate(
         raise ValueError(f"{command_name} limit must be positive")
     generated_at = datetime.now(UTC)
 
-    from polymarket_alpha_lab.paper_autonomous_allocation_proposal_db_history import (
-        PaperAutonomousAllocationProposalDbHistoryConfig,
-    )
     from polymarket_alpha_lab.paper_autonomous_allocation_proposal_db_history_health import (
         PaperAutonomousAllocationProposalDbHistoryHealthConfig,
     )
@@ -6545,7 +6535,6 @@ def _run_paper_autonomous_allocation_proposal_db_history_health_trend_gate(
         PaperAutonomousAllocationProposalDbHistoryHealthTrendGateConfig,
     )
 
-    history_config = PaperAutonomousAllocationProposalDbHistoryConfig()
     health_config = PaperAutonomousAllocationProposalDbHistoryHealthConfig()
     trend_config = PaperAutonomousAllocationProposalDbHistoryHealthTrendConfig()
     gate_config = PaperAutonomousAllocationProposalDbHistoryHealthTrendGateConfig()
@@ -6555,7 +6544,6 @@ def _run_paper_autonomous_allocation_proposal_db_history_health_trend_gate(
                 dsn=dsn,
                 table_name=table_name,
                 limit=limit,
-                history_config=history_config,
                 health_config=health_config,
                 trend_config=trend_config,
                 gate_config=gate_config,
@@ -6592,7 +6580,6 @@ def _run_paper_autonomous_allocation_proposal_db_history_health_trend_gate(
             connection,
             limit=limit,
             table_name=table_name,
-            history_config=history_config,
             health_config=health_config,
             trend_config=trend_config,
             gate_config=gate_config,

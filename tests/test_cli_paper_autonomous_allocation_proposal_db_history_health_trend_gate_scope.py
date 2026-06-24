@@ -73,7 +73,7 @@ def test_health_trend_gate_rejects_forbidden_flags_before_env_runner_or_connect(
 
     monkeypatch.setattr(
         cli,
-        "from_paper_autonomous_allocation_proposal_db_env",
+        "from_paper_autonomous_allocation_proposal_db_history_health_db_env",
         forbidden_env,
     )
     monkeypatch.setattr(builtins, "__import__", forbidden_import)
@@ -113,7 +113,7 @@ def test_health_trend_gate_rejects_abbreviated_limit_flag_before_env_runner_or_c
 
     monkeypatch.setattr(
         cli,
-        "from_paper_autonomous_allocation_proposal_db_env",
+        "from_paper_autonomous_allocation_proposal_db_history_health_db_env",
         forbidden_env,
     )
 

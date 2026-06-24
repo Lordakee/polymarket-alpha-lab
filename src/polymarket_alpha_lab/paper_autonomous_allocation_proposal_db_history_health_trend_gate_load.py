@@ -1,12 +1,9 @@
-"""Read-only loader composition for the DB-history health trend gate."""
+"""Read-only loader composition for the persisted DB-history health trend gate."""
 
 from __future__ import annotations
 
 from datetime import datetime
 
-from polymarket_alpha_lab.paper_autonomous_allocation_proposal_db_history import (
-    PaperAutonomousAllocationProposalDbHistoryConfig,
-)
 from polymarket_alpha_lab.paper_autonomous_allocation_proposal_db_history_health import (
     PaperAutonomousAllocationProposalDbHistoryHealthConfig,
 )
@@ -32,16 +29,11 @@ def load_paper_autonomous_allocation_proposal_db_history_health_trend_gate_repor
     *,
     limit: int | None,
     table_name: str,
-    history_config: PaperAutonomousAllocationProposalDbHistoryConfig,
     health_config: PaperAutonomousAllocationProposalDbHistoryHealthConfig,
     trend_config: PaperAutonomousAllocationProposalDbHistoryHealthTrendConfig,
     gate_config: PaperAutonomousAllocationProposalDbHistoryHealthTrendGateConfig,
     generated_at: datetime,
 ) -> PaperAutonomousAllocationProposalDbHistoryHealthTrendGateReport:
-    if type(history_config) is not PaperAutonomousAllocationProposalDbHistoryConfig:
-        raise ValueError(
-            "history_config must be a PaperAutonomousAllocationProposalDbHistoryConfig",
-        )
     if type(health_config) is not PaperAutonomousAllocationProposalDbHistoryHealthConfig:
         raise ValueError(
             "health_config must be a PaperAutonomousAllocationProposalDbHistoryHealthConfig",
@@ -61,7 +53,6 @@ def load_paper_autonomous_allocation_proposal_db_history_health_trend_gate_repor
         connection,
         limit=limit,
         table_name=table_name,
-        history_config=history_config,
         health_config=health_config,
         trend_config=trend_config,
         generated_at=generated_at,

@@ -10,11 +10,6 @@ from pathlib import Path
 
 import pytest
 
-from polymarket_alpha_lab.paper_autonomous_allocation_proposal_db_history import (
-    PaperAutonomousAllocationProposalDbHistoryConfig,
-)
-
-
 GENERATED_AT = datetime(2026, 6, 24, 12, 0, tzinfo=UTC)
 
 
@@ -143,7 +138,6 @@ def _make_health_trend_loader_module_stub() -> types.ModuleType:
         *,
         limit: int | None,
         table_name: str,
-        history_config: PaperAutonomousAllocationProposalDbHistoryConfig,
         health_config: PaperAutonomousAllocationProposalDbHistoryHealthConfig,
         trend_config: PaperAutonomousAllocationProposalDbHistoryHealthTrendConfig,
         generated_at: datetime,
@@ -194,7 +188,6 @@ def test_loader_composes_health_trend_loader_and_gate_reducer(
 ) -> None:
     module_under_test = _load_module(monkeypatch)
     connection = object()
-    history_config = PaperAutonomousAllocationProposalDbHistoryConfig()
     health_config = PaperAutonomousAllocationProposalDbHistoryHealthConfig()
     trend_config = PaperAutonomousAllocationProposalDbHistoryHealthTrendConfig()
     gate_config = PaperAutonomousAllocationProposalDbHistoryHealthTrendGateConfig()
@@ -208,7 +201,6 @@ def test_loader_composes_health_trend_loader_and_gate_reducer(
         *,
         limit: int | None,
         table_name: str,
-        history_config: PaperAutonomousAllocationProposalDbHistoryConfig,
         health_config: PaperAutonomousAllocationProposalDbHistoryHealthConfig,
         trend_config: PaperAutonomousAllocationProposalDbHistoryHealthTrendConfig,
         generated_at: datetime,
@@ -218,7 +210,6 @@ def test_loader_composes_health_trend_loader_and_gate_reducer(
                 "connection": connection,
                 "limit": limit,
                 "table_name": table_name,
-                "history_config": history_config,
                 "health_config": health_config,
                 "trend_config": trend_config,
                 "generated_at": generated_at,
@@ -257,8 +248,7 @@ def test_loader_composes_health_trend_loader_and_gate_reducer(
         .load_paper_autonomous_allocation_proposal_db_history_health_trend_gate_report(
             connection,
             limit=25,
-            table_name="paper_autonomous_allocation_proposal_reports_test",
-            history_config=history_config,
+            table_name="paper_autonomous_allocation_proposal_db_history_health_reports_test",
             health_config=health_config,
             trend_config=trend_config,
             gate_config=gate_config,
@@ -271,8 +261,9 @@ def test_loader_composes_health_trend_loader_and_gate_reducer(
         {
             "connection": connection,
             "limit": 25,
-            "table_name": "paper_autonomous_allocation_proposal_reports_test",
-            "history_config": history_config,
+            "table_name": (
+                "paper_autonomous_allocation_proposal_db_history_health_reports_test"
+            ),
             "health_config": health_config,
             "trend_config": trend_config,
             "generated_at": GENERATED_AT,
@@ -291,9 +282,6 @@ def test_loader_rejects_non_exact_configs_before_trend_read(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     module_under_test = _load_module(monkeypatch)
-
-    class HistoryConfigSubclass(PaperAutonomousAllocationProposalDbHistoryConfig):
-        pass
 
     class HealthConfigSubclass(PaperAutonomousAllocationProposalDbHistoryHealthConfig):
         pass
@@ -315,7 +303,6 @@ def test_loader_rejects_non_exact_configs_before_trend_read(
         *,
         limit: int | None,
         table_name: str,
-        history_config: PaperAutonomousAllocationProposalDbHistoryConfig,
         health_config: PaperAutonomousAllocationProposalDbHistoryHealthConfig,
         trend_config: PaperAutonomousAllocationProposalDbHistoryHealthTrendConfig,
         generated_at: datetime,
@@ -332,55 +319,35 @@ def test_loader_rejects_non_exact_configs_before_trend_read(
     invalid_cases = (
         (
             object(),
-            PaperAutonomousAllocationProposalDbHistoryHealthConfig(),
-            PaperAutonomousAllocationProposalDbHistoryHealthTrendConfig(),
-            PaperAutonomousAllocationProposalDbHistoryHealthTrendGateConfig(),
-            "history_config must be a PaperAutonomousAllocationProposalDbHistoryConfig",
-        ),
-        (
-            HistoryConfigSubclass(),
-            PaperAutonomousAllocationProposalDbHistoryHealthConfig(),
-            PaperAutonomousAllocationProposalDbHistoryHealthTrendConfig(),
-            PaperAutonomousAllocationProposalDbHistoryHealthTrendGateConfig(),
-            "history_config must be a PaperAutonomousAllocationProposalDbHistoryConfig",
-        ),
-        (
-            PaperAutonomousAllocationProposalDbHistoryConfig(),
-            object(),
             PaperAutonomousAllocationProposalDbHistoryHealthTrendConfig(),
             PaperAutonomousAllocationProposalDbHistoryHealthTrendGateConfig(),
             "health_config must be a PaperAutonomousAllocationProposalDbHistoryHealthConfig",
         ),
         (
-            PaperAutonomousAllocationProposalDbHistoryConfig(),
             HealthConfigSubclass(),
             PaperAutonomousAllocationProposalDbHistoryHealthTrendConfig(),
             PaperAutonomousAllocationProposalDbHistoryHealthTrendGateConfig(),
             "health_config must be a PaperAutonomousAllocationProposalDbHistoryHealthConfig",
         ),
         (
-            PaperAutonomousAllocationProposalDbHistoryConfig(),
             PaperAutonomousAllocationProposalDbHistoryHealthConfig(),
             object(),
             PaperAutonomousAllocationProposalDbHistoryHealthTrendGateConfig(),
             "trend_config must be a PaperAutonomousAllocationProposalDbHistoryHealthTrendConfig",
         ),
         (
-            PaperAutonomousAllocationProposalDbHistoryConfig(),
             PaperAutonomousAllocationProposalDbHistoryHealthConfig(),
             TrendConfigSubclass(),
             PaperAutonomousAllocationProposalDbHistoryHealthTrendGateConfig(),
             "trend_config must be a PaperAutonomousAllocationProposalDbHistoryHealthTrendConfig",
         ),
         (
-            PaperAutonomousAllocationProposalDbHistoryConfig(),
             PaperAutonomousAllocationProposalDbHistoryHealthConfig(),
             PaperAutonomousAllocationProposalDbHistoryHealthTrendConfig(),
             object(),
             "gate_config must be a PaperAutonomousAllocationProposalDbHistoryHealthTrendGateConfig",
         ),
         (
-            PaperAutonomousAllocationProposalDbHistoryConfig(),
             PaperAutonomousAllocationProposalDbHistoryHealthConfig(),
             PaperAutonomousAllocationProposalDbHistoryHealthTrendConfig(),
             GateConfigSubclass(),
@@ -389,7 +356,6 @@ def test_loader_rejects_non_exact_configs_before_trend_read(
     )
 
     for (
-        history_config,
         health_config,
         trend_config,
         gate_config,
@@ -401,8 +367,9 @@ def test_loader_rejects_non_exact_configs_before_trend_read(
                 .load_paper_autonomous_allocation_proposal_db_history_health_trend_gate_report(
                     object(),
                     limit=5,
-                    table_name="paper_autonomous_allocation_proposal_reports_test",
-                    history_config=history_config,
+                    table_name=(
+                        "paper_autonomous_allocation_proposal_db_history_health_reports_test"
+                    ),
                     health_config=health_config,
                     trend_config=trend_config,
                     gate_config=gate_config,
@@ -418,7 +385,6 @@ def test_loader_does_not_manage_connection_lifecycle_or_write(
 ) -> None:
     module_under_test = _load_module(monkeypatch)
     connection = NoMutationConnection()
-    history_config = PaperAutonomousAllocationProposalDbHistoryConfig()
     health_config = PaperAutonomousAllocationProposalDbHistoryHealthConfig()
     trend_config = PaperAutonomousAllocationProposalDbHistoryHealthTrendConfig()
     gate_config = PaperAutonomousAllocationProposalDbHistoryHealthTrendGateConfig()
@@ -432,7 +398,6 @@ def test_loader_does_not_manage_connection_lifecycle_or_write(
         *,
         limit: int | None,
         table_name: str,
-        history_config: PaperAutonomousAllocationProposalDbHistoryConfig,
         health_config: PaperAutonomousAllocationProposalDbHistoryHealthConfig,
         trend_config: PaperAutonomousAllocationProposalDbHistoryHealthTrendConfig,
         generated_at: datetime,
@@ -471,8 +436,7 @@ def test_loader_does_not_manage_connection_lifecycle_or_write(
         .load_paper_autonomous_allocation_proposal_db_history_health_trend_gate_report(
             connection,
             limit=2,
-            table_name="paper_autonomous_allocation_proposal_reports_test",
-            history_config=history_config,
+            table_name="paper_autonomous_allocation_proposal_db_history_health_reports_test",
             health_config=health_config,
             trend_config=trend_config,
             gate_config=gate_config,

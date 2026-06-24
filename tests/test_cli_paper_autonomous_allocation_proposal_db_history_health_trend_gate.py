@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import builtins
-import importlib
 import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -12,21 +11,19 @@ import pytest
 
 from polymarket_alpha_lab import cli
 from polymarket_alpha_lab.cli import main
-from polymarket_alpha_lab.supabase_paper_autonomous_allocation_proposal_config import (
-    PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_DSN_ENV_VAR,
-    PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_ENABLED_ENV_VAR,
-    PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_TABLE_ENV_VAR,
+from polymarket_alpha_lab.supabase_paper_autonomous_allocation_proposal_db_history_health_config import (
+    PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_HISTORY_HEALTH_DB_DSN_ENV_VAR,
+    PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_HISTORY_HEALTH_DB_ENABLED_ENV_VAR,
+    PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_HISTORY_HEALTH_DB_TABLE_ENV_VAR,
 )
 
 
 COMMAND = "paper-autonomous-allocation-proposal-db-history-health-trend-gate"
-HISTORY_CONFIG_VERSION = "paper-autonomous-allocation-proposal-db-history-v0"
 HEALTH_CONFIG_VERSION = "paper-autonomous-allocation-proposal-db-history-health-v0"
 TREND_CONFIG_VERSION = "paper-autonomous-allocation-proposal-db-history-health-trend-v0"
 GATE_CONFIG_VERSION = (
     "paper-autonomous-allocation-proposal-db-history-health-trend-gate-v0"
 )
-HISTORY_MODULE = "polymarket_alpha_lab.paper_autonomous_allocation_proposal_db_history"
 HEALTH_MODULE = (
     "polymarket_alpha_lab.paper_autonomous_allocation_proposal_db_history_health"
 )
@@ -43,51 +40,29 @@ GATE_LOADER_MODULE = (
 )
 
 
-def _set_allocation_proposal_db_env(
+def _set_allocation_proposal_db_history_health_db_env(
     monkeypatch: pytest.MonkeyPatch,
     dsn: str,
     *,
-    table_name: str = "paper_autonomous_allocation_proposal_reports",
+    table_name: str = "paper_autonomous_allocation_proposal_db_history_health_reports",
 ) -> None:
     monkeypatch.setenv(
-        PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_ENABLED_ENV_VAR,
+        PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_HISTORY_HEALTH_DB_ENABLED_ENV_VAR,
         "true",
     )
-    monkeypatch.setenv(PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_DSN_ENV_VAR, dsn)
     monkeypatch.setenv(
-        PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_TABLE_ENV_VAR,
+        PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_HISTORY_HEALTH_DB_DSN_ENV_VAR,
+        dsn,
+    )
+    monkeypatch.setenv(
+        PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_HISTORY_HEALTH_DB_TABLE_ENV_VAR,
         table_name,
     )
 
 
-def _install_or_get_history_api(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
-    try:
-        return importlib.import_module(HISTORY_MODULE)
-    except ModuleNotFoundError as exc:
-        if exc.name != HISTORY_MODULE:
-            raise
-
-    module = ModuleType(HISTORY_MODULE)
-
-    @dataclass(frozen=True)
-    class PaperAutonomousAllocationProposalDbHistoryConfig:
-        config_version: str = HISTORY_CONFIG_VERSION
-        min_report_count: int = 3
-        max_blocked_proposal_report_count: int = 0
-        max_watch_proposal_report_count: int = 0
-        max_duplicate_generated_at_count: int = 0
-        paper_only: bool = True
-        report_only: bool = True
-        readonly: bool = True
-
-    module.PaperAutonomousAllocationProposalDbHistoryConfig = (
-        PaperAutonomousAllocationProposalDbHistoryConfig
-    )
-    monkeypatch.setitem(sys.modules, HISTORY_MODULE, module)
-    return module
-
-
 def _install_or_get_health_api(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
+    import importlib
+
     try:
         return importlib.import_module(HEALTH_MODULE)
     except ModuleNotFoundError as exc:
@@ -116,6 +91,8 @@ def _install_or_get_health_api(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
 
 
 def _install_or_get_trend_api(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
+    import importlib
+
     try:
         return importlib.import_module(TREND_MODULE)
     except ModuleNotFoundError as exc:
@@ -139,6 +116,8 @@ def _install_or_get_trend_api(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
 
 
 def _install_or_get_gate_api(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
+    import importlib
+
     try:
         return importlib.import_module(GATE_MODULE)
     except ModuleNotFoundError as exc:
@@ -213,25 +192,27 @@ def test_allocation_proposal_db_history_health_trend_gate_command_uses_injected_
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    history_api = _install_or_get_history_api(monkeypatch)
     health_api = _install_or_get_health_api(monkeypatch)
     trend_api = _install_or_get_trend_api(monkeypatch)
     gate_api = _install_or_get_gate_api(monkeypatch)
     dsn = "postgresql://allocation-proposal-health-trend-gate.example.invalid/db"
-    table_name = "analytics.paper_autonomous_allocation_proposal_reports"
-    _set_allocation_proposal_db_env(monkeypatch, dsn, table_name=table_name)
+    table_name = (
+        "analytics.paper_autonomous_allocation_proposal_db_history_health_reports"
+    )
+    _set_allocation_proposal_db_history_health_db_env(
+        monkeypatch,
+        dsn,
+        table_name=table_name,
+    )
     runner_calls: list[dict[str, object]] = []
     report = _gate_report()
 
     def runner(**kwargs: Any) -> object:
         runner_calls.append(kwargs)
+        assert "history_config" not in kwargs
         assert kwargs["dsn"] == dsn
         assert kwargs["table_name"] == table_name
         assert kwargs["limit"] == 7
-        assert (
-            type(kwargs["history_config"])
-            is history_api.PaperAutonomousAllocationProposalDbHistoryConfig
-        )
         assert (
             type(kwargs["health_config"])
             is health_api.PaperAutonomousAllocationProposalDbHistoryHealthConfig
@@ -268,7 +249,7 @@ def test_allocation_proposal_db_history_health_trend_gate_command_uses_injected_
         dsn,
         table_name,
         "analytics",
-        "paper_autonomous_allocation_proposal_reports",
+        "paper_autonomous_allocation_proposal_db_history_health_reports",
     ):
         assert secret not in out
 
@@ -315,7 +296,7 @@ def test_health_trend_gate_helper_validates_limit_before_runner_or_imports(
 
     monkeypatch.setattr(
         cli,
-        "from_paper_autonomous_allocation_proposal_db_env",
+        "from_paper_autonomous_allocation_proposal_db_history_health_db_env",
         forbidden_env,
     )
     monkeypatch.setattr(builtins, "__import__", forbidden_import)
@@ -338,12 +319,11 @@ def test_health_trend_gate_helper_validates_limit_before_runner_or_imports(
 def test_health_trend_gate_helper_uses_psycopg_autocommit_and_closes_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    history_api = _install_or_get_history_api(monkeypatch)
     health_api = _install_or_get_health_api(monkeypatch)
     trend_api = _install_or_get_trend_api(monkeypatch)
     gate_api = _install_or_get_gate_api(monkeypatch)
     dsn = "postgresql://allocation-proposal-health-trend-gate.example.invalid/db"
-    table_name = "paper_autonomous_allocation_proposal_reports"
+    table_name = "paper_autonomous_allocation_proposal_db_history_health_reports"
     report = _gate_report()
     connect_calls: list[tuple[str, bool]] = []
     loader_calls: list[dict[str, object]] = []
@@ -376,7 +356,6 @@ def test_health_trend_gate_helper_uses_psycopg_autocommit_and_closes_once(
         *,
         limit: int,
         table_name: str,
-        history_config: object,
         health_config: object,
         trend_config: object,
         gate_config: object,
@@ -387,7 +366,6 @@ def test_health_trend_gate_helper_uses_psycopg_autocommit_and_closes_once(
                 "connection": received_connection,
                 "limit": limit,
                 "table_name": table_name,
-                "history_config": history_config,
                 "health_config": health_config,
                 "trend_config": trend_config,
                 "gate_config": gate_config,
@@ -417,10 +395,6 @@ def test_health_trend_gate_helper_uses_psycopg_autocommit_and_closes_once(
     assert loader_calls[0]["limit"] == 7
     assert loader_calls[0]["table_name"] == table_name
     assert (
-        type(loader_calls[0]["history_config"])
-        is history_api.PaperAutonomousAllocationProposalDbHistoryConfig
-    )
-    assert (
         type(loader_calls[0]["health_config"])
         is health_api.PaperAutonomousAllocationProposalDbHistoryHealthConfig
     )
@@ -443,13 +417,16 @@ def test_health_trend_gate_default_path_redacts_dsn_and_table_on_loader_error(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    _install_or_get_history_api(monkeypatch)
     _install_or_get_health_api(monkeypatch)
     _install_or_get_trend_api(monkeypatch)
     _install_or_get_gate_api(monkeypatch)
     dsn = "postgresql://user:secret@example.invalid/db"
-    table_name = "private_schema.paper_autonomous_allocation_proposal_reports"
-    _set_allocation_proposal_db_env(monkeypatch, dsn, table_name=table_name)
+    table_name = "private_schema.paper_autonomous_allocation_proposal_db_history_health_reports"
+    _set_allocation_proposal_db_history_health_db_env(
+        monkeypatch,
+        dsn,
+        table_name=table_name,
+    )
 
     class FakeConnection:
         def close(self) -> None:
@@ -463,7 +440,7 @@ def test_health_trend_gate_default_path_redacts_dsn_and_table_on_loader_error(
     def broken_load(*_args: Any, **_kwargs: Any) -> object:
         raise RuntimeError(
             f"loader failed dsn={dsn} table={table_name} "
-            "tail=paper_autonomous_allocation_proposal_reports",
+            "tail=paper_autonomous_allocation_proposal_db_history_health_reports",
         )
 
     monkeypatch.setitem(sys.modules, "psycopg", SimpleNamespace(connect=fake_connect))
@@ -481,7 +458,7 @@ def test_health_trend_gate_default_path_redacts_dsn_and_table_on_loader_error(
         dsn,
         table_name,
         "private_schema",
-        "paper_autonomous_allocation_proposal_reports",
+        "paper_autonomous_allocation_proposal_db_history_health_reports",
     ):
         assert secret not in captured.out
         assert secret not in captured.err
@@ -491,18 +468,21 @@ def test_health_trend_gate_runner_failure_redacts_direct_operator_fields(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    _install_or_get_history_api(monkeypatch)
     _install_or_get_health_api(monkeypatch)
     _install_or_get_trend_api(monkeypatch)
     _install_or_get_gate_api(monkeypatch)
     dsn = "postgresql://user:secret@example.invalid/db"
-    table_name = "private_schema.paper_autonomous_allocation_proposal_reports"
+    table_name = "private_schema.paper_autonomous_allocation_proposal_db_history_health_reports"
     market_slug = "secret-market-slug"
     question = "Will the direct secret question resolve yes?"
     account = "secret-account-id"
     wallet = "0xsecretwallet"
     order_identifier = "secret-order-id"
-    _set_allocation_proposal_db_env(monkeypatch, dsn, table_name=table_name)
+    _set_allocation_proposal_db_history_health_db_env(
+        monkeypatch,
+        dsn,
+        table_name=table_name,
+    )
 
     def broken_runner(**_kwargs: Any) -> object:
         raise RuntimeError(
@@ -539,7 +519,7 @@ def test_health_trend_gate_runner_failure_redacts_direct_operator_fields(
         dsn,
         table_name,
         "private_schema",
-        "paper_autonomous_allocation_proposal_reports",
+        "paper_autonomous_allocation_proposal_db_history_health_reports",
         market_slug,
         question,
         "YES",
@@ -579,7 +559,7 @@ def test_health_trend_gate_summary_suppresses_sensitive_fields(
             ),
         ),
         dsn="postgresql://user:secret@example.invalid/db",
-        table_name="private_schema.paper_autonomous_allocation_proposal_reports",
+        table_name="private_schema.paper_autonomous_allocation_proposal_db_history_health_reports",
         payload_json={"market_slug": "secret-market", "question": "secret question"},
         report_sha256="a" * 64,
         allocation_rows_json=[{"side": "YES", "action": "buy"}],
@@ -608,7 +588,7 @@ def test_health_trend_gate_summary_suppresses_sensitive_fields(
     )
     for forbidden in (
         "postgresql://user:secret@example.invalid/db",
-        "private_schema.paper_autonomous_allocation_proposal_reports",
+        "private_schema.paper_autonomous_allocation_proposal_db_history_health_reports",
         "private_schema",
         "payload_json",
         "secret-market",
