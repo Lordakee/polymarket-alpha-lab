@@ -18,6 +18,7 @@ REQUIRED_HEADINGS = (
     "## Paper Allocation Evidence",
     "## Transaction and Cost Awareness",
     "## CLI Contract",
+    "## DB History Health",
     "## Review Boundaries",
 )
 
@@ -54,16 +55,20 @@ REQUIRED_PHRASES = (
     "no live fee estimation",
     "paper-autonomous-allocation-proposal-db-history --limit 25",
     "paper-autonomous-allocation-proposal-db-history-gate --limit 25",
+    "paper-autonomous-allocation-proposal-db-history-health --limit 25",
     "reads only persisted final allocation proposal reports",
     "reads only persisted final allocation proposal reports through the DB history readback",
+    "reads only persisted final allocation proposal history through DB history readback",
     "reads the final allocation proposal DB configured by env",
     "does not write reports",
     "does not read upstream tables",
     "does not read upstream screening/queue tables",
     "does not place orders, approve execution, read accounts, or mutate exchange state",
     "gate status is not permission to trade",
+    "health status is not permission to trade",
     "prints aggregate history status, proposal-status counts, latest aggregate allocation counts, duplicate timestamp count, and reason-code summaries",
     "prints aggregate gate status, recommended next step, source history status, latest aggregate allocation counts, duplicate timestamp count, latest source age, and reason-code counts",
+    "prints aggregate health status, source history status, latest aggregate allocation counts, duplicate timestamp count, and reason-code counts",
 )
 
 REQUIRED_README_PHRASES = (
@@ -99,15 +104,19 @@ REQUIRED_README_PHRASES = (
     "not an approval workflow",
     ".venv/bin/polymarket-alpha-lab paper-autonomous-allocation-proposal-db-history --limit 25",
     ".venv/bin/polymarket-alpha-lab paper-autonomous-allocation-proposal-db-history-gate --limit 25",
+    ".venv/bin/polymarket-alpha-lab paper-autonomous-allocation-proposal-db-history-health --limit 25",
     "reads only persisted final allocation proposal reports",
     "reads only persisted final allocation proposal reports through the DB history readback",
+    "reads only persisted final allocation proposal history through DB history readback",
     "reads the final allocation proposal DB configured by env",
     "does not read upstream tables",
     "does not read upstream screening/queue tables",
     "does not place orders, approve execution, read accounts, or mutate exchange state",
     "gate status is not permission to trade",
+    "health status is not permission to trade",
     "prints aggregate history status, proposal-status counts, latest aggregate allocation counts, duplicate timestamp count, and reason-code summaries",
     "prints aggregate gate status, recommended next step, source history status, latest aggregate allocation counts, duplicate timestamp count, latest source age, and reason-code counts",
+    "prints aggregate health status, source history status, latest aggregate allocation counts, duplicate timestamp count, and reason-code counts",
 )
 
 SECRET_VALUE_PATTERNS = (
@@ -251,6 +260,9 @@ def test_readme_places_allocation_section_after_screening_gate_block() -> None:
     db_history_gate_command_marker = (
         "paper-autonomous-allocation-proposal-db-history-gate --limit 25"
     )
+    db_history_health_command_marker = (
+        "paper-autonomous-allocation-proposal-db-history-health --limit 25"
+    )
     section_marker = "Paper Autonomous Allocation Proposal"
     next_section_marker = "## Level 1B Node 1 Status"
 
@@ -261,6 +273,7 @@ def test_readme_places_allocation_section_after_screening_gate_block() -> None:
     assert persist_command_marker in readme_text
     assert db_history_command_marker in readme_text
     assert db_history_gate_command_marker in readme_text
+    assert db_history_health_command_marker in readme_text
     assert next_section_marker in readme_text
 
     gate_end = readme_text.index(gate_closing_line) + len(gate_closing_line)
@@ -276,6 +289,10 @@ def test_readme_places_allocation_section_after_screening_gate_block() -> None:
         db_history_gate_command_marker,
         db_history_command_start,
     )
+    db_history_health_command_start = readme_text.index(
+        db_history_health_command_marker,
+        db_history_gate_command_start,
+    )
     next_section_start = readme_text.index(next_section_marker)
 
     assert (
@@ -286,6 +303,7 @@ def test_readme_places_allocation_section_after_screening_gate_block() -> None:
         < persist_command_start
         < db_history_command_start
         < db_history_gate_command_start
+        < db_history_health_command_start
         < next_section_start
     )
 

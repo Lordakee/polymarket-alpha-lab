@@ -4,7 +4,7 @@
 
 **Goal:** Add a paper-only/report-only/read-only health and trend node over persisted paper autonomous allocation proposal DB history. The node should summarize recent allocation proposal history stability for operators and later autonomous cycle throttling, without producing investment rankings, approval workflow decisions, or any live execution signal.
 
-**Architecture:** Build a pure reducer over a sequence of existing `PaperAutonomousAllocationProposalDbHistoryReport` values. A tiny loader loads final allocation proposal reports once, builds deterministic prefix-window DB-history reports in memory, and passes those source history reports into the health reducer. A new env-only CLI command prints aggregate health and trend fields. The node is read-only and consumes final allocation proposal history only; it must not read upstream screening/queue tables, write reports, mutate exchange state, or create orders.
+**Architecture:** Build a pure reducer over a sequence of existing `PaperAutonomousAllocationProposalDbHistoryReport` values. A tiny loader loads final allocation proposal reports once, skips warm-up prefixes below `history_config.min_report_count`, builds deterministic prefix-window DB-history reports in memory, and passes those source history reports into the health reducer. A new env-only CLI command prints aggregate health and trend fields. The node is read-only and consumes final allocation proposal history only; it must not read upstream screening/queue tables, write reports, mutate exchange state, or create orders.
 
 **Tech Stack:** Python 3.12, argparse CLI, frozen dataclasses, `Decimal` for notional fields, existing allocation proposal DB-history reducer/load modules, psycopg read-only autocommit connection in CLI boundary only, pytest, CodeGraph, and local OpenCode reviews using `zhipuai-coding-plan/glm-5.2` with variant `max`.
 
@@ -67,6 +67,16 @@ load_paper_autonomous_allocation_proposal_db_history_health_report(
 
 Any change to this function name or keyword signature requires a plan update before parallel work continues.
 
+Also freeze these CLI entry-point names before Lanes C and D start:
+
+```python
+PaperAutonomousAllocationProposalDbHistoryHealthRunner
+_run_paper_autonomous_allocation_proposal_db_history_health
+_print_paper_autonomous_allocation_proposal_db_history_health_summary
+```
+
+Any change to those symbol names requires a plan update before parallel work continues.
+
 ---
 
 ### Task 1: Pure DB-History Health Reducer
@@ -90,10 +100,10 @@ Any change to this function name or keyword signature requires a plan update bef
 Cover:
 - Empty input blocks with `insufficient_allocation_proposal_db_history_health_samples`.
 - Fewer than `min_history_report_count` blocks.
-- All recent pass history yields `health_status == "pass"` and `recommended_next_step == "allow_allocation_proposal_history_health_review"`.
+- All recent pass history yields `health_status == "pass"` and `recommended_next_step == "allow_paper_autonomous_allocation_proposal_history_review"`.
 - Any latest blocked source history blocks.
-- Excess recent watch share yields `health_status == "watch"` and `recommended_next_step == "throttle_allocation_proposal_history_health_review"`.
-- Excess recent blocked share yields `health_status == "blocked"` and `recommended_next_step == "block_allocation_proposal_history_health_review"`.
+- Excess recent watch count yields `health_status == "watch"` and `recommended_next_step == "throttle_paper_autonomous_allocation_proposal_history_review"`.
+- Excess recent blocked count yields `health_status == "blocked"` and `recommended_next_step == "block_paper_autonomous_allocation_proposal_history_review"`.
 - Stale latest source history yields watch.
 - Source history with `latest_report_generated_at is None` yields `health_status == "blocked"` with reason `missing_latest_allocation_proposal_db_history_timestamp`.
 - Duplicate source `latest_report_generated_at` values yield watch.
@@ -130,17 +140,22 @@ else:
 Required blocked reasons:
 - `insufficient_allocation_proposal_db_history_health_samples`
 - `latest_allocation_proposal_db_history_blocked`
-- `blocked_allocation_proposal_db_history_share_threshold_exceeded`
+- `blocked_allocation_proposal_db_history_count_threshold_exceeded`
 - `missing_latest_allocation_proposal_db_history_timestamp`
 
 Required watch reasons:
 - `latest_allocation_proposal_db_history_watch`
-- `watch_allocation_proposal_db_history_share_threshold_exceeded`
+- `watch_allocation_proposal_db_history_count_threshold_exceeded`
 - `stale_allocation_proposal_db_history`
 - `duplicate_allocation_proposal_history_timestamp_threshold_exceeded`
 
 Required pass reason:
 - `paper_autonomous_allocation_proposal_db_history_health_passed`
+
+Recommended next-step mapping:
+- `pass` -> `allow_paper_autonomous_allocation_proposal_history_review`
+- `watch` -> `throttle_paper_autonomous_allocation_proposal_history_review`
+- `blocked` -> `block_paper_autonomous_allocation_proposal_history_review`
 
 Default config:
 
@@ -155,8 +170,10 @@ max_latest_age_seconds = 86400
 Reason-code counts should count source report presence, not occurrences within a single source report, and should sort by `report_count` descending then `reason_code` ascending.
 
 Timestamp age handling:
+- `missing_latest_allocation_proposal_db_history_timestamp` is reducer-level defensive coverage; the loader path never produces it, but reducer fixtures must still cover it.
 - If any source history report has `latest_report_generated_at is None`, emit `missing_latest_allocation_proposal_db_history_timestamp`, set `health_status == "blocked"`, and set `latest_source_age_seconds` and `max_source_age_seconds` to `None`.
 - Otherwise compute age fields from the reducer `generated_at` against each source history report's `latest_report_generated_at`.
+- `max_source_age_seconds` is the oldest included source history age; `latest_source_age_seconds` is the newest included source history age.
 
 - [ ] **Step 3: Add reducer scope tests**
 
@@ -197,13 +214,13 @@ Run:
 
 **Interfaces:**
 - Produces `load_paper_autonomous_allocation_proposal_db_history_health_report(connection, *, limit, table_name, history_config, health_config, generated_at)`.
-- Loads final allocation proposal reports once via `load_paper_autonomous_allocation_proposal_reports(connection, limit=limit, table_name=table_name)`, reverses the DB-descending output into chronological order if needed, builds prefix-window `PaperAutonomousAllocationProposalDbHistoryReport` values with `build_paper_autonomous_allocation_proposal_db_history_report(proposal_reports[:i + 1], config=history_config, generated_at=proposal_reports[i].generated_at)`, then builds the health report from that exact sequence of source history reports.
+- Loads final allocation proposal reports once via `load_paper_autonomous_allocation_proposal_reports(connection, limit=limit, table_name=table_name)`, reverses the DB-descending output into chronological order if needed, then builds prefix-window `PaperAutonomousAllocationProposalDbHistoryReport` values only from the first sufficient prefix onward with `build_paper_autonomous_allocation_proposal_db_history_report(proposal_reports[:i + 1], config=history_config, generated_at=proposal_reports[i].generated_at)` for `i >= history_config.min_report_count - 1`, then builds the health report from that exact sequence of source history reports.
 
 - [ ] **Step 1: Write failing loader tests**
 
 Cover:
 - Delegates `connection`, `limit`, and `table_name` to the existing final proposal report store loader exactly once.
-- Builds prefix-window DB-history source reports with the supplied `history_config` and each window's latest proposal `generated_at`.
+- Builds prefix-window DB-history source reports from the first sufficient prefix onward with the supplied `history_config` and each window's latest proposal `generated_at`.
 - Builds a health report from the exact prefix-window source history values and `health_config`.
 - Rejects non-exact `history_config` and `health_config` before reading.
 - Does not call `commit`, `rollback`, `close`, `cursor`, `execute`, `insert`, `update`, or `delete` on supplied connection directly.
@@ -211,7 +228,7 @@ Cover:
 
 - [ ] **Step 2: Implement loader**
 
-Keep it small and boundary-free. The windowing contract is fixed to prefix windows over chronological final proposal reports:
+Keep it small and boundary-free. The windowing contract is fixed to prefix windows over chronological final proposal reports, starting at the first sufficient prefix:
 
 ```python
 window_i = proposal_reports[: i + 1]
@@ -222,7 +239,7 @@ source_history_i = build_paper_autonomous_allocation_proposal_db_history_report(
 )
 ```
 
-This is one SELECT plus pure in-memory reducer calls. Do not add a writer, migration, new DB table, or second DB round-trip per window.
+This is one SELECT plus pure in-memory reducer calls. Do not add a writer, migration, new DB table, or second DB round-trip per window. Use `i >= history_config.min_report_count - 1` so warm-up prefixes below the reducer minimum are skipped and do not force the health node to report every run as blocked.
 
 Run:
 
@@ -306,6 +323,7 @@ Docs must explicitly state:
 - not financial advice
 - not investment ranking
 - not an approval workflow
+- `tests/test_docs_paper_autonomous_allocation_proposal_scope.py` must add a `db_history_health_command_marker` and include it in the strict ordering chain after `db_history_gate_command_marker`
 
 ---
 
@@ -338,9 +356,10 @@ codegraph status .
 - [ ] Run OpenCode post-node review:
 
 ```bash
-opencode run -m zhipuai-coding-plan/glm-5.2 --variant max \
-  "Read-only review only. DO NOT modify/create/delete ANY file; output ONLY verdict + findings. Review the current git diff for the paper-autonomous-allocation-proposal-db-history-health node. Check Phase 1 boundaries, read-only DB behavior, CLI redaction, no live/auth/order/account surfaces, package exports and scope tests, docs boundary wording, trend metric semantics, Decimal-only behavior, and test adequacy. Report Critical/Important/Minor findings with file/line references. If no Critical/Important findings, say so clearly."
+opencode run "Read-only review only. DO NOT modify, create, delete, stage, commit, or push ANY file. Review the current git diff for the paper-autonomous-allocation-proposal-db-history-health node. Check Phase 1 boundaries, read-only DB behavior, CLI redaction, no live/auth/order/account surfaces, package exports and scope tests, docs boundary wording, trend metric semantics, Decimal-only behavior, and test adequacy. Report Critical/Important/Minor findings with file/line references. If no Critical/Important findings, say so clearly." -m zhipuai-coding-plan/glm-5.2 --variant max
 ```
+
+If OpenCode cannot be invoked after a real attempt, pause and re-check the local review tooling before proceeding; do not silently switch review routes.
 
 Fix all Critical and Important findings before commit.
 

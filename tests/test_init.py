@@ -309,6 +309,12 @@ from polymarket_alpha_lab.paper_autonomous_allocation_proposal_db_history_gate i
     PaperAutonomousAllocationProposalDbHistoryGateReport,
     build_paper_autonomous_allocation_proposal_db_history_gate_report,
 )
+from polymarket_alpha_lab.paper_autonomous_allocation_proposal_db_history_health import (
+    PaperAutonomousAllocationProposalDbHistoryHealthConfig,
+    PaperAutonomousAllocationProposalDbHistoryHealthReasonCodeCount,
+    PaperAutonomousAllocationProposalDbHistoryHealthReport,
+    build_paper_autonomous_allocation_proposal_db_history_health_report,
+)
 from polymarket_alpha_lab.paper_portfolio_nav import mark_paper_portfolio_nav
 from polymarket_alpha_lab.outcome_tracker import (
     OutcomeTrackingConfig,
@@ -866,6 +872,43 @@ def test_paper_autonomous_allocation_proposal_public_api_exports():
     assert (
         lab.build_paper_autonomous_allocation_proposal_db_history_report
         is build_paper_autonomous_allocation_proposal_db_history_report
+    )
+    for name in forbidden_exports:
+        assert not hasattr(lab, name)
+
+
+def test_paper_autonomous_allocation_proposal_db_history_health_public_api_exports():
+    expected_exports = {
+        "PaperAutonomousAllocationProposalDbHistoryHealthConfig",
+        "PaperAutonomousAllocationProposalDbHistoryHealthReasonCodeCount",
+        "PaperAutonomousAllocationProposalDbHistoryHealthReport",
+        "build_paper_autonomous_allocation_proposal_db_history_health_report",
+    }
+    forbidden_exports = {
+        "DEFAULT_PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_HISTORY_HEALTH_CONFIG_VERSION",
+        "PaperAutonomousAllocationProposalDbHistoryHealthRunner",
+        "load_paper_autonomous_allocation_proposal_db_history_health_report",
+        "_run_paper_autonomous_allocation_proposal_db_history_health",
+        "_print_paper_autonomous_allocation_proposal_db_history_health_summary",
+    }
+
+    assert expected_exports <= set(lab.__all__)
+    assert not (forbidden_exports & set(lab.__all__))
+    assert (
+        lab.PaperAutonomousAllocationProposalDbHistoryHealthConfig
+        is PaperAutonomousAllocationProposalDbHistoryHealthConfig
+    )
+    assert (
+        lab.PaperAutonomousAllocationProposalDbHistoryHealthReasonCodeCount
+        is PaperAutonomousAllocationProposalDbHistoryHealthReasonCodeCount
+    )
+    assert (
+        lab.PaperAutonomousAllocationProposalDbHistoryHealthReport
+        is PaperAutonomousAllocationProposalDbHistoryHealthReport
+    )
+    assert (
+        lab.build_paper_autonomous_allocation_proposal_db_history_health_report
+        is build_paper_autonomous_allocation_proposal_db_history_health_report
     )
     for name in forbidden_exports:
         assert not hasattr(lab, name)

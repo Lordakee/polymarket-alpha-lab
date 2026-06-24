@@ -124,6 +124,23 @@ The gate status is not permission to trade. It is not financial advice, not inve
 
 It prints aggregate gate status, recommended next step, source history status, latest aggregate allocation counts, duplicate timestamp count, latest source age, and reason-code counts.
 
+## DB History Health
+
+The DB history health command is env-only, read-only, paper-only/report-only/readonly, and no-write:
+
+```bash
+.venv/bin/polymarket-alpha-lab paper-autonomous-allocation-proposal-db-history-health --limit 25
+```
+
+It accepts only `--limit`. It reads the final allocation proposal DB configured by env and reads only persisted final allocation proposal history through DB history readback.
+
+It does not write reports and does not read upstream screening/queue tables.
+It does not place orders, approve execution, read accounts, or mutate exchange state.
+
+The health status is not permission to trade. It is not financial advice, not investment ranking, and not an approval workflow.
+
+It prints aggregate health status, source history status, latest aggregate allocation counts, duplicate timestamp count, and reason-code counts.
+
 ## Review Boundaries
 
 The Phase 1 boundary is explicit:
