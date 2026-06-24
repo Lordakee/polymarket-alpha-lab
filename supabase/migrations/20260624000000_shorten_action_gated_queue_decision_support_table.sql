@@ -1,0 +1,25 @@
+alter table if exists public.paper_action_gated_strategy_recommendation_queue_decision_support_reports
+  rename to paper_action_gated_queue_decision_support_reports;
+
+alter index if exists idx_pagsrqdsr_generated_at
+  rename to idx_pagqdsr_generated_at;
+
+alter index if exists idx_pagsrqdsr_risk_status_generated_at
+  rename to idx_pagqdsr_risk_status_generated_at;
+
+alter index if exists idx_pagsrqdsr_risk_config_version_generated_at
+  rename to idx_pagqdsr_risk_config_version_generated_at;
+
+alter index if exists idx_pagsrqdsr_priority_source_report_count_generated_at
+  rename to idx_pagqdsr_priority_source_report_count_generated_at;
+
+alter index if exists idx_pagsrqdsr_risk_status_load_sort
+  rename to idx_pagqdsr_risk_status_load_sort;
+
+alter table if exists public.paper_action_gated_queue_decision_support_trend_sources
+  drop constraint if exists paper_action_gated_queue_decision_support_trend_sources_snapsho;
+
+alter table if exists public.paper_action_gated_queue_decision_support_trend_sources
+  add constraint pagqdst_sources_snapshot_sha256_fkey
+  foreign key (snapshot_sha256)
+  references public.paper_action_gated_queue_decision_support_reports(snapshot_sha256);

@@ -4,7 +4,7 @@ This persistence-only surface stores deterministic composite snapshots made from
 `PaperActionGatedStrategyRecommendationQueuePriorityReport` and
 `PaperActionGatedStrategyRecommendationQueueRiskReport`. It is paper-only,
 report-only, and readonly. The default table is
-`paper_action_gated_strategy_recommendation_queue_decision_support_reports`.
+`paper_action_gated_queue_decision_support_reports`.
 
 ## Environment
 
@@ -21,14 +21,14 @@ POLYMARKET_ALPHA_LAB_ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_TABLE
 only `1`, `true`, `0`, `false`, or a blank value. The DSN is required only when
 the decision-support DB is enabled. The table value must be a lowercase
 identifier with an optional lowercase schema prefix, such as
-`public.paper_action_gated_strategy_recommendation_queue_decision_support_reports`.
+`public.paper_action_gated_queue_decision_support_reports`.
 
 `.env.example` intentionally contains blank variables only. Do not add a sample DSN, credential, wallet value, private key, or account identifier to that file.
 
 ## Migration
 
 The Supabase migration creates only
-`public.paper_action_gated_strategy_recommendation_queue_decision_support_reports`.
+`public.paper_action_gated_queue_decision_support_reports`.
 The table stores scalar priority metrics, scalar risk metrics, risk reason codes
 as `jsonb`, full priority and risk report payloads as `jsonb`, and hard boundary
 flags:

@@ -33,7 +33,7 @@ The flow ends at report output. It is a paper evidence checkpoint, not an execut
 
 ## CLI Contract
 
-The shipped command is a read-only env-only CLI:
+The default command is a read-only env-only CLI:
 
 ```bash
 polymarket-alpha-lab paper-autonomous-screening-decision-support-gate --limit 25
@@ -46,6 +46,25 @@ rank-stability DB and the two required upstream DBs to use the same DSN.
 
 The command accepts only `--limit`. It does not accept command-line DB targets,
 does not persist the final report, and does not create missing upstream inputs.
+
+The persisted handoff to the allocation proposal stage is a separate sibling
+producer command:
+
+```bash
+polymarket-alpha-lab paper-autonomous-screening-decision-support-gate-persist --limit 25
+```
+
+The producer uses the same required upstream DB environment configuration and
+also requires the autonomous screening gate DB environment configuration:
+
+- `POLYMARKET_ALPHA_LAB_PAPER_AUTONOMOUS_SCREENING_DECISION_SUPPORT_GATE_DB_ENABLED`
+- `POLYMARKET_ALPHA_LAB_PAPER_AUTONOMOUS_SCREENING_DECISION_SUPPORT_GATE_DB_DSN`
+- `POLYMARKET_ALPHA_LAB_PAPER_AUTONOMOUS_SCREENING_DECISION_SUPPORT_GATE_DB_TABLE`
+
+The producer first builds the same paper-only/report-only/readonly final gate
+report, then persists only that final report to the configured local paper DB.
+It accepts only `--limit`, prints aggregate status and a `persisted=True/False`
+marker, and does not create missing upstream inputs.
 
 ## Gate Status and Next Step
 

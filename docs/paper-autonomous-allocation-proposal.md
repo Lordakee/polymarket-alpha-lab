@@ -6,7 +6,7 @@ The Paper Autonomous Allocation Proposal is a paper-only/report-only/read-only a
 
 This stage moves toward autonomous investing only by preparing paper allocation proposals. It does not allocate capital, alter strategy behavior, create live instructions, or replace human review.
 
-Proposal status, recommended-next-step fields, reason-code counts, allocation rows, and shadow NAV summaries are operator review aids, not approvals.
+Proposal status, recommended-next-step fields, reason-code counts, and allocation rows are operator review aids, not approvals.
 
 The proposal is not financial advice, not investment ranking, not automatic live investing, not order instruction, not execution authorization, not an approval workflow, and not a live-execution signal.
 
@@ -29,7 +29,7 @@ The reducer must treat upstream paper reports as immutable evidence. It must not
 2. The read-only loader selects the requested persisted upstream report window and source queue rows.
 3. The proposal reducer checks hard paper/report/read-only flags, consistency between the screening gate and queue reports, and source queue availability.
 4. Ready source queue rows from research-ready reports become paper allocation inputs for the existing paper recommendation allocation reducer.
-5. The operator reviews proposal status, recommended next step, reason codes, source queue summary, paper allocation rows, and shadow NAV evidence.
+5. The operator reviews proposal status, recommended next step, reason codes, source queue summary, and paper allocation rows.
 6. Any follow-up remains a paper review action outside this proposal stage.
 
 The flow ends at report output. It is a paper allocation review checkpoint, not an execution workflow.
@@ -48,13 +48,11 @@ The recommended next step is a paper review label such as `review_paper_autonomo
 
 A pass status is not permission to trade. A watch status is not a live monitoring instruction. A blocked status is not an exchange action.
 
-## Paper Allocation and Shadow NAV
+## Paper Allocation Evidence
 
 Paper notional is paper sizing, not capital commitment. Paper allocation proposal rows are not order tickets.
 
-Paper allocation rows carry proposed paper notional, paper share quantities, cap usage, zero or reduced allocation reason codes, and allocation status for review. They are accounting rows for paper analysis only.
-
-Shadow NAV and exposure summaries show how the proposed paper allocation would affect paper portfolio risk under supplied paper assumptions. They are review evidence only and must not be treated as capital movement, account state, exchange state, or a live-execution signal.
+Paper allocation rows carry proposed paper notional, paper share quantities, cap usage, zero or reduced allocation reason codes, and allocation status for review. They are accounting rows for paper analysis only and must not be treated as capital movement, account state, exchange state, or a live-execution signal.
 
 ## Transaction and Cost Awareness
 
@@ -102,6 +100,6 @@ The Phase 1 boundary is explicit:
 - no investment ranking
 - no financial advice
 
-Operator notes and runbooks should describe source report freshness, proposal status, recommended next step, paper allocation rows, shadow NAV evidence, and reason codes only.
+Operator notes and runbooks should describe source report freshness, proposal status, recommended next step, paper allocation rows, and reason codes only.
 
 This stage must not connect to authentication, key or wallet handling, account handling, exchange clients, live execution, or any component that can mutate exchange state.

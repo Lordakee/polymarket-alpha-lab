@@ -35,11 +35,6 @@ MAX_PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_READ_LIMIT = 500
 
 _IDENTIFIER_PATTERN = re.compile(r"^[a-z][a-z0-9_]*[a-z0-9]$")
 _POSTGRES_IDENTIFIER_MAX_LENGTH = 63
-_KNOWN_LONG_IDENTIFIERS = frozenset(
-    (
-        DEFAULT_PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DECISION_SUPPORT_TABLE,
-    ),
-)
 _T = TypeVar("_T")
 
 
@@ -168,10 +163,7 @@ def _validate_table_name(value: str) -> str:
             raise ValueError(
                 "table_name must be a lowercase identifier with optional schema prefix",
             )
-        if (
-            len(part) > _POSTGRES_IDENTIFIER_MAX_LENGTH
-            and part not in _KNOWN_LONG_IDENTIFIERS
-        ):
+        if len(part) > _POSTGRES_IDENTIFIER_MAX_LENGTH:
             raise ValueError(
                 "table_name must be a lowercase identifier with optional schema prefix",
             )

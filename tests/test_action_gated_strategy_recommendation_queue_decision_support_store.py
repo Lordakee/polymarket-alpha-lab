@@ -276,7 +276,7 @@ def test_insert_decision_support_report_uses_parameterized_insert(
     sql, params = connection.cursor_instance.calls[0]
     assert normalize_sql(sql) == normalize_sql(
         """
-        INSERT INTO paper_action_gated_strategy_recommendation_queue_decision_support_reports (
+        INSERT INTO paper_action_gated_queue_decision_support_reports (
             snapshot_sha256,
             generated_at,
             priority_source_report_count,
@@ -341,7 +341,7 @@ def test_insert_decision_support_report_uses_parameterized_insert(
 @pytest.mark.parametrize(
     "table_name",
     [
-        "paper_action_gated_strategy_recommendation_queue_decision_support_reports; drop table users",
+        "paper_action_gated_queue_decision_support_reports; drop table users",
         "ActionGatedQueueDecisionSupportReports",
         "audit.ActionGatedQueueDecisionSupportReports",
         "_action_gated_queue_decision_support_reports",

@@ -268,6 +268,22 @@ connection read helper expects it to use the same DSN as the required upstream
 DBs. The command is env-only and accepts only `--limit`; it does not accept
 DSN/table/persist flags and does not write reports.
 
+To produce the persisted final screening gate consumed by the allocation
+proposal stage, use the sibling env-only producer command:
+
+```bash
+POLYMARKET_ALPHA_LAB_PAPER_RESEARCH_PACKET_OPERATOR_FLOW_DB_ENABLED=true \
+POLYMARKET_ALPHA_LAB_ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_ENABLED=true \
+POLYMARKET_ALPHA_LAB_PAPER_AUTONOMOUS_SCREENING_DECISION_SUPPORT_GATE_DB_ENABLED=true \
+.venv/bin/polymarket-alpha-lab paper-autonomous-screening-decision-support-gate-persist --limit 25
+```
+
+The producer first builds the same paper-only/report-only/readonly screening
+gate report, then writes that final report to the autonomous screening gate DB.
+It remains env-only, accepts only `--limit`, prints aggregate status plus
+`persisted=True/False`, and does not create live instructions or mutate
+exchange state.
+
 Paper Autonomous Allocation Proposal combines a passed autonomous screening
 gate, latest action-gated queue decision-support reports, and source queue
 reports into a paper-only/report-only/read-only allocation proposal:

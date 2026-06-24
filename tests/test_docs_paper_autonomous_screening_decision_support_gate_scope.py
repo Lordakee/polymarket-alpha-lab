@@ -43,6 +43,10 @@ REQUIRED_PHRASES = (
 REQUIRED_README_PHRASES = (
     "Paper Autonomous Screening Decision Support Gate",
     "docs/paper-autonomous-screening-decision-support-gate.md",
+    "paper-autonomous-screening-decision-support-gate --limit 25",
+    "paper-autonomous-screening-decision-support-gate-persist --limit 25",
+    "persisted final screening gate consumed by the allocation",
+    "prints aggregate status plus `persisted=True/False`",
 )
 
 SECRET_VALUE_PATTERNS = (
@@ -87,6 +91,8 @@ ALLOWED_BOUNDARY_MARKERS = (
     "read-only",
     "paper-only/report-only/read-only",
     "boundary",
+    "producer",
+    "only",
 )
 
 
@@ -154,6 +160,22 @@ def test_doc_keeps_live_terms_in_exclusions() -> None:
 
 def test_readme_links_operator_doc() -> None:
     readme_text = _readme_text()
+    normalized = _normalized(readme_text)
 
     for phrase in REQUIRED_README_PHRASES:
-        assert phrase in readme_text
+        assert phrase in normalized
+
+
+def test_doc_describes_separate_persisted_handoff_producer() -> None:
+    normalized = _normalized(_doc_text())
+
+    for phrase in (
+        "The persisted handoff to the allocation proposal stage is a separate sibling producer command",
+        "paper-autonomous-screening-decision-support-gate-persist --limit 25",
+        "POLYMARKET_ALPHA_LAB_PAPER_AUTONOMOUS_SCREENING_DECISION_SUPPORT_GATE_DB_ENABLED",
+        "POLYMARKET_ALPHA_LAB_PAPER_AUTONOMOUS_SCREENING_DECISION_SUPPORT_GATE_DB_DSN",
+        "POLYMARKET_ALPHA_LAB_PAPER_AUTONOMOUS_SCREENING_DECISION_SUPPORT_GATE_DB_TABLE",
+        "persists only that final report",
+        "persisted=True/False",
+    ):
+        assert phrase in normalized

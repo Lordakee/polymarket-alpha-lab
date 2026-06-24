@@ -614,7 +614,7 @@ def test_paper_autonomous_screening_decision_support_gate_cli_prints_concise_sum
     )
     monkeypatch.setenv(
         ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_TABLE_ENV_VAR,
-        "paper_action_gated_strategy_recommendation_queue_decision_support_reports",
+        "paper_action_gated_queue_decision_support_reports",
     )
     calls = []
 
@@ -686,7 +686,7 @@ def test_paper_autonomous_allocation_proposal_cli_prints_aggregate_summary(
     shared_dsn = "postgresql://allocation-proposal.example.invalid/db"
     screening_gate_table_name = "paper_autonomous_screening_decision_support_gate_reports"
     decision_support_table_name = (
-        "paper_action_gated_strategy_recommendation_queue_decision_support_reports"
+        "paper_action_gated_queue_decision_support_reports"
     )
     source_queue_table_name = "paper_action_gated_strategy_recommendation_queue_reports"
     monkeypatch.setenv(

@@ -15,7 +15,7 @@ REQUIRED_HEADINGS = (
     "## Source Reports",
     "## Operator Flow",
     "## Allocation Proposal Status and Next Step",
-    "## Paper Allocation and Shadow NAV",
+    "## Paper Allocation Evidence",
     "## Transaction and Cost Awareness",
     "## CLI Contract",
     "## Review Boundaries",
@@ -211,19 +211,21 @@ def test_doc_and_readme_section_keep_live_auth_order_terms_in_boundary_language(
 def test_readme_places_allocation_section_after_screening_gate_block() -> None:
     readme_text = _readme_text()
     gate_closing_line = "DSN/table/persist flags and does not write reports."
+    producer_marker = "paper-autonomous-screening-decision-support-gate-persist"
     section_marker = "Paper Autonomous Allocation Proposal"
     next_section_marker = "## Level 1B Node 1 Status"
 
     assert gate_closing_line in readme_text
+    assert producer_marker in readme_text
     assert section_marker in readme_text
     assert next_section_marker in readme_text
 
     gate_end = readme_text.index(gate_closing_line) + len(gate_closing_line)
-    section_start = readme_text.index(section_marker, gate_end)
+    producer_start = readme_text.index(producer_marker, gate_end)
+    section_start = readme_text.index(section_marker, producer_start)
     next_section_start = readme_text.index(next_section_marker)
 
-    assert gate_end < section_start < next_section_start
-    assert readme_text[gate_end:section_start].strip() == ""
+    assert gate_end < producer_start < section_start < next_section_start
 
 
 def test_readme_links_operator_doc_and_states_cli_contract() -> None:

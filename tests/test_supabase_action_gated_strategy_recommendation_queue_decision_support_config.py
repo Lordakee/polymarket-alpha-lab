@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import FrozenInstanceError
 from pathlib import Path
+import re
 
 import pytest
 
@@ -21,6 +22,10 @@ MIGRATION_PATH = Path(
     "supabase/migrations/"
     "20260620000002_action_gated_strategy_recommendation_queue_decision_support_reports.sql",
 )
+RENAME_MIGRATION_PATH = Path(
+    "supabase/migrations/"
+    "20260624000000_shorten_action_gated_queue_decision_support_table.sql",
+)
 
 
 def test_disabled_env_config_uses_default_table_and_accepts_absent_dsn() -> None:
@@ -36,6 +41,14 @@ def test_disabled_env_config_uses_default_table_and_accepts_absent_dsn() -> None
             table_name=DEFAULT_ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_TABLE,
         )
     )
+
+
+def test_default_table_name_is_postgres_identifier_safe() -> None:
+    assert (
+        DEFAULT_ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_TABLE
+        == "paper_action_gated_queue_decision_support_reports"
+    )
+    assert len(DEFAULT_ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_TABLE) <= 63
 
 
 def test_enabled_env_config_requires_dsn_without_echoing_secret() -> None:
@@ -200,12 +213,9 @@ def test_table_name_must_be_lowercase_identifier_with_optional_schema(
     "table_name",
     [
         "a0",
-        "paper_action_gated_strategy_recommendation_queue_decision_support_reports",
+        "paper_action_gated_queue_decision_support_reports",
         "action_gated_1_queue_2_decision_support_reports",
-        (
-            "public."
-            "paper_action_gated_strategy_recommendation_queue_decision_support_reports"
-        ),
+        "public.paper_action_gated_queue_decision_support_reports",
         "audit.action_gated_queue_decision_support_reports",
     ],
 )
@@ -370,3 +380,27 @@ def test_migration_defines_action_gated_queue_decision_support_report_table() ->
         "(risk_status, generated_at desc, inserted_at desc, snapshot_sha256 desc)",
     ):
         assert index_fragment in sql
+
+
+def test_forward_migration_renames_overlong_decision_support_table() -> None:
+    sql = RENAME_MIGRATION_PATH.read_text(encoding="utf-8")
+
+    assert re.search(
+        r"alter table if exists\s+"
+        r"public\.paper_action_gated_strategy_recommendation_queue_decision_support_reports\s+"
+        r"rename to paper_action_gated_queue_decision_support_reports",
+        sql,
+    )
+    assert "paper_action_gated_queue_decision_support_reports" in sql
+
+
+def test_forward_migration_uses_postgres_safe_replacement_identifiers() -> None:
+    sql = RENAME_MIGRATION_PATH.read_text(encoding="utf-8")
+    replacement_identifiers = re.findall(
+        r"\b(?:rename to|add constraint|drop constraint if exists)\s+([a-z][a-z0-9_]*)",
+        sql,
+    )
+
+    assert replacement_identifiers
+    assert all(len(identifier) <= 63 for identifier in replacement_identifiers)
+    assert "add constraint pagqdst_sources_snapshot_sha256_fkey" in sql

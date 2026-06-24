@@ -142,7 +142,7 @@ def test_load_delegates_options_and_generated_at_to_readonly_loader(
             ),
             "action_gated_queue_decision_support_limit": 7,
             "action_gated_queue_decision_support_table_name": (
-                "paper_action_gated_strategy_recommendation_queue_decision_support_reports"
+                "paper_action_gated_queue_decision_support_reports"
             ),
             "source_queue_limit": 7,
             "source_queue_table_name": (

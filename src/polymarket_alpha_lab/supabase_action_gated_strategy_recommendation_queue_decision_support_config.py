@@ -18,8 +18,9 @@ ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_TABLE_ENV_VAR = (
     "POLYMARKET_ALPHA_LAB_ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_TABLE"
 )
 DEFAULT_ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_TABLE = (
-    "paper_action_gated_strategy_recommendation_queue_decision_support_reports"
+    "paper_action_gated_queue_decision_support_reports"
 )
+_POSTGRES_IDENTIFIER_MAX_LENGTH = 63
 
 _IDENTIFIER_PATTERN = re.compile(r"^[a-z][a-z0-9_]*[a-z0-9]$")
 _TRUE_VALUES = frozenset(("1", "true"))
@@ -118,7 +119,11 @@ def _validate_table_name(value: object) -> str:
     parts = value.split(".")
     if len(parts) not in (1, 2):
         raise ValueError(_TABLE_NAME_ERROR)
-    if any(_IDENTIFIER_PATTERN.fullmatch(part) is None for part in parts):
+    if any(
+        _IDENTIFIER_PATTERN.fullmatch(part) is None
+        or len(part) > _POSTGRES_IDENTIFIER_MAX_LENGTH
+        for part in parts
+    ):
         raise ValueError(_TABLE_NAME_ERROR)
     return value
 

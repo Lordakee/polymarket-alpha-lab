@@ -283,6 +283,7 @@ PaperResearchPacketOperatorFlowDbHistoryRunner = Callable[
 ]
 PaperResearchPacketOperatorFlowDbHistoryGateRunner = Callable[..., object]
 PaperAutonomousScreeningDecisionSupportGateRunner = Callable[..., object]
+PaperAutonomousScreeningDecisionSupportGateDbSink = Callable[..., object]
 PaperAutonomousAllocationProposalRunner = Callable[..., object]
 PaperResearchPacketOperatorFlowDbSink = Callable[..., object]
 PaperProbabilityRecommendationQueueDbSink = Callable[..., object]
@@ -867,6 +868,9 @@ def main(
     ) = None,
     paper_autonomous_screening_decision_support_gate_runner: (
         PaperAutonomousScreeningDecisionSupportGateRunner | None
+    ) = None,
+    paper_autonomous_screening_decision_support_gate_db_sink: (
+        PaperAutonomousScreeningDecisionSupportGateDbSink | None
     ) = None,
     paper_autonomous_allocation_proposal_runner: (
         PaperAutonomousAllocationProposalRunner | None
@@ -1504,6 +1508,15 @@ def main(
         "paper-autonomous-screening-decision-support-gate",
     )
     paper_autonomous_screening_decision_support_gate.add_argument(
+        "--limit",
+        type=int,
+        default=25,
+        dest="limit",
+    )
+    paper_autonomous_screening_decision_support_gate_persist = subparsers.add_parser(
+        "paper-autonomous-screening-decision-support-gate-persist",
+    )
+    paper_autonomous_screening_decision_support_gate_persist.add_argument(
         "--limit",
         type=int,
         default=25,
@@ -2865,23 +2878,30 @@ def main(
             )
             return 1
 
-    if args.command == "paper-autonomous-screening-decision-support-gate":
+    if args.command in (
+        "paper-autonomous-screening-decision-support-gate",
+        "paper-autonomous-screening-decision-support-gate-persist",
+    ):
+        command_name = args.command
+        persist_gate_report = (
+            command_name
+            == "paper-autonomous-screening-decision-support-gate-persist"
+        )
         try:
             if isinstance(args.limit, bool) or type(args.limit) is not int or args.limit < 1:
                 raise ValueError(
-                    "paper-autonomous-screening-decision-support-gate limit "
-                    "must be positive",
+                    f"{command_name} limit must be positive",
                 )
             operator_flow_db_config = from_paper_research_packet_operator_flow_db_env()
             if not operator_flow_db_config.enabled:
                 raise ValueError(
-                    "paper-autonomous-screening-decision-support-gate requires "
+                    f"{command_name} requires "
                     "paper research packet operator-flow DB to be enabled",
                 )
             operator_flow_dsn = operator_flow_db_config.dsn
             if operator_flow_dsn is None:
                 raise ValueError(
-                    "paper-autonomous-screening-decision-support-gate requires "
+                    f"{command_name} requires "
                     "a paper research packet operator-flow DB DSN",
                 )
             action_queue_db_config = (
@@ -2889,13 +2909,13 @@ def main(
             )
             if not action_queue_db_config.enabled:
                 raise ValueError(
-                    "paper-autonomous-screening-decision-support-gate requires "
+                    f"{command_name} requires "
                     "action-gated queue decision-support DB to be enabled",
                 )
             action_queue_dsn = action_queue_db_config.dsn
             if action_queue_dsn is None:
                 raise ValueError(
-                    "paper-autonomous-screening-decision-support-gate requires "
+                    f"{command_name} requires "
                     "an action-gated queue decision-support DB DSN",
                 )
             rank_stability_db_config = (
@@ -2907,11 +2927,28 @@ def main(
                 rank_stability_dsn = rank_stability_db_config.dsn
                 if rank_stability_dsn is None:
                     raise ValueError(
-                        "paper-autonomous-screening-decision-support-gate requires "
+                        f"{command_name} requires "
                         "a paper project screening rank stability DB DSN when "
                         "rank-stability DB is enabled",
                     )
                 rank_stability_table_name = rank_stability_db_config.table_name
+            screening_gate_dsn = None
+            screening_gate_table_name = None
+            if persist_gate_report:
+                screening_gate_db_config = (
+                    from_paper_autonomous_screening_decision_support_gate_db_env()
+                )
+                if not screening_gate_db_config.enabled:
+                    raise ValueError(
+                        f"{command_name} requires autonomous screening gate DB "
+                        "to be enabled",
+                    )
+                screening_gate_dsn = screening_gate_db_config.dsn
+                if screening_gate_dsn is None:
+                    raise ValueError(
+                        f"{command_name} requires an autonomous screening gate DB DSN",
+                    )
+                screening_gate_table_name = screening_gate_db_config.table_name
             try:
                 report = _run_paper_autonomous_screening_decision_support_gate(
                     rank_stability_dsn=rank_stability_dsn,
@@ -2936,10 +2973,39 @@ def main(
                     action_queue_table_name=action_queue_db_config.table_name,
                 ) from None
             _print_paper_autonomous_screening_decision_support_gate_summary(report)
+            if persist_gate_report:
+                assert screening_gate_dsn is not None
+                assert screening_gate_table_name is not None
+                try:
+                    if paper_autonomous_screening_decision_support_gate_db_sink is None:
+                        from polymarket_alpha_lab.paper_autonomous_screening_decision_support_gate_psycopg import (
+                            insert_paper_autonomous_screening_decision_support_gate_report_with_psycopg,
+                        )
+
+                        paper_autonomous_screening_decision_support_gate_db_sink = (
+                            insert_paper_autonomous_screening_decision_support_gate_report_with_psycopg
+                        )
+                    sink_result = paper_autonomous_screening_decision_support_gate_db_sink(
+                        dsn=screening_gate_dsn,
+                        report=report,
+                        table_name=screening_gate_table_name,
+                    )
+                except Exception as exc:
+                    message = _redact_db_dsn(str(exc), dsn=screening_gate_dsn)
+                    message = _redact_db_table_name_and_tail(
+                        message,
+                        table_name=screening_gate_table_name,
+                    )
+                    message = _redact_paper_research_packet_sensitive_fields(message)
+                    if not message.strip():
+                        message = exc.__class__.__name__
+                    raise RuntimeError(message) from None
+                inserted = getattr(sink_result, "inserted", True)
+                print(f"{command_name}: persisted={inserted}")
             return 0
         except Exception as exc:
             print(
-                f"paper-autonomous-screening-decision-support-gate failed: {exc}",
+                f"{command_name} failed: {exc}",
                 file=sys.stderr,
             )
             return 1

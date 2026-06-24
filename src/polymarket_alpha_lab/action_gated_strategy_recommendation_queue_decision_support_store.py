@@ -21,9 +21,10 @@ __all__ = (
 
 
 _IDENTIFIER_PATTERN = re.compile(r"^[a-z][a-z0-9_]*[a-z0-9]$")
+_POSTGRES_IDENTIFIER_MAX_LENGTH = 63
 _RISK_STATUSES = ("pass", "watch", "blocked")
 DEFAULT_ACTION_GATED_STRATEGY_RECOMMENDATION_QUEUE_DECISION_SUPPORT_TABLE = (
-    "paper_action_gated_strategy_recommendation_queue_decision_support_reports"
+    "paper_action_gated_queue_decision_support_reports"
 )
 _SELECT_COLUMNS = (
     "snapshot_sha256",
@@ -273,7 +274,11 @@ def _validate_table_name(value: str) -> str:
         raise ValueError(
             "table_name must be a lowercase identifier with optional schema prefix",
         )
-    if any(_IDENTIFIER_PATTERN.fullmatch(part) is None for part in parts):
+    if any(
+        _IDENTIFIER_PATTERN.fullmatch(part) is None
+        or len(part) > _POSTGRES_IDENTIFIER_MAX_LENGTH
+        for part in parts
+    ):
         raise ValueError(
             "table_name must be a lowercase identifier with optional schema prefix",
         )

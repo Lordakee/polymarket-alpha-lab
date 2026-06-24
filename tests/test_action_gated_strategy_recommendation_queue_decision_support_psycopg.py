@@ -104,7 +104,7 @@ def _install_fake_store(
 ) -> types.ModuleType:
     store_module = types.ModuleType(STORE_MODULE_NAME)
     store_module.DEFAULT_ACTION_GATED_STRATEGY_RECOMMENDATION_QUEUE_DECISION_SUPPORT_TABLE = (
-        "paper_action_gated_strategy_recommendation_queue_decision_support_reports"
+        "paper_action_gated_queue_decision_support_reports"
     )
     store_module.insert_paper_action_gated_strategy_recommendation_queue_decision_support_report = (
         insert if insert is not None else _unexpected_store_call("insert")

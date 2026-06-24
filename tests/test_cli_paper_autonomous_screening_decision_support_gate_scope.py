@@ -21,6 +21,11 @@ from polymarket_alpha_lab.supabase_paper_project_screening_rank_stability_config
     PAPER_PROJECT_SCREENING_RANK_STABILITY_DB_ENABLED_ENV_VAR,
     PAPER_PROJECT_SCREENING_RANK_STABILITY_DB_TABLE_ENV_VAR,
 )
+from polymarket_alpha_lab.supabase_paper_autonomous_screening_decision_support_gate_config import (
+    PAPER_AUTONOMOUS_SCREENING_DECISION_SUPPORT_GATE_DB_DSN_ENV_VAR,
+    PAPER_AUTONOMOUS_SCREENING_DECISION_SUPPORT_GATE_DB_ENABLED_ENV_VAR,
+    PAPER_AUTONOMOUS_SCREENING_DECISION_SUPPORT_GATE_DB_TABLE_ENV_VAR,
+)
 from polymarket_alpha_lab.supabase_paper_research_packet_operator_flow_config import (
     PAPER_RESEARCH_PACKET_OPERATOR_FLOW_DB_DSN_ENV_VAR,
     PAPER_RESEARCH_PACKET_OPERATOR_FLOW_DB_ENABLED_ENV_VAR,
@@ -29,6 +34,7 @@ from polymarket_alpha_lab.supabase_paper_research_packet_operator_flow_config im
 
 
 COMMAND = "paper-autonomous-screening-decision-support-gate"
+PERSIST_COMMAND = "paper-autonomous-screening-decision-support-gate-persist"
 GATE_CONFIG_VERSION = "paper-autonomous-screening-decision-support-gate-v0"
 GATE_MODULE = (
     "polymarket_alpha_lab.paper_autonomous_screening_decision_support_gate"
@@ -47,7 +53,7 @@ def _set_upstream_db_env(
     operator_flow_table_name: str = "paper_research_packet_operator_flow_reports",
     action_queue_dsn: str,
     action_queue_table_name: str = (
-        "paper_action_gated_strategy_recommendation_queue_decision_support_reports"
+        "paper_action_gated_queue_decision_support_reports"
     ),
 ) -> None:
     if rank_stability_dsn is None:
@@ -96,6 +102,26 @@ def _set_upstream_db_env(
     monkeypatch.setenv(
         ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_TABLE_ENV_VAR,
         action_queue_table_name,
+    )
+
+
+def _set_gate_db_env(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    dsn: str,
+    table_name: str = "paper_autonomous_screening_decision_support_gate_reports",
+) -> None:
+    monkeypatch.setenv(
+        PAPER_AUTONOMOUS_SCREENING_DECISION_SUPPORT_GATE_DB_ENABLED_ENV_VAR,
+        "true",
+    )
+    monkeypatch.setenv(
+        PAPER_AUTONOMOUS_SCREENING_DECISION_SUPPORT_GATE_DB_DSN_ENV_VAR,
+        dsn,
+    )
+    monkeypatch.setenv(
+        PAPER_AUTONOMOUS_SCREENING_DECISION_SUPPORT_GATE_DB_TABLE_ENV_VAR,
+        table_name,
     )
 
 
@@ -204,6 +230,105 @@ def test_gate_cli_requires_enabled_operator_flow_db_before_runner_or_client(
     assert (
         f"{COMMAND} requires paper research packet operator-flow DB to be enabled"
         in captured.err
+    )
+
+
+def test_gate_persist_cli_uses_injected_runner_sink_and_prints_persistence_marker(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    dsn = "postgresql://screening-gate.example.invalid/db"
+    table_name = "paper_autonomous_screening_decision_support_gate_reports"
+    _set_upstream_db_env(
+        monkeypatch,
+        operator_flow_dsn=dsn,
+        action_queue_dsn=dsn,
+    )
+    _set_gate_db_env(monkeypatch, dsn=dsn, table_name=table_name)
+    report = _gate_report()
+    runner_calls: list[dict[str, object]] = []
+    sink_calls: list[dict[str, object]] = []
+
+    def fake_runner(**kwargs: Any) -> object:
+        runner_calls.append(dict(kwargs))
+        return report
+
+    def fake_sink(**kwargs: Any) -> object:
+        sink_calls.append(dict(kwargs))
+        return SimpleNamespace(inserted=True)
+
+    exit_code = main(
+        [PERSIST_COMMAND, "--limit", "9"],
+        paper_autonomous_screening_decision_support_gate_runner=fake_runner,
+        paper_autonomous_screening_decision_support_gate_db_sink=fake_sink,
+        client_factory=lambda: (_ for _ in ()).throw(
+            AssertionError("client should not be constructed"),
+        ),
+    )
+
+    assert exit_code == 0
+    assert len(runner_calls) == 1
+    assert runner_calls[0]["operator_flow_dsn"] == dsn
+    assert runner_calls[0]["action_queue_dsn"] == dsn
+    assert runner_calls[0]["limit"] == 9
+    assert len(sink_calls) == 1
+    assert sink_calls[0] == {
+        "dsn": dsn,
+        "report": report,
+        "table_name": table_name,
+    }
+    captured = capsys.readouterr()
+    assert f"{PERSIST_COMMAND}: persisted=True" in captured.out
+    assert "gate_status=watch" in captured.out
+    assert captured.err == ""
+    assert dsn not in captured.out
+    assert table_name not in captured.out
+
+
+def test_gate_persist_cli_requires_enabled_gate_db_before_runner_or_sink(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    dsn = "postgresql://screening-gate.example.invalid/db"
+    _set_upstream_db_env(
+        monkeypatch,
+        operator_flow_dsn=dsn,
+        action_queue_dsn=dsn,
+    )
+    monkeypatch.delenv(
+        PAPER_AUTONOMOUS_SCREENING_DECISION_SUPPORT_GATE_DB_ENABLED_ENV_VAR,
+        raising=False,
+    )
+    monkeypatch.delenv(
+        PAPER_AUTONOMOUS_SCREENING_DECISION_SUPPORT_GATE_DB_DSN_ENV_VAR,
+        raising=False,
+    )
+    runner_calls = 0
+    sink_calls = 0
+
+    def forbidden_runner(**kwargs: Any) -> object:
+        nonlocal runner_calls
+        runner_calls += 1
+        raise AssertionError("paper autonomous screening gate runner should not run")
+
+    def forbidden_sink(**kwargs: Any) -> object:
+        nonlocal sink_calls
+        sink_calls += 1
+        raise AssertionError("screening gate DB sink should not run")
+
+    exit_code = main(
+        [PERSIST_COMMAND],
+        paper_autonomous_screening_decision_support_gate_runner=forbidden_runner,
+        paper_autonomous_screening_decision_support_gate_db_sink=forbidden_sink,
+    )
+
+    assert exit_code == 1
+    assert runner_calls == 0
+    assert sink_calls == 0
+    captured = capsys.readouterr()
+    assert f"{PERSIST_COMMAND} failed:" in captured.err
+    assert f"{PERSIST_COMMAND} requires autonomous screening gate DB to be enabled" in (
+        captured.err
     )
 
 
@@ -388,7 +513,7 @@ def test_gate_helper_rejects_invalid_limit_before_runner_or_connect(
         operator_flow_table_name="paper_research_packet_operator_flow_reports",
         action_queue_dsn="postgresql://action-queue.example.invalid/db",
         action_queue_table_name=(
-            "paper_action_gated_strategy_recommendation_queue_decision_support_reports"
+            "paper_action_gated_queue_decision_support_reports"
         ),
         limit=bad_limit,
         runner=forbidden_runner,
@@ -445,7 +570,7 @@ def test_gate_cli_scope_uses_only_injected_gate_runner_and_readonly_configs(
     operator_flow_table_name = "paper_research_packet_operator_flow_reports"
     action_queue_dsn = "postgresql://action-queue-gate.example.invalid/db"
     action_queue_table_name = (
-        "paper_action_gated_strategy_recommendation_queue_decision_support_reports"
+        "paper_action_gated_queue_decision_support_reports"
     )
     _set_upstream_db_env(
         monkeypatch,
@@ -615,7 +740,7 @@ def test_gate_helper_default_load_path_uses_autocommit_and_closes_only(
     operator_flow_table_name = "paper_research_packet_operator_flow_reports"
     action_queue_dsn = operator_flow_dsn
     action_queue_table_name = (
-        "paper_action_gated_strategy_recommendation_queue_decision_support_reports"
+        "paper_action_gated_queue_decision_support_reports"
     )
     report = _gate_report()
     connect_calls: list[tuple[str, bool]] = []
@@ -702,7 +827,7 @@ def test_gate_helper_default_load_path_omits_rank_loader_when_rank_db_disabled(
     shared_dsn = "postgresql://shared-gate.example.invalid/db"
     operator_flow_table_name = "paper_research_packet_operator_flow_reports"
     action_queue_table_name = (
-        "paper_action_gated_strategy_recommendation_queue_decision_support_reports"
+        "paper_action_gated_queue_decision_support_reports"
     )
     report = _gate_report()
     loader_calls: list[dict[str, object]] = []
@@ -771,7 +896,7 @@ def test_gate_helper_default_load_path_requires_required_db_dsns_to_match(
             operator_flow_table_name="paper_research_packet_operator_flow_reports",
             action_queue_dsn="postgresql://action-queue.example.invalid/db",
             action_queue_table_name=(
-                "paper_action_gated_strategy_recommendation_queue_decision_support_reports"
+                "paper_action_gated_queue_decision_support_reports"
             ),
             limit=7,
             runner=None,
@@ -791,7 +916,7 @@ def test_gate_cli_runner_failure_redacts_dsns_tables_and_payloads(
     operator_flow_table_name = "paper_research_packet_operator_flow_reports"
     action_queue_dsn = "postgresql://action-queue-secret.example.invalid/db"
     action_queue_table_name = (
-        "paper_action_gated_strategy_recommendation_queue_decision_support_reports"
+        "paper_action_gated_queue_decision_support_reports"
     )
     payload_json = '{"secret":"autonomous-screening-gate-payload-secret"}'
     colon_payload_json = (
@@ -857,7 +982,7 @@ def test_gate_cli_runner_failure_redacts_dsns_tables_and_payloads(
         action_queue_table_name,
         "paper_project_screening_rank_stability_reports",
         "paper_research_packet_operator_flow_reports",
-        "paper_action_gated_strategy_recommendation_queue_decision_support_reports",
+        "paper_action_gated_queue_decision_support_reports",
         payload_json,
         "autonomous-screening-gate-payload-secret",
         colon_payload_json,

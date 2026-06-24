@@ -42,7 +42,7 @@ def _set_upstream_db_env(
     ),
     decision_support_dsn: str,
     decision_support_table_name: str = (
-        "paper_action_gated_strategy_recommendation_queue_decision_support_reports"
+        "paper_action_gated_queue_decision_support_reports"
     ),
     source_queue_dsn: str,
     source_queue_table_name: str = (
@@ -549,7 +549,7 @@ def test_allocation_cli_runner_failure_redacts_dsns_tables_payloads_questions_ha
     screening_gate_table_name = "paper_autonomous_screening_decision_support_gate_reports"
     decision_support_dsn = "postgresql://decision-secret.example.invalid/db"
     decision_support_table_name = (
-        "paper_action_gated_strategy_recommendation_queue_decision_support_reports"
+        "paper_action_gated_queue_decision_support_reports"
     )
     source_queue_dsn = "postgresql://source-secret.example.invalid/db"
     source_queue_table_name = (
