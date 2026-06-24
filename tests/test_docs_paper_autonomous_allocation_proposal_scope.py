@@ -20,6 +20,7 @@ REQUIRED_HEADINGS = (
     "## CLI Contract",
     "## DB History Health",
     "## DB History Health Trend",
+    "## DB History Health Trend Gate",
     "## Review Boundaries",
 )
 
@@ -58,6 +59,7 @@ REQUIRED_PHRASES = (
     "paper-autonomous-allocation-proposal-db-history-gate --limit 25",
     "paper-autonomous-allocation-proposal-db-history-health --limit 25",
     "paper-autonomous-allocation-proposal-db-history-health-trend --limit 25",
+    "paper-autonomous-allocation-proposal-db-history-health-trend-gate --limit 25",
     "reads only persisted final allocation proposal reports",
     "reads only persisted final allocation proposal reports through the DB history readback",
     "reads only persisted final allocation proposal history through DB history readback",
@@ -69,10 +71,12 @@ REQUIRED_PHRASES = (
     "gate status is not permission to trade",
     "health status is not permission to trade",
     "trend status is not permission to trade",
+    "health-trend gate status is not permission to trade",
     "prints aggregate history status, proposal-status counts, latest aggregate allocation counts, duplicate timestamp count, and reason-code summaries",
     "prints aggregate gate status, recommended next step, source history status, latest aggregate allocation counts, duplicate timestamp count, latest source age, and reason-code counts",
     "prints aggregate health status, source history status, latest aggregate allocation counts, duplicate timestamp count, and reason-code counts",
     "prints aggregate health-status trend counts, latest health status, delta summaries, duplicate timestamp count, streak counts, and latest reason-code counts",
+    "prints aggregate health-trend gate status, recommended next step, latest health status, sample counts, duplicate timestamp count, latest streak counts, health-delta signals, and reason-code counts",
 )
 
 REQUIRED_README_PHRASES = (
@@ -110,6 +114,7 @@ REQUIRED_README_PHRASES = (
     ".venv/bin/polymarket-alpha-lab paper-autonomous-allocation-proposal-db-history-gate --limit 25",
     ".venv/bin/polymarket-alpha-lab paper-autonomous-allocation-proposal-db-history-health --limit 25",
     ".venv/bin/polymarket-alpha-lab paper-autonomous-allocation-proposal-db-history-health-trend --limit 25",
+    ".venv/bin/polymarket-alpha-lab paper-autonomous-allocation-proposal-db-history-health-trend-gate --limit 25",
     "reads only persisted final allocation proposal reports",
     "reads only persisted final allocation proposal reports through the DB history readback",
     "reads only persisted final allocation proposal history through DB history readback",
@@ -120,10 +125,12 @@ REQUIRED_README_PHRASES = (
     "gate status is not permission to trade",
     "health status is not permission to trade",
     "trend status is not permission to trade",
+    "health-trend gate status is not permission to trade",
     "prints aggregate history status, proposal-status counts, latest aggregate allocation counts, duplicate timestamp count, and reason-code summaries",
     "prints aggregate gate status, recommended next step, source history status, latest aggregate allocation counts, duplicate timestamp count, latest source age, and reason-code counts",
     "prints aggregate health status, source history status, latest aggregate allocation counts, duplicate timestamp count, and reason-code counts",
     "prints aggregate health-status trend counts, latest health status, delta summaries, duplicate timestamp count, streak counts, and latest reason-code counts",
+    "prints aggregate health-trend gate status, recommended next step, latest health status, sample counts, duplicate timestamp count, latest streak counts, health-delta signals, and reason-code counts",
 )
 
 SECRET_VALUE_PATTERNS = (
@@ -270,6 +277,12 @@ def test_readme_places_allocation_section_after_screening_gate_block() -> None:
     db_history_health_command_marker = (
         "paper-autonomous-allocation-proposal-db-history-health --limit 25"
     )
+    db_history_health_trend_command_marker = (
+        "paper-autonomous-allocation-proposal-db-history-health-trend --limit 25"
+    )
+    db_history_health_trend_gate_command_marker = (
+        "paper-autonomous-allocation-proposal-db-history-health-trend-gate --limit 25"
+    )
     section_marker = "Paper Autonomous Allocation Proposal"
     next_section_marker = "## Level 1B Node 1 Status"
 
@@ -281,6 +294,8 @@ def test_readme_places_allocation_section_after_screening_gate_block() -> None:
     assert db_history_command_marker in readme_text
     assert db_history_gate_command_marker in readme_text
     assert db_history_health_command_marker in readme_text
+    assert db_history_health_trend_command_marker in readme_text
+    assert db_history_health_trend_gate_command_marker in readme_text
     assert next_section_marker in readme_text
 
     gate_end = readme_text.index(gate_closing_line) + len(gate_closing_line)
@@ -300,6 +315,14 @@ def test_readme_places_allocation_section_after_screening_gate_block() -> None:
         db_history_health_command_marker,
         db_history_gate_command_start,
     )
+    db_history_health_trend_command_start = readme_text.index(
+        db_history_health_trend_command_marker,
+        db_history_health_command_start,
+    )
+    db_history_health_trend_gate_command_start = readme_text.index(
+        db_history_health_trend_gate_command_marker,
+        db_history_health_trend_command_start,
+    )
     next_section_start = readme_text.index(next_section_marker)
 
     assert (
@@ -311,6 +334,8 @@ def test_readme_places_allocation_section_after_screening_gate_block() -> None:
         < db_history_command_start
         < db_history_gate_command_start
         < db_history_health_command_start
+        < db_history_health_trend_command_start
+        < db_history_health_trend_gate_command_start
         < next_section_start
     )
 

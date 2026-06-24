@@ -174,6 +174,25 @@ It must not write reports, must not read upstream screening or queue tables dire
 
 The trend summary remains negative-boundary first: no live trading, no auth, no wallet, no key handling, no account reads, no order instruction, no execution authorization, no approval workflow, and no exchange mutation.
 
+## DB History Health Trend Gate
+
+The DB history health trend gate command is env-only, read-only, paper-only/report-only/readonly, and no-write:
+
+```bash
+.venv/bin/polymarket-alpha-lab paper-autonomous-allocation-proposal-db-history-health-trend-gate --limit 25
+```
+
+It accepts only `--limit`. It reads the final allocation proposal DB configured by env, derives the DB history health trend from persisted final allocation proposal history, and prints one aggregate gate report.
+
+It does not write reports and does not read upstream screening/queue tables.
+It does not place orders, approve execution, read accounts, or mutate exchange state.
+
+The health-trend gate status is not permission to trade. It is not financial advice, not investment ranking, and not an approval workflow.
+
+It prints aggregate health-trend gate status, recommended next step, latest health status, sample counts, duplicate timestamp count, latest streak counts, health-delta signals, and reason-code counts.
+
+The health-trend gate reducer is not permission to trade, not financial advice, not investment ranking, and not an approval workflow.
+
 ## Review Boundaries
 
 The Phase 1 boundary is explicit:

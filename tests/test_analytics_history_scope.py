@@ -185,6 +185,9 @@ EXPECTED_PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_EXPORTS = {
     "PaperAutonomousAllocationProposalDbHistoryHealthTrendReasonCodeRow",
     "PaperAutonomousAllocationProposalDbHistoryHealthTrendSnapshotSummary",
     "PaperAutonomousAllocationProposalDbHistoryHealthTrendReport",
+    "PaperAutonomousAllocationProposalDbHistoryHealthTrendGateConfig",
+    "PaperAutonomousAllocationProposalDbHistoryHealthTrendGateReasonCodeCount",
+    "PaperAutonomousAllocationProposalDbHistoryHealthTrendGateReport",
     "PaperAutonomousAllocationProposalDbHistoryReasonCodeRow",
     "PaperAutonomousAllocationProposalDbHistoryReport",
     "PaperAutonomousAllocationProposalDbHistoryStatusRow",
@@ -195,6 +198,7 @@ EXPECTED_PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_EXPORTS = {
     "build_paper_autonomous_allocation_proposal_db_history_gate_report",
     "build_paper_autonomous_allocation_proposal_db_history_health_report",
     "build_paper_autonomous_allocation_proposal_db_history_health_trend_report",
+    "build_paper_autonomous_allocation_proposal_db_history_health_trend_gate_report",
     "build_paper_autonomous_allocation_proposal_db_history_report",
 }
 EXPECTED_LEVEL_2_ARTIFACT_EXPORTS = (

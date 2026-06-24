@@ -322,6 +322,12 @@ from polymarket_alpha_lab.paper_autonomous_allocation_proposal_db_history_health
     PaperAutonomousAllocationProposalDbHistoryHealthTrendSnapshotSummary,
     build_paper_autonomous_allocation_proposal_db_history_health_trend_report,
 )
+from polymarket_alpha_lab.paper_autonomous_allocation_proposal_db_history_health_trend_gate import (
+    PaperAutonomousAllocationProposalDbHistoryHealthTrendGateConfig,
+    PaperAutonomousAllocationProposalDbHistoryHealthTrendGateReasonCodeCount,
+    PaperAutonomousAllocationProposalDbHistoryHealthTrendGateReport,
+    build_paper_autonomous_allocation_proposal_db_history_health_trend_gate_report,
+)
 from polymarket_alpha_lab.paper_portfolio_nav import mark_paper_portfolio_nav
 from polymarket_alpha_lab.outcome_tracker import (
     OutcomeTrackingConfig,
@@ -890,18 +896,27 @@ def test_paper_autonomous_allocation_proposal_db_history_health_public_api_expor
         "PaperAutonomousAllocationProposalDbHistoryHealthReasonCodeCount",
         "PaperAutonomousAllocationProposalDbHistoryHealthReport",
         "PaperAutonomousAllocationProposalDbHistoryHealthTrendConfig",
+        "PaperAutonomousAllocationProposalDbHistoryHealthTrendGateConfig",
+        "PaperAutonomousAllocationProposalDbHistoryHealthTrendGateReasonCodeCount",
+        "PaperAutonomousAllocationProposalDbHistoryHealthTrendGateReport",
         "PaperAutonomousAllocationProposalDbHistoryHealthTrendReasonCodeRow",
         "PaperAutonomousAllocationProposalDbHistoryHealthTrendSnapshotSummary",
         "PaperAutonomousAllocationProposalDbHistoryHealthTrendReport",
         "build_paper_autonomous_allocation_proposal_db_history_health_report",
+        "build_paper_autonomous_allocation_proposal_db_history_health_trend_gate_report",
         "build_paper_autonomous_allocation_proposal_db_history_health_trend_report",
     }
     forbidden_exports = {
         "DEFAULT_PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_HISTORY_HEALTH_CONFIG_VERSION",
+        "DEFAULT_PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_HISTORY_HEALTH_TREND_GATE_CONFIG_VERSION",
         "PaperAutonomousAllocationProposalDbHistoryHealthRunner",
+        "PaperAutonomousAllocationProposalDbHistoryHealthTrendGateRunner",
         "load_paper_autonomous_allocation_proposal_db_history_health_report",
+        "load_paper_autonomous_allocation_proposal_db_history_health_trend_gate_report",
         "_run_paper_autonomous_allocation_proposal_db_history_health",
+        "_run_paper_autonomous_allocation_proposal_db_history_health_trend_gate",
         "_print_paper_autonomous_allocation_proposal_db_history_health_summary",
+        "_print_paper_autonomous_allocation_proposal_db_history_health_trend_gate_summary",
     }
 
     assert expected_exports <= set(lab.__all__)
@@ -923,6 +938,18 @@ def test_paper_autonomous_allocation_proposal_db_history_health_public_api_expor
         is PaperAutonomousAllocationProposalDbHistoryHealthTrendConfig
     )
     assert (
+        lab.PaperAutonomousAllocationProposalDbHistoryHealthTrendGateConfig
+        is PaperAutonomousAllocationProposalDbHistoryHealthTrendGateConfig
+    )
+    assert (
+        lab.PaperAutonomousAllocationProposalDbHistoryHealthTrendGateReasonCodeCount
+        is PaperAutonomousAllocationProposalDbHistoryHealthTrendGateReasonCodeCount
+    )
+    assert (
+        lab.PaperAutonomousAllocationProposalDbHistoryHealthTrendGateReport
+        is PaperAutonomousAllocationProposalDbHistoryHealthTrendGateReport
+    )
+    assert (
         lab.PaperAutonomousAllocationProposalDbHistoryHealthTrendReasonCodeRow
         is PaperAutonomousAllocationProposalDbHistoryHealthTrendReasonCodeRow
     )
@@ -937,6 +964,10 @@ def test_paper_autonomous_allocation_proposal_db_history_health_public_api_expor
     assert (
         lab.build_paper_autonomous_allocation_proposal_db_history_health_report
         is build_paper_autonomous_allocation_proposal_db_history_health_report
+    )
+    assert (
+        lab.build_paper_autonomous_allocation_proposal_db_history_health_trend_gate_report
+        is build_paper_autonomous_allocation_proposal_db_history_health_trend_gate_report
     )
     assert (
         lab.build_paper_autonomous_allocation_proposal_db_history_health_trend_report
