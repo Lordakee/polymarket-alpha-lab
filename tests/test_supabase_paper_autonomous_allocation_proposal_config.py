@@ -121,13 +121,13 @@ def test_enabled_env_config_reads_explicit_dsn_at_process_edge() -> None:
         {
             ENABLED_ENV_VAR: "1",
             DSN_ENV_VAR: dsn,
-            TABLE_ENV_VAR: "paper_autonomous_allocation_proposal_archive",
+            TABLE_ENV_VAR: "audit.paper_autonomous_allocation_proposal_archive",
         },
     )
 
     assert config.enabled is True
     assert config.dsn == dsn
-    assert config.table_name == "paper_autonomous_allocation_proposal_archive"
+    assert config.table_name == "audit.paper_autonomous_allocation_proposal_archive"
 
 
 @pytest.mark.parametrize(
@@ -194,19 +194,22 @@ def test_config_is_frozen_and_masks_dsn_in_repr() -> None:
     [
         "PaperReports",
         "paper-reports",
-        "paper.reports",
+        "paper..reports",
+        "paper.reports.extra",
         "_paper_reports",
         "paper_reports_",
-        "a",
         "",
     ],
 )
-def test_table_name_must_match_store_simple_lowercase_identifier(
+def test_table_name_must_match_store_lowercase_identifier_contract(
     table_name: str,
 ) -> None:
     config_module = _config_module()
 
-    with pytest.raises(ValueError, match="table_name must be a simple lowercase identifier"):
+    with pytest.raises(
+        ValueError,
+        match="table_name must be a lowercase identifier with optional schema prefix",
+    ):
         config_module.SupabasePaperAutonomousAllocationProposalConfig(
             enabled=False,
             dsn=None,
@@ -217,12 +220,14 @@ def test_table_name_must_match_store_simple_lowercase_identifier(
 @pytest.mark.parametrize(
     "table_name",
     [
+        "a",
         "a0",
         "paper_autonomous_allocation_proposal_archive",
+        "audit.paper_autonomous_allocation_proposal_archive",
         "proposal_1_archive_2",
     ],
 )
-def test_table_name_accepts_simple_lowercase_identifier_values(
+def test_table_name_accepts_lowercase_identifier_values(
     table_name: str,
 ) -> None:
     config_module = _config_module()
@@ -252,7 +257,10 @@ def test_table_name_accepts_postgres_identifier_at_length_limit() -> None:
 def test_table_name_rejects_postgres_identifier_over_length_limit() -> None:
     config_module = _config_module()
 
-    with pytest.raises(ValueError, match="table_name must be a simple lowercase identifier"):
+    with pytest.raises(
+        ValueError,
+        match="table_name must be a lowercase identifier with optional schema prefix",
+    ):
         config_module.SupabasePaperAutonomousAllocationProposalConfig(
             enabled=False,
             dsn=None,

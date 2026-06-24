@@ -166,6 +166,9 @@ EXPECTED_PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_EXPORTS = {
     "DEFAULT_PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_HISTORY_CONFIG_VERSION",
     "PaperAutonomousAllocationProposalConfig",
     "PaperAutonomousAllocationProposalDbHistoryConfig",
+    "PaperAutonomousAllocationProposalDbHistoryGateConfig",
+    "PaperAutonomousAllocationProposalDbHistoryGateReasonCodeCount",
+    "PaperAutonomousAllocationProposalDbHistoryGateReport",
     "PaperAutonomousAllocationProposalDbHistoryReasonCodeRow",
     "PaperAutonomousAllocationProposalDbHistoryReport",
     "PaperAutonomousAllocationProposalDbHistoryStatusRow",
@@ -173,6 +176,7 @@ EXPECTED_PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_EXPORTS = {
     "PaperAutonomousAllocationProposalReport",
     "PaperAutonomousAllocationProposalSourceQueueSummary",
     "build_paper_autonomous_allocation_proposal_report",
+    "build_paper_autonomous_allocation_proposal_db_history_gate_report",
     "build_paper_autonomous_allocation_proposal_db_history_report",
 }
 EXPECTED_LEVEL_2_ARTIFACT_EXPORTS = (

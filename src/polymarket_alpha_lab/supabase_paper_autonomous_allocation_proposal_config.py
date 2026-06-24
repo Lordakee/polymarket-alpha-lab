@@ -25,7 +25,7 @@ DEFAULT_PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_TABLE = (
     DEFAULT_PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_REPORTS_TABLE
 )
 
-_IDENTIFIER_PATTERN = re.compile(r"^[a-z][a-z0-9_]*[a-z0-9]$")
+_IDENTIFIER_PATTERN = re.compile(r"^[a-z](?:[a-z0-9_]*[a-z0-9])?$")
 _POSTGRES_IDENTIFIER_MAX_LENGTH = 63
 _TRUE_VALUES = frozenset(("1", "true"))
 _FALSE_VALUES = frozenset(("", "0", "false"))
@@ -78,10 +78,10 @@ def from_paper_autonomous_allocation_proposal_db_env(
             table_name=table_name,
         )
     except ValueError as exc:
-        if str(exc) == "table_name must be a simple lowercase identifier":
+        if str(exc) == "table_name must be a lowercase identifier with optional schema prefix":
             raise ValueError(
                 f"{PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_TABLE_ENV_VAR} "
-                "must be a simple lowercase identifier",
+                "must be a lowercase identifier with optional schema prefix",
             ) from exc
         raise
 
@@ -117,12 +117,17 @@ def _normalize_optional_dsn(value: object) -> str | None:
 
 
 def _validate_table_name(value: object) -> str:
-    if (
-        type(value) is not str
-        or len(value) > _POSTGRES_IDENTIFIER_MAX_LENGTH
-        or _IDENTIFIER_PATTERN.fullmatch(value) is None
-    ):
-        raise ValueError("table_name must be a simple lowercase identifier")
+    if type(value) is not str:
+        raise ValueError("table_name must be a lowercase identifier with optional schema prefix")
+    parts = value.split(".")
+    if not 1 <= len(parts) <= 2:
+        raise ValueError("table_name must be a lowercase identifier with optional schema prefix")
+    for part in parts:
+        if (
+            len(part.encode("utf-8")) > _POSTGRES_IDENTIFIER_MAX_LENGTH
+            or _IDENTIFIER_PATTERN.fullmatch(part) is None
+        ):
+            raise ValueError("table_name must be a lowercase identifier with optional schema prefix")
     return value
 
 

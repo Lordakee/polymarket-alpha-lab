@@ -309,6 +309,12 @@ from polymarket_alpha_lab.paper_autonomous_allocation_proposal_db_history import
     PaperAutonomousAllocationProposalDbHistoryStatusRow,
     build_paper_autonomous_allocation_proposal_db_history_report,
 )
+from polymarket_alpha_lab.paper_autonomous_allocation_proposal_db_history_gate import (
+    PaperAutonomousAllocationProposalDbHistoryGateConfig,
+    PaperAutonomousAllocationProposalDbHistoryGateReasonCodeCount,
+    PaperAutonomousAllocationProposalDbHistoryGateReport,
+    build_paper_autonomous_allocation_proposal_db_history_gate_report,
+)
 from polymarket_alpha_lab.positions import (
     PaperNavLog,
     PaperNavSnapshot,
@@ -357,6 +363,9 @@ __all__ = [
     "DEFAULT_PAPER_AUTONOMOUS_SCREENING_DECISION_SUPPORT_GATE_CONFIG_VERSION",
     "PaperAutonomousAllocationProposalConfig",
     "PaperAutonomousAllocationProposalDbHistoryConfig",
+    "PaperAutonomousAllocationProposalDbHistoryGateConfig",
+    "PaperAutonomousAllocationProposalDbHistoryGateReasonCodeCount",
+    "PaperAutonomousAllocationProposalDbHistoryGateReport",
     "PaperAutonomousAllocationProposalDbHistoryReasonCodeRow",
     "PaperAutonomousAllocationProposalDbHistoryReport",
     "PaperAutonomousAllocationProposalDbHistoryStatusRow",
@@ -548,6 +557,7 @@ __all__ = [
     "TradeProposalReviewSummaryReport",
     "build_paper_analytics_history_report",
     "build_paper_analytics_report",
+    "build_paper_autonomous_allocation_proposal_db_history_gate_report",
     "build_paper_autonomous_allocation_proposal_db_history_report",
     "build_paper_autonomous_allocation_proposal_report",
     "build_paper_autonomous_screening_decision_support_gate_report",

@@ -27,9 +27,9 @@ __all__ = (
 )
 
 
-_IDENTIFIER_PATTERN = re.compile(r"^[a-z][a-z0-9_]*[a-z0-9]$")
+_IDENTIFIER_PATTERN = re.compile(r"^[a-z](?:[a-z0-9_]*[a-z0-9])?$")
 _POSTGRES_IDENTIFIER_MAX_LENGTH = 63
-_TABLE_NAME_ERROR = "table_name must be a simple lowercase identifier"
+_TABLE_NAME_ERROR = "table_name must be a lowercase identifier with optional schema prefix"
 _STATUSES = ("pass", "watch", "blocked")
 DEFAULT_PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_REPORTS_TABLE = (
     "paper_autonomous_allocation_proposal_reports"
@@ -254,12 +254,17 @@ def _normalize_json_array(field_name: str, value: Any) -> list[Any]:
 
 
 def _validate_table_name(value: str) -> str:
-    if (
-        type(value) is not str
-        or len(value) > _POSTGRES_IDENTIFIER_MAX_LENGTH
-        or _IDENTIFIER_PATTERN.fullmatch(value) is None
-    ):
+    if type(value) is not str:
         raise ValueError(_TABLE_NAME_ERROR)
+    parts = value.split(".")
+    if not 1 <= len(parts) <= 2:
+        raise ValueError(_TABLE_NAME_ERROR)
+    for part in parts:
+        if (
+            len(part.encode("utf-8")) > _POSTGRES_IDENTIFIER_MAX_LENGTH
+            or _IDENTIFIER_PATTERN.fullmatch(part) is None
+        ):
+            raise ValueError(_TABLE_NAME_ERROR)
     return value
 
 

@@ -303,6 +303,12 @@ from polymarket_alpha_lab.paper_autonomous_allocation_proposal_db_history import
     PaperAutonomousAllocationProposalDbHistoryStatusRow,
     build_paper_autonomous_allocation_proposal_db_history_report,
 )
+from polymarket_alpha_lab.paper_autonomous_allocation_proposal_db_history_gate import (
+    PaperAutonomousAllocationProposalDbHistoryGateConfig,
+    PaperAutonomousAllocationProposalDbHistoryGateReasonCodeCount,
+    PaperAutonomousAllocationProposalDbHistoryGateReport,
+    build_paper_autonomous_allocation_proposal_db_history_gate_report,
+)
 from polymarket_alpha_lab.paper_portfolio_nav import mark_paper_portfolio_nav
 from polymarket_alpha_lab.outcome_tracker import (
     OutcomeTrackingConfig,
@@ -775,16 +781,21 @@ def test_paper_autonomous_allocation_proposal_public_api_exports():
         "DEFAULT_PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_HISTORY_CONFIG_VERSION",
         "PaperAutonomousAllocationProposalConfig",
         "PaperAutonomousAllocationProposalDbHistoryConfig",
+        "PaperAutonomousAllocationProposalDbHistoryGateConfig",
+        "PaperAutonomousAllocationProposalDbHistoryGateReasonCodeCount",
+        "PaperAutonomousAllocationProposalDbHistoryGateReport",
         "PaperAutonomousAllocationProposalDbHistoryReasonCodeRow",
         "PaperAutonomousAllocationProposalDbHistoryReport",
         "PaperAutonomousAllocationProposalDbHistoryStatusRow",
         "PaperAutonomousAllocationProposalReasonCodeCount",
         "PaperAutonomousAllocationProposalSourceQueueSummary",
         "PaperAutonomousAllocationProposalReport",
+        "build_paper_autonomous_allocation_proposal_db_history_gate_report",
         "build_paper_autonomous_allocation_proposal_db_history_report",
         "build_paper_autonomous_allocation_proposal_report",
     }
     forbidden_exports = {
+        "DEFAULT_PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_HISTORY_GATE_CONFIG_VERSION",
         "PaperAutonomousAllocationProposalRunner",
         "PaperAutonomousAllocationProposalDbRow",
         "load_paper_autonomous_allocation_proposal_report",
@@ -807,6 +818,18 @@ def test_paper_autonomous_allocation_proposal_public_api_exports():
     assert (
         lab.PaperAutonomousAllocationProposalDbHistoryConfig
         is PaperAutonomousAllocationProposalDbHistoryConfig
+    )
+    assert (
+        lab.PaperAutonomousAllocationProposalDbHistoryGateConfig
+        is PaperAutonomousAllocationProposalDbHistoryGateConfig
+    )
+    assert (
+        lab.PaperAutonomousAllocationProposalDbHistoryGateReasonCodeCount
+        is PaperAutonomousAllocationProposalDbHistoryGateReasonCodeCount
+    )
+    assert (
+        lab.PaperAutonomousAllocationProposalDbHistoryGateReport
+        is PaperAutonomousAllocationProposalDbHistoryGateReport
     )
     assert (
         lab.PaperAutonomousAllocationProposalDbHistoryReasonCodeRow
@@ -835,6 +858,10 @@ def test_paper_autonomous_allocation_proposal_public_api_exports():
     assert (
         lab.build_paper_autonomous_allocation_proposal_report
         is build_paper_autonomous_allocation_proposal_report
+    )
+    assert (
+        lab.build_paper_autonomous_allocation_proposal_db_history_gate_report
+        is build_paper_autonomous_allocation_proposal_db_history_gate_report
     )
     assert (
         lab.build_paper_autonomous_allocation_proposal_db_history_report

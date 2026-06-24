@@ -305,11 +305,11 @@ def test_load_proposal_reports_accepts_db_row_objects() -> None:
     "table_name",
     [
         "paper_autonomous_allocation_proposal_reports; drop table users",
-        "audit.paper_autonomous_allocation_proposal_reports",
+        "audit..paper_autonomous_allocation_proposal_reports",
+        "audit.paper.autonomous_allocation_proposal_reports",
         "PaperAutonomousAllocationProposalReports",
         "_paper_autonomous_allocation_proposal_reports",
         "paper_autonomous_allocation_proposal_reports_",
-        "a",
     ],
 )
 def test_insert_rejects_unsafe_table_name_before_cursor_creation(
@@ -332,7 +332,15 @@ def test_insert_rejects_unsafe_table_name_before_cursor_creation(
     assert connection.cursor_instance.calls == []
 
 
-def test_insert_accepts_simple_lowercase_table_names() -> None:
+@pytest.mark.parametrize(
+    "table_name",
+    (
+        "a",
+        "allocation_proposal_archive",
+        "audit.allocation_proposal_archive",
+    ),
+)
+def test_insert_accepts_lowercase_table_names(table_name: str) -> None:
     from polymarket_alpha_lab.paper_autonomous_allocation_proposal_store import (
         insert_paper_autonomous_allocation_proposal_report,
     )
@@ -342,11 +350,11 @@ def test_insert_accepts_simple_lowercase_table_names() -> None:
     insert_paper_autonomous_allocation_proposal_report(
         connection,
         _report(),
-        table_name="allocation_proposal_archive",
+        table_name=table_name,
     )
 
     sql, _params = connection.cursor_instance.calls[0]
-    assert "INSERT INTO allocation_proposal_archive" in sql
+    assert f"INSERT INTO {table_name}" in sql
 
 
 def test_insert_accepts_postgres_identifier_at_length_limit() -> None:
@@ -388,12 +396,14 @@ def test_insert_rejects_postgres_identifier_over_length_limit() -> None:
 @pytest.mark.parametrize(
     "table_name",
     [
+        "a",
         "a0",
         "allocation_proposal_archive",
+        "audit.allocation_proposal_archive",
         "allocation_1_proposal_2_archive",
     ],
 )
-def test_load_accepts_simple_lowercase_table_names(table_name: str) -> None:
+def test_load_accepts_lowercase_table_names(table_name: str) -> None:
     from polymarket_alpha_lab.paper_autonomous_allocation_proposal_store import (
         load_paper_autonomous_allocation_proposal_reports,
     )
@@ -412,9 +422,9 @@ def test_load_accepts_simple_lowercase_table_names(table_name: str) -> None:
 @pytest.mark.parametrize(
     ("kwargs", "message"),
     (
-        ({"table_name": "audit.allocation_proposal_archive"}, "table_name"),
+        ({"table_name": "audit..allocation_proposal_archive"}, "table_name"),
+        ({"table_name": "audit.allocation.proposal_archive"}, "table_name"),
         ({"table_name": "_"}, "table_name"),
-        ({"table_name": "a"}, "table_name"),
         ({"config_version": ""}, "config_version"),
         ({"config_version": " proposal-v0"}, "config_version"),
         ({"allocation_config_version": ""}, "allocation_config_version"),
