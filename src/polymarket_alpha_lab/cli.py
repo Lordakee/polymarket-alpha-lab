@@ -294,6 +294,7 @@ PaperAutonomousAllocationProposalRunner = Callable[..., object]
 PaperAutonomousAllocationProposalDbHistoryRunner = Callable[..., object]
 PaperAutonomousAllocationProposalDbHistoryGateRunner = Callable[..., object]
 PaperAutonomousAllocationProposalDbHistoryHealthRunner = Callable[..., object]
+PaperAutonomousAllocationProposalDbHistoryMetricsRunner = Callable[..., object]
 PaperAutonomousAllocationProposalDbHistoryHealthDbSink = Callable[..., object]
 PaperAutonomousAllocationProposalDbHistoryHealthTrendRunner = Callable[..., object]
 PaperAutonomousAllocationProposalDbHistoryHealthTrendGateRunner = Callable[
@@ -968,6 +969,9 @@ def main(
     ) = None,
     paper_autonomous_allocation_proposal_db_history_health_runner: (
         PaperAutonomousAllocationProposalDbHistoryHealthRunner | None
+    ) = None,
+    paper_autonomous_allocation_proposal_db_history_metrics_runner: (
+        PaperAutonomousAllocationProposalDbHistoryMetricsRunner | None
     ) = None,
     paper_autonomous_allocation_proposal_db_history_health_db_sink: (
         PaperAutonomousAllocationProposalDbHistoryHealthDbSink | None
@@ -1659,6 +1663,16 @@ def main(
         "paper-autonomous-allocation-proposal-db-history-gate",
     )
     paper_autonomous_allocation_proposal_db_history_gate.add_argument(
+        "--limit",
+        type=int,
+        default=25,
+        dest="limit",
+    )
+    paper_autonomous_allocation_proposal_db_history_metrics = subparsers.add_parser(
+        "paper-autonomous-allocation-proposal-db-history-metrics",
+        allow_abbrev=False,
+    )
+    paper_autonomous_allocation_proposal_db_history_metrics.add_argument(
         "--limit",
         type=int,
         default=25,
@@ -3261,6 +3275,48 @@ def main(
                     table_name=allocation_proposal_db_config.table_name,
                 ) from None
             _print_paper_autonomous_allocation_proposal_db_history_gate_summary(report)
+            return 0
+        except Exception as exc:
+            print(
+                f"{command_name} failed: {exc}",
+                file=sys.stderr,
+            )
+            return 1
+
+    if args.command == "paper-autonomous-allocation-proposal-db-history-metrics":
+        command_name = "paper-autonomous-allocation-proposal-db-history-metrics"
+        try:
+            if isinstance(args.limit, bool) or type(args.limit) is not int or args.limit < 1:
+                raise ValueError(f"{command_name} limit must be positive")
+            allocation_proposal_db_config = (
+                from_paper_autonomous_allocation_proposal_db_env()
+            )
+            if not allocation_proposal_db_config.enabled:
+                raise ValueError(
+                    f"{command_name} requires autonomous allocation proposal DB "
+                    "to be enabled",
+                )
+            dsn = allocation_proposal_db_config.dsn
+            if dsn is None:
+                raise ValueError(
+                    f"{command_name} requires an autonomous allocation proposal DB DSN",
+                )
+            try:
+                report = _run_paper_autonomous_allocation_proposal_db_history_metrics(
+                    dsn=dsn,
+                    table_name=allocation_proposal_db_config.table_name,
+                    limit=args.limit,
+                    runner=paper_autonomous_allocation_proposal_db_history_metrics_runner,
+                )
+            except Exception as exc:
+                raise _redacted_paper_research_packet_db_history_error(
+                    exc,
+                    dsn=dsn,
+                    table_name=allocation_proposal_db_config.table_name,
+                ) from None
+            _print_paper_autonomous_allocation_proposal_db_history_metrics_summary(
+                report,
+            )
             return 0
         except Exception as exc:
             print(
@@ -6351,6 +6407,81 @@ def _run_paper_autonomous_allocation_proposal_db_history_gate(
             pass
 
 
+def _run_paper_autonomous_allocation_proposal_db_history_metrics(
+    *,
+    dsn: str,
+    table_name: str,
+    limit: int,
+    runner: PaperAutonomousAllocationProposalDbHistoryMetricsRunner | None,
+) -> object:
+    command_name = "paper-autonomous-allocation-proposal-db-history-metrics"
+    if isinstance(limit, bool) or type(limit) is not int or limit < 1:
+        raise ValueError(f"{command_name} limit must be positive")
+    generated_at = datetime.now(UTC)
+
+    from polymarket_alpha_lab.paper_autonomous_allocation_proposal_db_history_metrics import (
+        PaperAutonomousAllocationProposalDbHistoryMetricsConfig,
+    )
+
+    config = PaperAutonomousAllocationProposalDbHistoryMetricsConfig()
+    if runner is not None:
+        try:
+            return runner(
+                dsn=dsn,
+                table_name=table_name,
+                limit=limit,
+                config=config,
+                generated_at=generated_at,
+            )
+        except Exception as exc:
+            raise _redacted_paper_research_packet_db_history_error(
+                exc,
+                dsn=dsn,
+                table_name=table_name,
+            ) from None
+
+    from polymarket_alpha_lab.paper_autonomous_allocation_proposal_db_history_metrics_load import (
+        load_paper_autonomous_allocation_proposal_db_history_metrics_report,
+    )
+
+    try:
+        import psycopg
+    except ModuleNotFoundError as exc:
+        if exc.name != "psycopg":
+            raise
+        raise RuntimeError(
+            "psycopg is required to use the paper autonomous allocation proposal "
+            "DB history metrics read adapter; install the postgres extra.",
+        ) from exc
+    try:
+        connection = psycopg.connect(dsn, autocommit=True)
+    except Exception as exc:
+        raise _redacted_paper_research_packet_db_history_error(
+            exc,
+            dsn=dsn,
+            table_name=table_name,
+        ) from None
+    try:
+        return load_paper_autonomous_allocation_proposal_db_history_metrics_report(
+            connection,
+            limit=limit,
+            table_name=table_name,
+            config=config,
+            generated_at=generated_at,
+        )
+    except Exception as exc:
+        raise _redacted_paper_research_packet_db_history_error(
+            exc,
+            dsn=dsn,
+            table_name=table_name,
+        ) from None
+    finally:
+        try:
+            connection.close()
+        except Exception:
+            pass
+
+
 def _run_paper_autonomous_allocation_proposal_db_history_health(
     *,
     dsn: str,
@@ -8088,6 +8219,38 @@ def _print_paper_autonomous_allocation_proposal_db_history_gate_summary(
         for row in report.reason_code_counts
     )
     print(f"reason_code_counts: {reason_code_counts or 'none'}")
+
+
+def _print_paper_autonomous_allocation_proposal_db_history_metrics_summary(
+    report: object,
+) -> None:
+    latest_largest_market_share = None
+    for row in report.latest_largest_concentration_rows:
+        if getattr(row, "group_type", getattr(row, "kind", None)) == "market":
+            latest_largest_market_share = getattr(
+                row,
+                "allocated_paper_notional_share",
+                getattr(row, "share", None),
+            )
+            break
+    summary_parts = [
+        "paper-autonomous-allocation-proposal-db-history-metrics:",
+        f"source_report_count={report.source_report_count}",
+        f"latest_proposal_status={_none_or_value(report.latest_proposal_status)}",
+        f"latest_budget_utilization={_none_or_value(report.latest_budget_utilization)}",
+        f"latest_requested_fill_ratio={_none_or_value(report.latest_requested_fill_ratio)}",
+        "latest_total_allocated_paper_notional="
+        f"{_none_or_value(report.latest_total_allocated_paper_notional)}",
+        f"latest_largest_market_share={_none_or_value(latest_largest_market_share)}",
+        "latest_added_market_side_count="
+        f"{_none_or_value(report.latest_added_market_side_count)}",
+        "latest_removed_market_side_count="
+        f"{_none_or_value(report.latest_removed_market_side_count)}",
+        f"latest_notional_turnover={_none_or_value(report.latest_notional_turnover)}",
+        f"latest_allocated_edge_share={_none_or_value(report.latest_allocated_edge_share)}",
+        f"latest_expected_edge_notional={_none_or_value(report.latest_expected_edge_notional)}",
+    ]
+    print(" ".join(summary_parts))
 
 
 def _print_paper_autonomous_allocation_proposal_db_history_health_summary(

@@ -124,6 +124,25 @@ The gate status is not permission to trade. It is not financial advice, not inve
 
 It prints aggregate gate status, recommended next step, source history status, latest aggregate allocation counts, duplicate timestamp count, latest source age, and reason-code counts.
 
+## DB History Metrics
+
+The DB history metrics command is env-only, read-only, paper-only/report-only/readonly, and no-write:
+
+```bash
+.venv/bin/polymarket-alpha-lab paper-autonomous-allocation-proposal-db-history-metrics --limit 25
+```
+
+It accepts only `--limit`. It reads the final allocation proposal DB configured by env and reads only persisted final allocation proposal reports.
+
+It computes aggregate paper allocation risk/performance metrics: budget utilization, fill ratio, concentration, churn, cap reasons, edge coverage, and expected edge notional where edge data exists.
+
+The v0 aggregates across all persisted proposal statuses and config versions selected by the table and `--limit`.
+
+It does not write reports and does not read upstream screening/queue tables.
+It does not place orders, approve execution, read accounts, or mutate exchange state.
+
+It is not financial advice, not investment ranking, not automatic live investing, not order instruction, and not execution authorization.
+
 ## DB History Health
 
 The DB history health command is env-only, read-only by default, and paper-only/report-only/readonly:

@@ -315,6 +315,14 @@ from polymarket_alpha_lab.paper_autonomous_allocation_proposal_db_history_gate i
     PaperAutonomousAllocationProposalDbHistoryGateReport,
     build_paper_autonomous_allocation_proposal_db_history_gate_report,
 )
+from polymarket_alpha_lab.paper_autonomous_allocation_proposal_db_history_metrics import (
+    PaperAutonomousAllocationProposalDbHistoryMetricsCapReasonRow,
+    PaperAutonomousAllocationProposalDbHistoryMetricsConcentrationRow,
+    PaperAutonomousAllocationProposalDbHistoryMetricsConfig,
+    PaperAutonomousAllocationProposalDbHistoryMetricsReport,
+    PaperAutonomousAllocationProposalDbHistoryMetricsSnapshotSummary,
+    build_paper_autonomous_allocation_proposal_db_history_metrics_report,
+)
 from polymarket_alpha_lab.paper_autonomous_allocation_proposal_db_history_health import (
     PaperAutonomousAllocationProposalDbHistoryHealthConfig,
     PaperAutonomousAllocationProposalDbHistoryHealthReasonCodeCount,
@@ -395,6 +403,11 @@ __all__ = [
     "PaperAutonomousAllocationProposalDbHistoryHealthTrendReasonCodeRow",
     "PaperAutonomousAllocationProposalDbHistoryHealthTrendSnapshotSummary",
     "PaperAutonomousAllocationProposalDbHistoryHealthTrendReport",
+    "PaperAutonomousAllocationProposalDbHistoryMetricsCapReasonRow",
+    "PaperAutonomousAllocationProposalDbHistoryMetricsConcentrationRow",
+    "PaperAutonomousAllocationProposalDbHistoryMetricsConfig",
+    "PaperAutonomousAllocationProposalDbHistoryMetricsReport",
+    "PaperAutonomousAllocationProposalDbHistoryMetricsSnapshotSummary",
     "PaperAutonomousAllocationProposalDbHistoryReasonCodeRow",
     "PaperAutonomousAllocationProposalDbHistoryReport",
     "PaperAutonomousAllocationProposalDbHistoryStatusRow",
@@ -590,6 +603,7 @@ __all__ = [
     "build_paper_autonomous_allocation_proposal_db_history_health_report",
     "build_paper_autonomous_allocation_proposal_db_history_health_trend_report",
     "build_paper_autonomous_allocation_proposal_db_history_health_trend_gate_report",
+    "build_paper_autonomous_allocation_proposal_db_history_metrics_report",
     "build_paper_autonomous_allocation_proposal_db_history_report",
     "build_paper_autonomous_allocation_proposal_report",
     "build_paper_autonomous_screening_decision_support_gate_report",

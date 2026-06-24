@@ -328,6 +328,14 @@ from polymarket_alpha_lab.paper_autonomous_allocation_proposal_db_history_health
     PaperAutonomousAllocationProposalDbHistoryHealthTrendGateReport,
     build_paper_autonomous_allocation_proposal_db_history_health_trend_gate_report,
 )
+from polymarket_alpha_lab.paper_autonomous_allocation_proposal_db_history_metrics import (
+    PaperAutonomousAllocationProposalDbHistoryMetricsCapReasonRow,
+    PaperAutonomousAllocationProposalDbHistoryMetricsConcentrationRow,
+    PaperAutonomousAllocationProposalDbHistoryMetricsConfig,
+    PaperAutonomousAllocationProposalDbHistoryMetricsReport,
+    PaperAutonomousAllocationProposalDbHistoryMetricsSnapshotSummary,
+    build_paper_autonomous_allocation_proposal_db_history_metrics_report,
+)
 from polymarket_alpha_lab.paper_portfolio_nav import mark_paper_portfolio_nav
 from polymarket_alpha_lab.outcome_tracker import (
     OutcomeTrackingConfig,
@@ -902,19 +910,29 @@ def test_paper_autonomous_allocation_proposal_db_history_health_public_api_expor
         "PaperAutonomousAllocationProposalDbHistoryHealthTrendReasonCodeRow",
         "PaperAutonomousAllocationProposalDbHistoryHealthTrendSnapshotSummary",
         "PaperAutonomousAllocationProposalDbHistoryHealthTrendReport",
+        "PaperAutonomousAllocationProposalDbHistoryMetricsCapReasonRow",
+        "PaperAutonomousAllocationProposalDbHistoryMetricsConcentrationRow",
+        "PaperAutonomousAllocationProposalDbHistoryMetricsConfig",
+        "PaperAutonomousAllocationProposalDbHistoryMetricsReport",
+        "PaperAutonomousAllocationProposalDbHistoryMetricsSnapshotSummary",
         "build_paper_autonomous_allocation_proposal_db_history_health_report",
         "build_paper_autonomous_allocation_proposal_db_history_health_trend_gate_report",
         "build_paper_autonomous_allocation_proposal_db_history_health_trend_report",
+        "build_paper_autonomous_allocation_proposal_db_history_metrics_report",
     }
     forbidden_exports = {
         "DEFAULT_PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_HISTORY_HEALTH_CONFIG_VERSION",
         "DEFAULT_PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_HISTORY_HEALTH_TREND_GATE_CONFIG_VERSION",
+        "PaperAutonomousAllocationProposalDbHistoryMetricsRunner",
         "PaperAutonomousAllocationProposalDbHistoryHealthRunner",
         "PaperAutonomousAllocationProposalDbHistoryHealthTrendGateRunner",
+        "load_paper_autonomous_allocation_proposal_db_history_metrics_report",
         "load_paper_autonomous_allocation_proposal_db_history_health_report",
         "load_paper_autonomous_allocation_proposal_db_history_health_trend_gate_report",
+        "_run_paper_autonomous_allocation_proposal_db_history_metrics",
         "_run_paper_autonomous_allocation_proposal_db_history_health",
         "_run_paper_autonomous_allocation_proposal_db_history_health_trend_gate",
+        "_print_paper_autonomous_allocation_proposal_db_history_metrics_summary",
         "_print_paper_autonomous_allocation_proposal_db_history_health_summary",
         "_print_paper_autonomous_allocation_proposal_db_history_health_trend_gate_summary",
     }
@@ -962,6 +980,26 @@ def test_paper_autonomous_allocation_proposal_db_history_health_public_api_expor
         is PaperAutonomousAllocationProposalDbHistoryHealthTrendReport
     )
     assert (
+        lab.PaperAutonomousAllocationProposalDbHistoryMetricsCapReasonRow
+        is PaperAutonomousAllocationProposalDbHistoryMetricsCapReasonRow
+    )
+    assert (
+        lab.PaperAutonomousAllocationProposalDbHistoryMetricsConcentrationRow
+        is PaperAutonomousAllocationProposalDbHistoryMetricsConcentrationRow
+    )
+    assert (
+        lab.PaperAutonomousAllocationProposalDbHistoryMetricsConfig
+        is PaperAutonomousAllocationProposalDbHistoryMetricsConfig
+    )
+    assert (
+        lab.PaperAutonomousAllocationProposalDbHistoryMetricsReport
+        is PaperAutonomousAllocationProposalDbHistoryMetricsReport
+    )
+    assert (
+        lab.PaperAutonomousAllocationProposalDbHistoryMetricsSnapshotSummary
+        is PaperAutonomousAllocationProposalDbHistoryMetricsSnapshotSummary
+    )
+    assert (
         lab.build_paper_autonomous_allocation_proposal_db_history_health_report
         is build_paper_autonomous_allocation_proposal_db_history_health_report
     )
@@ -972,6 +1010,10 @@ def test_paper_autonomous_allocation_proposal_db_history_health_public_api_expor
     assert (
         lab.build_paper_autonomous_allocation_proposal_db_history_health_trend_report
         is build_paper_autonomous_allocation_proposal_db_history_health_trend_report
+    )
+    assert (
+        lab.build_paper_autonomous_allocation_proposal_db_history_metrics_report
+        is build_paper_autonomous_allocation_proposal_db_history_metrics_report
     )
     for name in forbidden_exports:
         assert not hasattr(lab, name)

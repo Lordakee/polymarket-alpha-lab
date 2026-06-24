@@ -12,7 +12,7 @@ The long-term research direction is a system that can screen markets, research c
 
 ## Phase 1 Scope
 
-This repository currently contains the project design, research notes, implementation plans, a read-only market scanner, research packet assembly, paper research packet generation and DB-history readback, pure paper research packet quality reports, bid/ask paper-fill simulation, JSONL paper-trade journaling, paper-only risk gates, rejected-candidate logs, paper position ledgers, executable NAV marks, paper-only portfolio analytics, exposure reports, executable-NAV drawdown reports, paper-only analytics history validation, paper-only forecast evidence reports, paper-only outcome-tracking report logs, local-only strategy risk audit CLI reports with a cost discipline gate over paper logs, optional local Strategy Risk Audit logs and history summaries, local-only strategy evidence snapshot summaries over paper logs and local reports, local-only paper trade cost audit reports over paper logs, paper-only cost-aware event strategy reports, paper-only project screening research queues, paper-only manual-review queues, paper-only strategy recommendation bundle and bundle-log artifacts with a read-only history CLI summary, human-review proposal packet artifacts, append-only proposal-review record artifacts, proposal-review summary report artifacts, proposal-review quality gate artifacts, proposal-review diagnostic artifacts, proposal-review coverage report artifacts, proposal-review dossier artifacts, proposal-review dossier batch health artifacts, proposal evidence comparison artifacts, proposal evidence comparison history artifacts, proposal evidence comparison history batch-health artifacts, proposal evidence comparison history batch-health trend artifacts, proposal evidence comparison history batch-health trend-batch artifacts, proposal evidence comparison history batch-health trend-batch health artifacts, proposal evidence comparison history batch-health trend-batch health trend artifacts, paper autonomous allocation proposal artifacts, paper autonomous allocation proposal DB-history artifacts, paper autonomous allocation proposal DB-history gate artifacts, paper autonomous allocation proposal DB-history health artifacts, paper autonomous allocation proposal DB-history health trend artifacts, paper autonomous allocation proposal DB-history health-trend gate artifacts, and local DB persistence for DB-history health reports.
+This repository currently contains the project design, research notes, implementation plans, a read-only market scanner, research packet assembly, paper research packet generation and DB-history readback, pure paper research packet quality reports, bid/ask paper-fill simulation, JSONL paper-trade journaling, paper-only risk gates, rejected-candidate logs, paper position ledgers, executable NAV marks, paper-only portfolio analytics, exposure reports, executable-NAV drawdown reports, paper-only analytics history validation, paper-only forecast evidence reports, paper-only outcome-tracking report logs, local-only strategy risk audit CLI reports with a cost discipline gate over paper logs, optional local Strategy Risk Audit logs and history summaries, local-only strategy evidence snapshot summaries over paper logs and local reports, local-only paper trade cost audit reports over paper logs, paper-only cost-aware event strategy reports, paper-only project screening research queues, paper-only manual-review queues, paper-only strategy recommendation bundle and bundle-log artifacts with a read-only history CLI summary, human-review proposal packet artifacts, append-only proposal-review record artifacts, proposal-review summary report artifacts, proposal-review quality gate artifacts, proposal-review diagnostic artifacts, proposal-review coverage report artifacts, proposal-review dossier artifacts, proposal-review dossier batch health artifacts, proposal evidence comparison artifacts, proposal evidence comparison history artifacts, proposal evidence comparison history batch-health artifacts, proposal evidence comparison history batch-health trend artifacts, proposal evidence comparison history batch-health trend-batch artifacts, proposal evidence comparison history batch-health trend-batch health artifacts, proposal evidence comparison history batch-health trend-batch health trend artifacts, paper autonomous allocation proposal artifacts, paper autonomous allocation proposal DB-history artifacts, paper autonomous allocation proposal DB-history gate artifacts, paper autonomous allocation proposal DB-history metrics artifacts, paper autonomous allocation proposal DB-history health artifacts, paper autonomous allocation proposal DB-history health trend artifacts, paper autonomous allocation proposal DB-history health-trend gate artifacts, and local DB persistence for DB-history health reports.
 
 It also includes an optional local-only Strategy Risk Audit preflight for continuous paper runs, optional Strategy Risk Audit logging, and a local history summary over that optional log; the preflight reads existing paper logs and can pause the next paper run before any public client is constructed, audit logging is explicit opt-in local append-only JSONL evidence, and the history summary reads that evidence without changing run behavior.
 
@@ -345,6 +345,29 @@ It is not financial advice, not investment ranking, and not an approval workflow
 It prints aggregate gate status, recommended next step, source history status,
 latest aggregate allocation counts, duplicate timestamp count, latest source
 age, and reason-code counts.
+
+DB History Metrics:
+
+```bash
+.venv/bin/polymarket-alpha-lab paper-autonomous-allocation-proposal-db-history-metrics --limit 25
+```
+
+The DB history metrics command is env-only, read-only,
+paper-only/report-only/readonly, and no-write. It accepts only `--limit`. It
+reads the final allocation proposal DB configured by env and reads only
+persisted final allocation proposal reports.
+
+It computes aggregate paper allocation risk/performance metrics: budget
+utilization, fill ratio, concentration, churn, cap reasons, edge coverage, and
+expected edge notional where edge data exists.
+
+The v0 aggregates across all persisted proposal statuses and config versions
+selected by the table and `--limit`.
+
+It does not write reports and does not read upstream screening/queue tables.
+It does not place orders, approve execution, read accounts, or mutate exchange state.
+It is not financial advice, not investment ranking, not automatic live investing,
+not order instruction, and not execution authorization.
 
 DB History Health:
 
