@@ -171,8 +171,17 @@ EXPECTED_PROPOSAL_EVIDENCE_COMPARISON_HISTORY_BATCH_HEALTH_TREND_BATCH_HEALTH_TR
     "TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthTrendLog",
     "build_trade_proposal_evidence_comparison_history_batch_health_trend_batch_health_trend_report",
 }
+EXPECTED_PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_EXPORTS = {
+    "DEFAULT_PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_CONFIG_VERSION",
+    "PaperAutonomousAllocationProposalConfig",
+    "PaperAutonomousAllocationProposalReasonCodeCount",
+    "PaperAutonomousAllocationProposalReport",
+    "PaperAutonomousAllocationProposalSourceQueueSummary",
+    "build_paper_autonomous_allocation_proposal_report",
+}
 EXPECTED_LEVEL_2_ARTIFACT_EXPORTS = (
-    EXPECTED_LEVEL_2_PROPOSAL_PACKET_EXPORTS
+    EXPECTED_PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_EXPORTS
+    | EXPECTED_LEVEL_2_PROPOSAL_PACKET_EXPORTS
     | EXPECTED_PROPOSAL_REVIEW_EXPORTS
     | EXPECTED_PROPOSAL_REVIEW_SUMMARY_EXPORTS
     | EXPECTED_PROPOSAL_REVIEW_QUALITY_EXPORTS

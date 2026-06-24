@@ -287,6 +287,14 @@ from polymarket_alpha_lab.paper_autonomous_screening_decision_support_gate impor
     PaperAutonomousScreeningDecisionSupportGateReport,
     build_paper_autonomous_screening_decision_support_gate_report,
 )
+from polymarket_alpha_lab.paper_autonomous_allocation_proposal import (
+    DEFAULT_PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_CONFIG_VERSION,
+    PaperAutonomousAllocationProposalConfig,
+    PaperAutonomousAllocationProposalReasonCodeCount,
+    PaperAutonomousAllocationProposalReport,
+    PaperAutonomousAllocationProposalSourceQueueSummary,
+    build_paper_autonomous_allocation_proposal_report,
+)
 from polymarket_alpha_lab.paper_portfolio_nav import mark_paper_portfolio_nav
 from polymarket_alpha_lab.outcome_tracker import (
     OutcomeTrackingConfig,
@@ -748,6 +756,51 @@ def test_paper_autonomous_screening_decision_support_gate_public_api_exports():
     assert (
         lab.build_paper_autonomous_screening_decision_support_gate_report
         is build_paper_autonomous_screening_decision_support_gate_report
+    )
+    for name in forbidden_exports:
+        assert not hasattr(lab, name)
+
+
+def test_paper_autonomous_allocation_proposal_public_api_exports():
+    expected_exports = {
+        "DEFAULT_PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_CONFIG_VERSION",
+        "PaperAutonomousAllocationProposalConfig",
+        "PaperAutonomousAllocationProposalReasonCodeCount",
+        "PaperAutonomousAllocationProposalSourceQueueSummary",
+        "PaperAutonomousAllocationProposalReport",
+        "build_paper_autonomous_allocation_proposal_report",
+    }
+    forbidden_exports = {
+        "PaperAutonomousAllocationProposalRunner",
+        "PaperAutonomousAllocationProposalDbRow",
+        "load_paper_autonomous_allocation_proposal_report",
+    }
+
+    assert expected_exports <= set(lab.__all__)
+    assert not (forbidden_exports & set(lab.__all__))
+    assert (
+        lab.DEFAULT_PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_CONFIG_VERSION
+        is DEFAULT_PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_CONFIG_VERSION
+    )
+    assert (
+        lab.PaperAutonomousAllocationProposalConfig
+        is PaperAutonomousAllocationProposalConfig
+    )
+    assert (
+        lab.PaperAutonomousAllocationProposalReasonCodeCount
+        is PaperAutonomousAllocationProposalReasonCodeCount
+    )
+    assert (
+        lab.PaperAutonomousAllocationProposalSourceQueueSummary
+        is PaperAutonomousAllocationProposalSourceQueueSummary
+    )
+    assert (
+        lab.PaperAutonomousAllocationProposalReport
+        is PaperAutonomousAllocationProposalReport
+    )
+    assert (
+        lab.build_paper_autonomous_allocation_proposal_report
+        is build_paper_autonomous_allocation_proposal_report
     )
     for name in forbidden_exports:
         assert not hasattr(lab, name)

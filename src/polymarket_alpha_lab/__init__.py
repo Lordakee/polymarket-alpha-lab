@@ -293,6 +293,14 @@ from polymarket_alpha_lab.paper_autonomous_screening_decision_support_gate impor
     PaperAutonomousScreeningDecisionSupportGateReport,
     build_paper_autonomous_screening_decision_support_gate_report,
 )
+from polymarket_alpha_lab.paper_autonomous_allocation_proposal import (
+    DEFAULT_PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_CONFIG_VERSION,
+    PaperAutonomousAllocationProposalConfig,
+    PaperAutonomousAllocationProposalReasonCodeCount,
+    PaperAutonomousAllocationProposalReport,
+    PaperAutonomousAllocationProposalSourceQueueSummary,
+    build_paper_autonomous_allocation_proposal_report,
+)
 from polymarket_alpha_lab.positions import (
     PaperNavLog,
     PaperNavSnapshot,
@@ -336,7 +344,12 @@ __all__ = [
     "PaperAnalyticsHistoryLog",
     "PaperAnalyticsHistoryReport",
     "PaperAnalyticsHistoryTrend",
+    "DEFAULT_PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_CONFIG_VERSION",
     "DEFAULT_PAPER_AUTONOMOUS_SCREENING_DECISION_SUPPORT_GATE_CONFIG_VERSION",
+    "PaperAutonomousAllocationProposalConfig",
+    "PaperAutonomousAllocationProposalReasonCodeCount",
+    "PaperAutonomousAllocationProposalReport",
+    "PaperAutonomousAllocationProposalSourceQueueSummary",
     "PaperAutonomousScreeningDecisionSupportGateReasonCodeCount",
     "PaperAutonomousScreeningDecisionSupportGateReport",
     "PaperCostAwareEventCostAssumptions",
@@ -522,6 +535,7 @@ __all__ = [
     "TradeProposalReviewSummaryReport",
     "build_paper_analytics_history_report",
     "build_paper_analytics_report",
+    "build_paper_autonomous_allocation_proposal_report",
     "build_paper_autonomous_screening_decision_support_gate_report",
     "build_paper_book_imbalance_forecast",
     "build_paper_llm_forecast",

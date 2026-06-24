@@ -146,6 +146,11 @@ from polymarket_alpha_lab.supabase_paper_nav_snapshot_config import (
     PAPER_NAV_SNAPSHOT_DB_ENABLED_ENV_VAR,
     PAPER_NAV_SNAPSHOT_DB_TABLE_ENV_VAR,
 )
+from polymarket_alpha_lab.supabase_paper_autonomous_screening_decision_support_gate_config import (
+    PAPER_AUTONOMOUS_SCREENING_DECISION_SUPPORT_GATE_DB_DSN_ENV_VAR,
+    PAPER_AUTONOMOUS_SCREENING_DECISION_SUPPORT_GATE_DB_ENABLED_ENV_VAR,
+    PAPER_AUTONOMOUS_SCREENING_DECISION_SUPPORT_GATE_DB_TABLE_ENV_VAR,
+)
 from polymarket_alpha_lab.supabase_action_gated_strategy_recommendation_queue_decision_support_config import (
     ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_DSN_ENV_VAR,
     ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_ENABLED_ENV_VAR,
@@ -671,6 +676,136 @@ def test_paper_autonomous_screening_decision_support_gate_cli_prints_concise_sum
     assert rank_stability_dsn not in captured.out
     assert operator_flow_dsn not in captured.out
     assert action_queue_dsn not in captured.out
+
+
+def test_paper_autonomous_allocation_proposal_cli_prints_aggregate_summary(
+    monkeypatch,
+    capsys,
+):
+    command = "paper-autonomous-allocation-proposal"
+    shared_dsn = "postgresql://allocation-proposal.example.invalid/db"
+    screening_gate_table_name = "paper_autonomous_screening_decision_support_gate_reports"
+    decision_support_table_name = (
+        "paper_action_gated_strategy_recommendation_queue_decision_support_reports"
+    )
+    source_queue_table_name = "paper_action_gated_strategy_recommendation_queue_reports"
+    monkeypatch.setenv(
+        PAPER_AUTONOMOUS_SCREENING_DECISION_SUPPORT_GATE_DB_ENABLED_ENV_VAR,
+        "true",
+    )
+    monkeypatch.setenv(
+        PAPER_AUTONOMOUS_SCREENING_DECISION_SUPPORT_GATE_DB_DSN_ENV_VAR,
+        shared_dsn,
+    )
+    monkeypatch.setenv(
+        PAPER_AUTONOMOUS_SCREENING_DECISION_SUPPORT_GATE_DB_TABLE_ENV_VAR,
+        screening_gate_table_name,
+    )
+    monkeypatch.setenv(
+        ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_ENABLED_ENV_VAR,
+        "true",
+    )
+    monkeypatch.setenv(
+        ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_DSN_ENV_VAR,
+        shared_dsn,
+    )
+    monkeypatch.setenv(
+        ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_TABLE_ENV_VAR,
+        decision_support_table_name,
+    )
+    monkeypatch.setenv(ACTION_GATED_QUEUE_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(ACTION_GATED_QUEUE_DB_DSN_ENV_VAR, shared_dsn)
+    monkeypatch.setenv(ACTION_GATED_QUEUE_DB_TABLE_ENV_VAR, source_queue_table_name)
+    calls = []
+
+    def fake_runner(**kwargs):
+        calls.append(kwargs)
+        assert kwargs["limit"] == 5
+        assert kwargs["screening_gate_dsn"] == shared_dsn
+        assert kwargs["screening_gate_table_name"] == screening_gate_table_name
+        assert kwargs["action_gated_queue_decision_support_dsn"] == shared_dsn
+        assert (
+            kwargs["action_gated_queue_decision_support_table_name"]
+            == decision_support_table_name
+        )
+        assert kwargs["source_queue_dsn"] == shared_dsn
+        assert kwargs["source_queue_table_name"] == source_queue_table_name
+        return SimpleNamespace(
+            proposal_status="watch",
+            recommended_next_step="hold_paper_autonomous_allocation_proposal",
+            source_queue_count=3,
+            screening_gate_status="pass",
+            queue_risk_status="watch",
+            allocation_report=SimpleNamespace(
+                input_count=3,
+                row_count=3,
+                allocated_count=1,
+                capped_count=1,
+                no_budget_count=0,
+                non_recommend_count=1,
+                skipped_count=0,
+                total_allocated_paper_notional=Decimal("25.000000"),
+                remaining_paper_budget=Decimal("75.000000"),
+                rows=(
+                    SimpleNamespace(
+                        market_slug="hidden-market-slug",
+                        question="Will hidden market resolve yes?",
+                    ),
+                ),
+            ),
+            reason_code_counts=(
+                SimpleNamespace(
+                    reason_code="queue_risk_watch",
+                    report_count=1,
+                ),
+                SimpleNamespace(
+                    reason_code="allocation_capped",
+                    report_count=1,
+                ),
+            ),
+        )
+
+    exit_code = main(
+        [command, "--limit", "5"],
+        paper_autonomous_allocation_proposal_runner=fake_runner,
+        client_factory=lambda: (_ for _ in ()).throw(
+            AssertionError("client should not be constructed"),
+        ),
+    )
+
+    assert exit_code == 0
+    assert len(calls) == 1
+    captured = capsys.readouterr()
+    assert captured.out.splitlines() == [
+        (
+            f"{command}: proposal_status=watch "
+            "recommended_next_step=hold_paper_autonomous_allocation_proposal "
+            "source_queue_count=3 "
+            "screening_gate_status=pass "
+            "queue_risk_status=watch "
+            "input_count=3 "
+            "row_count=3 "
+            "allocated_count=1 "
+            "capped_count=1 "
+            "no_budget_count=0 "
+            "non_recommend_count=1 "
+            "skipped_count=0 "
+            "total_allocated_paper_notional=25.000000 "
+            "remaining_paper_budget=75.000000"
+        ),
+        "reason_code_counts: queue_risk_watch=1 allocation_capped=1",
+    ]
+    assert captured.err == ""
+    for hidden in (
+        shared_dsn,
+        screening_gate_table_name,
+        decision_support_table_name,
+        source_queue_table_name,
+        "hidden-market-slug",
+        "Will hidden market resolve yes?",
+    ):
+        assert hidden not in captured.out
+        assert hidden not in captured.err
 
 
 def _empty_nav_snapshot() -> PaperNavSnapshot:

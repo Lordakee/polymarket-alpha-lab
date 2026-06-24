@@ -89,6 +89,9 @@ from polymarket_alpha_lab.paper_trade_cost_trend import (
 from polymarket_alpha_lab.paper_trade_cost_audit_psycopg import (
     insert_paper_trade_cost_audit_report_with_psycopg,
 )
+from polymarket_alpha_lab.paper_autonomous_allocation_proposal_psycopg_read import (
+    MAX_PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_READ_LIMIT,
+)
 from polymarket_alpha_lab.pipeline import MarketScanConfig, run_market_scan
 from polymarket_alpha_lab.positions import PaperNavLog, PaperNavSnapshot
 from polymarket_alpha_lab.paper_recommendation_cycle_snapshot_psycopg import (
@@ -178,6 +181,9 @@ from polymarket_alpha_lab.supabase_outcome_tracking_config import (
 )
 from polymarket_alpha_lab.supabase_paper_nav_snapshot_config import (
     from_paper_nav_snapshot_db_env,
+)
+from polymarket_alpha_lab.supabase_paper_autonomous_screening_decision_support_gate_config import (
+    from_paper_autonomous_screening_decision_support_gate_db_env,
 )
 from polymarket_alpha_lab.supabase_paper_research_packet_config import (
     from_paper_research_packet_db_env,
@@ -277,6 +283,7 @@ PaperResearchPacketOperatorFlowDbHistoryRunner = Callable[
 ]
 PaperResearchPacketOperatorFlowDbHistoryGateRunner = Callable[..., object]
 PaperAutonomousScreeningDecisionSupportGateRunner = Callable[..., object]
+PaperAutonomousAllocationProposalRunner = Callable[..., object]
 PaperResearchPacketOperatorFlowDbSink = Callable[..., object]
 PaperProbabilityRecommendationQueueDbSink = Callable[..., object]
 PaperRecommendationRiskBudgetDbSink = Callable[..., object]
@@ -330,15 +337,15 @@ def _redact_db_table_name_and_tail(text: str, *, table_name: str) -> str:
 
 
 def _redact_paper_research_packet_sensitive_fields(text: str) -> str:
-    message = re.sub(
-        r"\b(payload_json|payload)=.*?(?=\s+[A-Za-z_][A-Za-z0-9_]*=|$)",
-        r"\1=<redacted-payload>",
+    message = _redact_keyed_sensitive_fields(
         text,
+        field_names=("payload_json", "payload"),
+        replacement="<redacted-payload>",
     )
-    message = re.sub(
-        r"\bquestion=.*?(?=\s+[A-Za-z_][A-Za-z0-9_]*=|$)",
-        "question=<redacted-question>",
+    message = _redact_keyed_sensitive_fields(
         message,
+        field_names=("question",),
+        replacement="<redacted-question>",
     )
     message = re.sub(
         r"\breport_sha256=[A-Fa-f0-9]{64}\b",
@@ -346,6 +353,195 @@ def _redact_paper_research_packet_sensitive_fields(text: str) -> str:
         message,
     )
     return re.sub(r"\b[A-Fa-f0-9]{64}\b", "<redacted-sha256>", message)
+
+
+def _redact_keyed_sensitive_fields(
+    text: str,
+    *,
+    field_names: tuple[str, ...],
+    replacement: str,
+) -> str:
+    message = text
+    for field_name in field_names:
+        message = _redact_sensitive_equals_field(
+            message,
+            field_name=field_name,
+            replacement=replacement,
+        )
+        message = _redact_sensitive_colon_field(
+            message,
+            field_name=field_name,
+            replacement=replacement,
+        )
+        message = _redact_sensitive_json_field(
+            message,
+            field_name=field_name,
+            replacement=replacement,
+        )
+    return message
+
+
+def _redact_sensitive_equals_field(
+    text: str,
+    *,
+    field_name: str,
+    replacement: str,
+) -> str:
+    pattern = re.compile(rf"\b{re.escape(field_name)}=")
+    return _redact_sensitive_field_matches(
+        text,
+        pattern=pattern,
+        replacement=f"{field_name}={replacement}",
+    )
+
+
+def _redact_sensitive_colon_field(
+    text: str,
+    *,
+    field_name: str,
+    replacement: str,
+) -> str:
+    pattern = re.compile(rf"\b{re.escape(field_name)}:\s*")
+    return _redact_sensitive_field_matches(
+        text,
+        pattern=pattern,
+        replacement=f"{field_name}: {replacement}",
+    )
+
+
+def _redact_sensitive_json_field(
+    text: str,
+    *,
+    field_name: str,
+    replacement: str,
+) -> str:
+    pattern = re.compile(rf'"{re.escape(field_name)}"\s*:\s*')
+    return _redact_sensitive_field_matches(
+        text,
+        pattern=pattern,
+        replacement=f'"{field_name}": "{replacement}"',
+    )
+
+
+def _redact_sensitive_field_matches(
+    text: str,
+    *,
+    pattern: re.Pattern[str],
+    replacement: str,
+) -> str:
+    parts: list[str] = []
+    cursor = 0
+    while True:
+        match = pattern.search(text, cursor)
+        if match is None:
+            parts.append(text[cursor:])
+            break
+        parts.append(text[cursor : match.start()])
+        value_end = _sensitive_field_value_end(text, match.end())
+        parts.append(replacement)
+        cursor = value_end
+    return "".join(parts)
+
+
+def _sensitive_field_value_end(text: str, start: int) -> int:
+    json_value_end = _json_like_value_end(text, start)
+    if json_value_end is not None:
+        field_start = _next_key_value_field_start(text, json_value_end)
+        if field_start is None:
+            return len(text)
+        return field_start
+    field_start = _next_key_value_field_start(text, start)
+    if field_start is None:
+        return len(text)
+    return field_start
+
+
+def _json_like_value_end(text: str, start: int) -> int | None:
+    index = start
+    while index < len(text) and text[index].isspace():
+        index += 1
+    if index >= len(text) or text[index] not in "{[":
+        return None
+
+    closing_by_opening = {"{": "}", "[": "]"}
+    stack = [text[index]]
+    quote: str | None = None
+    escaped = False
+    for position in range(index + 1, len(text)):
+        char = text[position]
+        if quote is not None:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = None
+            continue
+
+        if char in {'"', "'"}:
+            quote = char
+            continue
+        if char in closing_by_opening:
+            stack.append(char)
+            continue
+        if char in ("}", "]"):
+            if not stack or closing_by_opening[stack[-1]] != char:
+                return None
+            stack.pop()
+            if not stack:
+                return position + 1
+    return None
+
+
+def _next_key_value_field_start(text: str, start: int) -> int | None:
+    index = start
+    while True:
+        match = re.search(
+            r'\s+(?:"[A-Za-z_][A-Za-z0-9_]*"\s*:|'
+            r"[A-Za-z_][A-Za-z0-9_]*(?:=|:))",
+            text[index:],
+        )
+        if match is None:
+            return None
+        candidate = index + match.start()
+        key_start = candidate + 1
+        if _is_false_key_value_in_question(text, candidate):
+            index = key_start
+            continue
+        return candidate
+
+
+def _is_false_key_value_in_question(text: str, candidate: int) -> bool:
+    key_start = candidate + 1
+    if key_start < len(text) and text[key_start] == '"':
+        return False
+    key_end = key_start
+    while key_end < len(text) and (
+        text[key_end].isalnum() or text[key_end] == "_"
+    ):
+        key_end += 1
+    key = text[key_start:key_end]
+    if key in {"payload_json", "payload", "question"}:
+        return False
+    separator_index = key_end
+    value_start = separator_index + 1
+    if separator_index >= len(text) or text[separator_index] != "=":
+        return False
+    value_end = value_start
+    while value_end < len(text) and not text[value_end].isspace():
+        value_end += 1
+    next_word_start = value_end
+    while next_word_start < len(text) and text[next_word_start].isspace():
+        next_word_start += 1
+    if next_word_start >= len(text):
+        return False
+    next_word_end = next_word_start
+    while next_word_end < len(text) and not text[next_word_end].isspace():
+        next_word_end += 1
+    next_word = text[next_word_start:next_word_end]
+    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*(?:=|:).*", next_word):
+        return False
+    return text[next_word_start].isalpha()
 
 
 def _redacted_paper_research_packet_db_history_error(
@@ -443,6 +639,47 @@ def _redacted_paper_autonomous_screening_gate_error(
     if not message.strip():
         message = exc.__class__.__name__
     return RuntimeError(message)
+
+
+def _redacted_paper_autonomous_allocation_proposal_error(
+    exc: Exception,
+    *,
+    screening_gate_dsn: str | None,
+    screening_gate_table_name: str | None,
+    action_gated_queue_decision_support_dsn: str | None,
+    action_gated_queue_decision_support_table_name: str | None,
+    source_queue_dsn: str | None,
+    source_queue_table_name: str | None,
+) -> RuntimeError:
+    message = str(exc)
+    for dsn in (
+        screening_gate_dsn,
+        action_gated_queue_decision_support_dsn,
+        source_queue_dsn,
+    ):
+        if dsn is not None:
+            message = _redact_db_dsn(message, dsn=dsn)
+    for table_name in (
+        screening_gate_table_name,
+        action_gated_queue_decision_support_table_name,
+        source_queue_table_name,
+    ):
+        if table_name is not None:
+            message = _redact_db_table_name_and_tail(message, table_name=table_name)
+    message = _redact_paper_research_packet_sensitive_fields(message)
+    if not message.strip():
+        message = exc.__class__.__name__
+    return RuntimeError(message)
+
+
+def _require_paper_autonomous_allocation_proposal_limit(limit: object) -> None:
+    if isinstance(limit, bool) or type(limit) is not int or limit < 1:
+        raise ValueError("paper-autonomous-allocation-proposal limit must be positive")
+    if limit > MAX_PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_READ_LIMIT:
+        raise ValueError(
+            "paper-autonomous-allocation-proposal limit must be less than or equal to "
+            f"{MAX_PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_READ_LIMIT}",
+        )
 
 
 def _raise_redacted_db_sink_error(
@@ -630,6 +867,9 @@ def main(
     ) = None,
     paper_autonomous_screening_decision_support_gate_runner: (
         PaperAutonomousScreeningDecisionSupportGateRunner | None
+    ) = None,
+    paper_autonomous_allocation_proposal_runner: (
+        PaperAutonomousAllocationProposalRunner | None
     ) = None,
     paper_probability_recommendation_queue_db_sink: (
         PaperProbabilityRecommendationQueueDbSink | None
@@ -1264,6 +1504,15 @@ def main(
         "paper-autonomous-screening-decision-support-gate",
     )
     paper_autonomous_screening_decision_support_gate.add_argument(
+        "--limit",
+        type=int,
+        default=25,
+        dest="limit",
+    )
+    paper_autonomous_allocation_proposal = subparsers.add_parser(
+        "paper-autonomous-allocation-proposal",
+    )
+    paper_autonomous_allocation_proposal.add_argument(
         "--limit",
         type=int,
         default=25,
@@ -2691,6 +2940,85 @@ def main(
         except Exception as exc:
             print(
                 f"paper-autonomous-screening-decision-support-gate failed: {exc}",
+                file=sys.stderr,
+            )
+            return 1
+
+    if args.command == "paper-autonomous-allocation-proposal":
+        try:
+            _require_paper_autonomous_allocation_proposal_limit(args.limit)
+            screening_gate_db_config = (
+                from_paper_autonomous_screening_decision_support_gate_db_env()
+            )
+            if not screening_gate_db_config.enabled:
+                raise ValueError(
+                    "paper-autonomous-allocation-proposal requires "
+                    "autonomous screening gate DB to be enabled",
+                )
+            screening_gate_dsn = screening_gate_db_config.dsn
+            if screening_gate_dsn is None:
+                raise ValueError(
+                    "paper-autonomous-allocation-proposal requires an "
+                    "autonomous screening gate DB DSN",
+                )
+            decision_support_db_config = (
+                from_action_gated_strategy_recommendation_queue_decision_support_db_env()
+            )
+            if not decision_support_db_config.enabled:
+                raise ValueError(
+                    "paper-autonomous-allocation-proposal requires "
+                    "action-gated queue decision-support DB to be enabled",
+                )
+            decision_support_dsn = decision_support_db_config.dsn
+            if decision_support_dsn is None:
+                raise ValueError(
+                    "paper-autonomous-allocation-proposal requires an "
+                    "action-gated queue decision-support DB DSN",
+                )
+            source_queue_db_config = (
+                from_action_gated_strategy_recommendation_queue_db_env()
+            )
+            if not source_queue_db_config.enabled:
+                raise ValueError(
+                    "paper-autonomous-allocation-proposal requires "
+                    "action-gated queue DB to be enabled",
+                )
+            source_queue_dsn = source_queue_db_config.dsn
+            if source_queue_dsn is None:
+                raise ValueError(
+                    "paper-autonomous-allocation-proposal requires an "
+                    "action-gated queue DB DSN",
+                )
+            try:
+                report = _run_paper_autonomous_allocation_proposal(
+                    screening_gate_dsn=screening_gate_dsn,
+                    screening_gate_table_name=screening_gate_db_config.table_name,
+                    action_gated_queue_decision_support_dsn=decision_support_dsn,
+                    action_gated_queue_decision_support_table_name=(
+                        decision_support_db_config.table_name
+                    ),
+                    source_queue_dsn=source_queue_dsn,
+                    source_queue_table_name=source_queue_db_config.table_name,
+                    limit=args.limit,
+                    runner=paper_autonomous_allocation_proposal_runner,
+                )
+            except Exception as exc:
+                raise _redacted_paper_autonomous_allocation_proposal_error(
+                    exc,
+                    screening_gate_dsn=screening_gate_dsn,
+                    screening_gate_table_name=screening_gate_db_config.table_name,
+                    action_gated_queue_decision_support_dsn=decision_support_dsn,
+                    action_gated_queue_decision_support_table_name=(
+                        decision_support_db_config.table_name
+                    ),
+                    source_queue_dsn=source_queue_dsn,
+                    source_queue_table_name=source_queue_db_config.table_name,
+                ) from None
+            _print_paper_autonomous_allocation_proposal_summary(report)
+            return 0
+        except Exception as exc:
+            print(
+                f"paper-autonomous-allocation-proposal failed: {exc}",
                 file=sys.stderr,
             )
             return 1
@@ -5488,6 +5816,125 @@ def _run_paper_autonomous_screening_decision_support_gate(
                 pass
 
 
+def _run_paper_autonomous_allocation_proposal(
+    *,
+    screening_gate_dsn: str,
+    screening_gate_table_name: str,
+    action_gated_queue_decision_support_dsn: str,
+    action_gated_queue_decision_support_table_name: str,
+    source_queue_dsn: str,
+    source_queue_table_name: str,
+    limit: int,
+    runner: PaperAutonomousAllocationProposalRunner | None,
+) -> object:
+    _require_paper_autonomous_allocation_proposal_limit(limit)
+    generated_at = datetime.now(UTC)
+
+    if runner is not None:
+        try:
+            return runner(
+                screening_gate_dsn=screening_gate_dsn,
+                screening_gate_table_name=screening_gate_table_name,
+                action_gated_queue_decision_support_dsn=(
+                    action_gated_queue_decision_support_dsn
+                ),
+                action_gated_queue_decision_support_table_name=(
+                    action_gated_queue_decision_support_table_name
+                ),
+                source_queue_dsn=source_queue_dsn,
+                source_queue_table_name=source_queue_table_name,
+                limit=limit,
+                generated_at=generated_at,
+            )
+        except Exception as exc:
+            raise _redacted_paper_autonomous_allocation_proposal_error(
+                exc,
+                screening_gate_dsn=screening_gate_dsn,
+                screening_gate_table_name=screening_gate_table_name,
+                action_gated_queue_decision_support_dsn=(
+                    action_gated_queue_decision_support_dsn
+                ),
+                action_gated_queue_decision_support_table_name=(
+                    action_gated_queue_decision_support_table_name
+                ),
+                source_queue_dsn=source_queue_dsn,
+                source_queue_table_name=source_queue_table_name,
+            ) from None
+
+    if not (
+        screening_gate_dsn
+        == action_gated_queue_decision_support_dsn
+        == source_queue_dsn
+    ):
+        raise RuntimeError(
+            "paper-autonomous-allocation-proposal read adapter requires all "
+            "upstream DB DSNs to match",
+        )
+
+    try:
+        import psycopg
+    except ModuleNotFoundError as exc:
+        if exc.name != "psycopg":
+            raise
+        raise RuntimeError(
+            "psycopg is required to use the paper autonomous allocation proposal "
+            "read adapter; install the postgres extra.",
+        ) from exc
+
+    connection = None
+    try:
+        connection = psycopg.connect(screening_gate_dsn, autocommit=True)
+    except Exception:
+        raise RuntimeError(
+            "failed to connect to the paper autonomous allocation proposal "
+            "upstream databases",
+        ) from None
+    try:
+        return _load_paper_autonomous_allocation_proposal_report(
+            connection,
+            screening_gate_limit=limit,
+            screening_gate_table_name=screening_gate_table_name,
+            action_gated_queue_decision_support_limit=limit,
+            action_gated_queue_decision_support_table_name=(
+                action_gated_queue_decision_support_table_name
+            ),
+            source_queue_limit=limit,
+            source_queue_table_name=source_queue_table_name,
+            generated_at=generated_at,
+        )
+    except Exception as exc:
+        raise _redacted_paper_autonomous_allocation_proposal_error(
+            exc,
+            screening_gate_dsn=screening_gate_dsn,
+            screening_gate_table_name=screening_gate_table_name,
+            action_gated_queue_decision_support_dsn=(
+                action_gated_queue_decision_support_dsn
+            ),
+            action_gated_queue_decision_support_table_name=(
+                action_gated_queue_decision_support_table_name
+            ),
+            source_queue_dsn=source_queue_dsn,
+            source_queue_table_name=source_queue_table_name,
+        ) from None
+    finally:
+        if connection is not None:
+            try:
+                connection.close()
+            except Exception:
+                pass
+
+
+def _load_paper_autonomous_allocation_proposal_report(
+    connection: object,
+    **kwargs: object,
+) -> object:
+    from polymarket_alpha_lab.paper_autonomous_allocation_proposal_load import (
+        load_paper_autonomous_allocation_proposal_report,
+    )
+
+    return load_paper_autonomous_allocation_proposal_report(connection, **kwargs)
+
+
 def _run_outcome_tracking_db_history(
     *,
     dsn: str,
@@ -6626,6 +7073,50 @@ def _print_paper_autonomous_screening_decision_support_gate_summary(
         for row in report.reason_code_counts
     )
     print(f"reason_code_counts: {reason_code_counts or 'none'}")
+
+
+def _print_paper_autonomous_allocation_proposal_summary(report: object) -> None:
+    allocation_report = getattr(report, "allocation_report", None)
+    summary_parts = [
+        "paper-autonomous-allocation-proposal:",
+        f"proposal_status={getattr(report, 'proposal_status')}",
+        f"recommended_next_step={getattr(report, 'recommended_next_step')}",
+    ]
+    for field_name in (
+        "source_queue_count",
+        "screening_gate_status",
+        "queue_risk_status",
+    ):
+        if hasattr(report, field_name):
+            summary_parts.append(f"{field_name}={getattr(report, field_name)}")
+    if allocation_report is not None:
+        for field_name in (
+            "input_count",
+            "row_count",
+            "allocated_count",
+            "capped_count",
+            "no_budget_count",
+            "non_recommend_count",
+            "skipped_count",
+            "total_allocated_paper_notional",
+            "remaining_paper_budget",
+        ):
+            if hasattr(allocation_report, field_name):
+                summary_parts.append(
+                    f"{field_name}={getattr(allocation_report, field_name)}",
+                )
+    print(" ".join(summary_parts))
+    reason_code_counts = " ".join(
+        f"{row.reason_code}={_reason_code_report_count(row)}"
+        for row in getattr(report, "reason_code_counts", ())
+    )
+    print(f"reason_code_counts: {reason_code_counts or 'none'}")
+
+
+def _reason_code_report_count(row: object) -> object:
+    if hasattr(row, "report_count"):
+        return getattr(row, "report_count")
+    return getattr(row, "count")
 
 
 def _format_autonomous_screening_gate_signal_counts(report: object) -> str:

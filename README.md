@@ -268,6 +268,22 @@ connection read helper expects it to use the same DSN as the required upstream
 DBs. The command is env-only and accepts only `--limit`; it does not accept
 DSN/table/persist flags and does not write reports.
 
+Paper Autonomous Allocation Proposal combines a passed autonomous screening
+gate, latest action-gated queue decision-support reports, and source queue
+reports into a paper-only/report-only/read-only allocation proposal:
+
+```bash
+.venv/bin/polymarket-alpha-lab paper-autonomous-allocation-proposal --limit 25
+```
+
+Operator scope details: [Paper Autonomous Allocation Proposal](docs/paper-autonomous-allocation-proposal.md).
+
+The command is env-only and reads already-persisted upstream reports. It
+accepts only `--limit`; it does not accept DSN/table/persist flags, does not
+write reports, and stays no-write. It is not a live-execution signal, not
+execution authorization, not order instruction, and not financial advice.
+Boundary: no live trading, no auth, no key handling, no wallet handling, no account handling, no account reads, no order construction, no order signing, no order submission, no order cancellation, no order replacement, no exchange mutation, no investment ranking, not automatic live investing, and not an approval workflow.
+
 ## Level 1B Node 1 Status
 
 Level 1B Node 1 adds configurable paper-only risk gates and append-only rejected-candidate logs. It does not place orders, authenticate, handle private keys, cancel orders, open user WebSockets, run heartbeat logic, or create live-trading proposals.

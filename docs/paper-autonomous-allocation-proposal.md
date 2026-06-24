@@ -1,0 +1,107 @@
+# Paper Autonomous Allocation Proposal
+
+## Scope
+
+The Paper Autonomous Allocation Proposal is a paper-only/report-only/read-only autonomous allocation proposal for Polymarket probability-event allocation review. It consumes already-produced and persisted upstream paper reports and combines upstream paper reports into an allocation proposal status and recommended next step for operator review.
+
+This stage moves toward autonomous investing only by preparing paper allocation proposals. It does not allocate capital, alter strategy behavior, create live instructions, or replace human review.
+
+Proposal status, recommended-next-step fields, reason-code counts, allocation rows, and shadow NAV summaries are operator review aids, not approvals.
+
+The proposal is not financial advice, not investment ranking, not automatic live investing, not order instruction, not execution authorization, not an approval workflow, and not a live-execution signal.
+
+## Source Reports
+
+The source of truth is the set of already-produced and persisted upstream paper reports selected by the loader or caller. The default operator flow uses:
+
+- the latest autonomous screening decision-support gate report
+- the latest action-gated queue decision-support priority and risk reports
+- source action-gated queue reports across statuses, including paper research-ready rows
+- the existing paper recommendation allocation reducer and allocation report
+
+The decision-support snapshot alone is not enough for per-market rows; source queue reports provide the paper row details used to build allocation inputs.
+
+The reducer must treat upstream paper reports as immutable evidence. It must not fetch live market data, read accounts, repair missing upstream reports, create new research, change upstream weights, or mutate source reports.
+
+## Operator Flow
+
+1. Upstream paper workflows produce and persist their own screening, queue, priority, risk, cost, and allocation-related report artifacts.
+2. The read-only loader selects the requested persisted upstream report window and source queue rows.
+3. The proposal reducer checks hard paper/report/read-only flags, consistency between the screening gate and queue reports, and source queue availability.
+4. Ready source queue rows from research-ready reports become paper allocation inputs for the existing paper recommendation allocation reducer.
+5. The operator reviews proposal status, recommended next step, reason codes, source queue summary, paper allocation rows, and shadow NAV evidence.
+6. Any follow-up remains a paper review action outside this proposal stage.
+
+The flow ends at report output. It is a paper allocation review checkpoint, not an execution workflow.
+
+The reducer preserves the source queue row action in paper allocation inputs. If an upstream ready row carries a non-recommend action, the allocation reducer treats it as `non_recommend`, forcing operator review instead of upgrading it to a paper allocation.
+
+## Allocation Proposal Status and Next Step
+
+Allocation proposal status should describe whether the selected upstream paper evidence can support the next paper allocation review:
+
+- `pass`: the autonomous screening gate and queue risk evidence passed, source queue rows are available, and the allocation reducer produced a paper proposal suitable for review.
+- `watch`: upstream evidence exists but gate, risk, source consistency, cap pressure, or allocation constraints require operator inspection.
+- `blocked`: upstream evidence is missing, stale, internally inconsistent, blocked by the screening gate or queue risk, or unable to produce a usable paper allocation proposal.
+
+The recommended next step is a paper review label such as `review_paper_autonomous_allocation_proposal`, `hold_paper_autonomous_allocation_proposal`, or `block_paper_autonomous_allocation_proposal`.
+
+A pass status is not permission to trade. A watch status is not a live monitoring instruction. A blocked status is not an exchange action.
+
+## Paper Allocation and Shadow NAV
+
+Paper notional is paper sizing, not capital commitment. Paper allocation proposal rows are not order tickets.
+
+Paper allocation rows carry proposed paper notional, paper share quantities, cap usage, zero or reduced allocation reason codes, and allocation status for review. They are accounting rows for paper analysis only.
+
+Shadow NAV and exposure summaries show how the proposed paper allocation would affect paper portfolio risk under supplied paper assumptions. They are review evidence only and must not be treated as capital movement, account state, exchange state, or a live-execution signal.
+
+## Transaction and Cost Awareness
+
+Transaction/cost awareness is upstream evidence. This proposal may reflect already-computed paper cost, fee-drag, liquidity, slippage, fill-quality, or cost-discipline evidence from upstream reports.
+
+There is no live fee estimation, no live trading, no order construction, no order signing, no order submission, no order cancellation, no order replacement, and no exchange mutation in this stage.
+
+The proposal must not query current fee schedules, request order books, build order payloads, estimate live fill costs, or transform paper cost awareness into execution authorization.
+
+## CLI Contract
+
+The operator command is env-only, report-only, read-only, and no-write:
+
+```bash
+.venv/bin/polymarket-alpha-lab paper-autonomous-allocation-proposal --limit 25
+```
+
+The command reads already-persisted upstream reports from environment-configured paper report stores. It accepts only `--limit`; it does not accept DSN/table/persist flags, does not write reports, and does not create missing upstream inputs.
+
+The CLI does not accept live/auth/wallet/private-key/api-key/account/order/trade/execute/submit/approve flags. It prints aggregate paper proposal status, recommended next step, counts, reason-code summaries, and redacted operator evidence only.
+
+Do not put secret values, credentials, DSN values, wallet material, private keys, account identifiers, table names, payload JSON, hashes, market questions, or market slugs in operator examples or runbook output.
+
+## Review Boundaries
+
+The Phase 1 boundary is explicit:
+
+- no live trading
+- no automatic live investing
+- no auth
+- no key handling
+- no wallet handling
+- no account handling
+- no account reads
+- no order instruction
+- no order construction
+- no order signing
+- no order submission
+- no order cancellation
+- no order replacement
+- no execution authorization
+- no approval workflow
+- no live-execution signal
+- no exchange mutation
+- no investment ranking
+- no financial advice
+
+Operator notes and runbooks should describe source report freshness, proposal status, recommended next step, paper allocation rows, shadow NAV evidence, and reason codes only.
+
+This stage must not connect to authentication, key or wallet handling, account handling, exchange clients, live execution, or any component that can mutate exchange state.
