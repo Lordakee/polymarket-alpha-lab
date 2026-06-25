@@ -120,6 +120,7 @@ def _remove_psycopg_modules(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.fixture()
 def adapter_module() -> types.ModuleType:
     sys.modules.pop(ADAPTER_MODULE_NAME, None)
+    sys.modules.pop("polymarket_alpha_lab.paper_autonomous_investment_ledger_store", None)
     return importlib.import_module(ADAPTER_MODULE_NAME)
 
 

@@ -304,6 +304,36 @@ def test_insert_ledger_report_with_result_observes_duplicate_insert(
     assert duplicate.inserted is False
 
 
+def test_insert_result_accepts_exact_ledger_db_row_and_inserted_bool(
+    store_module: types.ModuleType,
+) -> None:
+    row = fake_db_row()
+
+    result = store_module.PaperAutonomousInvestmentLedgerInsertResult(
+        row=row,
+        inserted=True,
+    )
+
+    assert result.row is row
+    assert result.inserted is True
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    (
+        ({"row": object(), "inserted": True}, "row"),
+        ({"row": fake_db_row(), "inserted": 1}, "inserted"),
+    ),
+)
+def test_insert_result_rejects_non_ledger_db_row_or_non_bool_inserted(
+    store_module: types.ModuleType,
+    kwargs: dict[str, object],
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        store_module.PaperAutonomousInvestmentLedgerInsertResult(**kwargs)
+
+
 def test_insert_ledger_report_rejects_unexpected_rowcount(
     store_module: types.ModuleType,
 ) -> None:
