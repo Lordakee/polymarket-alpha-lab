@@ -1,4 +1,4 @@
-"""Optional psycopg adapter for paper broker execution record persistence."""
+"""Optional psycopg adapter for paper probability selection summary history persistence."""
 
 from __future__ import annotations
 
@@ -7,21 +7,24 @@ from dataclasses import dataclass
 import re
 from typing import Any, TypeVar
 
-from polymarket_alpha_lab.paper_broker import PaperBrokerExecutionRecord
-from polymarket_alpha_lab.paper_broker_db_row import (
-    paper_broker_execution_record_to_db_row,
+from polymarket_alpha_lab.paper_probability_selection_summary_history import (
+    PaperProbabilitySelectionSummaryHistoryReport,
 )
-from polymarket_alpha_lab.supabase_paper_broker_config import (
-    DEFAULT_PAPER_BROKER_DB_TABLE,
-    SupabasePaperBrokerConfig,
+from polymarket_alpha_lab.paper_probability_selection_summary_history_store import (
+    DEFAULT_PAPER_PROBABILITY_SELECTION_SUMMARY_HISTORY_REPORTS_TABLE,
+    insert_paper_probability_selection_summary_history_report,
+    load_paper_probability_selection_summary_history_reports,
+)
+from polymarket_alpha_lab.supabase_paper_probability_selection_summary_history_config import (
+    SupabasePaperProbabilitySelectionSummaryHistoryConfig,
 )
 
 
 __all__ = (
-    "insert_paper_broker_execution_record_from_config",
-    "insert_paper_broker_execution_record_with_psycopg",
-    "load_paper_broker_execution_records_from_config",
-    "load_paper_broker_execution_records_with_psycopg",
+    "insert_paper_probability_selection_summary_history_report_from_config",
+    "insert_paper_probability_selection_summary_history_report_with_psycopg",
+    "load_paper_probability_selection_summary_history_reports_from_config",
+    "load_paper_probability_selection_summary_history_reports_with_psycopg",
 )
 
 
@@ -29,113 +32,115 @@ _T = TypeVar("_T")
 _IDENTIFIER_PATTERN = re.compile(r"^[a-z][a-z0-9_]*[a-z0-9]$")
 
 
-def insert_paper_broker_execution_record_from_config(
-    config: SupabasePaperBrokerConfig,
-    record: PaperBrokerExecutionRecord,
+def insert_paper_probability_selection_summary_history_report_from_config(
+    config: SupabasePaperProbabilitySelectionSummaryHistoryConfig,
+    report: PaperProbabilitySelectionSummaryHistoryReport,
     *,
     connect: Callable[[str], Any] | None = None,
-    insert_record: Callable[..., _T] | None = None,
+    insert_report: Callable[..., _T] | None = None,
 ) -> _T | None:
-    if type(config) is not SupabasePaperBrokerConfig:
-        raise ValueError("config must be a SupabasePaperBrokerConfig")
-    _require_record(record)
+    if type(config) is not SupabasePaperProbabilitySelectionSummaryHistoryConfig:
+        raise ValueError(
+            "config must be a "
+            "SupabasePaperProbabilitySelectionSummaryHistoryConfig",
+        )
+    _require_report(report)
     if config.enabled is False:
         return None
     if config.dsn is None:
         raise ValueError("enabled config must include a DSN")
     if connect is None:
-        return insert_paper_broker_execution_record_with_psycopg(
+        return insert_paper_probability_selection_summary_history_report_with_psycopg(
             config.dsn,
-            record,
+            report,
             table_name=config.table_name,
-            insert_record=insert_record,
+            insert_report=insert_report,
         )
     return _with_raw_owned_connection(
         config.dsn,
         lambda connection: _insert_with_boundary(
             connection,
-            record,
+            report,
             table_name=config.table_name,
-            insert_record=insert_record,
+            insert_report=insert_report,
         ),
         connect=connect,
     )
 
 
-def insert_paper_broker_execution_record_with_psycopg(
-    dsn: str,
-    record: PaperBrokerExecutionRecord,
-    *,
-    table_name: str = DEFAULT_PAPER_BROKER_DB_TABLE,
-    connect: Callable[[str], Any] | None = None,
-    insert_record: Callable[..., _T] | None = None,
-) -> _T:
-    _require_dsn(dsn)
-    _require_record(record)
-    table_name = _validate_table_name(table_name)
-    return _with_psycopg_owned_connection(
-        dsn,
-        lambda connection: _insert_with_boundary(
-            connection,
-            record,
-            table_name=table_name,
-            insert_record=insert_record,
-        ),
-        connect=connect,
-    )
-
-
-def load_paper_broker_execution_records_from_config(
-    config: SupabasePaperBrokerConfig,
+def load_paper_probability_selection_summary_history_reports_from_config(
+    config: SupabasePaperProbabilitySelectionSummaryHistoryConfig,
     *,
     config_version: str | None = None,
-    execution_status: str | None = None,
-    source_gate_status: str | None = None,
+    history_status: str | None = None,
     limit: int | None = None,
     connect: Callable[[str], Any] | None = None,
-    load_records: Callable[..., _T] | None = None,
+    load_reports: Callable[..., _T] | None = None,
 ) -> _T | None:
-    if type(config) is not SupabasePaperBrokerConfig:
-        raise ValueError("config must be a SupabasePaperBrokerConfig")
+    if type(config) is not SupabasePaperProbabilitySelectionSummaryHistoryConfig:
+        raise ValueError(
+            "config must be a "
+            "SupabasePaperProbabilitySelectionSummaryHistoryConfig",
+        )
     if config.enabled is False:
         return None
     if config.dsn is None:
         raise ValueError("enabled config must include a DSN")
     if connect is None:
-        return load_paper_broker_execution_records_with_psycopg(
+        return load_paper_probability_selection_summary_history_reports_with_psycopg(
             config.dsn,
             config_version=config_version,
-            execution_status=execution_status,
-            source_gate_status=source_gate_status,
+            history_status=history_status,
             limit=limit,
             table_name=config.table_name,
-            load_records=load_records,
+            load_reports=load_reports,
         )
     return _with_raw_owned_connection(
         config.dsn,
         lambda connection: _load_with_boundary(
             connection,
             config_version=config_version,
-            execution_status=execution_status,
-            source_gate_status=source_gate_status,
+            history_status=history_status,
             limit=limit,
             table_name=config.table_name,
-            load_records=load_records,
+            load_reports=load_reports,
         ),
         connect=connect,
     )
 
 
-def load_paper_broker_execution_records_with_psycopg(
+def insert_paper_probability_selection_summary_history_report_with_psycopg(
+    dsn: str,
+    report: PaperProbabilitySelectionSummaryHistoryReport,
+    *,
+    table_name: str = DEFAULT_PAPER_PROBABILITY_SELECTION_SUMMARY_HISTORY_REPORTS_TABLE,
+    connect: Callable[[str], Any] | None = None,
+    insert_report: Callable[..., _T] | None = None,
+) -> _T:
+    _require_dsn(dsn)
+    _require_report(report)
+    table_name = _validate_table_name(table_name)
+    return _with_psycopg_owned_connection(
+        dsn,
+        lambda connection: _insert_with_boundary(
+            connection,
+            report,
+            table_name=table_name,
+            insert_report=insert_report,
+        ),
+        connect=connect,
+    )
+
+
+def load_paper_probability_selection_summary_history_reports_with_psycopg(
     dsn: str,
     *,
     config_version: str | None = None,
-    execution_status: str | None = None,
-    source_gate_status: str | None = None,
+    history_status: str | None = None,
     limit: int | None = None,
-    table_name: str = DEFAULT_PAPER_BROKER_DB_TABLE,
+    table_name: str = DEFAULT_PAPER_PROBABILITY_SELECTION_SUMMARY_HISTORY_REPORTS_TABLE,
     connect: Callable[[str], Any] | None = None,
-    load_records: Callable[..., _T] | None = None,
+    load_reports: Callable[..., _T] | None = None,
 ) -> _T:
     _require_dsn(dsn)
     table_name = _validate_table_name(table_name)
@@ -144,11 +149,10 @@ def load_paper_broker_execution_records_with_psycopg(
         lambda connection: _load_with_boundary(
             connection,
             config_version=config_version,
-            execution_status=execution_status,
-            source_gate_status=source_gate_status,
+            history_status=history_status,
             limit=limit,
             table_name=table_name,
-            load_records=load_records,
+            load_reports=load_reports,
         ),
         connect=connect,
     )
@@ -156,126 +160,70 @@ def load_paper_broker_execution_records_with_psycopg(
 
 def _insert_with_boundary(
     connection: Any,
-    record: PaperBrokerExecutionRecord,
+    report: PaperProbabilitySelectionSummaryHistoryReport,
     *,
     table_name: str,
-    insert_record: Callable[..., _T] | None,
+    insert_report: Callable[..., _T] | None,
 ) -> _T:
-    if insert_record is not None:
-        return insert_record(connection, record, table_name=table_name)
-    return _default_insert_record(connection, record, table_name=table_name)
+    if insert_report is not None:
+        return insert_report(connection, report, table_name=table_name)
+    return _default_insert_report(connection, report, table_name=table_name)
+
+
+def _default_insert_report(
+    connection: Any,
+    report: PaperProbabilitySelectionSummaryHistoryReport,
+    *,
+    table_name: str,
+) -> Any:
+    return insert_paper_probability_selection_summary_history_report(
+        connection,
+        report,
+        table_name=table_name,
+    )
 
 
 def _load_with_boundary(
     connection: Any,
     *,
     config_version: str | None,
-    execution_status: str | None,
-    source_gate_status: str | None,
+    history_status: str | None,
     limit: int | None,
     table_name: str,
-    load_records: Callable[..., _T] | None,
+    load_reports: Callable[..., _T] | None,
 ) -> _T:
-    if load_records is not None:
-        return load_records(
+    if load_reports is not None:
+        return load_reports(
             connection,
             config_version=config_version,
-            execution_status=execution_status,
-            source_gate_status=source_gate_status,
+            history_status=history_status,
             limit=limit,
             table_name=table_name,
         )
-    return _default_load_records(
+    return _default_load_reports(
         connection,
         config_version=config_version,
-        execution_status=execution_status,
-        source_gate_status=source_gate_status,
+        history_status=history_status,
         limit=limit,
         table_name=table_name,
     )
 
 
-def _default_insert_record(
-    connection: Any,
-    record: PaperBrokerExecutionRecord,
-    *,
-    table_name: str,
-) -> Any:
-    return _insert_record_generic(connection, record, table_name=table_name)
-
-
-def _default_load_records(
+def _default_load_reports(
     connection: Any,
     *,
     config_version: str | None,
-    execution_status: str | None,
-    source_gate_status: str | None,
+    history_status: str | None,
     limit: int | None,
     table_name: str,
 ) -> Any:
-    from polymarket_alpha_lab.paper_broker_store import (
-        load_paper_broker_execution_records,
-    )
-
-    return load_paper_broker_execution_records(
+    return load_paper_probability_selection_summary_history_reports(
         connection,
         config_version=config_version,
-        execution_status=execution_status,
-        source_gate_status=source_gate_status,
+        history_status=history_status,
         limit=limit,
         table_name=table_name,
     )
-
-
-def _insert_record_generic(
-    connection: Any,
-    record: PaperBrokerExecutionRecord,
-    *,
-    table_name: str,
-) -> Any:
-    table_name = _validate_table_name(table_name)
-    row = paper_broker_execution_record_to_db_row(record)
-    sql = f"""
-        INSERT INTO {table_name} (
-            record_sha256,
-            generated_at,
-            config_version,
-            execution_status,
-            recommended_next_step,
-            source_gate_status,
-            source_proposal_count,
-            source_proposal_total_notional,
-            execution_notional,
-            reason_codes,
-            payload,
-            paper_only,
-            report_only,
-            readonly
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        ON CONFLICT (record_sha256) DO NOTHING
-        """
-    params = (
-        row.record_sha256,
-        row.generated_at,
-        row.config_version,
-        row.execution_status,
-        row.recommended_next_step,
-        row.source_gate_status,
-        row.source_proposal_count,
-        row.source_proposal_total_notional,
-        row.execution_notional,
-        row.reason_codes_json,
-        row.payload_json,
-        row.paper_only,
-        row.report_only,
-        row.readonly,
-    )
-    cursor = connection.cursor()
-    try:
-        cursor.execute(sql, params)
-    finally:
-        cursor.close()
-    return row
 
 
 def _with_raw_owned_connection(
@@ -342,8 +290,8 @@ def _connect(dsn: str) -> Any:
         if exc.name != "psycopg":
             raise
         raise RuntimeError(
-            "psycopg is required to use the paper broker psycopg adapter; "
-            "install the postgres extra.",
+            "psycopg is required to use the paper probability selection summary "
+            "history adapter; install the postgres extra.",
         ) from exc
     return _connect_with(dsn, psycopg.connect)
 
@@ -352,7 +300,10 @@ def _connect_with(dsn: str, connect: Callable[[str], Any]) -> Any:
     try:
         return connect(dsn)
     except Exception:
-        raise RuntimeError("failed to connect to the paper broker database") from None
+        raise RuntimeError(
+            "failed to connect to the paper probability selection summary "
+            "history database",
+        ) from None
 
 
 def _jsonb_adapter() -> type[Any]:
@@ -362,8 +313,8 @@ def _jsonb_adapter() -> type[Any]:
         if exc.name not in ("psycopg", "psycopg.types", "psycopg.types.json"):
             raise
         raise RuntimeError(
-            "psycopg is required to use the paper broker psycopg adapter; "
-            "install the postgres extra.",
+            "psycopg is required to use the paper probability selection summary "
+            "history adapter; install the postgres extra.",
         ) from exc
     return Jsonb
 
@@ -417,12 +368,16 @@ def _require_dsn(value: object) -> None:
         raise ValueError("dsn must be a canonical nonblank string")
 
 
-def _require_record(record: object) -> None:
-    if type(record) is not PaperBrokerExecutionRecord:
-        raise ValueError("record must be a PaperBrokerExecutionRecord")
+def _require_report(report: object) -> None:
+    if type(report) is not PaperProbabilitySelectionSummaryHistoryReport:
+        raise ValueError(
+            "report must be a PaperProbabilitySelectionSummaryHistoryReport",
+        )
     for flag_name in ("paper_only", "report_only", "readonly"):
-        if getattr(record, flag_name) is not True:
-            raise ValueError(f"{flag_name} must be True for paper broker record")
+        if getattr(report, flag_name) is not True:
+            raise ValueError(
+                f"{flag_name} must be True for selection summary history report",
+            )
 
 
 def _validate_table_name(value: object) -> str:
@@ -432,7 +387,7 @@ def _validate_table_name(value: object) -> str:
 
 
 def _raise_redacted(exc: Exception, *, dsn: str) -> None:
-    message = _redact_secret_text(str(exc), secret=dsn)
+    message = _redact_dsn_text(str(exc), dsn=dsn)
     if not message.strip():
         message = exc.__class__.__name__
     try:
@@ -442,9 +397,9 @@ def _raise_redacted(exc: Exception, *, dsn: str) -> None:
     raise redacted_exc from None
 
 
-def _redact_secret_text(value: str, *, secret: str) -> str:
-    if secret and secret in value:
-        value = value.replace(secret, "<redacted>")
+def _redact_dsn_text(value: str, *, dsn: str) -> str:
+    if dsn and dsn in value:
+        value = value.replace(dsn, "<redacted>")
     if "postgresql://" in value:
-        return "paper broker database operation failed for <redacted>"
+        return "selection summary history database operation failed for <redacted>"
     return value

@@ -188,6 +188,12 @@ from polymarket_alpha_lab.supabase_paper_autonomous_screening_decision_support_g
 from polymarket_alpha_lab.supabase_paper_execution_pipeline_config import (
     from_paper_execution_pipeline_db_env,
 )
+from polymarket_alpha_lab.supabase_paper_broker_config import (
+    from_paper_broker_db_env,
+)
+from polymarket_alpha_lab.supabase_paper_autonomous_investment_ledger_config import (
+    from_paper_autonomous_investment_ledger_db_env,
+)
 from polymarket_alpha_lab.supabase_paper_autonomous_allocation_proposal_config import (
     from_paper_autonomous_allocation_proposal_db_env,
 )
@@ -791,6 +797,20 @@ def _raise_redacted_db_sink_error(
 
 def _raise_redacted_db_read_error(exc: Exception, *, dsn: str) -> None:
     message = _redact_db_dsn(str(exc), dsn=dsn)
+    if not message.strip():
+        message = exc.__class__.__name__
+    raise RuntimeError(message) from None
+
+
+def _raise_redacted_multi_db_sink_error(
+    exc: Exception,
+    *,
+    dsns: tuple[str | None, ...],
+) -> None:
+    message = str(exc)
+    for dsn in dsns:
+        if dsn is not None:
+            message = _redact_db_dsn(message, dsn=dsn)
     if not message.strip():
         message = exc.__class__.__name__
     raise RuntimeError(message) from None
@@ -3801,7 +3821,12 @@ def main(
                 raise ValueError(
                     f"{command_name} requires an autonomous screening gate DB table",
                 )
-            pipeline_report = _run_paper_execution_pipeline(
+            pipeline_runner = (
+                paper_execution_pipeline_runner
+                if paper_execution_pipeline_runner is not None
+                else _run_paper_execution_pipeline
+            )
+            pipeline_report = pipeline_runner(
                 screening_gate_dsn=screening_gate_dsn,
                 screening_gate_table_name=screening_gate_table_name,
                 limit=args.limit,
@@ -3823,11 +3848,44 @@ def main(
                     raise ValueError(
                         f"{command_name} requires a paper execution pipeline DB table",
                     )
-                _persist_paper_execution_pipeline(
-                    pipeline_report=pipeline_report,
-                    dsn=execution_dsn,
-                    table_name=execution_table_name,
+                paper_broker_db_config = from_paper_broker_db_env()
+                broker_dsn = paper_broker_db_config.dsn
+                broker_table_name = paper_broker_db_config.table_name
+                if paper_broker_db_config.enabled and broker_dsn is None:
+                    raise ValueError(f"{command_name} requires a paper broker DB DSN")
+                investment_ledger_db_config = (
+                    from_paper_autonomous_investment_ledger_db_env()
                 )
+                ledger_dsn = investment_ledger_db_config.dsn
+                ledger_table_name = investment_ledger_db_config.table_name
+                if investment_ledger_db_config.enabled and ledger_dsn is None:
+                    raise ValueError(
+                        f"{command_name} requires a paper autonomous investment "
+                        "ledger DB DSN",
+                    )
+                pipeline_persister = (
+                    paper_execution_pipeline_persister
+                    if paper_execution_pipeline_persister is not None
+                    else _persist_paper_execution_pipeline
+                )
+                persister_kwargs = {
+                    "pipeline_report": pipeline_report,
+                    "dsn": execution_dsn,
+                    "table_name": execution_table_name,
+                }
+                if paper_broker_db_config.enabled and broker_dsn is not None:
+                    persister_kwargs["broker_dsn"] = broker_dsn
+                    persister_kwargs["broker_table_name"] = broker_table_name
+                if investment_ledger_db_config.enabled and ledger_dsn is not None:
+                    persister_kwargs["ledger_dsn"] = ledger_dsn
+                    persister_kwargs["ledger_table_name"] = ledger_table_name
+                try:
+                    pipeline_persister(**persister_kwargs)
+                except Exception as exc:
+                    _raise_redacted_multi_db_sink_error(
+                        exc,
+                        dsns=(execution_dsn, broker_dsn, ledger_dsn),
+                    )
             return 0
         except Exception as exc:
             print(
@@ -4202,6 +4260,21 @@ def main(
                         "execution pipeline DB persistence requires a DB DSN",
                     )
                 execution_pipeline_table_name = execution_pipeline_db_config.table_name
+                paper_broker_db_config = from_paper_broker_db_env()
+                broker_dsn = paper_broker_db_config.dsn
+                broker_table_name = paper_broker_db_config.table_name
+                if paper_broker_db_config.enabled and broker_dsn is None:
+                    raise ValueError("paper broker DB persistence requires a DB DSN")
+                investment_ledger_db_config = (
+                    from_paper_autonomous_investment_ledger_db_env()
+                )
+                ledger_dsn = investment_ledger_db_config.dsn
+                ledger_table_name = investment_ledger_db_config.table_name
+                if investment_ledger_db_config.enabled and ledger_dsn is None:
+                    raise ValueError(
+                        "paper autonomous investment ledger DB persistence "
+                        "requires a DB DSN",
+                    )
                 pipeline_runner = (
                     paper_execution_pipeline_runner
                     if paper_execution_pipeline_runner is not None
@@ -4235,17 +4308,42 @@ def main(
                     _execution_pipeline_table_name: str = (
                         execution_pipeline_table_name
                     ),
+                    _broker_dsn: str | None = (
+                        broker_dsn if paper_broker_db_config.enabled else None
+                    ),
+                    _broker_table_name: str | None = (
+                        broker_table_name if paper_broker_db_config.enabled else None
+                    ),
+                    _ledger_dsn: str | None = (
+                        ledger_dsn if investment_ledger_db_config.enabled else None
+                    ),
+                    _ledger_table_name: str | None = (
+                        ledger_table_name
+                        if investment_ledger_db_config.enabled
+                        else None
+                    ),
                 ) -> None:
                     try:
-                        pipeline_persister(
-                            pipeline_report=pipeline_report,
-                            dsn=_execution_pipeline_dsn,
-                            table_name=_execution_pipeline_table_name,
-                        )
+                        persister_kwargs = {
+                            "pipeline_report": pipeline_report,
+                            "dsn": _execution_pipeline_dsn,
+                            "table_name": _execution_pipeline_table_name,
+                        }
+                        if _broker_dsn is not None and _broker_table_name is not None:
+                            persister_kwargs["broker_dsn"] = _broker_dsn
+                            persister_kwargs["broker_table_name"] = _broker_table_name
+                        if _ledger_dsn is not None and _ledger_table_name is not None:
+                            persister_kwargs["ledger_dsn"] = _ledger_dsn
+                            persister_kwargs["ledger_table_name"] = _ledger_table_name
+                        pipeline_persister(**persister_kwargs)
                     except Exception as exc:
-                        _raise_redacted_db_sink_error(
+                        _raise_redacted_multi_db_sink_error(
                             exc,
-                            dsn=_execution_pipeline_dsn,
+                            dsns=(
+                                _execution_pipeline_dsn,
+                                _broker_dsn,
+                                _ledger_dsn,
+                            ),
                         )
 
                 loop_runner_kwargs["execution_pipeline_source"] = (
@@ -8763,6 +8861,9 @@ def _run_paper_execution_pipeline(
     from polymarket_alpha_lab.paper_broker import (
         build_paper_broker_execution_record,
     )
+    from polymarket_alpha_lab.paper_autonomous_investment_ledger import (
+        build_paper_autonomous_investment_ledger_report,
+    )
     from polymarket_alpha_lab.paper_order_lifecycle import (
         build_paper_order_lifecycle_record,
     )
@@ -8779,7 +8880,7 @@ def _run_paper_execution_pipeline(
     if not gate_reports:
         raise ValueError("no screening gate reports found")
 
-    gate_report = gate_reports[-1]  # latest
+    gate_report = gate_reports[0]  # loader returns newest first
     generated_at = gate_report.generated_at
 
     proposal_report = build_paper_autonomous_proposal_report(
@@ -8798,6 +8899,10 @@ def _run_paper_execution_pipeline(
         broker_record=broker_record,
         generated_at=generated_at,
     )
+    investment_ledger_report = build_paper_autonomous_investment_ledger_report(
+        broker_execution_records=(broker_record,),
+        generated_at=generated_at,
+    )
 
     return {
         "gate_report": gate_report,
@@ -8805,6 +8910,7 @@ def _run_paper_execution_pipeline(
         "risk_gate_report": risk_gate_report,
         "broker_record": broker_record,
         "lifecycle_record": lifecycle_record,
+        "investment_ledger_report": investment_ledger_report,
     }
 
 
@@ -8813,22 +8919,46 @@ def _persist_paper_execution_pipeline(
     pipeline_report: object,
     dsn: str,
     table_name: str,
+    broker_dsn: str | None = None,
+    broker_table_name: str | None = None,
+    ledger_dsn: str | None = None,
+    ledger_table_name: str | None = None,
 ) -> None:
     """Persist paper execution pipeline records to DB."""
-    import psycopg
-
-    from polymarket_alpha_lab.paper_order_lifecycle_store import (
-        insert_paper_order_lifecycle_record,
+    from polymarket_alpha_lab.paper_order_lifecycle_psycopg import (
+        insert_paper_order_lifecycle_record_with_psycopg,
+    )
+    from polymarket_alpha_lab.paper_broker_psycopg import (
+        insert_paper_broker_execution_record_with_psycopg,
+    )
+    from polymarket_alpha_lab.paper_autonomous_investment_ledger_psycopg import (
+        insert_paper_autonomous_investment_ledger_report_with_psycopg,
     )
 
     lifecycle_record = pipeline_report["lifecycle_record"]
-    with psycopg.connect(dsn, autocommit=True) as conn:
-        insert_paper_order_lifecycle_record(
-            conn,
-            lifecycle_record,
-            table_name=table_name,
+    insert_paper_order_lifecycle_record_with_psycopg(
+        dsn=dsn,
+        record=lifecycle_record,
+        table_name=table_name,
+    )
+    persisted_parts = [f"lifecycle status={lifecycle_record.lifecycle_status}"]
+    if broker_dsn is not None and broker_table_name is not None:
+        broker_record = pipeline_report["broker_record"]
+        insert_paper_broker_execution_record_with_psycopg(
+            dsn=broker_dsn,
+            record=broker_record,
+            table_name=broker_table_name,
         )
-    print(f"paper-execution-pipeline: persisted lifecycle status={lifecycle_record.lifecycle_status}")
+        persisted_parts.append(f"broker status={broker_record.execution_status}")
+    if ledger_dsn is not None and ledger_table_name is not None:
+        ledger_report = pipeline_report["investment_ledger_report"]
+        insert_paper_autonomous_investment_ledger_report_with_psycopg(
+            dsn=ledger_dsn,
+            report=ledger_report,
+            table_name=ledger_table_name,
+        )
+        persisted_parts.append(f"ledger status={ledger_report.ledger_status}")
+    print(f"paper-execution-pipeline: persisted {' '.join(persisted_parts)}")
 
 
 def _load_paper_execution_pipeline_db_history(
@@ -8858,6 +8988,7 @@ def _print_paper_execution_pipeline_summary(pipeline_report: object) -> None:
     lifecycle = pipeline_report["lifecycle_record"]
     proposal = pipeline_report["proposal_report"]
     broker = pipeline_report["broker_record"]
+    investment_ledger = pipeline_report.get("investment_ledger_report")
 
     print("paper-execution-pipeline:")
     print(f"  proposal_status={proposal.proposal_status}")
@@ -8867,6 +8998,12 @@ def _print_paper_execution_pipeline_summary(pipeline_report: object) -> None:
     print(f"  lifecycle_status={lifecycle.lifecycle_status}")
     print(f"  lifecycle_is_terminal={lifecycle.is_terminal}")
     print(f"  lifecycle_fill_notional={lifecycle.fill_notional}")
+    if investment_ledger is not None:
+        print(f"  investment_ledger_status={investment_ledger.ledger_status}")
+        print(
+            "  investment_ledger_next_step="
+            f"{investment_ledger.recommended_next_step}",
+        )
 
 
 def _print_paper_execution_pipeline_history_summary(records: object) -> None:

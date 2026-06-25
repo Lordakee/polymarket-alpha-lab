@@ -9,7 +9,12 @@ import pytest
 from polymarket_alpha_lab.paper_recommendation_artifact_index import (
     build_paper_recommendation_artifact_index_report,
 )
-from polymarket_alpha_lab.cli import main
+from polymarket_alpha_lab.cli import (
+    _persist_paper_execution_pipeline,
+    _print_paper_execution_pipeline_summary,
+    _run_paper_execution_pipeline,
+    main,
+)
 from polymarket_alpha_lab.forecast_evidence import (
     PaperForecastEvidenceConfig,
     PaperForecastEvidenceObservation,
@@ -155,6 +160,16 @@ from polymarket_alpha_lab.supabase_paper_execution_pipeline_config import (
     PAPER_EXECUTION_PIPELINE_DB_DSN_ENV_VAR,
     PAPER_EXECUTION_PIPELINE_DB_ENABLED_ENV_VAR,
     PAPER_EXECUTION_PIPELINE_DB_TABLE_ENV_VAR,
+)
+from polymarket_alpha_lab.supabase_paper_broker_config import (
+    PAPER_BROKER_DB_DSN_ENV_VAR,
+    PAPER_BROKER_DB_ENABLED_ENV_VAR,
+    PAPER_BROKER_DB_TABLE_ENV_VAR,
+)
+from polymarket_alpha_lab.supabase_paper_autonomous_investment_ledger_config import (
+    PAPER_AUTONOMOUS_INVESTMENT_LEDGER_DB_DSN_ENV_VAR,
+    PAPER_AUTONOMOUS_INVESTMENT_LEDGER_DB_ENABLED_ENV_VAR,
+    PAPER_AUTONOMOUS_INVESTMENT_LEDGER_DB_TABLE_ENV_VAR,
 )
 from polymarket_alpha_lab.supabase_paper_autonomous_allocation_proposal_config import (
     PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_DSN_ENV_VAR,
@@ -7060,6 +7075,568 @@ def test_run_cli_execution_pipeline_uses_screening_gate_source_and_pipeline_sink
             "table_name": "paper_execution_archive",
         },
     ]
+
+
+def test_run_cli_execution_pipeline_persists_broker_and_ledger_when_enabled(
+    tmp_path,
+    monkeypatch,
+):
+    screening_gate_dsn = "postgresql://screening-gate.example.invalid/db"
+    execution_pipeline_dsn = "postgresql://execution-pipeline.example.invalid/db"
+    broker_dsn = "postgresql://broker.example.invalid/db"
+    ledger_dsn = "postgresql://ledger.example.invalid/db"
+    monkeypatch.setenv(
+        PAPER_AUTONOMOUS_SCREENING_DECISION_SUPPORT_GATE_DB_ENABLED_ENV_VAR,
+        "true",
+    )
+    monkeypatch.setenv(
+        PAPER_AUTONOMOUS_SCREENING_DECISION_SUPPORT_GATE_DB_DSN_ENV_VAR,
+        screening_gate_dsn,
+    )
+    monkeypatch.setenv(
+        PAPER_AUTONOMOUS_SCREENING_DECISION_SUPPORT_GATE_DB_TABLE_ENV_VAR,
+        "screening_gate_archive",
+    )
+    monkeypatch.setenv(PAPER_EXECUTION_PIPELINE_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(PAPER_EXECUTION_PIPELINE_DB_DSN_ENV_VAR, execution_pipeline_dsn)
+    monkeypatch.setenv(
+        PAPER_EXECUTION_PIPELINE_DB_TABLE_ENV_VAR,
+        "paper_execution_archive",
+    )
+    monkeypatch.setenv(PAPER_BROKER_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(PAPER_BROKER_DB_DSN_ENV_VAR, broker_dsn)
+    monkeypatch.setenv(PAPER_BROKER_DB_TABLE_ENV_VAR, "paper_broker_archive")
+    monkeypatch.setenv(PAPER_AUTONOMOUS_INVESTMENT_LEDGER_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(PAPER_AUTONOMOUS_INVESTMENT_LEDGER_DB_DSN_ENV_VAR, ledger_dsn)
+    monkeypatch.setenv(
+        PAPER_AUTONOMOUS_INVESTMENT_LEDGER_DB_TABLE_ENV_VAR,
+        "paper_investment_ledger_archive",
+    )
+    broker_record = SimpleNamespace(
+        execution_status="paper_submitted",
+        execution_notional=Decimal("12.500000"),
+        paper_only=True,
+        report_only=True,
+        readonly=True,
+    )
+    lifecycle_record = SimpleNamespace(
+        lifecycle_status="paper_filled",
+        paper_only=True,
+        report_only=True,
+        readonly=True,
+    )
+    ledger_report = SimpleNamespace(
+        ledger_status="pass",
+        paper_only=True,
+        report_only=True,
+        readonly=True,
+    )
+    pipeline_report = {
+        "broker_record": broker_record,
+        "lifecycle_record": lifecycle_record,
+        "investment_ledger_report": ledger_report,
+    }
+    sink_calls = []
+
+    def fake_loop_runner(**kwargs):
+        report = kwargs["execution_pipeline_source"](
+            cycle_report=object(),
+            iteration_started_at=datetime(2026, 6, 25, tzinfo=UTC),
+        )
+        kwargs["execution_pipeline_sink"](report)
+        return RunLoopSummary(
+            iterations_completed=1,
+            iterations_failed=0,
+            first_iteration_at=datetime(2026, 6, 25, tzinfo=UTC),
+            last_iteration_at=datetime(2026, 6, 25, tzinfo=UTC),
+            last_error=None,
+            execution_pipelines_persisted=1,
+        )
+
+    def fake_pipeline_runner(**kwargs):
+        return pipeline_report
+
+    def fake_pipeline_persister(**kwargs):
+        sink_calls.append(kwargs)
+
+    exit_code = main(
+        [
+            "run",
+            "--archive-root",
+            str(tmp_path / "raw"),
+            "--starting-cash",
+            "10000",
+            "--cycle-log",
+            str(tmp_path / "cycle.jsonl"),
+        ],
+        loop_runner=fake_loop_runner,
+        client_factory=lambda: "fake-client",
+        paper_execution_pipeline_runner=fake_pipeline_runner,
+        paper_execution_pipeline_persister=fake_pipeline_persister,
+    )
+
+    assert exit_code == 0
+    assert sink_calls == [
+        {
+            "pipeline_report": pipeline_report,
+            "dsn": execution_pipeline_dsn,
+            "table_name": "paper_execution_archive",
+            "broker_dsn": broker_dsn,
+            "broker_table_name": "paper_broker_archive",
+            "ledger_dsn": ledger_dsn,
+            "ledger_table_name": "paper_investment_ledger_archive",
+        },
+    ]
+
+
+def test_paper_execution_pipeline_persist_cli_passes_optional_broker_and_ledger_db(
+    monkeypatch,
+    capsys,
+):
+    screening_gate_dsn = "postgresql://screening-gate.example.invalid/db"
+    execution_pipeline_dsn = "postgresql://execution-pipeline.example.invalid/db"
+    broker_dsn = "postgresql://broker.example.invalid/db"
+    ledger_dsn = "postgresql://ledger.example.invalid/db"
+    monkeypatch.setenv(
+        PAPER_AUTONOMOUS_SCREENING_DECISION_SUPPORT_GATE_DB_ENABLED_ENV_VAR,
+        "true",
+    )
+    monkeypatch.setenv(
+        PAPER_AUTONOMOUS_SCREENING_DECISION_SUPPORT_GATE_DB_DSN_ENV_VAR,
+        screening_gate_dsn,
+    )
+    monkeypatch.setenv(
+        PAPER_AUTONOMOUS_SCREENING_DECISION_SUPPORT_GATE_DB_TABLE_ENV_VAR,
+        "screening_gate_archive",
+    )
+    monkeypatch.setenv(PAPER_EXECUTION_PIPELINE_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(PAPER_EXECUTION_PIPELINE_DB_DSN_ENV_VAR, execution_pipeline_dsn)
+    monkeypatch.setenv(
+        PAPER_EXECUTION_PIPELINE_DB_TABLE_ENV_VAR,
+        "paper_execution_archive",
+    )
+    monkeypatch.setenv(PAPER_BROKER_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(PAPER_BROKER_DB_DSN_ENV_VAR, broker_dsn)
+    monkeypatch.setenv(PAPER_BROKER_DB_TABLE_ENV_VAR, "paper_broker_archive")
+    monkeypatch.setenv(PAPER_AUTONOMOUS_INVESTMENT_LEDGER_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(PAPER_AUTONOMOUS_INVESTMENT_LEDGER_DB_DSN_ENV_VAR, ledger_dsn)
+    monkeypatch.setenv(
+        PAPER_AUTONOMOUS_INVESTMENT_LEDGER_DB_TABLE_ENV_VAR,
+        "paper_investment_ledger_archive",
+    )
+    pipeline_report = {
+        "proposal_report": SimpleNamespace(
+            proposal_status="pass",
+            proposal_count=1,
+        ),
+        "broker_record": SimpleNamespace(
+            execution_status="paper_submitted",
+            execution_notional=Decimal("12.500000"),
+        ),
+        "lifecycle_record": SimpleNamespace(
+            lifecycle_status="paper_filled",
+            is_terminal=True,
+            fill_notional=Decimal("12.500000"),
+        ),
+        "investment_ledger_report": SimpleNamespace(
+            ledger_status="pass",
+            recommended_next_step="continue_paper_autonomous_investment",
+        ),
+    }
+    runner_calls = []
+    persister_calls = []
+
+    def fake_pipeline_runner(**kwargs):
+        runner_calls.append(kwargs)
+        return pipeline_report
+
+    def fake_pipeline_persister(**kwargs):
+        persister_calls.append(kwargs)
+
+    exit_code = main(
+        [
+            "paper-execution-pipeline-persist",
+            "--limit",
+            "7",
+        ],
+        paper_execution_pipeline_runner=fake_pipeline_runner,
+        paper_execution_pipeline_persister=fake_pipeline_persister,
+    )
+
+    assert exit_code == 0
+    assert runner_calls == [
+        {
+            "screening_gate_dsn": screening_gate_dsn,
+            "screening_gate_table_name": "screening_gate_archive",
+            "limit": 7,
+        },
+    ]
+    assert persister_calls == [
+        {
+            "pipeline_report": pipeline_report,
+            "dsn": execution_pipeline_dsn,
+            "table_name": "paper_execution_archive",
+            "broker_dsn": broker_dsn,
+            "broker_table_name": "paper_broker_archive",
+            "ledger_dsn": ledger_dsn,
+            "ledger_table_name": "paper_investment_ledger_archive",
+        },
+    ]
+    captured = capsys.readouterr()
+    assert "investment_ledger_status=pass" in captured.out
+
+
+def test_run_cli_redacts_execution_pipeline_broker_and_ledger_sink_dsns(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    screening_gate_dsn = "postgresql://screening-gate.example.invalid/db"
+    execution_pipeline_dsn = "postgresql://execution-pipeline.example.invalid/db"
+    broker_dsn = "postgresql://broker.example.invalid/db"
+    ledger_dsn = "postgresql://ledger.example.invalid/db"
+    monkeypatch.setenv(
+        PAPER_AUTONOMOUS_SCREENING_DECISION_SUPPORT_GATE_DB_ENABLED_ENV_VAR,
+        "true",
+    )
+    monkeypatch.setenv(
+        PAPER_AUTONOMOUS_SCREENING_DECISION_SUPPORT_GATE_DB_DSN_ENV_VAR,
+        screening_gate_dsn,
+    )
+    monkeypatch.setenv(PAPER_EXECUTION_PIPELINE_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(PAPER_EXECUTION_PIPELINE_DB_DSN_ENV_VAR, execution_pipeline_dsn)
+    monkeypatch.setenv(PAPER_BROKER_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(PAPER_BROKER_DB_DSN_ENV_VAR, broker_dsn)
+    monkeypatch.setenv(PAPER_AUTONOMOUS_INVESTMENT_LEDGER_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(PAPER_AUTONOMOUS_INVESTMENT_LEDGER_DB_DSN_ENV_VAR, ledger_dsn)
+    pipeline_report = {
+        "broker_record": SimpleNamespace(
+            execution_status="paper_submitted",
+            paper_only=True,
+            report_only=True,
+            readonly=True,
+        ),
+        "lifecycle_record": SimpleNamespace(
+            lifecycle_status="paper_filled",
+            paper_only=True,
+            report_only=True,
+            readonly=True,
+        ),
+        "investment_ledger_report": SimpleNamespace(
+            ledger_status="pass",
+            paper_only=True,
+            report_only=True,
+            readonly=True,
+        ),
+    }
+
+    def fake_loop_runner(**kwargs):
+        report = kwargs["execution_pipeline_source"](
+            cycle_report=object(),
+            iteration_started_at=datetime(2026, 6, 25, tzinfo=UTC),
+        )
+        try:
+            kwargs["execution_pipeline_sink"](report)
+        except Exception as exc:
+            return RunLoopSummary(
+                iterations_completed=0,
+                iterations_failed=1,
+                first_iteration_at=datetime(2026, 6, 25, tzinfo=UTC),
+                last_iteration_at=datetime(2026, 6, 25, tzinfo=UTC),
+                last_error=f"{type(exc).__name__}: {exc}",
+            )
+        raise AssertionError("execution pipeline sink should fail")
+
+    def fake_pipeline_runner(**kwargs):
+        return pipeline_report
+
+    def broken_pipeline_persister(**kwargs):
+        raise RuntimeError(
+            "failed "
+            f"{execution_pipeline_dsn} {broker_dsn} {ledger_dsn}",
+        )
+
+    exit_code = main(
+        [
+            "run",
+            "--archive-root",
+            str(tmp_path / "raw"),
+            "--starting-cash",
+            "10000",
+            "--cycle-log",
+            str(tmp_path / "cycle.jsonl"),
+        ],
+        loop_runner=fake_loop_runner,
+        client_factory=lambda: "fake-client",
+        paper_execution_pipeline_runner=fake_pipeline_runner,
+        paper_execution_pipeline_persister=broken_pipeline_persister,
+    )
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    assert execution_pipeline_dsn not in captured.out
+    assert broker_dsn not in captured.out
+    assert ledger_dsn not in captured.out
+    assert execution_pipeline_dsn not in captured.err
+    assert broker_dsn not in captured.err
+    assert ledger_dsn not in captured.err
+    assert "failed <redacted-dsn> <redacted-dsn> <redacted-dsn>" in captured.out
+
+
+def test_paper_execution_pipeline_summary_prints_investment_ledger_status(
+    capsys,
+):
+    pipeline_report = {
+        "proposal_report": SimpleNamespace(
+            proposal_status="pass",
+            proposal_count=2,
+        ),
+        "broker_record": SimpleNamespace(
+            execution_status="paper_submitted",
+            execution_notional=Decimal("12.500000"),
+        ),
+        "lifecycle_record": SimpleNamespace(
+            lifecycle_status="paper_filled",
+            is_terminal=True,
+            fill_notional=Decimal("12.500000"),
+        ),
+        "investment_ledger_report": SimpleNamespace(
+            ledger_status="watch",
+            recommended_next_step="review_paper_autonomous_investment_ledger",
+        ),
+    }
+
+    _print_paper_execution_pipeline_summary(pipeline_report)
+
+    captured = capsys.readouterr()
+    assert "investment_ledger_status=watch" in captured.out
+    assert (
+        "investment_ledger_next_step=review_paper_autonomous_investment_ledger"
+        in captured.out
+    )
+
+
+def test_run_paper_execution_pipeline_uses_newest_loaded_screening_gate(
+    monkeypatch,
+):
+    class FakePsycopg:
+        @staticmethod
+        def connect(dsn, autocommit):
+            assert dsn == "postgresql://screening-gate.example.invalid/db"
+            assert autocommit is True
+            return FakeConnection()
+
+    class FakeConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return None
+
+    newest_gate = SimpleNamespace(
+        generated_at=datetime(2026, 6, 25, 12, 0, tzinfo=UTC),
+        gate_status="pass",
+        queue_ready_count=1,
+        queue_total_ready_notional=Decimal("12.500000"),
+        paper_only=True,
+        report_only=True,
+        readonly=True,
+    )
+    older_gate = SimpleNamespace(
+        generated_at=datetime(2026, 6, 25, 11, 0, tzinfo=UTC),
+        gate_status="blocked",
+        queue_ready_count=0,
+        queue_total_ready_notional=Decimal("0.000000"),
+        paper_only=True,
+        report_only=True,
+        readonly=True,
+    )
+    loaded_calls = []
+
+    def fake_load_reports(connection, *, table_name, limit):
+        loaded_calls.append((connection, table_name, limit))
+        return (newest_gate, older_gate)
+
+    def fake_proposal_report(*, gate_report, generated_at):
+        assert generated_at == gate_report.generated_at
+        return SimpleNamespace(
+            generated_at=generated_at,
+            source_gate_status=gate_report.gate_status,
+            paper_only=True,
+            report_only=True,
+            readonly=True,
+        )
+
+    def fake_risk_gate_report(*, proposal_report, generated_at):
+        assert generated_at == proposal_report.generated_at
+        return SimpleNamespace(
+            generated_at=generated_at,
+            source_gate_status=proposal_report.source_gate_status,
+            paper_only=True,
+            report_only=True,
+            readonly=True,
+        )
+
+    def fake_broker_record(*, risk_gate_report, generated_at):
+        assert generated_at == risk_gate_report.generated_at
+        return SimpleNamespace(
+            generated_at=generated_at,
+            execution_status=f"paper_{risk_gate_report.source_gate_status}",
+            execution_notional=Decimal("12.500000"),
+            paper_only=True,
+            report_only=True,
+            readonly=True,
+        )
+
+    def fake_lifecycle_record(*, broker_record, generated_at):
+        assert generated_at == broker_record.generated_at
+        return SimpleNamespace(
+            generated_at=generated_at,
+            lifecycle_status="paper_filled",
+            is_terminal=True,
+            fill_notional=broker_record.execution_notional,
+            paper_only=True,
+            report_only=True,
+            readonly=True,
+        )
+
+    def fake_ledger_report(*, broker_execution_records, generated_at):
+        assert generated_at == broker_execution_records[0].generated_at
+        return SimpleNamespace(
+            generated_at=generated_at,
+            latest_generated_at=broker_execution_records[0].generated_at,
+            ledger_status="pass",
+            recommended_next_step="continue_paper_autonomous_investment",
+            paper_only=True,
+            report_only=True,
+            readonly=True,
+        )
+
+    monkeypatch.setitem(sys.modules, "psycopg", FakePsycopg)
+    monkeypatch.setattr(
+        "polymarket_alpha_lab.paper_autonomous_screening_decision_support_gate_store."
+        "load_paper_autonomous_screening_decision_support_gate_reports",
+        fake_load_reports,
+    )
+    monkeypatch.setattr(
+        "polymarket_alpha_lab.paper_autonomous_proposal."
+        "build_paper_autonomous_proposal_report",
+        fake_proposal_report,
+    )
+    monkeypatch.setattr(
+        "polymarket_alpha_lab.paper_autonomous_proposal_risk_gate."
+        "build_paper_autonomous_proposal_risk_gate_report",
+        fake_risk_gate_report,
+    )
+    monkeypatch.setattr(
+        "polymarket_alpha_lab.paper_broker.build_paper_broker_execution_record",
+        fake_broker_record,
+    )
+    monkeypatch.setattr(
+        "polymarket_alpha_lab.paper_order_lifecycle."
+        "build_paper_order_lifecycle_record",
+        fake_lifecycle_record,
+    )
+    monkeypatch.setattr(
+        "polymarket_alpha_lab.paper_autonomous_investment_ledger."
+        "build_paper_autonomous_investment_ledger_report",
+        fake_ledger_report,
+    )
+
+    pipeline_report = _run_paper_execution_pipeline(
+        screening_gate_dsn="postgresql://screening-gate.example.invalid/db",
+        screening_gate_table_name="screening_gate_archive",
+        limit=2,
+    )
+
+    assert loaded_calls[0][1:] == ("screening_gate_archive", 2)
+    assert pipeline_report["proposal_report"].generated_at == newest_gate.generated_at
+    assert pipeline_report["broker_record"].generated_at == newest_gate.generated_at
+    assert (
+        pipeline_report["investment_ledger_report"].latest_generated_at
+        == newest_gate.generated_at
+    )
+
+
+def test_persist_paper_execution_pipeline_uses_psycopg_adapters(
+    monkeypatch,
+    capsys,
+):
+    lifecycle_record = SimpleNamespace(lifecycle_status="paper_filled")
+    broker_record = SimpleNamespace(execution_status="paper_submitted")
+    ledger_report = SimpleNamespace(ledger_status="pass")
+    pipeline_report = {
+        "lifecycle_record": lifecycle_record,
+        "broker_record": broker_record,
+        "investment_ledger_report": ledger_report,
+    }
+    lifecycle_calls = []
+    broker_calls = []
+    ledger_calls = []
+
+    def fake_lifecycle_insert(**kwargs):
+        lifecycle_calls.append(kwargs)
+        return SimpleNamespace(inserted=True)
+
+    def fake_broker_insert(**kwargs):
+        broker_calls.append(kwargs)
+        return SimpleNamespace(inserted=True)
+
+    def fake_ledger_insert(**kwargs):
+        ledger_calls.append(kwargs)
+        return SimpleNamespace(inserted=True)
+
+    monkeypatch.setattr(
+        "polymarket_alpha_lab.paper_order_lifecycle_psycopg."
+        "insert_paper_order_lifecycle_record_with_psycopg",
+        fake_lifecycle_insert,
+    )
+    monkeypatch.setattr(
+        "polymarket_alpha_lab.paper_broker_psycopg."
+        "insert_paper_broker_execution_record_with_psycopg",
+        fake_broker_insert,
+    )
+    monkeypatch.setattr(
+        "polymarket_alpha_lab.paper_autonomous_investment_ledger_psycopg."
+        "insert_paper_autonomous_investment_ledger_report_with_psycopg",
+        fake_ledger_insert,
+    )
+
+    _persist_paper_execution_pipeline(
+        pipeline_report=pipeline_report,
+        dsn="postgresql://lifecycle.example.invalid/db",
+        table_name="paper_order_lifecycle_archive",
+        broker_dsn="postgresql://broker.example.invalid/db",
+        broker_table_name="paper_broker_archive",
+        ledger_dsn="postgresql://ledger.example.invalid/db",
+        ledger_table_name="paper_investment_ledger_archive",
+    )
+
+    assert lifecycle_calls == [
+        {
+            "dsn": "postgresql://lifecycle.example.invalid/db",
+            "record": lifecycle_record,
+            "table_name": "paper_order_lifecycle_archive",
+        },
+    ]
+    assert broker_calls == [
+        {
+            "dsn": "postgresql://broker.example.invalid/db",
+            "record": broker_record,
+            "table_name": "paper_broker_archive",
+        },
+    ]
+    assert ledger_calls == [
+        {
+            "dsn": "postgresql://ledger.example.invalid/db",
+            "report": ledger_report,
+            "table_name": "paper_investment_ledger_archive",
+        },
+    ]
+    captured = capsys.readouterr()
+    assert "lifecycle status=paper_filled" in captured.out
+    assert "broker status=paper_submitted" in captured.out
+    assert "ledger status=pass" in captured.out
 
 
 def test_run_cli_uses_default_action_gated_queue_source_when_db_enabled_without_injection(

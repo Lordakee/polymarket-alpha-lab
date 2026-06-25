@@ -164,6 +164,8 @@ def test_public_exports_and_import_do_not_require_psycopg(
     assert module.__all__ == (
         "insert_paper_broker_execution_record_from_config",
         "insert_paper_broker_execution_record_with_psycopg",
+        "load_paper_broker_execution_records_from_config",
+        "load_paper_broker_execution_records_with_psycopg",
     )
 
 
@@ -224,6 +226,96 @@ def test_enabled_config_uses_dsn_table_connector_and_insert_boundary(
     store_connection, store_record, table_name = insert_calls[0]
     assert store_connection is connection
     assert store_record is record
+    assert table_name == "paper_broker_execution_archive"
+    assert connection.commit_count == 1
+    assert connection.rollback_count == 0
+    assert connection.close_count == 1
+
+
+def test_disabled_load_config_returns_none_without_connecting(
+    adapter_module: types.ModuleType,
+) -> None:
+    connect_calls: list[str] = []
+    load_calls: list[object] = []
+    config = SupabasePaperBrokerConfig(
+        enabled=False,
+        dsn=None,
+        table_name="paper_broker_execution_records",
+    )
+
+    result = adapter_module.load_paper_broker_execution_records_from_config(
+        config,
+        config_version="paper-broker-v0",
+        execution_status="paper_submitted",
+        source_gate_status="pass",
+        limit=10,
+        connect=lambda dsn: connect_calls.append(dsn),
+        load_records=lambda *args, **kwargs: load_calls.append((args, kwargs)),
+    )
+
+    assert result is None
+    assert connect_calls == []
+    assert load_calls == []
+
+
+def test_enabled_config_uses_dsn_table_connector_filters_and_load_boundary(
+    adapter_module: types.ModuleType,
+) -> None:
+    connection = FakeConnection()
+    expected_records = (_record(),)
+    connect_calls: list[str] = []
+    load_calls: list[tuple[Any, str | None, str | None, str | None, int | None, str]] = []
+
+    def connect(dsn: str) -> FakeConnection:
+        connect_calls.append(dsn)
+        return connection
+
+    def load_records(
+        connection_arg: Any,
+        *,
+        config_version: str | None,
+        execution_status: str | None,
+        source_gate_status: str | None,
+        limit: int | None,
+        table_name: str,
+    ) -> tuple[PaperBrokerExecutionRecord, ...]:
+        load_calls.append(
+            (
+                connection_arg,
+                config_version,
+                execution_status,
+                source_gate_status,
+                limit,
+                table_name,
+            ),
+        )
+        return expected_records
+
+    result = adapter_module.load_paper_broker_execution_records_from_config(
+        _enabled_config(),
+        config_version="paper-broker-v0",
+        execution_status="paper_submitted",
+        source_gate_status="pass",
+        limit=10,
+        connect=connect,
+        load_records=load_records,
+    )
+
+    assert result == expected_records
+    assert connect_calls == [SECRET_DSN]
+    (
+        store_connection,
+        config_version,
+        execution_status,
+        source_gate_status,
+        limit,
+        table_name,
+    ) = load_calls[0]
+    assert store_connection is connection
+    assert config_version == "paper-broker-v0"
+    assert execution_status == "paper_submitted"
+    assert source_gate_status == "pass"
+    assert limit == 10
     assert table_name == "paper_broker_execution_archive"
     assert connection.commit_count == 1
     assert connection.rollback_count == 0
@@ -314,6 +406,72 @@ def test_with_psycopg_opens_owned_connection_delegates_commits_and_closes(
     assert connection.close_count == 1
 
 
+def test_load_with_psycopg_opens_owned_connection_delegates_commits_and_closes(
+    monkeypatch: pytest.MonkeyPatch,
+    adapter_module: types.ModuleType,
+) -> None:
+    connection = FakeConnection()
+    expected_records = (_record(),)
+    connect_calls: list[str] = []
+    load_calls: list[tuple[Any, str | None, str | None, str | None, int | None, str]] = []
+    _install_fake_psycopg(
+        monkeypatch,
+        connect=lambda dsn: connect_calls.append(dsn) or connection,
+    )
+
+    def load_records(
+        connection_arg: Any,
+        *,
+        config_version: str | None,
+        execution_status: str | None,
+        source_gate_status: str | None,
+        limit: int | None,
+        table_name: str,
+    ) -> tuple[PaperBrokerExecutionRecord, ...]:
+        load_calls.append(
+            (
+                connection_arg,
+                config_version,
+                execution_status,
+                source_gate_status,
+                limit,
+                table_name,
+            ),
+        )
+        return expected_records
+
+    result = adapter_module.load_paper_broker_execution_records_with_psycopg(
+        SECRET_DSN,
+        config_version="paper-broker-v0",
+        execution_status="paper_submitted",
+        source_gate_status="pass",
+        limit=10,
+        table_name="paper_broker_execution_archive",
+        load_records=load_records,
+    )
+
+    assert result == expected_records
+    assert connect_calls == [SECRET_DSN]
+    (
+        store_connection,
+        config_version,
+        execution_status,
+        source_gate_status,
+        limit,
+        table_name,
+    ) = load_calls[0]
+    assert store_connection is not connection
+    assert store_connection.connection is connection
+    assert config_version == "paper-broker-v0"
+    assert execution_status == "paper_submitted"
+    assert source_gate_status == "pass"
+    assert limit == 10
+    assert table_name == "paper_broker_execution_archive"
+    assert connection.commit_count == 1
+    assert connection.rollback_count == 0
+    assert connection.close_count == 1
+
+
 def test_cursor_wraps_dict_and_list_params_in_jsonb_only(
     monkeypatch: pytest.MonkeyPatch,
     adapter_module: types.ModuleType,
@@ -392,6 +550,32 @@ def test_store_failure_rolls_back_closes_reraises_and_does_not_echo_dsn(
 
     message = str(exc_info.value)
     assert "store failed without dsn" in message
+    assert "postgresql://" not in message
+    assert "secret" not in message
+    assert "example.invalid" not in message
+    assert connection.commit_count == 0
+    assert connection.rollback_count == 1
+    assert connection.close_count == 1
+
+
+def test_load_failure_rolls_back_closes_reraises_and_does_not_echo_dsn(
+    monkeypatch: pytest.MonkeyPatch,
+    adapter_module: types.ModuleType,
+) -> None:
+    connection = FakeConnection()
+    _install_fake_psycopg(monkeypatch, connect=lambda dsn: connection)
+
+    def load_records(connection_arg: Any, **kwargs: object) -> object:
+        raise ValueError(f"load failed for {SECRET_DSN}")
+
+    with pytest.raises(ValueError) as exc_info:
+        adapter_module.load_paper_broker_execution_records_with_psycopg(
+            SECRET_DSN,
+            load_records=load_records,
+        )
+
+    message = str(exc_info.value)
+    assert "load failed for <redacted>" in message
     assert "postgresql://" not in message
     assert "secret" not in message
     assert "example.invalid" not in message
