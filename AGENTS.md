@@ -91,6 +91,12 @@ Push a completed Codex node to GitHub after all of the following are true:
 
 Do not push half-finished work, failing tests, unreviewed code, or work that still has unresolved review findings.
 
+After a completed Codex node is verified, committed, reviewed, and pushed to
+GitHub, continue to the next suitable task by default. Do not pause solely
+because a GitHub push completed. Stop only when user confirmation is needed, a
+blocker prevents meaningful progress, a phase or risk boundary would change, or
+the user explicitly asks to stop or pause.
+
 ## OMO / Sisyphus Session Workflow (opencode only — codex ignores this section)
 
 This section binds every opencode/Sisyphus session working on this repository. It is set by the user on 2026-06-16 and survives across sessions. Codex does not use this section; codex resume continues from the latest main commit.
