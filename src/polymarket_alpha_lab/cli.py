@@ -306,6 +306,8 @@ PaperAutonomousAllocationProposalDbHistoryHealthTrendGateRunner = Callable[
     object,
 ]
 PaperAutonomousAllocationProposalDbSink = Callable[..., object]
+PaperExecutionPipelineRunner = Callable[..., object]
+PaperExecutionPipelinePersister = Callable[..., object]
 PaperResearchPacketOperatorFlowDbSink = Callable[..., object]
 PaperProbabilityRecommendationQueueDbSink = Callable[..., object]
 PaperRecommendationRiskBudgetDbSink = Callable[..., object]
@@ -991,6 +993,12 @@ def main(
     ) = None,
     paper_autonomous_allocation_proposal_db_sink: (
         PaperAutonomousAllocationProposalDbSink | None
+    ) = None,
+    paper_execution_pipeline_runner: (
+        PaperExecutionPipelineRunner | None
+    ) = None,
+    paper_execution_pipeline_persister: (
+        PaperExecutionPipelinePersister | None
     ) = None,
     paper_probability_recommendation_queue_db_sink: (
         PaperProbabilityRecommendationQueueDbSink | None
@@ -4174,40 +4182,71 @@ def main(
             }
             execution_pipeline_db_config = from_paper_execution_pipeline_db_env()
             if execution_pipeline_db_config.enabled:
-                ep_dsn = execution_pipeline_db_config.dsn
-                if ep_dsn is None:
+                screening_gate_db_config = (
+                    from_paper_autonomous_screening_decision_support_gate_db_env()
+                )
+                if not screening_gate_db_config.enabled:
+                    raise ValueError(
+                        "execution pipeline run persistence requires "
+                        "autonomous screening gate DB to be enabled",
+                    )
+                screening_gate_dsn = screening_gate_db_config.dsn
+                if screening_gate_dsn is None:
+                    raise ValueError(
+                        "execution pipeline run persistence requires "
+                        "an autonomous screening gate DB DSN",
+                    )
+                execution_pipeline_dsn = execution_pipeline_db_config.dsn
+                if execution_pipeline_dsn is None:
                     raise ValueError(
                         "execution pipeline DB persistence requires a DB DSN",
                     )
-                ep_table_name = execution_pipeline_db_config.table_name
+                execution_pipeline_table_name = execution_pipeline_db_config.table_name
+                pipeline_runner = (
+                    paper_execution_pipeline_runner
+                    if paper_execution_pipeline_runner is not None
+                    else _run_paper_execution_pipeline
+                )
+                pipeline_persister = (
+                    paper_execution_pipeline_persister
+                    if paper_execution_pipeline_persister is not None
+                    else _persist_paper_execution_pipeline
+                )
 
                 def _run_execution_pipeline_source(
                     cycle_report: object,
                     iteration_started_at: object,
                     *,
-                    _ep_dsn: str = ep_dsn,
-                    _ep_table_name: str = ep_table_name,
+                    _screening_gate_dsn: str = screening_gate_dsn,
+                    _screening_gate_table_name: str = (
+                        screening_gate_db_config.table_name
+                    ),
                 ) -> object:
-                    return _run_paper_execution_pipeline(
-                        screening_gate_dsn=_ep_dsn,
-                        screening_gate_table_name="paper_autonomous_screening_decision_support_gate_reports",
+                    return pipeline_runner(
+                        screening_gate_dsn=_screening_gate_dsn,
+                        screening_gate_table_name=_screening_gate_table_name,
                         limit=1,
                     )
 
                 def _run_execution_pipeline_sink(
                     pipeline_report: object,
                     *,
-                    _ep_dsn: str = ep_dsn,
-                    _ep_table_name: str = ep_table_name,
+                    _execution_pipeline_dsn: str = execution_pipeline_dsn,
+                    _execution_pipeline_table_name: str = (
+                        execution_pipeline_table_name
+                    ),
                 ) -> None:
                     try:
-                        _persist_paper_execution_pipeline(
+                        pipeline_persister(
                             pipeline_report=pipeline_report,
-                            dsn=_ep_dsn,
-                            table_name=_ep_table_name,
+                            dsn=_execution_pipeline_dsn,
+                            table_name=_execution_pipeline_table_name,
                         )
                     except Exception as exc:
-                        _raise_redacted_db_sink_error(exc, dsn=_ep_dsn)
+                        _raise_redacted_db_sink_error(
+                            exc,
+                            dsn=_execution_pipeline_dsn,
+                        )
 
                 loop_runner_kwargs["execution_pipeline_source"] = (
                     _run_execution_pipeline_source

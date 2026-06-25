@@ -151,6 +151,11 @@ from polymarket_alpha_lab.supabase_paper_autonomous_screening_decision_support_g
     PAPER_AUTONOMOUS_SCREENING_DECISION_SUPPORT_GATE_DB_ENABLED_ENV_VAR,
     PAPER_AUTONOMOUS_SCREENING_DECISION_SUPPORT_GATE_DB_TABLE_ENV_VAR,
 )
+from polymarket_alpha_lab.supabase_paper_execution_pipeline_config import (
+    PAPER_EXECUTION_PIPELINE_DB_DSN_ENV_VAR,
+    PAPER_EXECUTION_PIPELINE_DB_ENABLED_ENV_VAR,
+    PAPER_EXECUTION_PIPELINE_DB_TABLE_ENV_VAR,
+)
 from polymarket_alpha_lab.supabase_paper_autonomous_allocation_proposal_config import (
     PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_DSN_ENV_VAR,
     PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_ENABLED_ENV_VAR,
@@ -6968,6 +6973,93 @@ def test_run_cli_wires_action_gated_queue_db_sink_when_env_enabled(
     assert "action_gated_queues_persisted=1" in captured.out
     assert action_gated_dsn not in captured.out
     assert action_gated_dsn not in captured.err
+
+
+def test_run_cli_execution_pipeline_uses_screening_gate_source_and_pipeline_sink(
+    tmp_path,
+    monkeypatch,
+):
+    screening_gate_dsn = "postgresql://screening-gate.example.invalid/db"
+    execution_pipeline_dsn = "postgresql://execution-pipeline.example.invalid/db"
+    monkeypatch.setenv(
+        PAPER_AUTONOMOUS_SCREENING_DECISION_SUPPORT_GATE_DB_ENABLED_ENV_VAR,
+        "true",
+    )
+    monkeypatch.setenv(
+        PAPER_AUTONOMOUS_SCREENING_DECISION_SUPPORT_GATE_DB_DSN_ENV_VAR,
+        screening_gate_dsn,
+    )
+    monkeypatch.setenv(
+        PAPER_AUTONOMOUS_SCREENING_DECISION_SUPPORT_GATE_DB_TABLE_ENV_VAR,
+        "screening_gate_archive",
+    )
+    monkeypatch.setenv(PAPER_EXECUTION_PIPELINE_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(PAPER_EXECUTION_PIPELINE_DB_DSN_ENV_VAR, execution_pipeline_dsn)
+    monkeypatch.setenv(
+        PAPER_EXECUTION_PIPELINE_DB_TABLE_ENV_VAR,
+        "paper_execution_archive",
+    )
+    pipeline_report = {
+        "lifecycle_record": SimpleNamespace(lifecycle_status="paper_filled"),
+    }
+    source_calls = []
+    sink_calls = []
+
+    def fake_loop_runner(**kwargs):
+        assert kwargs["execution_pipeline_source"] is not None
+        assert kwargs["execution_pipeline_sink"] is not None
+        report = kwargs["execution_pipeline_source"](
+            cycle_report=object(),
+            iteration_started_at=datetime(2026, 6, 25, tzinfo=UTC),
+        )
+        kwargs["execution_pipeline_sink"](report)
+        return RunLoopSummary(
+            iterations_completed=1,
+            iterations_failed=0,
+            first_iteration_at=datetime(2026, 6, 25, tzinfo=UTC),
+            last_iteration_at=datetime(2026, 6, 25, tzinfo=UTC),
+            last_error=None,
+            execution_pipelines_persisted=1,
+        )
+
+    def fake_pipeline_runner(**kwargs):
+        source_calls.append(kwargs)
+        return pipeline_report
+
+    def fake_pipeline_persister(**kwargs):
+        sink_calls.append(kwargs)
+
+    exit_code = main(
+        [
+            "run",
+            "--archive-root",
+            str(tmp_path / "raw"),
+            "--starting-cash",
+            "10000",
+            "--cycle-log",
+            str(tmp_path / "cycle.jsonl"),
+        ],
+        loop_runner=fake_loop_runner,
+        client_factory=lambda: "fake-client",
+        paper_execution_pipeline_runner=fake_pipeline_runner,
+        paper_execution_pipeline_persister=fake_pipeline_persister,
+    )
+
+    assert exit_code == 0
+    assert source_calls == [
+        {
+            "screening_gate_dsn": screening_gate_dsn,
+            "screening_gate_table_name": "screening_gate_archive",
+            "limit": 1,
+        },
+    ]
+    assert sink_calls == [
+        {
+            "pipeline_report": pipeline_report,
+            "dsn": execution_pipeline_dsn,
+            "table_name": "paper_execution_archive",
+        },
+    ]
 
 
 def test_run_cli_uses_default_action_gated_queue_source_when_db_enabled_without_injection(

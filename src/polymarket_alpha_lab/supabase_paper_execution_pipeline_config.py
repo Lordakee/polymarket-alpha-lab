@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from os import environ
+import re
 from typing import Mapping
+
+from polymarket_alpha_lab.paper_order_lifecycle_store import (
+    DEFAULT_PAPER_ORDER_LIFECYCLE_RECORDS_TABLE,
+)
 
 
 __all__ = (
@@ -22,7 +27,10 @@ PAPER_EXECUTION_PIPELINE_DB_DSN_ENV_VAR = (
 PAPER_EXECUTION_PIPELINE_DB_TABLE_ENV_VAR = (
     "POLYMARKET_ALPHA_LAB_PAPER_EXECUTION_PIPELINE_DB_TABLE"
 )
-DEFAULT_PAPER_EXECUTION_PIPELINE_DB_TABLE = "paper_execution_pipeline_reports"
+DEFAULT_PAPER_EXECUTION_PIPELINE_DB_TABLE = (
+    DEFAULT_PAPER_ORDER_LIFECYCLE_RECORDS_TABLE
+)
+_IDENTIFIER_PATTERN = re.compile(r"^[a-z][a-z0-9_]*[a-z0-9]$")
 
 _TRUE_VALUES = frozenset({"true", "1", "yes"})
 _FALSE_VALUES = frozenset({"false", "0", "no", ""})
@@ -39,7 +47,10 @@ class SupabasePaperExecutionPipelineConfig:
             raise ValueError("enabled must be a bool")
         if self.dsn is not None and (type(self.dsn) is not str or not self.dsn):
             raise ValueError("dsn must be a nonblank string or None")
-        if type(self.table_name) is not str or not self.table_name or self.table_name.strip() != self.table_name:
+        if (
+            type(self.table_name) is not str
+            or _IDENTIFIER_PATTERN.fullmatch(self.table_name) is None
+        ):
             raise ValueError("table_name must be a simple lowercase identifier")
         if self.enabled and self.dsn is None:
             raise ValueError("dsn is required when enabled is True")
