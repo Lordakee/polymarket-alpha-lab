@@ -317,6 +317,7 @@ PaperExecutionPipelinePersister = Callable[..., object]
 PaperAutonomousInvestmentLedgerRunner = Callable[..., object]
 PaperAutonomousInvestmentLedgerDbSink = Callable[..., object]
 PaperAutonomousInvestmentLedgerDbHistoryRunner = Callable[..., object]
+PaperAutonomousInvestmentLedgerDbHistoryHealthRunner = Callable[..., object]
 PaperResearchPacketOperatorFlowDbSink = Callable[..., object]
 PaperProbabilityRecommendationQueueDbSink = Callable[..., object]
 PaperRecommendationRiskBudgetDbSink = Callable[..., object]
@@ -1052,6 +1053,9 @@ def main(
     ) = None,
     paper_autonomous_investment_ledger_db_history_runner: (
         PaperAutonomousInvestmentLedgerDbHistoryRunner | None
+    ) = None,
+    paper_autonomous_investment_ledger_db_history_health_runner: (
+        PaperAutonomousInvestmentLedgerDbHistoryHealthRunner | None
     ) = None,
     paper_probability_recommendation_queue_db_sink: (
         PaperProbabilityRecommendationQueueDbSink | None
@@ -1883,6 +1887,16 @@ def main(
         choices=("pass", "watch", "blocked"),
         default=None,
         dest="ledger_status",
+    )
+    paper_autonomous_investment_ledger_db_history_health = subparsers.add_parser(
+        "paper-autonomous-investment-ledger-db-history-health",
+        allow_abbrev=False,
+    )
+    paper_autonomous_investment_ledger_db_history_health.add_argument(
+        "--limit",
+        type=int,
+        default=25,
+        dest="limit",
     )
 
     paper_research_packet_operator_flow = subparsers.add_parser(
@@ -4165,6 +4179,55 @@ def main(
                     broker_table_name=ledger_table_name,
                 ) from None
             _print_paper_autonomous_investment_ledger_db_history_summary(reports)
+            return 0
+        except Exception as exc:
+            print(
+                f"{command_name} failed: {exc}",
+                file=sys.stderr,
+            )
+            return 1
+
+    if args.command == "paper-autonomous-investment-ledger-db-history-health":
+        command_name = "paper-autonomous-investment-ledger-db-history-health"
+        try:
+            if isinstance(args.limit, bool) or type(args.limit) is not int or args.limit < 1:
+                raise ValueError(f"{command_name} limit must be positive")
+            ledger_db_config = from_paper_autonomous_investment_ledger_db_env()
+            if not ledger_db_config.enabled:
+                raise ValueError(
+                    f"{command_name} requires paper autonomous investment ledger "
+                    "DB to be enabled",
+                )
+            ledger_dsn = ledger_db_config.dsn
+            if ledger_dsn is None:
+                raise ValueError(
+                    f"{command_name} requires a paper autonomous investment "
+                    "ledger DB DSN",
+                )
+            ledger_table_name = ledger_db_config.table_name
+            if ledger_table_name is None:
+                raise ValueError(
+                    f"{command_name} requires a paper autonomous investment "
+                    "ledger DB table",
+                )
+            try:
+                report = _run_paper_autonomous_investment_ledger_db_history_health(
+                    dsn=ledger_dsn,
+                    table_name=ledger_table_name,
+                    limit=args.limit,
+                    runner=(
+                        paper_autonomous_investment_ledger_db_history_health_runner
+                    ),
+                )
+            except Exception as exc:
+                raise _redacted_paper_autonomous_investment_ledger_error(
+                    exc,
+                    broker_dsn=ledger_dsn,
+                    broker_table_name=ledger_table_name,
+                ) from None
+            _print_paper_autonomous_investment_ledger_db_history_health_summary(
+                report,
+            )
             return 0
         except Exception as exc:
             print(
@@ -9308,6 +9371,72 @@ def _load_paper_autonomous_investment_ledger_db_history(
     )
 
 
+def _run_paper_autonomous_investment_ledger_db_history_health(
+    *,
+    dsn: str,
+    table_name: str,
+    limit: int,
+    runner: PaperAutonomousInvestmentLedgerDbHistoryHealthRunner | None = None,
+) -> object:
+    command_name = "paper-autonomous-investment-ledger-db-history-health"
+    if isinstance(limit, bool) or type(limit) is not int or limit < 1:
+        raise ValueError(f"{command_name} limit must be positive")
+    generated_at = datetime.now(UTC)
+
+    from polymarket_alpha_lab.paper_autonomous_investment_ledger_db_history_health import (
+        PaperAutonomousInvestmentLedgerDbHistoryHealthConfig,
+    )
+
+    config = PaperAutonomousInvestmentLedgerDbHistoryHealthConfig()
+    if runner is not None:
+        return runner(
+            dsn=dsn,
+            table_name=table_name,
+            limit=limit,
+            config=config,
+            generated_at=generated_at,
+        )
+
+    from polymarket_alpha_lab.paper_autonomous_investment_ledger_db_history_health_load import (
+        load_paper_autonomous_investment_ledger_db_history_health_report,
+    )
+
+    try:
+        import psycopg
+    except ModuleNotFoundError as exc:
+        if exc.name != "psycopg":
+            raise
+        raise RuntimeError(
+            "psycopg is required to use the paper autonomous investment ledger "
+            "DB history health read adapter; install the postgres extra.",
+        ) from exc
+    try:
+        connection = psycopg.connect(dsn, autocommit=True)
+    except Exception:
+        raise RuntimeError(
+            "failed to connect to the paper autonomous investment ledger database",
+        ) from None
+    try:
+        return load_paper_autonomous_investment_ledger_db_history_health_report(
+            connection,
+            limit=limit,
+            table_name=table_name,
+            config=config,
+            generated_at=generated_at,
+        )
+    except Exception as exc:
+        raise _redacted_paper_autonomous_investment_ledger_error(
+            exc,
+            broker_dsn=dsn,
+            broker_table_name=table_name,
+        ) from None
+    finally:
+        try:
+            connection.close()
+        except Exception:
+            pass
+
+
 def _print_paper_execution_pipeline_summary(pipeline_report: object) -> None:
     """Print summary of paper execution pipeline results."""
     lifecycle = pipeline_report["lifecycle_record"]
@@ -9395,6 +9524,39 @@ def _print_paper_autonomous_investment_ledger_db_history_summary(
         print(f"  reason_code_counts: {reason_code_counts or 'none'}")
     if len(report_tuple) > 5:
         print(f"  ... and {len(report_tuple) - 5} more")
+
+
+def _print_paper_autonomous_investment_ledger_db_history_health_summary(
+    report: object,
+) -> None:
+    command_name = "paper-autonomous-investment-ledger-db-history-health"
+    print(
+        f"{command_name}: health_status={report.health_status} "
+        f"recommended_next_step={report.recommended_next_step} "
+        f"ledger_report_count={report.ledger_report_count} "
+        f"latest_ledger_status={_none_or_value(report.latest_ledger_status)} "
+        "latest_source_record_count="
+        f"{_none_or_value(report.latest_source_record_count)} "
+        f"latest_submitted_count={_none_or_value(report.latest_submitted_count)} "
+        f"latest_held_count={_none_or_value(report.latest_held_count)} "
+        f"latest_blocked_count={_none_or_value(report.latest_blocked_count)} "
+        "latest_total_submitted_notional="
+        f"{_none_or_value(report.latest_total_submitted_notional)} "
+        "latest_source_generated_at="
+        f"{_iso_or_none(report.latest_source_generated_at)} "
+        f"latest_source_age_seconds={_none_or_value(report.latest_source_age_seconds)} "
+        f"max_source_age_seconds={_none_or_value(report.max_source_age_seconds)} "
+        f"pass_ledger_report_count={report.pass_ledger_report_count} "
+        f"watch_ledger_report_count={report.watch_ledger_report_count} "
+        f"blocked_ledger_report_count={report.blocked_ledger_report_count} "
+        "duplicate_latest_generated_at_count="
+        f"{report.duplicate_latest_generated_at_count}",
+    )
+    reason_code_counts = " ".join(
+        f"{row.reason_code}={_reason_code_report_count(row)}"
+        for row in report.reason_code_counts
+    )
+    print(f"reason_code_counts: {reason_code_counts or 'none'}")
 
 
 def _print_paper_autonomous_screening_decision_support_gate_summary(

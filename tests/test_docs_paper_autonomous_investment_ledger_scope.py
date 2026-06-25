@@ -13,6 +13,7 @@ REQUIRED_README_PHRASES = (
     ".venv/bin/polymarket-alpha-lab paper-autonomous-investment-ledger --limit 25",
     ".venv/bin/polymarket-alpha-lab paper-autonomous-investment-ledger --limit 25 --persist",
     ".venv/bin/polymarket-alpha-lab paper-autonomous-investment-ledger-db-history --limit 25",
+    ".venv/bin/polymarket-alpha-lab paper-autonomous-investment-ledger-db-history-health --limit 25",
     "POLYMARKET_ALPHA_LAB_PAPER_BROKER_DB_ENABLED",
     "POLYMARKET_ALPHA_LAB_PAPER_BROKER_DB_DSN",
     "POLYMARKET_ALPHA_LAB_PAPER_BROKER_DB_TABLE",
@@ -27,10 +28,15 @@ REQUIRED_README_PHRASES = (
     "stores only the already-built investment ledger report",
     "prints `persisted=True/False`",
     "DB history readback is env-only, read-only, paper-only/report-only/readonly",
+    "accepts only `--limit`, `--config-version`, and `--ledger-status`",
+    "DB history health readback is env-only, read-only, paper-only/report-only/readonly",
+    "reads already persisted paper autonomous investment ledger DB-history reports",
+    "builds one health report",
     "accepts only `--limit`",
     "does not accept DSN/table CLI flags",
     "does not accept `--persist`",
     "does not persist in db-history",
+    "does not persist health rows",
     "does not write reports",
     "does not read upstream paper broker tables",
     "no live trading",
@@ -169,6 +175,9 @@ def test_readme_places_investment_ledger_after_allocation_proposal_block() -> No
     default_command_marker = "paper-autonomous-investment-ledger --limit 25"
     persist_command_marker = "paper-autonomous-investment-ledger --limit 25 --persist"
     db_history_command_marker = "paper-autonomous-investment-ledger-db-history --limit 25"
+    db_history_health_command_marker = (
+        "paper-autonomous-investment-ledger-db-history-health --limit 25"
+    )
     next_section_marker = "## Level 1B Node 1 Status"
 
     assert allocation_marker in readme_text
@@ -176,6 +185,7 @@ def test_readme_places_investment_ledger_after_allocation_proposal_block() -> No
     assert default_command_marker in readme_text
     assert persist_command_marker in readme_text
     assert db_history_command_marker in readme_text
+    assert db_history_health_command_marker in readme_text
     assert next_section_marker in readme_text
 
     allocation_start = readme_text.index(allocation_marker)
@@ -186,6 +196,10 @@ def test_readme_places_investment_ledger_after_allocation_proposal_block() -> No
         db_history_command_marker,
         persist_command_start,
     )
+    db_history_health_command_start = readme_text.index(
+        db_history_health_command_marker,
+        db_history_command_start,
+    )
     next_section_start = readme_text.index(next_section_marker)
 
     assert (
@@ -194,6 +208,7 @@ def test_readme_places_investment_ledger_after_allocation_proposal_block() -> No
         < default_command_start
         < persist_command_start
         < db_history_command_start
+        < db_history_health_command_start
         < next_section_start
     )
 

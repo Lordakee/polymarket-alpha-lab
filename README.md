@@ -493,10 +493,24 @@ Investment Ledger DB History Readback:
 ```
 
 The DB history readback is env-only, read-only, paper-only/report-only/readonly,
-and accepts only `--limit`. It reads the paper autonomous investment ledger DB
-configured by env and does not accept DSN/table CLI flags, does not accept
-`--persist`, does not persist in db-history, does not write reports, and does
-not read upstream paper broker tables.
+and accepts only `--limit`, `--config-version`, and `--ledger-status`. It reads
+the paper autonomous investment ledger DB configured by env and does not accept
+DSN/table CLI flags, does not accept `--persist`, does not persist in db-history,
+does not write reports, and does not read upstream paper broker tables.
+
+Investment Ledger DB History Health:
+
+```bash
+.venv/bin/polymarket-alpha-lab paper-autonomous-investment-ledger-db-history-health --limit 25
+```
+
+The DB history health readback is env-only, read-only,
+paper-only/report-only/readonly, and accepts only `--limit`. It reads already
+persisted paper autonomous investment ledger DB-history reports from the paper
+autonomous investment ledger DB configured by env, builds one health report, does
+not accept DSN/table CLI flags, does not accept `--persist`, does not persist
+health rows, does not write reports, and does not read upstream paper broker
+tables.
 
 Boundary: no live trading, no auth, no key handling, no wallet handling,
 no account reads, no order construction, no order signing, no order submission,
