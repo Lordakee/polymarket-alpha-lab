@@ -264,13 +264,18 @@ def test_strategy_cycle_snapshot_source_converts_blocked_cycle_without_screening
     rows = _row_by_name(snapshot)
     assert "paper_strategy_cycle_report" not in rows
     assert "strategy_cycle_blocked_counts" in rows
-    assert "strategy_cycle_cost_aware_reports" not in rows
+    assert "strategy_cycle_cost_aware_reports" in rows
     assert "strategy_cycle_screening_report" in rows
     assert rows["strategy_cycle_blocked_counts"].status == "blocked"
     assert rows["strategy_cycle_blocked_counts"].item_count == 3
     assert rows["strategy_cycle_blocked_counts"].reason_codes == (
         "blocked_fetch_error",
         "blocked_non_binary_market",
+    )
+    assert rows["strategy_cycle_cost_aware_reports"].status == "watch"
+    assert rows["strategy_cycle_cost_aware_reports"].item_count == 0
+    assert rows["strategy_cycle_cost_aware_reports"].reason_codes == (
+        "no_cost_aware_reports",
     )
     assert rows["strategy_cycle_screening_report"].status == "blocked"
     assert rows["strategy_cycle_screening_report"].item_count == 0
@@ -283,7 +288,7 @@ def test_strategy_cycle_snapshot_source_converts_blocked_cycle_without_screening
     assert "missing_screening_report" in snapshot.reason_codes
 
 
-def test_strategy_cycle_snapshot_source_converts_cycle_with_screening_report():
+def test_strategy_cycle_snapshot_source_surfaces_cost_aware_mismatch_with_screening_report():
     screening_report = _screening_report()
     cycle_report = _cycle_report(
         scan_market_count=2,
@@ -299,10 +304,10 @@ def test_strategy_cycle_snapshot_source_converts_cycle_with_screening_report():
 
     assert snapshot.generated_at == GENERATED_AT
     assert snapshot.config_version == CONFIG_VERSION
-    assert snapshot.final_status == "pass"
+    assert snapshot.final_status == "blocked"
     assert snapshot.stage_count == 4
     assert snapshot.artifact_count == snapshot.artifact_index_report.row_count
-    assert snapshot.blocked_artifact_count == 0
+    assert snapshot.blocked_artifact_count == 1
     assert snapshot.watch_artifact_count == 0
     assert snapshot.paper_only is True
     assert snapshot.report_only is True
@@ -325,8 +330,16 @@ def test_strategy_cycle_snapshot_source_converts_cycle_with_screening_report():
     rows = _row_by_name(snapshot)
     assert "paper_strategy_cycle_report" not in rows
     assert "paper_project_screening_report" not in rows
-    assert "strategy_cycle_cost_aware_reports" not in rows
+    assert "strategy_cycle_cost_aware_reports" in rows
     assert "strategy_cycle_screening_report" in rows
+    assert rows["strategy_cycle_cost_aware_reports"].status == "blocked"
+    assert rows["strategy_cycle_cost_aware_reports"].item_count == 0
+    assert rows["strategy_cycle_cost_aware_reports"].reason_codes == (
+        "cost_aware_report_count_mismatch",
+    )
+    assert rows["strategy_cycle_blocked_counts"].status == "pass"
+    assert rows["strategy_cycle_blocked_counts"].item_count == 0
+    assert rows["strategy_cycle_blocked_counts"].reason_codes == ()
     assert rows["strategy_cycle_screening_report"].status == "pass"
     assert rows["strategy_cycle_screening_report"].item_count == 1
     assert rows["strategy_cycle_screening_report"].reason_codes == (

@@ -146,32 +146,10 @@ def _build_artifacts(
     considered_count: int,
     screening_report: object | None,
 ) -> tuple[object, ...]:
-    cost_aware_reports = getattr(cycle_report, "cost_aware_reports", ())
-    if cost_aware_reports:
-        return build_strategy_cycle_recommendation_artifacts(
-            cycle_report,
-            generated_at=generated_at,
-        )
-
-    artifacts = [
-        _StrategyCycleSnapshotArtifact(
-            artifact_name="strategy_cycle_blocked_counts",
-            config_version=config_version,
-            generated_at=generated_at,
-            status=_blocked_counts_status(blocked_counts),
-            item_count=sum(count for _status, count in blocked_counts),
-            reason_codes=tuple(sorted(status for status, _count in blocked_counts)),
-        ),
-        _StrategyCycleSnapshotArtifact(
-            artifact_name="strategy_cycle_screening_report",
-            config_version=config_version,
-            generated_at=generated_at,
-            status=_screening_artifact_status(screening_report, considered_count),
-            item_count=_screening_ready_count(screening_report),
-            reason_codes=_screening_artifact_reason_codes(screening_report, considered_count),
-        ),
-    ]
-    return tuple(artifacts)
+    return build_strategy_cycle_recommendation_artifacts(
+        cycle_report,
+        generated_at=generated_at,
+    )
 
 
 def _screening_artifact_status(screening_report: object | None, considered_count: int) -> str:

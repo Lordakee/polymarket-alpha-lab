@@ -42,6 +42,9 @@ ZERO = Decimal("0.000000")
 ONE = Decimal("1.000000")
 SCORE_STATUSES = ("scored", "skipped", "blocked")
 SIDES = ("yes", "no", "none")
+_MARKET_SCORE_STATUSES = ("pass", "ready", "recommend", "scored")
+_MARKET_SKIP_STATUSES = ("watch", "skipped")
+_MARKET_BLOCK_STATUSES = ("blocked", "reject")
 
 
 def _validate_hard_flags(label: str, obj: object) -> None:
@@ -249,6 +252,234 @@ def _normalize_reason_codes(value: object) -> tuple[str, ...]:
     return value
 
 
+def _require_ratio_decimal(field_name: str, value: object) -> Decimal:
+    _require_nonnegative_decimal(field_name, value)
+    assert isinstance(value, Decimal)
+    if value > ONE:
+        raise ValueError(f"{field_name} must not exceed 1")
+    return _quantize(value)
+
+
+def _decimal_from_market_data(
+    entry: dict[str, object],
+    aliases: tuple[str, ...],
+    *,
+    field_name: str,
+    default: Decimal,
+    ratio: bool,
+) -> Decimal:
+    for alias in aliases:
+        if alias in entry:
+            value = entry[alias]
+            if ratio:
+                return _require_ratio_decimal(alias, value)
+            _require_nonnegative_decimal(alias, value)
+            assert isinstance(value, Decimal)
+            return _quantize(value)
+    return default
+
+
+def _market_data_string(entry: dict[str, object], field_name: str) -> str:
+    value = entry.get(field_name)
+    _require_canonical_string(field_name, value)
+    assert isinstance(value, str)
+    return value
+
+
+def _market_data_side(entry: dict[str, object]) -> str:
+    value = entry.get("scoring_side", entry.get("side"))
+    if type(value) is not str or value not in SIDES:
+        raise ValueError(f"scoring_side must be one of {SIDES}")
+    return value
+
+
+def _require_market_data_safety_flags(entry: dict[str, object]) -> None:
+    for field_name in ("paper_only", "report_only", "readonly"):
+        if field_name in entry and entry[field_name] is not True:
+            raise ValueError(f"{field_name} must be True for market_data")
+
+
+def _market_data_score_status(
+    *,
+    entry: dict[str, object],
+    total_score: Decimal,
+    min_total_score: Decimal,
+) -> str:
+    value = entry.get("selection_status", "ready")
+    _require_canonical_string("selection_status", value)
+    assert isinstance(value, str)
+    if value in _MARKET_BLOCK_STATUSES:
+        return "blocked"
+    if value in _MARKET_SKIP_STATUSES:
+        return "skipped"
+    if value in _MARKET_SCORE_STATUSES:
+        return "scored" if total_score >= min_total_score else "skipped"
+    raise ValueError("selection_status must be a known market status")
+
+
+def _score_market_data_row(
+    entry: dict[str, object],
+    *,
+    config: AutonomousMarketScorerConfig,
+) -> AutonomousMarketScoreRow:
+    if type(entry) is not dict:
+        raise ValueError("market_data entries must be dictionaries")
+    _require_market_data_safety_flags(entry)
+    condition_id = _market_data_string(entry, "condition_id")
+    market_slug = _market_data_string(entry, "market_slug")
+    question = _market_data_string(entry, "question")
+    side = _market_data_side(entry)
+    confidence = _decimal_from_market_data(
+        entry,
+        ("confidence_score", "recommendation_score"),
+        field_name="confidence_score",
+        default=ZERO,
+        ratio=True,
+    )
+    liquidity = _decimal_from_market_data(
+        entry,
+        ("liquidity_score", "fill_ratio"),
+        field_name="liquidity_score",
+        default=ZERO,
+        ratio=True,
+    )
+    spread = _decimal_from_market_data(
+        entry,
+        ("spread_score",),
+        field_name="spread_score",
+        default=ZERO,
+        ratio=True,
+    )
+    edge = _decimal_from_market_data(
+        entry,
+        ("edge_score", "net_probability_edge"),
+        field_name="edge_score",
+        default=ZERO,
+        ratio=True,
+    )
+    cost = _decimal_from_market_data(
+        entry,
+        ("cost_score", "total_cost_per_share"),
+        field_name="cost_score",
+        default=ZERO,
+        ratio=True,
+    )
+    risk = _decimal_from_market_data(
+        entry,
+        ("risk_score",),
+        field_name="risk_score",
+        default=ZERO,
+        ratio=True,
+    )
+    recommended_notional = _decimal_from_market_data(
+        entry,
+        ("recommended_notional", "requested_paper_shares", "executable_paper_shares"),
+        field_name="recommended_notional",
+        default=ZERO,
+        ratio=False,
+    )
+    estimated_edge = _decimal_from_market_data(
+        entry,
+        ("estimated_edge", "net_probability_edge", "edge_score"),
+        field_name="estimated_edge",
+        default=edge,
+        ratio=False,
+    )
+    reason_codes = _normalize_reason_codes(entry.get("reason_codes", ()))
+
+    with localcontext(DECIMAL_CONTEXT):
+        total_score = _quantize(
+            config.confidence_weight * confidence
+            + config.liquidity_weight * liquidity
+            + config.spread_weight * spread
+            + config.edge_weight * edge
+            + config.cost_weight * (ONE - cost)
+            + config.risk_weight * (ONE - risk),
+        )
+    score_status = _market_data_score_status(
+        entry=entry,
+        total_score=total_score,
+        min_total_score=config.min_total_score,
+    )
+    if score_status != "scored":
+        total_score = ZERO
+        recommended_notional = ZERO
+
+    return AutonomousMarketScoreRow(
+        condition_id=condition_id,
+        market_slug=market_slug,
+        question=question,
+        scoring_side=side,
+        confidence_score=confidence,
+        liquidity_score=liquidity,
+        spread_score=spread,
+        edge_score=edge,
+        cost_score=cost,
+        risk_score=risk,
+        total_score=total_score,
+        score_status=score_status,
+        recommended_notional=recommended_notional,
+        estimated_edge=estimated_edge,
+        reason_codes=reason_codes,
+    )
+
+
+def _build_market_data_report(
+    *,
+    generated_at: datetime,
+    config: AutonomousMarketScorerConfig,
+    market_data: tuple[dict[str, object], ...],
+) -> AutonomousMarketScorerReport:
+    score_rows = tuple(
+        sorted(
+            (_score_market_data_row(entry, config=config) for entry in market_data),
+            key=lambda row: (-row.total_score, row.market_slug, row.condition_id),
+        )[: config.max_markets],
+    )
+    markets_scored = sum(1 for row in score_rows if row.score_status == "scored")
+    markets_skipped = sum(1 for row in score_rows if row.score_status == "skipped")
+    markets_blocked = sum(1 for row in score_rows if row.score_status == "blocked")
+    top_total = max((row.total_score for row in score_rows), default=ZERO)
+    avg_total = (
+        _quantize(sum(row.total_score for row in score_rows) / Decimal(len(score_rows)))
+        if score_rows
+        else ZERO
+    )
+    total_notional = sum((row.recommended_notional for row in score_rows), ZERO)
+    reason_codes = tuple(
+        sorted(
+            dict.fromkeys(
+                reason_code
+                for row in score_rows
+                for reason_code in row.reason_codes
+            ),
+        ),
+    )
+    if markets_scored > 0:
+        gate_status = "pass"
+    elif markets_blocked > 0 and markets_skipped == 0:
+        gate_status = "blocked"
+    else:
+        gate_status = "watch"
+
+    return AutonomousMarketScorerReport(
+        generated_at=generated_at,
+        config_version=config.config_version,
+        gate_status=gate_status,
+        markets_scored=markets_scored,
+        markets_skipped=markets_skipped,
+        markets_blocked=markets_blocked,
+        top_total_score=top_total,
+        average_total_score=avg_total,
+        total_recommended_notional=total_notional,
+        score_rows=score_rows,
+        reason_codes=reason_codes,
+        paper_only=True,
+        report_only=True,
+        readonly=True,
+    )
+
+
 def build_autonomous_market_scorer_report(
     *,
     gate_report: PaperAutonomousScreeningDecisionSupportGateReport,
@@ -287,6 +518,13 @@ def build_autonomous_market_scorer_report(
             config=config,
             gate_report=gate_report,
             reason_code="autonomous_market_scorer_gate_watch",
+        )
+
+    if market_data:
+        return _build_market_data_report(
+            generated_at=generated_at_utc,
+            config=config,
+            market_data=market_data,
         )
 
     # gate_status == "pass": score based on queue metrics
