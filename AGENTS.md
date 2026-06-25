@@ -10,6 +10,18 @@ Future execution work must be introduced through explicit roadmap documentation,
 
 Do not perform compliance, legal, geographic-access, or regulatory analysis in this repository unless the user explicitly reopens that topic.
 
+## Database Persistence Iron Rule
+
+All database-related implementation in this project must use the local Supabase
+Postgres instance on this host. Treat local Supabase/Postgres as the only
+approved database persistence target for project data.
+
+Do not introduce alternate database backends, hosted remote database
+assumptions, SQLite substitutes, file-backed database substitutes, or generic
+database abstraction layers unless the user explicitly changes this project
+rule. DB configuration, stores, loaders, migrations, runbooks, and tests should
+preserve this local Supabase/Postgres assumption.
+
 ## CodeGraph
 
 This repository is intended to be indexed by CodeGraph. If `.codegraph/` exists at the repository root, use CodeGraph before `rg`, `find`, or manual file reads when the goal is to understand or locate code:
