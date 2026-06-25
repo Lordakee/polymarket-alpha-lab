@@ -335,6 +335,12 @@ from polymarket_alpha_lab.paper_autonomous_investment_ledger_db_history_health_t
     PaperAutonomousInvestmentLedgerDbHistoryHealthTrendSnapshotSummary,
     build_paper_autonomous_investment_ledger_db_history_health_trend_report,
 )
+from polymarket_alpha_lab.paper_autonomous_investment_ledger_db_history_health_trend_gate import (
+    PaperAutonomousInvestmentLedgerDbHistoryHealthTrendGateConfig,
+    PaperAutonomousInvestmentLedgerDbHistoryHealthTrendGateReasonCodeCount,
+    PaperAutonomousInvestmentLedgerDbHistoryHealthTrendGateReport,
+    build_paper_autonomous_investment_ledger_db_history_health_trend_gate_report,
+)
 from polymarket_alpha_lab.paper_autonomous_allocation_proposal_db_history_metrics import (
     PaperAutonomousAllocationProposalDbHistoryMetricsCapReasonRow,
     PaperAutonomousAllocationProposalDbHistoryMetricsConcentrationRow,
@@ -1029,16 +1035,40 @@ def test_paper_autonomous_allocation_proposal_db_history_health_public_api_expor
 def test_paper_autonomous_investment_ledger_db_history_health_trend_public_api_exports():
     expected_exports = {
         "PaperAutonomousInvestmentLedgerDbHistoryHealthTrendConfig",
+        "PaperAutonomousInvestmentLedgerDbHistoryHealthTrendGateConfig",
+        "PaperAutonomousInvestmentLedgerDbHistoryHealthTrendGateReasonCodeCount",
+        "PaperAutonomousInvestmentLedgerDbHistoryHealthTrendGateReport",
         "PaperAutonomousInvestmentLedgerDbHistoryHealthTrendReasonCodeRow",
         "PaperAutonomousInvestmentLedgerDbHistoryHealthTrendReport",
         "PaperAutonomousInvestmentLedgerDbHistoryHealthTrendSnapshotSummary",
+        "build_paper_autonomous_investment_ledger_db_history_health_trend_gate_report",
         "build_paper_autonomous_investment_ledger_db_history_health_trend_report",
+    }
+    forbidden_exports = {
+        "DEFAULT_PAPER_AUTONOMOUS_INVESTMENT_LEDGER_DB_HISTORY_HEALTH_TREND_GATE_CONFIG_VERSION",
+        "PaperAutonomousInvestmentLedgerDbHistoryHealthTrendGateRunner",
+        "load_paper_autonomous_investment_ledger_db_history_health_trend_gate_report",
+        "_run_paper_autonomous_investment_ledger_db_history_health_trend_gate",
+        "_print_paper_autonomous_investment_ledger_db_history_health_trend_gate_summary",
     }
 
     assert expected_exports <= set(lab.__all__)
+    assert not (forbidden_exports & set(lab.__all__))
     assert (
         lab.PaperAutonomousInvestmentLedgerDbHistoryHealthTrendConfig
         is PaperAutonomousInvestmentLedgerDbHistoryHealthTrendConfig
+    )
+    assert (
+        lab.PaperAutonomousInvestmentLedgerDbHistoryHealthTrendGateConfig
+        is PaperAutonomousInvestmentLedgerDbHistoryHealthTrendGateConfig
+    )
+    assert (
+        lab.PaperAutonomousInvestmentLedgerDbHistoryHealthTrendGateReasonCodeCount
+        is PaperAutonomousInvestmentLedgerDbHistoryHealthTrendGateReasonCodeCount
+    )
+    assert (
+        lab.PaperAutonomousInvestmentLedgerDbHistoryHealthTrendGateReport
+        is PaperAutonomousInvestmentLedgerDbHistoryHealthTrendGateReport
     )
     assert (
         lab.PaperAutonomousInvestmentLedgerDbHistoryHealthTrendReasonCodeRow
@@ -1056,6 +1086,12 @@ def test_paper_autonomous_investment_ledger_db_history_health_trend_public_api_e
         lab.build_paper_autonomous_investment_ledger_db_history_health_trend_report
         is build_paper_autonomous_investment_ledger_db_history_health_trend_report
     )
+    assert (
+        lab.build_paper_autonomous_investment_ledger_db_history_health_trend_gate_report
+        is build_paper_autonomous_investment_ledger_db_history_health_trend_gate_report
+    )
+    for name in forbidden_exports:
+        assert not hasattr(lab, name)
 
 
 def test_outcome_tracker_public_api_exports():
