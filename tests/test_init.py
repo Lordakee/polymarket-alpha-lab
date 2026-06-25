@@ -328,6 +328,13 @@ from polymarket_alpha_lab.paper_autonomous_allocation_proposal_db_history_health
     PaperAutonomousAllocationProposalDbHistoryHealthTrendGateReport,
     build_paper_autonomous_allocation_proposal_db_history_health_trend_gate_report,
 )
+from polymarket_alpha_lab.paper_autonomous_investment_ledger_db_history_health_trend import (
+    PaperAutonomousInvestmentLedgerDbHistoryHealthTrendConfig,
+    PaperAutonomousInvestmentLedgerDbHistoryHealthTrendReasonCodeRow,
+    PaperAutonomousInvestmentLedgerDbHistoryHealthTrendReport,
+    PaperAutonomousInvestmentLedgerDbHistoryHealthTrendSnapshotSummary,
+    build_paper_autonomous_investment_ledger_db_history_health_trend_report,
+)
 from polymarket_alpha_lab.paper_autonomous_allocation_proposal_db_history_metrics import (
     PaperAutonomousAllocationProposalDbHistoryMetricsCapReasonRow,
     PaperAutonomousAllocationProposalDbHistoryMetricsConcentrationRow,
@@ -1017,6 +1024,38 @@ def test_paper_autonomous_allocation_proposal_db_history_health_public_api_expor
     )
     for name in forbidden_exports:
         assert not hasattr(lab, name)
+
+
+def test_paper_autonomous_investment_ledger_db_history_health_trend_public_api_exports():
+    expected_exports = {
+        "PaperAutonomousInvestmentLedgerDbHistoryHealthTrendConfig",
+        "PaperAutonomousInvestmentLedgerDbHistoryHealthTrendReasonCodeRow",
+        "PaperAutonomousInvestmentLedgerDbHistoryHealthTrendReport",
+        "PaperAutonomousInvestmentLedgerDbHistoryHealthTrendSnapshotSummary",
+        "build_paper_autonomous_investment_ledger_db_history_health_trend_report",
+    }
+
+    assert expected_exports <= set(lab.__all__)
+    assert (
+        lab.PaperAutonomousInvestmentLedgerDbHistoryHealthTrendConfig
+        is PaperAutonomousInvestmentLedgerDbHistoryHealthTrendConfig
+    )
+    assert (
+        lab.PaperAutonomousInvestmentLedgerDbHistoryHealthTrendReasonCodeRow
+        is PaperAutonomousInvestmentLedgerDbHistoryHealthTrendReasonCodeRow
+    )
+    assert (
+        lab.PaperAutonomousInvestmentLedgerDbHistoryHealthTrendReport
+        is PaperAutonomousInvestmentLedgerDbHistoryHealthTrendReport
+    )
+    assert (
+        lab.PaperAutonomousInvestmentLedgerDbHistoryHealthTrendSnapshotSummary
+        is PaperAutonomousInvestmentLedgerDbHistoryHealthTrendSnapshotSummary
+    )
+    assert (
+        lab.build_paper_autonomous_investment_ledger_db_history_health_trend_report
+        is build_paper_autonomous_investment_ledger_db_history_health_trend_report
+    )
 
 
 def test_outcome_tracker_public_api_exports():

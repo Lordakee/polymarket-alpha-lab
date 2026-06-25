@@ -349,6 +349,13 @@ from polymarket_alpha_lab.paper_autonomous_allocation_proposal_db_history_health
     PaperAutonomousAllocationProposalDbHistoryHealthTrendGateReport,
     build_paper_autonomous_allocation_proposal_db_history_health_trend_gate_report,
 )
+from polymarket_alpha_lab.paper_autonomous_investment_ledger_db_history_health_trend import (
+    PaperAutonomousInvestmentLedgerDbHistoryHealthTrendConfig,
+    PaperAutonomousInvestmentLedgerDbHistoryHealthTrendReasonCodeRow,
+    PaperAutonomousInvestmentLedgerDbHistoryHealthTrendReport,
+    PaperAutonomousInvestmentLedgerDbHistoryHealthTrendSnapshotSummary,
+    build_paper_autonomous_investment_ledger_db_history_health_trend_report,
+)
 from polymarket_alpha_lab.positions import (
     PaperNavLog,
     PaperNavSnapshot,
@@ -425,6 +432,10 @@ __all__ = [
     "PaperAutonomousAllocationProposalReasonCodeCount",
     "PaperAutonomousAllocationProposalReport",
     "PaperAutonomousAllocationProposalSourceQueueSummary",
+    "PaperAutonomousInvestmentLedgerDbHistoryHealthTrendConfig",
+    "PaperAutonomousInvestmentLedgerDbHistoryHealthTrendReasonCodeRow",
+    "PaperAutonomousInvestmentLedgerDbHistoryHealthTrendReport",
+    "PaperAutonomousInvestmentLedgerDbHistoryHealthTrendSnapshotSummary",
     "PaperAutonomousScreeningDecisionSupportGateReasonCodeCount",
     "PaperAutonomousScreeningDecisionSupportGateReport",
     "PaperCostAwareEventCostAssumptions",
@@ -618,6 +629,7 @@ __all__ = [
     "build_paper_autonomous_allocation_proposal_db_history_metrics_evaluation_report",
     "build_paper_autonomous_allocation_proposal_db_history_report",
     "build_paper_autonomous_allocation_proposal_report",
+    "build_paper_autonomous_investment_ledger_db_history_health_trend_report",
     "build_paper_autonomous_screening_decision_support_gate_report",
     "build_paper_book_imbalance_forecast",
     "build_paper_llm_forecast",
