@@ -93,6 +93,7 @@ class RunLoopSummary:
     paper_only: bool = True
     report_only: bool = True
     action_gated_queues_persisted: int = 0
+    execution_pipelines_persisted: int = 0
 
     def __post_init__(self) -> None:
         _require_nonnegative_int("iterations_completed", self.iterations_completed)
@@ -148,6 +149,8 @@ def run_strategy_loop(
     action_gated_queue_sink: object | None = None,
     paper_trade_record_sink: object | None = None,
     nav_snapshot_sink: object | None = None,
+    execution_pipeline_source: object | None = None,
+    execution_pipeline_sink: object | None = None,
 ) -> RunLoopSummary:
     """Run the strategy cycle + NAV mark loop ``max_iterations`` times.
 
@@ -172,7 +175,7 @@ def run_strategy_loop(
 
     ``cycle_snapshot_source`` / ``cycle_snapshot_sink``,
     ``action_gated_queue_source`` / ``action_gated_queue_sink``,
-    ``paper_trade_record_sink``, and ``nav_snapshot_sink`` are optional injected
+    ``paper_trade_record_sink``, ``nav_snapshot_sink``, ``execution_pipeline_source``, and ``execution_pipeline_sink`` are optional injected
     persistence hooks. Sink failures are treated like any other iteration
     failure by the existing ``on_cycle_error`` policy.
     """
@@ -193,6 +196,8 @@ def run_strategy_loop(
         action_gated_queue_sink=action_gated_queue_sink,
         paper_trade_record_sink=paper_trade_record_sink,
         nav_snapshot_sink=nav_snapshot_sink,
+        execution_pipeline_source=execution_pipeline_source,
+        execution_pipeline_sink=execution_pipeline_sink,
     )
 
     iterations_completed = 0
@@ -200,6 +205,7 @@ def run_strategy_loop(
     nav_marks_skipped = 0
     cycle_snapshots_persisted = 0
     action_gated_queues_persisted = 0
+    execution_pipelines_persisted = 0
     last_error: str | None = None
     first_iteration_at: datetime | None = None
     last_iteration_at: datetime | None = None
@@ -241,7 +247,18 @@ def run_strategy_loop(
                 _require_action_gated_queue_safety_flags(action_gated_queue)
                 action_gated_queue_sink(action_gated_queue)
                 action_gated_queues_persisted += 1
-            # (e) Optional NAV mark.
+            # (e) Optional paper execution pipeline.
+            if (
+                execution_pipeline_source is not None
+                and execution_pipeline_sink is not None
+            ):
+                pipeline_report = execution_pipeline_source(
+                    cycle_report=report,
+                    iteration_started_at=iteration_at,
+                )
+                execution_pipeline_sink(pipeline_report)
+                execution_pipelines_persisted += 1
+            # (f) Optional NAV mark.
             nav_marks_skipped += _mark_nav_or_skip(
                 cycle_config=cycle_config,
                 client=client,
@@ -273,6 +290,7 @@ def run_strategy_loop(
         nav_marks_skipped=nav_marks_skipped,
         cycle_snapshots_persisted=cycle_snapshots_persisted,
         action_gated_queues_persisted=action_gated_queues_persisted,
+        execution_pipelines_persisted=execution_pipelines_persisted,
     )
 
 
@@ -335,6 +353,8 @@ def _validate_loop_params(
     action_gated_queue_sink: object,
     paper_trade_record_sink: object,
     nav_snapshot_sink: object,
+    execution_pipeline_source: object,
+    execution_pipeline_sink: object,
 ) -> None:
     if not isinstance(client, MarketDataClient):
         raise ValueError("client must be a MarketDataClient")
@@ -385,6 +405,10 @@ def _validate_loop_params(
         raise ValueError("paper_trade_record_sink must be callable or None")
     if nav_snapshot_sink is not None and not callable(nav_snapshot_sink):
         raise ValueError("nav_snapshot_sink must be callable or None")
+    if execution_pipeline_source is not None and not callable(execution_pipeline_source):
+        raise ValueError("execution_pipeline_source must be callable or None")
+    if execution_pipeline_sink is not None and not callable(execution_pipeline_sink):
+        raise ValueError("execution_pipeline_sink must be callable or None")
 
 
 def _as_utc(value: datetime) -> datetime:

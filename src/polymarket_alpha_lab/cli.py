@@ -4172,6 +4172,49 @@ def main(
                 "paper_trade_record_sink": run_paper_trade_record_sink,
                 "nav_snapshot_sink": run_nav_snapshot_sink,
             }
+            execution_pipeline_db_config = from_paper_execution_pipeline_db_env()
+            if execution_pipeline_db_config.enabled:
+                ep_dsn = execution_pipeline_db_config.dsn
+                if ep_dsn is None:
+                    raise ValueError(
+                        "execution pipeline DB persistence requires a DB DSN",
+                    )
+                ep_table_name = execution_pipeline_db_config.table_name
+
+                def _run_execution_pipeline_source(
+                    cycle_report: object,
+                    iteration_started_at: object,
+                    *,
+                    _ep_dsn: str = ep_dsn,
+                    _ep_table_name: str = ep_table_name,
+                ) -> object:
+                    return _run_paper_execution_pipeline(
+                        screening_gate_dsn=_ep_dsn,
+                        screening_gate_table_name="paper_autonomous_screening_decision_support_gate_reports",
+                        limit=1,
+                    )
+
+                def _run_execution_pipeline_sink(
+                    pipeline_report: object,
+                    *,
+                    _ep_dsn: str = ep_dsn,
+                    _ep_table_name: str = ep_table_name,
+                ) -> None:
+                    try:
+                        _persist_paper_execution_pipeline(
+                            pipeline_report=pipeline_report,
+                            dsn=_ep_dsn,
+                            table_name=_ep_table_name,
+                        )
+                    except Exception as exc:
+                        _raise_redacted_db_sink_error(exc, dsn=_ep_dsn)
+
+                loop_runner_kwargs["execution_pipeline_source"] = (
+                    _run_execution_pipeline_source
+                )
+                loop_runner_kwargs["execution_pipeline_sink"] = (
+                    _run_execution_pipeline_sink
+                )
             if action_gated_queue_db_config.enabled:
                 loop_runner_kwargs["action_gated_queue_source"] = (
                     run_action_gated_queue_source
