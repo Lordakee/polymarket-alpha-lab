@@ -75,6 +75,7 @@ class PaperProjectScreeningRankStabilityDbHistoryHealthTrendGateConfig:
     max_consecutive_latest_blocked_count: int = 0
     max_duplicate_generated_at_count: int = 0
     max_latest_source_age_seconds: int = 86_400
+    max_trend_report_age_seconds: int = 86_400
     max_latest_unstable_ready_count: int = 0
     max_unstable_ready_count_delta: int = 0
     max_watch_rank_stability_report_count_delta: int = 0
@@ -105,6 +106,7 @@ class PaperProjectScreeningRankStabilityDbHistoryHealthTrendGateConfig:
             "max_consecutive_latest_blocked_count",
             "max_duplicate_generated_at_count",
             "max_latest_source_age_seconds",
+            "max_trend_report_age_seconds",
             "max_latest_unstable_ready_count",
             "max_unstable_ready_count_delta",
             "max_watch_rank_stability_report_count_delta",
@@ -158,6 +160,7 @@ class PaperProjectScreeningRankStabilityDbHistoryHealthTrendGateReport:
         ...,
     ]
     source_health_report_count: int
+    trend_report_age_seconds: int
     latest_health_status: str | None
     latest_health_generated_at: datetime | None
     latest_source_age_seconds: int | None
@@ -211,6 +214,10 @@ class PaperProjectScreeningRankStabilityDbHistoryHealthTrendGateReport:
         _require_nonnegative_int(
             "source_health_report_count",
             self.source_health_report_count,
+        )
+        _require_nonnegative_int(
+            "trend_report_age_seconds",
+            self.trend_report_age_seconds,
         )
         if self.latest_health_status is not None:
             _require_health_status("latest_health_status", self.latest_health_status)
@@ -281,8 +288,16 @@ def build_paper_project_screening_rank_stability_db_history_health_trend_gate_re
     generated_at_utc = _as_utc("generated_at", generated_at)
     _validate_hard_flags("config", config)
     _validate_hard_flags("trend report", trend_report)
+    trend_report_age_seconds = _trend_report_age_seconds(
+        generated_at=generated_at_utc,
+        trend_generated_at=trend_report.generated_at,
+    )
 
-    reason_codes = _gate_reason_codes(trend_report=trend_report, config=config)
+    reason_codes = _gate_reason_codes(
+        trend_report=trend_report,
+        trend_report_age_seconds=trend_report_age_seconds,
+        config=config,
+    )
     gate_status = _gate_status(reason_codes)
     reason_code_counts = tuple(
         PaperProjectScreeningRankStabilityDbHistoryHealthTrendGateReasonCodeCount(
@@ -301,6 +316,7 @@ def build_paper_project_screening_rank_stability_db_history_health_trend_gate_re
         recommended_next_step=NEXT_STEP_BY_STATUS[gate_status],
         reason_code_counts=reason_code_counts,
         source_health_report_count=trend_report.source_health_report_count,
+        trend_report_age_seconds=trend_report_age_seconds,
         latest_health_status=trend_report.latest_health_status,
         latest_health_generated_at=trend_report.latest_generated_at,
         latest_source_age_seconds=trend_report.latest_source_age_seconds_latest,
@@ -327,6 +343,7 @@ def build_paper_project_screening_rank_stability_db_history_health_trend_gate_re
 def _gate_reason_codes(
     *,
     trend_report: PaperProjectScreeningRankStabilityDbHistoryHealthTrendReport,
+    trend_report_age_seconds: int,
     config: PaperProjectScreeningRankStabilityDbHistoryHealthTrendGateConfig,
 ) -> tuple[str, ...]:
     reason_codes: list[str] = []
@@ -369,6 +386,10 @@ def _gate_reason_codes(
         and trend_report.latest_source_age_seconds_latest
         > config.max_latest_source_age_seconds
     ):
+        reason_codes.append(
+            "stale_paper_project_screening_rank_stability_db_history_health_trend",
+        )
+    if trend_report_age_seconds > config.max_trend_report_age_seconds:
         reason_codes.append(
             "stale_paper_project_screening_rank_stability_db_history_health_trend",
         )
@@ -417,6 +438,22 @@ def _gate_reason_codes(
     return tuple(sorted(set(reason_codes)))
 
 
+def _trend_report_age_seconds(
+    *,
+    generated_at: datetime,
+    trend_generated_at: datetime,
+) -> int:
+    age_seconds = int(
+        (
+            _as_utc("generated_at", generated_at)
+            - _as_utc("trend_report generated_at", trend_generated_at)
+        ).total_seconds(),
+    )
+    if age_seconds < 0:
+        raise ValueError("trend_report_age_seconds must be nonnegative")
+    return age_seconds
+
+
 def _gate_status(reason_codes: tuple[str, ...]) -> str:
     unknown_reason_codes = tuple(
         reason_code for reason_code in reason_codes if reason_code not in GATE_REASON_CODES
@@ -455,6 +492,11 @@ def _validate_gate_report(
             raise ValueError(
                 "latest_health_generated_at must be absent without source reports",
             )
+    if report.trend_report_age_seconds != _trend_report_age_seconds(
+        generated_at=report.generated_at,
+        trend_generated_at=report.source_generated_at,
+    ):
+        raise ValueError("trend_report_age_seconds must match source_generated_at")
 
 
 def _normalize_reason_code_counts(
