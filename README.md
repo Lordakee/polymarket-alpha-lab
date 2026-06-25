@@ -12,7 +12,7 @@ The long-term research direction is a system that can screen markets, research c
 
 ## Phase 1 Scope
 
-This repository currently contains the project design, research notes, implementation plans, a read-only market scanner, research packet assembly, paper research packet generation and DB-history readback, pure paper research packet quality reports, bid/ask paper-fill simulation, JSONL paper-trade journaling, paper-only risk gates, rejected-candidate logs, paper position ledgers, executable NAV marks, paper-only portfolio analytics, exposure reports, executable-NAV drawdown reports, paper-only analytics history validation, paper-only forecast evidence reports, paper-only outcome-tracking report logs, local-only strategy risk audit CLI reports with a cost discipline gate over paper logs, optional local Strategy Risk Audit logs and history summaries, local-only strategy evidence snapshot summaries over paper logs and local reports, local-only paper trade cost audit reports over paper logs, paper-only cost-aware event strategy reports, paper-only project screening research queues, paper-only manual-review queues, paper-only strategy recommendation bundle and bundle-log artifacts with a read-only history CLI summary, human-review proposal packet artifacts, append-only proposal-review record artifacts, proposal-review summary report artifacts, proposal-review quality gate artifacts, proposal-review diagnostic artifacts, proposal-review coverage report artifacts, proposal-review dossier artifacts, proposal-review dossier batch health artifacts, proposal evidence comparison artifacts, proposal evidence comparison history artifacts, proposal evidence comparison history batch-health artifacts, proposal evidence comparison history batch-health trend artifacts, proposal evidence comparison history batch-health trend-batch artifacts, proposal evidence comparison history batch-health trend-batch health artifacts, proposal evidence comparison history batch-health trend-batch health trend artifacts, paper autonomous allocation proposal artifacts, paper autonomous allocation proposal DB-history artifacts, paper autonomous allocation proposal DB-history gate artifacts, paper autonomous allocation proposal DB-history metrics artifacts, paper autonomous allocation proposal DB-history health artifacts, paper autonomous allocation proposal DB-history health trend artifacts, paper autonomous allocation proposal DB-history health-trend gate artifacts, and local DB persistence for DB-history health reports.
+This repository currently contains the project design, research notes, implementation plans, a read-only market scanner, research packet assembly, paper research packet generation and DB-history readback, pure paper research packet quality reports, bid/ask paper-fill simulation, JSONL paper-trade journaling, paper-only risk gates, rejected-candidate logs, paper position ledgers, executable NAV marks, paper-only portfolio analytics, exposure reports, executable-NAV drawdown reports, paper-only analytics history validation, paper-only forecast evidence reports, paper-only outcome-tracking report logs, local-only strategy risk audit CLI reports with a cost discipline gate over paper logs, optional local Strategy Risk Audit logs and history summaries, local-only strategy evidence snapshot summaries over paper logs and local reports, local-only paper trade cost audit reports over paper logs, paper-only cost-aware event strategy reports, paper-only project screening research queues, paper-only manual-review queues, paper-only strategy recommendation bundle and bundle-log artifacts with a read-only history CLI summary, human-review proposal packet artifacts, append-only proposal-review record artifacts, proposal-review summary report artifacts, proposal-review quality gate artifacts, proposal-review diagnostic artifacts, proposal-review coverage report artifacts, proposal-review dossier artifacts, proposal-review dossier batch health artifacts, proposal evidence comparison artifacts, proposal evidence comparison history artifacts, proposal evidence comparison history batch-health artifacts, proposal evidence comparison history batch-health trend artifacts, proposal evidence comparison history batch-health trend-batch artifacts, proposal evidence comparison history batch-health trend-batch health artifacts, proposal evidence comparison history batch-health trend-batch health trend artifacts, paper autonomous allocation proposal artifacts, paper autonomous allocation proposal DB-history artifacts, paper autonomous allocation proposal DB-history gate artifacts, paper autonomous allocation proposal DB-history metrics artifacts, paper autonomous allocation proposal DB-history health artifacts, paper autonomous allocation proposal DB-history health trend artifacts, paper autonomous allocation proposal DB-history health-trend gate artifacts, paper autonomous investment ledger artifacts, paper autonomous investment ledger DB-history artifacts, and local DB persistence for DB-history health reports.
 
 It also includes an optional local-only Strategy Risk Audit preflight for continuous paper runs, optional Strategy Risk Audit logging, and a local history summary over that optional log; the preflight reads existing paper logs and can pause the next paper run before any public client is constructed, audit logging is explicit opt-in local append-only JSONL evidence, and the history summary reads that evidence without changing run behavior.
 
@@ -459,6 +459,49 @@ health status, sample counts, duplicate timestamp count, latest streak counts,
 health-delta signals, and reason-code counts.
 
 Boundary: no live trading, no auth, no key handling, no wallet handling, no account handling, no account reads, no order construction, no order signing, no order submission, no order cancellation, no order replacement, no exchange mutation, no investment ranking, not automatic live investing, and not an approval workflow.
+
+Paper Autonomous Investment Ledger turns persisted paper broker records into a paper-only/report-only/readonly investment ledger summary:
+
+```bash
+.venv/bin/polymarket-alpha-lab paper-autonomous-investment-ledger --limit 25
+```
+
+Required paper broker DB env: `POLYMARKET_ALPHA_LAB_PAPER_BROKER_DB_ENABLED`,
+`POLYMARKET_ALPHA_LAB_PAPER_BROKER_DB_DSN`, and optional
+`POLYMARKET_ALPHA_LAB_PAPER_BROKER_DB_TABLE`. The command is env-only,
+read-only, paper-only/report-only/readonly, and accepts only local report
+filters plus `--limit`. Read-only boundary: the command reads already-persisted paper broker execution records only.
+
+To persist the already-built ledger report for later local review, use explicit
+default-off persistence:
+
+```bash
+.venv/bin/polymarket-alpha-lab paper-autonomous-investment-ledger --limit 25 --persist
+```
+
+Required paper autonomous investment ledger DB env:
+`POLYMARKET_ALPHA_LAB_PAPER_AUTONOMOUS_INVESTMENT_LEDGER_DB_ENABLED`,
+`POLYMARKET_ALPHA_LAB_PAPER_AUTONOMOUS_INVESTMENT_LEDGER_DB_DSN`, and optional
+`POLYMARKET_ALPHA_LAB_PAPER_AUTONOMOUS_INVESTMENT_LEDGER_DB_TABLE`. Persistence
+is env-only and stores only the already-built investment ledger report in the
+paper autonomous investment ledger DB, then prints `persisted=True/False`.
+
+Investment Ledger DB History Readback:
+
+```bash
+.venv/bin/polymarket-alpha-lab paper-autonomous-investment-ledger-db-history --limit 25
+```
+
+The DB history readback is env-only, read-only, paper-only/report-only/readonly,
+and accepts only `--limit`. It reads the paper autonomous investment ledger DB
+configured by env and does not accept DSN/table CLI flags, does not accept
+`--persist`, does not persist in db-history, does not write reports, and does
+not read upstream paper broker tables.
+
+Boundary: no live trading, no auth, no key handling, no wallet handling,
+no account reads, no order construction, no order signing, no order submission,
+no order cancellation, no exchange mutation, not financial advice,
+not investment ranking, not order instruction, and not execution authorization.
 
 ## Level 1B Node 1 Status
 

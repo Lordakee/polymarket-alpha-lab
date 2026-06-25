@@ -15,6 +15,9 @@ from polymarket_alpha_lab.paper_autonomous_investment_ledger import (
     PaperAutonomousInvestmentLedgerReasonCodeCount,
     PaperAutonomousInvestmentLedgerReport,
 )
+from polymarket_alpha_lab.paper_autonomous_investment_ledger_db_row import (
+    paper_autonomous_investment_ledger_report_to_db_row,
+)
 from polymarket_alpha_lab.supabase_paper_autonomous_investment_ledger_config import (
     SupabasePaperAutonomousInvestmentLedgerConfig,
 )
@@ -43,25 +46,26 @@ class FakeConnection:
 
 
 class FakeCursor:
-    def __init__(self) -> None:
+    def __init__(self, *, rows: tuple[Any, ...] = ()) -> None:
         self.calls: list[tuple[str, tuple[Any, ...]]] = []
         self.close_count = 0
         self.rowcount = 1
+        self.rows = rows
 
     def execute(self, sql: str, params: tuple[Any, ...] = ()) -> None:
         self.calls.append((sql, params))
 
     def fetchall(self) -> tuple[Any, ...]:
-        return ()
+        return self.rows
 
     def close(self) -> None:
         self.close_count += 1
 
 
 class FakeCursorConnection(FakeConnection):
-    def __init__(self) -> None:
+    def __init__(self, *, rows: tuple[Any, ...] = ()) -> None:
         super().__init__()
-        self.cursor_instance = FakeCursor()
+        self.cursor_instance = FakeCursor(rows=rows)
         self.cursor_count = 0
 
     def cursor(self) -> FakeCursor:
@@ -193,6 +197,35 @@ def _enabled_config() -> SupabasePaperAutonomousInvestmentLedgerConfig:
         dsn=SECRET_DSN,
         table_name="paper_autonomous_investment_ledger_archive",
     )
+
+
+def _db_record_from_report(
+    report: PaperAutonomousInvestmentLedgerReport,
+) -> dict[str, object]:
+    row = paper_autonomous_investment_ledger_report_to_db_row(report)
+    return {
+        "report_sha256": row.report_sha256,
+        "generated_at": row.generated_at,
+        "config_version": row.config_version,
+        "ledger_status": row.ledger_status,
+        "recommended_next_step": row.recommended_next_step,
+        "source_record_count": row.source_record_count,
+        "submitted_count": row.submitted_count,
+        "held_count": row.held_count,
+        "blocked_count": row.blocked_count,
+        "total_submitted_notional": row.total_submitted_notional,
+        "held_zero_notional_count": row.held_zero_notional_count,
+        "blocked_zero_notional_count": row.blocked_zero_notional_count,
+        "latest_generated_at": row.latest_generated_at,
+        "latest_age_seconds": row.latest_age_seconds,
+        "reason_code_counts": row.reason_code_counts_json,
+        "entries": row.entries_json,
+        "reason_codes": row.reason_codes_json,
+        "payload": row.payload_json,
+        "paper_only": row.paper_only,
+        "report_only": row.report_only,
+        "readonly": row.readonly,
+    }
 
 
 def _unchecked_config(
@@ -474,6 +507,79 @@ def test_with_psycopg_opens_owned_connection_delegates_commits_and_closes(
     assert load_connection.commit_count == 1
     assert load_connection.rollback_count == 0
     assert load_connection.close_count == 1
+
+
+def test_load_with_psycopg_default_path_reconstructs_reports_via_store_and_db_row_codec(
+    monkeypatch: pytest.MonkeyPatch,
+    adapter_module: types.ModuleType,
+) -> None:
+    report = _report()
+    connection = FakeCursorConnection(rows=(_db_record_from_report(report),))
+    connect_calls: list[str] = []
+
+    def connect(dsn: str) -> FakeCursorConnection:
+        connect_calls.append(dsn)
+        return connection
+
+    _install_fake_psycopg(monkeypatch, connect=connect)
+
+    result = adapter_module.load_paper_autonomous_investment_ledger_reports_with_psycopg(
+        SECRET_DSN,
+        config_version="paper-autonomous-investment-ledger-v0",
+        ledger_status="watch",
+        limit=10,
+        table_name="paper_autonomous_investment_ledger_archive",
+    )
+
+    assert result == (report,)
+    loaded = result[0]
+    assert type(loaded) is PaperAutonomousInvestmentLedgerReport
+    assert loaded.paper_only is True
+    assert loaded.report_only is True
+    assert loaded.readonly is True
+    assert all(entry.paper_only is True for entry in loaded.entries)
+    assert all(entry.report_only is True for entry in loaded.entries)
+    assert all(entry.readonly is True for entry in loaded.entries)
+    assert all(row.paper_only is True for row in loaded.reason_code_counts)
+    assert all(row.report_only is True for row in loaded.reason_code_counts)
+    assert all(row.readonly is True for row in loaded.reason_code_counts)
+    assert connect_calls == [SECRET_DSN]
+    assert connection.cursor_count == 1
+    assert connection.cursor_instance.close_count == 1
+    sql, params = connection.cursor_instance.calls[0]
+    assert "SELECT" in sql
+    for column_name in (
+        "report_sha256",
+        "generated_at",
+        "config_version",
+        "ledger_status",
+        "recommended_next_step",
+        "source_record_count",
+        "submitted_count",
+        "held_count",
+        "blocked_count",
+        "total_submitted_notional",
+        "held_zero_notional_count",
+        "blocked_zero_notional_count",
+        "latest_generated_at",
+        "latest_age_seconds",
+        "reason_code_counts",
+        "entries",
+        "reason_codes",
+        "payload",
+        "paper_only",
+        "report_only",
+        "readonly",
+    ):
+        assert column_name in sql
+    assert "FROM paper_autonomous_investment_ledger_archive" in sql
+    assert "WHERE config_version = %s AND ledger_status = %s" in sql
+    assert "ORDER BY generated_at DESC, inserted_at DESC, report_sha256 DESC" in sql
+    assert "LIMIT %s" in sql
+    assert params == ("paper-autonomous-investment-ledger-v0", "watch", 10)
+    assert connection.commit_count == 1
+    assert connection.rollback_count == 0
+    assert connection.close_count == 1
 
 
 def test_cursor_wraps_dict_and_list_params_in_jsonb_only(
