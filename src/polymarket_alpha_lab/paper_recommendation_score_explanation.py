@@ -5,6 +5,11 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Context, Decimal, localcontext
 
+from polymarket_alpha_lab.autonomous_market_scorer import (
+    AutonomousMarketScorerReport,
+    AutonomousMarketScoreRow,
+)
+
 
 SCORE_QUANTUM = Decimal("0.000001")
 ZERO = Decimal("0")
@@ -161,6 +166,63 @@ def build_paper_recommendation_score_explanation_report(
         rows=sorted_rows,
         flags=_report_flags(sorted_rows),
     )
+
+
+def build_autonomous_market_scorer_score_explanation_report(
+    report: AutonomousMarketScorerReport,
+) -> PaperRecommendationScoreExplanationReport:
+    """Bridge an autonomous market scorer report into a report-only explanation."""
+
+    if type(report) is not AutonomousMarketScorerReport:
+        raise ValueError("report must be an AutonomousMarketScorerReport")
+    return build_paper_recommendation_score_explanation_report(
+        generated_at=report.generated_at,
+        config_version=report.config_version,
+        rows=(
+            _autonomous_market_score_row_to_explanation_row(row)
+            for row in report.score_rows
+        ),
+    )
+
+
+def _autonomous_market_score_row_to_explanation_row(
+    row: AutonomousMarketScoreRow,
+) -> PaperRecommendationScoreExplanationRow:
+    return PaperRecommendationScoreExplanationRow(
+        market_slug=row.market_slug,
+        side=row.scoring_side,
+        total_score=row.total_score,
+        score_status=_autonomous_market_score_status(row.score_status),
+        components=(
+            PaperRecommendationScoreComponent(
+                component_name="autonomous_market_scorer_total",
+                contribution=row.total_score,
+                direction="positive" if row.total_score > ZERO else "neutral",
+                reason_code=_autonomous_market_score_component_reason_code(
+                    row.reason_codes,
+                ),
+                flags=("autonomous_market_scorer_explanation",),
+            ),
+        ),
+        reason_codes=row.reason_codes,
+        flags=("autonomous_market_scorer_explanation",),
+    )
+
+
+def _autonomous_market_score_status(score_status: str) -> str:
+    if score_status == "scored":
+        return "pass"
+    if score_status == "skipped":
+        return "watch"
+    if score_status == "blocked":
+        return "blocked"
+    raise ValueError("score_status must be scored, skipped, or blocked")
+
+
+def _autonomous_market_score_component_reason_code(
+    reason_codes: tuple[str, ...],
+) -> str:
+    return reason_codes[0] if reason_codes else "autonomous_market_scorer_total_score"
 
 
 def _normalize_components(
