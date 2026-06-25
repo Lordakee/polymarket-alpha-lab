@@ -185,6 +185,9 @@ from polymarket_alpha_lab.supabase_paper_nav_snapshot_config import (
 from polymarket_alpha_lab.supabase_paper_autonomous_screening_decision_support_gate_config import (
     from_paper_autonomous_screening_decision_support_gate_db_env,
 )
+from polymarket_alpha_lab.supabase_paper_execution_pipeline_config import (
+    from_paper_execution_pipeline_db_env,
+)
 from polymarket_alpha_lab.supabase_paper_autonomous_allocation_proposal_config import (
     from_paper_autonomous_allocation_proposal_db_env,
 )
@@ -1730,6 +1733,37 @@ def main(
         default=25,
         dest="limit",
     )
+    paper_execution_pipeline = subparsers.add_parser(
+        "paper-execution-pipeline",
+        allow_abbrev=False,
+    )
+    paper_execution_pipeline.add_argument(
+        "--limit",
+        type=int,
+        default=25,
+        dest="limit",
+    )
+    paper_execution_pipeline_persist = subparsers.add_parser(
+        "paper-execution-pipeline-persist",
+        allow_abbrev=False,
+    )
+    paper_execution_pipeline_persist.add_argument(
+        "--limit",
+        type=int,
+        default=25,
+        dest="limit",
+    )
+    paper_execution_pipeline_db_history = subparsers.add_parser(
+        "paper-execution-pipeline-db-history",
+        allow_abbrev=False,
+    )
+    paper_execution_pipeline_db_history.add_argument(
+        "--limit",
+        type=int,
+        default=100,
+        dest="limit",
+    )
+
     paper_research_packet_operator_flow = subparsers.add_parser(
         "paper-research-packet-operator-flow",
     )
@@ -3725,6 +3759,103 @@ def main(
                     raise RuntimeError(message) from None
                 persisted = bool(getattr(sink_result, "inserted", sink_result))
                 print(f"{command_name}: persisted={persisted}")
+            return 0
+        except Exception as exc:
+            print(
+                f"{command_name} failed: {exc}",
+                file=sys.stderr,
+            )
+            return 1
+
+    if args.command in (
+        "paper-execution-pipeline",
+        "paper-execution-pipeline-persist",
+    ):
+        command_name = args.command
+        persist_pipeline = command_name == "paper-execution-pipeline-persist"
+        try:
+            if isinstance(args.limit, bool) or type(args.limit) is not int or args.limit < 1:
+                raise ValueError(
+                    f"{command_name} limit must be positive",
+                )
+            screening_gate_db_config = from_paper_autonomous_screening_decision_support_gate_db_env()
+            if not screening_gate_db_config.enabled:
+                raise ValueError(
+                    f"{command_name} requires autonomous screening gate DB to be enabled",
+                )
+            screening_gate_dsn = screening_gate_db_config.dsn
+            if screening_gate_dsn is None:
+                raise ValueError(
+                    f"{command_name} requires an autonomous screening gate DB DSN",
+                )
+            screening_gate_table_name = screening_gate_db_config.table_name
+            if screening_gate_table_name is None:
+                raise ValueError(
+                    f"{command_name} requires an autonomous screening gate DB table",
+                )
+            pipeline_report = _run_paper_execution_pipeline(
+                screening_gate_dsn=screening_gate_dsn,
+                screening_gate_table_name=screening_gate_table_name,
+                limit=args.limit,
+            )
+            _print_paper_execution_pipeline_summary(pipeline_report)
+            if persist_pipeline:
+                execution_db_config = from_paper_execution_pipeline_db_env()
+                if not execution_db_config.enabled:
+                    raise ValueError(
+                        f"{command_name} requires paper execution pipeline DB to be enabled",
+                    )
+                execution_dsn = execution_db_config.dsn
+                if execution_dsn is None:
+                    raise ValueError(
+                        f"{command_name} requires a paper execution pipeline DB DSN",
+                    )
+                execution_table_name = execution_db_config.table_name
+                if execution_table_name is None:
+                    raise ValueError(
+                        f"{command_name} requires a paper execution pipeline DB table",
+                    )
+                _persist_paper_execution_pipeline(
+                    pipeline_report=pipeline_report,
+                    dsn=execution_dsn,
+                    table_name=execution_table_name,
+                )
+            return 0
+        except Exception as exc:
+            print(
+                f"{command_name} failed: {exc}",
+                file=sys.stderr,
+            )
+            return 1
+
+    if args.command == "paper-execution-pipeline-db-history":
+        command_name = "paper-execution-pipeline-db-history"
+        try:
+            if isinstance(args.limit, bool) or type(args.limit) is not int or args.limit < 1:
+                raise ValueError(
+                    f"{command_name} limit must be positive",
+                )
+            execution_db_config = from_paper_execution_pipeline_db_env()
+            if not execution_db_config.enabled:
+                raise ValueError(
+                    f"{command_name} requires paper execution pipeline DB to be enabled",
+                )
+            execution_dsn = execution_db_config.dsn
+            if execution_dsn is None:
+                raise ValueError(
+                    f"{command_name} requires a paper execution pipeline DB DSN",
+                )
+            execution_table_name = execution_db_config.table_name
+            if execution_table_name is None:
+                raise ValueError(
+                    f"{command_name} requires a paper execution pipeline DB table",
+                )
+            history_report = _load_paper_execution_pipeline_db_history(
+                dsn=execution_dsn,
+                table_name=execution_table_name,
+                limit=args.limit,
+            )
+            _print_paper_execution_pipeline_history_summary(history_report)
             return 0
         except Exception as exc:
             print(
@@ -8525,6 +8656,148 @@ def _print_paper_research_packet_operator_flow_db_history_gate_summary(
         for row in report.reason_code_counts
     )
     print(f"reason_code_counts: {reason_code_counts or 'none'}")
+
+
+
+def _run_paper_execution_pipeline(
+    *,
+    screening_gate_dsn: str,
+    screening_gate_table_name: str,
+    limit: int,
+) -> object:
+    """Run the full paper-only execution pipeline.
+
+    Reads the latest screening gate report from DB, then runs:
+    proposal -> risk gate -> broker -> order lifecycle
+    """
+    import psycopg
+
+    from polymarket_alpha_lab.paper_autonomous_proposal import (
+        build_paper_autonomous_proposal_report,
+    )
+    from polymarket_alpha_lab.paper_autonomous_proposal_risk_gate import (
+        build_paper_autonomous_proposal_risk_gate_report,
+    )
+    from polymarket_alpha_lab.paper_broker import (
+        build_paper_broker_execution_record,
+    )
+    from polymarket_alpha_lab.paper_order_lifecycle import (
+        build_paper_order_lifecycle_record,
+    )
+    from polymarket_alpha_lab.paper_autonomous_screening_decision_support_gate_store import (
+        load_paper_autonomous_screening_decision_support_gate_reports,
+    )
+
+    with psycopg.connect(screening_gate_dsn, autocommit=True) as conn:
+        gate_reports = load_paper_autonomous_screening_decision_support_gate_reports(
+            conn,
+            table_name=screening_gate_table_name,
+            limit=limit,
+        )
+    if not gate_reports:
+        raise ValueError("no screening gate reports found")
+
+    gate_report = gate_reports[-1]  # latest
+    generated_at = gate_report.generated_at
+
+    proposal_report = build_paper_autonomous_proposal_report(
+        gate_report=gate_report,
+        generated_at=generated_at,
+    )
+    risk_gate_report = build_paper_autonomous_proposal_risk_gate_report(
+        proposal_report=proposal_report,
+        generated_at=generated_at,
+    )
+    broker_record = build_paper_broker_execution_record(
+        risk_gate_report=risk_gate_report,
+        generated_at=generated_at,
+    )
+    lifecycle_record = build_paper_order_lifecycle_record(
+        broker_record=broker_record,
+        generated_at=generated_at,
+    )
+
+    return {
+        "gate_report": gate_report,
+        "proposal_report": proposal_report,
+        "risk_gate_report": risk_gate_report,
+        "broker_record": broker_record,
+        "lifecycle_record": lifecycle_record,
+    }
+
+
+def _persist_paper_execution_pipeline(
+    *,
+    pipeline_report: object,
+    dsn: str,
+    table_name: str,
+) -> None:
+    """Persist paper execution pipeline records to DB."""
+    import psycopg
+
+    from polymarket_alpha_lab.paper_order_lifecycle_store import (
+        insert_paper_order_lifecycle_record,
+    )
+
+    lifecycle_record = pipeline_report["lifecycle_record"]
+    with psycopg.connect(dsn, autocommit=True) as conn:
+        insert_paper_order_lifecycle_record(
+            conn,
+            lifecycle_record,
+            table_name=table_name,
+        )
+    print(f"paper-execution-pipeline: persisted lifecycle status={lifecycle_record.lifecycle_status}")
+
+
+def _load_paper_execution_pipeline_db_history(
+    *,
+    dsn: str,
+    table_name: str,
+    limit: int,
+) -> object:
+    """Load paper execution pipeline history from DB."""
+    import psycopg
+
+    from polymarket_alpha_lab.paper_order_lifecycle_store import (
+        load_paper_order_lifecycle_records,
+    )
+
+    with psycopg.connect(dsn, autocommit=True) as conn:
+        records = load_paper_order_lifecycle_records(
+            conn,
+            table_name=table_name,
+            limit=limit,
+        )
+    return records
+
+
+def _print_paper_execution_pipeline_summary(pipeline_report: object) -> None:
+    """Print summary of paper execution pipeline results."""
+    lifecycle = pipeline_report["lifecycle_record"]
+    proposal = pipeline_report["proposal_report"]
+    broker = pipeline_report["broker_record"]
+
+    print("paper-execution-pipeline:")
+    print(f"  proposal_status={proposal.proposal_status}")
+    print(f"  proposal_count={proposal.proposal_count}")
+    print(f"  broker_execution_status={broker.execution_status}")
+    print(f"  broker_execution_notional={broker.execution_notional}")
+    print(f"  lifecycle_status={lifecycle.lifecycle_status}")
+    print(f"  lifecycle_is_terminal={lifecycle.is_terminal}")
+    print(f"  lifecycle_fill_notional={lifecycle.fill_notional}")
+
+
+def _print_paper_execution_pipeline_history_summary(records: object) -> None:
+    """Print summary of paper execution pipeline history."""
+    if not records:
+        print("paper-execution-pipeline-db-history: no records found")
+        return
+
+    print(f"paper-execution-pipeline-db-history: {len(records)} records")
+    for i, record in enumerate(records[:5]):  # show first 5
+        print(f"  [{i+1}] status={record.lifecycle_status} notional={record.fill_notional} terminal={record.is_terminal}")
+    if len(records) > 5:
+        print(f"  ... and {len(records) - 5} more")
 
 
 def _print_paper_autonomous_screening_decision_support_gate_summary(
