@@ -542,6 +542,41 @@ are env-only, read-only, paper-only/report-only/readonly, and accept only
 or order/trade/execution flags, and they do not write reports or authorize
 trading.
 
+Paper Autonomous Readiness Gate:
+
+The paper autonomous readiness gate is a pure Python reducer that combines three
+already-built Phase 1 health gates:
+
+- screening decision-support gate DB-history health
+- allocation proposal DB-history health trend gate
+- investment-ledger DB-history health trend gate
+
+Operator notes: `docs/paper-autonomous-readiness-gate.md`.
+
+It emits a paper-only/report-only/readonly readiness report with `pass`,
+`watch`, or `blocked` status for operator-facing paper review.
+
+- does not alter strategy behavior
+- does not trigger allocation
+- does not stop execution paths
+- does not promote a paper status into a trading decision
+
+Boundary:
+
+- does not connect to Supabase or Postgres
+- does not read env
+- does not expose CLI flags
+- does not persist reports
+- does not authorize trading
+- does not alter strategy behavior
+- does not trigger allocation
+- does not stop execution paths
+- does not handle private keys, wallets, accounts, orders, or trades
+- is not financial advice
+- is not investment ranking
+- is not order instruction
+- is not execution authorization
+
 ## Level 1B Node 1 Status
 
 Level 1B Node 1 adds configurable paper-only risk gates and append-only rejected-candidate logs. It does not place orders, authenticate, handle private keys, cancel orders, open user WebSockets, run heartbeat logic, or create live-trading proposals.

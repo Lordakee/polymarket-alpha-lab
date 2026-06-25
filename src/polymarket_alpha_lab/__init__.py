@@ -293,6 +293,12 @@ from polymarket_alpha_lab.paper_autonomous_screening_decision_support_gate impor
     PaperAutonomousScreeningDecisionSupportGateReport,
     build_paper_autonomous_screening_decision_support_gate_report,
 )
+from polymarket_alpha_lab.paper_autonomous_readiness_gate import (
+    PaperAutonomousReadinessGateConfig,
+    PaperAutonomousReadinessGateReasonCodeCount,
+    PaperAutonomousReadinessGateReport,
+    build_paper_autonomous_readiness_gate_report,
+)
 from polymarket_alpha_lab.paper_autonomous_allocation_proposal import (
     DEFAULT_PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_CONFIG_VERSION,
     PaperAutonomousAllocationProposalConfig,
@@ -445,6 +451,9 @@ __all__ = [
     "PaperAutonomousInvestmentLedgerDbHistoryHealthTrendReasonCodeRow",
     "PaperAutonomousInvestmentLedgerDbHistoryHealthTrendReport",
     "PaperAutonomousInvestmentLedgerDbHistoryHealthTrendSnapshotSummary",
+    "PaperAutonomousReadinessGateConfig",
+    "PaperAutonomousReadinessGateReasonCodeCount",
+    "PaperAutonomousReadinessGateReport",
     "PaperAutonomousScreeningDecisionSupportGateReasonCodeCount",
     "PaperAutonomousScreeningDecisionSupportGateReport",
     "PaperCostAwareEventCostAssumptions",
@@ -640,6 +649,7 @@ __all__ = [
     "build_paper_autonomous_allocation_proposal_report",
     "build_paper_autonomous_investment_ledger_db_history_health_trend_gate_report",
     "build_paper_autonomous_investment_ledger_db_history_health_trend_report",
+    "build_paper_autonomous_readiness_gate_report",
     "build_paper_autonomous_screening_decision_support_gate_report",
     "build_paper_book_imbalance_forecast",
     "build_paper_llm_forecast",

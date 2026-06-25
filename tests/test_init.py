@@ -815,6 +815,61 @@ def test_paper_autonomous_screening_decision_support_gate_public_api_exports():
         assert not hasattr(lab, name)
 
 
+def test_paper_autonomous_readiness_gate_public_api_exports():
+    gate_module = importlib.import_module(
+        "polymarket_alpha_lab.paper_autonomous_readiness_gate"
+    )
+    expected_exports = {
+        "PaperAutonomousReadinessGateConfig",
+        "PaperAutonomousReadinessGateReasonCodeCount",
+        "PaperAutonomousReadinessGateReport",
+        "build_paper_autonomous_readiness_gate_report",
+    }
+    forbidden_exports = {
+        "DEFAULT_PAPER_AUTONOMOUS_READINESS_GATE_CONFIG_VERSION",
+        "PaperAutonomousReadinessGateRunner",
+        "load_paper_autonomous_readiness_gate_report",
+        "_run_paper_autonomous_readiness_gate",
+        "_print_paper_autonomous_readiness_gate_summary",
+        "PaperAutonomousReadinessGateLiveConfig",
+        "PaperAutonomousReadinessGateOrder",
+        "PaperAutonomousReadinessGateBroker",
+        "PaperAutonomousReadinessGateSink",
+    }
+
+    assert expected_exports <= set(lab.__all__)
+    assert not (forbidden_exports & set(lab.__all__))
+    assert (
+        lab.PaperAutonomousReadinessGateConfig
+        is gate_module.PaperAutonomousReadinessGateConfig
+    )
+    assert (
+        lab.PaperAutonomousReadinessGateReasonCodeCount
+        is gate_module.PaperAutonomousReadinessGateReasonCodeCount
+    )
+    assert (
+        lab.PaperAutonomousReadinessGateReport
+        is gate_module.PaperAutonomousReadinessGateReport
+    )
+    assert (
+        lab.build_paper_autonomous_readiness_gate_report
+        is gate_module.build_paper_autonomous_readiness_gate_report
+    )
+    for name in forbidden_exports:
+        assert not hasattr(lab, name)
+    readiness_exports = {
+        name
+        for name in lab.__all__
+        if "readiness" in name.lower()
+        or "PaperAutonomousReadinessGate" in name
+    }
+    assert not {
+        name
+        for name in readiness_exports
+        if any(surface in name.lower() for surface in ("live", "order", "broker", "sink"))
+    }
+
+
 def test_paper_autonomous_allocation_proposal_public_api_exports():
     expected_exports = {
         "DEFAULT_PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_CONFIG_VERSION",
