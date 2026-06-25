@@ -9,6 +9,7 @@ from typing import Any, TypeVar
 from polymarket_alpha_lab.paper_order_lifecycle_store import (
     DEFAULT_PAPER_ORDER_LIFECYCLE_RECORDS_TABLE,
     insert_paper_order_lifecycle_record_with_result,
+    load_paper_order_lifecycle_records,
 )
 
 
@@ -29,6 +30,24 @@ def insert_paper_order_lifecycle_record_with_psycopg(
                 record,
                 table_name=table_name,
             )
+        ),
+    )
+
+
+def load_paper_order_lifecycle_records_with_psycopg(
+    dsn: str,
+    *,
+    lifecycle_status: str | None = None,
+    limit: int | None = None,
+    table_name: str = DEFAULT_PAPER_ORDER_LIFECYCLE_RECORDS_TABLE,
+) -> tuple[Any, ...]:
+    return _with_owned_connection(
+        dsn,
+        lambda connection: load_paper_order_lifecycle_records(
+            connection,
+            lifecycle_status=lifecycle_status,
+            limit=limit,
+            table_name=table_name,
         ),
     )
 
@@ -115,6 +134,9 @@ class _PsycopgJsonCursor:
     def rowcount(self) -> int:
         return self.cursor.rowcount
 
+    def fetchall(self) -> Any:
+        return self.cursor.fetchall()
+
     def close(self) -> None:
         self.cursor.close()
 
@@ -128,4 +150,5 @@ def _adapt_json_params(params: tuple[Any, ...], jsonb_adapter: type[Any]) -> tup
 
 __all__ = (
     "insert_paper_order_lifecycle_record_with_psycopg",
+    "load_paper_order_lifecycle_records_with_psycopg",
 )
