@@ -578,6 +578,36 @@ def _validate_report_consistency(
     )
     if has_pass_reason and has_other_reason:
         raise ValueError("pass reason must not be mixed with watch or blocked reasons")
+    if report.source_record_count == 0 and (
+        "paper_autonomous_investment_ledger_no_source_records"
+        not in report.reason_codes
+    ):
+        raise ValueError(
+            "reason_codes must include "
+            "paper_autonomous_investment_ledger_no_source_records",
+        )
+    if report.blocked_count > 0 and (
+        "paper_autonomous_investment_ledger_blocked_records_present"
+        not in report.reason_codes
+    ):
+        raise ValueError(
+            "reason_codes must include "
+            "paper_autonomous_investment_ledger_blocked_records_present",
+        )
+    if report.held_count > 0 and (
+        "paper_autonomous_investment_ledger_held_records_present"
+        not in report.reason_codes
+    ):
+        raise ValueError(
+            "reason_codes must include "
+            "paper_autonomous_investment_ledger_held_records_present",
+        )
+    if has_pass_reason and (
+        report.source_record_count == 0
+        or report.blocked_count > 0
+        or report.held_count > 0
+    ):
+        raise ValueError("pass reason requires source records without held or blocked records")
     if report.source_record_count == 0:
         if report.latest_generated_at is not None:
             raise ValueError("latest_generated_at must be absent without source records")

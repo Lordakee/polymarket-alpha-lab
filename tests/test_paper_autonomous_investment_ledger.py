@@ -168,6 +168,61 @@ def test_ledger_passes_fresh_submitted_records() -> None:
     assert report.reason_codes == ("paper_autonomous_investment_ledger_passed",)
 
 
+@pytest.mark.parametrize(
+    ("source_records", "reason_code"),
+    (
+        (
+            (),
+            "paper_autonomous_investment_ledger_no_source_records",
+        ),
+        (
+            (
+                _source_record(
+                    generated_at=datetime(2026, 6, 25, 12, 0, tzinfo=UTC),
+                    execution_status="paper_blocked",
+                    source_gate_status="blocked",
+                    source_proposal_total_notional=d("7.500000"),
+                    execution_notional=ZERO,
+                    reason_codes=("paper_broker_gate_blocked",),
+                ),
+            ),
+            "paper_autonomous_investment_ledger_blocked_records_present",
+        ),
+        (
+            (
+                _source_record(
+                    generated_at=datetime(2026, 6, 25, 12, 0, tzinfo=UTC),
+                    execution_status="paper_held",
+                    source_gate_status="watch",
+                    source_proposal_total_notional=d("7.500000"),
+                    execution_notional=ZERO,
+                    reason_codes=("paper_broker_gate_held",),
+                ),
+            ),
+            "paper_autonomous_investment_ledger_held_records_present",
+        ),
+    ),
+)
+def test_ledger_rejects_report_reason_codes_that_do_not_match_source_counts(
+    source_records: tuple[PaperBrokerExecutionRecord, ...],
+    reason_code: str,
+) -> None:
+    report = build_paper_autonomous_investment_ledger_report(
+        broker_execution_records=source_records,
+        generated_at=datetime(2026, 6, 25, 12, 5, tzinfo=UTC),
+    )
+
+    with pytest.raises(ValueError, match=reason_code):
+        PaperAutonomousInvestmentLedgerReport(
+            **{
+                **report.__dict__,
+                "ledger_status": "pass",
+                "recommended_next_step": "archive_paper_autonomous_investment_ledger",
+                "reason_codes": ("paper_autonomous_investment_ledger_passed",),
+            },
+        )
+
+
 def test_ledger_rejects_non_tuple_or_duck_typed_source_records() -> None:
     record = _source_record()
     with pytest.raises(ValueError, match="broker_execution_records must be a tuple"):
