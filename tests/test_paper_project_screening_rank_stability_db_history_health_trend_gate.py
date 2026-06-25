@@ -292,6 +292,44 @@ def test_health_trend_gate_blocks_for_blocking_trend_inputs(
     )
 
 
+def test_health_trend_gate_blocks_missing_source_timestamp_without_stale_reason() -> None:
+    trend = _trend_report(
+        _health_report(generated_at=SOURCE_AT - timedelta(minutes=2)),
+        _health_report(generated_at=SOURCE_AT - timedelta(minutes=1)),
+        _health_report(
+            generated_at=SOURCE_AT,
+            health_status="blocked",
+            reason_codes=(
+                "missing_latest_paper_project_screening_rank_stability_source_timestamp",
+            ),
+            latest_source_age_seconds=None,
+            max_source_age_seconds=None,
+        ),
+    )
+
+    report = _api().build_paper_project_screening_rank_stability_db_history_health_trend_gate_report(
+        trend,
+        config=_config(),
+        generated_at=GENERATED_AT,
+    )
+
+    assert report.source_health_report_count == 3
+    assert report.latest_source_age_seconds is None
+    assert report.gate_status == "blocked"
+    assert (
+        "latest_paper_project_screening_rank_stability_db_history_health_trend_blocked"
+        in report.reason_codes
+    )
+    assert (
+        "stale_paper_project_screening_rank_stability_db_history_health_trend"
+        not in report.reason_codes
+    )
+    assert (
+        "missing_latest_paper_project_screening_rank_stability_db_history_health_trend_timestamp"
+        not in report.reason_codes
+    )
+
+
 @pytest.mark.parametrize(
     ("trend_factory", "expected_reason"),
     (

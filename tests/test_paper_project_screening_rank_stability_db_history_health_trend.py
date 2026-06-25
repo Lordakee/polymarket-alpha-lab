@@ -73,6 +73,7 @@ def _health_report(
     max_source_age_seconds: int | None = 600,
     duplicate_latest_generated_at_count: int = 0,
     reason_codes: tuple[str, ...] | None = None,
+    config_version: str = "paper-project-screening-rank-stability-db-history-health-v0",
 ) -> object:
     status_counts = {
         "pass": (3, 3, 0, 0),
@@ -115,9 +116,7 @@ def _health_report(
         latest_source_generated_at = generated_at - timedelta(seconds=300)
     return _health_api().PaperProjectScreeningRankStabilityDbHistoryHealthReport(
         generated_at=generated_at,
-        config_version=(
-            "paper-project-screening-rank-stability-db-history-health-v0"
-        ),
+        config_version=config_version,
         health_status=health_status,
         recommended_next_step=NEXT_STEP_BY_STATUS[health_status],
         rank_stability_report_count=rank_stability_report_count,
@@ -559,6 +558,44 @@ def test_health_trend_rejects_wrong_types_naive_datetimes_and_corrupt_values() -
         replace(trend, latest_candidate_count_delta=99)
 
 
+def test_health_trend_rejects_mixed_source_config_versions() -> None:
+    api = _api()
+    source = _health_report(generated_at=BASE_AT)
+    mixed = _health_report(
+        generated_at=BASE_AT + timedelta(minutes=1),
+        config_version="paper-project-screening-rank-stability-db-history-health-v1",
+    )
+
+    with pytest.raises(ValueError, match="source config_version values must match"):
+        api.build_paper_project_screening_rank_stability_db_history_health_trend_report(
+            (source, mixed),
+            config=_config(),
+            generated_at=GENERATED_AT,
+        )
+
+
+def test_health_trend_accepts_matching_nondefault_source_config_versions() -> None:
+    api = _api()
+    config_version = "paper-project-screening-rank-stability-db-history-health-v1"
+
+    trend = api.build_paper_project_screening_rank_stability_db_history_health_trend_report(
+        (
+            _health_report(
+                generated_at=BASE_AT,
+                config_version=config_version,
+            ),
+            _health_report(
+                generated_at=BASE_AT + timedelta(minutes=1),
+                config_version=config_version,
+            ),
+        ),
+        config=_config(),
+        generated_at=GENERATED_AT,
+    )
+
+    assert trend.source_health_report_count == 2
+
+
 @pytest.mark.parametrize(
     ("field_name", "value"),
     (
@@ -650,6 +687,57 @@ def test_health_trend_empty_snapshot_summary_rejects_populated_source_fields(
         api.PaperProjectScreeningRankStabilityDbHistoryHealthTrendSnapshotSummary(
             **values,
         )
+
+
+def test_health_trend_nonempty_snapshot_summary_rejects_missing_source_timestamp_without_reason() -> None:
+    api = _api()
+
+    with pytest.raises(ValueError, match="latest_source_generated_at"):
+        api.PaperProjectScreeningRankStabilityDbHistoryHealthTrendSnapshotSummary(
+            input_position=1,
+            generated_at=BASE_AT,
+            health_status="pass",
+            rank_stability_report_count=3,
+            stable_rank_stability_report_count=3,
+            watch_rank_stability_report_count=0,
+            blocked_rank_stability_report_count=0,
+            latest_rank_stability_status="stable",
+            latest_candidate_count=1,
+            latest_stable_ready_count=1,
+            latest_unstable_ready_count=0,
+            latest_source_generated_at=None,
+            latest_source_age_seconds=None,
+            max_source_age_seconds=None,
+            duplicate_latest_generated_at_count=0,
+            reason_codes=(
+                "paper_project_screening_rank_stability_db_history_health_passed",
+            ),
+        )
+
+
+def test_health_trend_nonempty_snapshot_summary_allows_missing_source_timestamp_reason() -> None:
+    summary = _api().PaperProjectScreeningRankStabilityDbHistoryHealthTrendSnapshotSummary(
+        input_position=1,
+        generated_at=BASE_AT,
+        health_status="blocked",
+        rank_stability_report_count=3,
+        stable_rank_stability_report_count=2,
+        watch_rank_stability_report_count=0,
+        blocked_rank_stability_report_count=1,
+        latest_rank_stability_status="blocked",
+        latest_candidate_count=1,
+        latest_stable_ready_count=1,
+        latest_unstable_ready_count=0,
+        latest_source_generated_at=None,
+        latest_source_age_seconds=None,
+        max_source_age_seconds=None,
+        duplicate_latest_generated_at_count=0,
+        reason_codes=(
+            "missing_latest_paper_project_screening_rank_stability_source_timestamp",
+        ),
+    )
+
+    assert summary.latest_source_age_seconds is None
 
 
 def test_health_trend_normalizes_aware_datetimes_to_utc() -> None:

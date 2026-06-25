@@ -379,6 +379,7 @@ def build_paper_project_screening_rank_stability_db_history_health_trend_report(
     _validate_hard_flags("config", config)
 
     reports = _normalize_health_reports(health_reports)
+    _validate_source_config_versions(reports)
     summaries = tuple(
         sorted(
             (
@@ -571,6 +572,17 @@ def _normalize_health_reports(
             )
         _validate_health_report_value(report)
     return reports
+
+
+def _validate_source_config_versions(
+    reports: tuple[PaperProjectScreeningRankStabilityDbHistoryHealthReport, ...],
+) -> None:
+    if not reports:
+        return
+    # Equality is the invariant; summaries are sorted chronologically later.
+    config_version = reports[0].config_version
+    if any(report.config_version != config_version for report in reports):
+        raise ValueError("source config_version values must match")
 
 
 def _validate_health_report_value(
@@ -855,6 +867,39 @@ def _validate_snapshot_summary(
         )
     ):
         raise ValueError("latest_candidate_count must cover latest ready counts")
+    if summary.rank_stability_report_count > 0:
+        missing_latest_reason = (
+            "missing_latest_paper_project_screening_rank_stability_source_timestamp"
+            in summary.reason_codes
+        )
+        if missing_latest_reason:
+            if summary.health_status != "blocked":
+                raise ValueError(
+                    "missing latest source timestamp reason requires blocked health_status",
+                )
+            for field_name in (
+                "latest_source_generated_at",
+                "latest_source_age_seconds",
+                "max_source_age_seconds",
+            ):
+                if getattr(summary, field_name) is not None:
+                    raise ValueError(f"{field_name} must be absent without timestamp")
+        else:
+            for field_name in (
+                "latest_source_generated_at",
+                "latest_source_age_seconds",
+                "max_source_age_seconds",
+            ):
+                if getattr(summary, field_name) is None:
+                    raise ValueError(f"{field_name} is required with source reports")
+            if (
+                summary.latest_source_age_seconds is not None
+                and summary.max_source_age_seconds is not None
+                and summary.latest_source_age_seconds > summary.max_source_age_seconds
+            ):
+                raise ValueError(
+                    "latest_source_age_seconds must not exceed max_source_age_seconds",
+                )
 
 
 def _validate_report_consistency(
