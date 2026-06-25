@@ -194,6 +194,9 @@ from polymarket_alpha_lab.supabase_paper_broker_config import (
 from polymarket_alpha_lab.supabase_paper_autonomous_investment_ledger_config import (
     from_paper_autonomous_investment_ledger_db_env,
 )
+from polymarket_alpha_lab.supabase_paper_autonomous_investment_ledger_db_history_health_config import (
+    from_paper_autonomous_investment_ledger_db_history_health_db_env,
+)
 from polymarket_alpha_lab.supabase_paper_autonomous_allocation_proposal_config import (
     from_paper_autonomous_allocation_proposal_db_env,
 )
@@ -318,6 +321,11 @@ PaperAutonomousInvestmentLedgerRunner = Callable[..., object]
 PaperAutonomousInvestmentLedgerDbSink = Callable[..., object]
 PaperAutonomousInvestmentLedgerDbHistoryRunner = Callable[..., object]
 PaperAutonomousInvestmentLedgerDbHistoryHealthRunner = Callable[..., object]
+PaperAutonomousInvestmentLedgerDbHistoryHealthTrendRunner = Callable[..., object]
+PaperAutonomousInvestmentLedgerDbHistoryHealthTrendGateRunner = Callable[
+    ...,
+    object,
+]
 PaperResearchPacketOperatorFlowDbSink = Callable[..., object]
 PaperProbabilityRecommendationQueueDbSink = Callable[..., object]
 PaperRecommendationRiskBudgetDbSink = Callable[..., object]
@@ -1056,6 +1064,12 @@ def main(
     ) = None,
     paper_autonomous_investment_ledger_db_history_health_runner: (
         PaperAutonomousInvestmentLedgerDbHistoryHealthRunner | None
+    ) = None,
+    paper_autonomous_investment_ledger_db_history_health_trend_runner: (
+        PaperAutonomousInvestmentLedgerDbHistoryHealthTrendRunner | None
+    ) = None,
+    paper_autonomous_investment_ledger_db_history_health_trend_gate_runner: (
+        PaperAutonomousInvestmentLedgerDbHistoryHealthTrendGateRunner | None
     ) = None,
     paper_probability_recommendation_queue_db_sink: (
         PaperProbabilityRecommendationQueueDbSink | None
@@ -1893,6 +1907,30 @@ def main(
         allow_abbrev=False,
     )
     paper_autonomous_investment_ledger_db_history_health.add_argument(
+        "--limit",
+        type=int,
+        default=25,
+        dest="limit",
+    )
+    paper_autonomous_investment_ledger_db_history_health_trend = (
+        subparsers.add_parser(
+            "paper-autonomous-investment-ledger-db-history-health-trend",
+            allow_abbrev=False,
+        )
+    )
+    paper_autonomous_investment_ledger_db_history_health_trend.add_argument(
+        "--limit",
+        type=int,
+        default=25,
+        dest="limit",
+    )
+    paper_autonomous_investment_ledger_db_history_health_trend_gate = (
+        subparsers.add_parser(
+            "paper-autonomous-investment-ledger-db-history-health-trend-gate",
+            allow_abbrev=False,
+        )
+    )
+    paper_autonomous_investment_ledger_db_history_health_trend_gate.add_argument(
         "--limit",
         type=int,
         default=25,
@@ -4192,24 +4230,11 @@ def main(
         try:
             if isinstance(args.limit, bool) or type(args.limit) is not int or args.limit < 1:
                 raise ValueError(f"{command_name} limit must be positive")
-            ledger_db_config = from_paper_autonomous_investment_ledger_db_env()
-            if not ledger_db_config.enabled:
-                raise ValueError(
-                    f"{command_name} requires paper autonomous investment ledger "
-                    "DB to be enabled",
+            ledger_dsn, ledger_table_name = (
+                _paper_autonomous_investment_ledger_db_config_from_env(
+                    command_name,
                 )
-            ledger_dsn = ledger_db_config.dsn
-            if ledger_dsn is None:
-                raise ValueError(
-                    f"{command_name} requires a paper autonomous investment "
-                    "ledger DB DSN",
-                )
-            ledger_table_name = ledger_db_config.table_name
-            if ledger_table_name is None:
-                raise ValueError(
-                    f"{command_name} requires a paper autonomous investment "
-                    "ledger DB table",
-                )
+            )
             try:
                 report = _run_paper_autonomous_investment_ledger_db_history_health(
                     dsn=ledger_dsn,
@@ -4226,6 +4251,80 @@ def main(
                     broker_table_name=ledger_table_name,
                 ) from None
             _print_paper_autonomous_investment_ledger_db_history_health_summary(
+                report,
+            )
+            return 0
+        except Exception as exc:
+            print(
+                f"{command_name} failed: {exc}",
+                file=sys.stderr,
+            )
+            return 1
+
+    if args.command == "paper-autonomous-investment-ledger-db-history-health-trend":
+        command_name = "paper-autonomous-investment-ledger-db-history-health-trend"
+        try:
+            if isinstance(args.limit, bool) or type(args.limit) is not int or args.limit < 1:
+                raise ValueError(f"{command_name} limit must be positive")
+            health_dsn, health_table_name = (
+                _paper_autonomous_investment_ledger_db_history_health_config_from_env(
+                    command_name,
+                )
+            )
+            try:
+                report = _run_paper_autonomous_investment_ledger_db_history_health_trend(
+                    dsn=health_dsn,
+                    table_name=health_table_name,
+                    limit=args.limit,
+                    runner=(
+                        paper_autonomous_investment_ledger_db_history_health_trend_runner
+                    ),
+                )
+            except Exception as exc:
+                raise _redacted_paper_autonomous_investment_ledger_error(
+                    exc,
+                    broker_dsn=health_dsn,
+                    broker_table_name=health_table_name,
+                ) from None
+            _print_paper_autonomous_investment_ledger_db_history_health_trend_summary(
+                report,
+            )
+            return 0
+        except Exception as exc:
+            print(
+                f"{command_name} failed: {exc}",
+                file=sys.stderr,
+            )
+            return 1
+
+    if args.command == "paper-autonomous-investment-ledger-db-history-health-trend-gate":
+        command_name = "paper-autonomous-investment-ledger-db-history-health-trend-gate"
+        try:
+            if isinstance(args.limit, bool) or type(args.limit) is not int or args.limit < 1:
+                raise ValueError(f"{command_name} limit must be positive")
+            health_dsn, health_table_name = (
+                _paper_autonomous_investment_ledger_db_history_health_config_from_env(
+                    command_name,
+                )
+            )
+            try:
+                report = (
+                    _run_paper_autonomous_investment_ledger_db_history_health_trend_gate(
+                        dsn=health_dsn,
+                        table_name=health_table_name,
+                        limit=args.limit,
+                        runner=(
+                            paper_autonomous_investment_ledger_db_history_health_trend_gate_runner
+                        ),
+                    )
+                )
+            except Exception as exc:
+                raise _redacted_paper_autonomous_investment_ledger_error(
+                    exc,
+                    broker_dsn=health_dsn,
+                    broker_table_name=health_table_name,
+                ) from None
+            _print_paper_autonomous_investment_ledger_db_history_health_trend_gate_summary(
                 report,
             )
             return 0
@@ -9371,6 +9470,50 @@ def _load_paper_autonomous_investment_ledger_db_history(
     )
 
 
+def _paper_autonomous_investment_ledger_db_config_from_env(
+    command_name: str,
+) -> tuple[str, str]:
+    ledger_db_config = from_paper_autonomous_investment_ledger_db_env()
+    if not ledger_db_config.enabled:
+        raise ValueError(
+            f"{command_name} requires paper autonomous investment ledger "
+            "DB to be enabled",
+        )
+    ledger_dsn = ledger_db_config.dsn
+    if ledger_dsn is None:
+        raise ValueError(
+            f"{command_name} requires a paper autonomous investment "
+            "ledger DB DSN",
+        )
+    ledger_table_name = ledger_db_config.table_name
+    if ledger_table_name is None:
+        raise ValueError(
+            f"{command_name} requires a paper autonomous investment "
+            "ledger DB table",
+        )
+    return ledger_dsn, ledger_table_name
+
+
+def _paper_autonomous_investment_ledger_db_history_health_config_from_env(
+    command_name: str,
+) -> tuple[str, str]:
+    health_db_config = (
+        from_paper_autonomous_investment_ledger_db_history_health_db_env()
+    )
+    if not health_db_config.enabled:
+        raise ValueError(
+            f"{command_name} requires paper autonomous investment ledger "
+            "DB-history health DB to be enabled",
+        )
+    health_dsn = health_db_config.dsn
+    if health_dsn is None:
+        raise ValueError(
+            f"{command_name} requires a paper autonomous investment ledger "
+            "DB-history health DB DSN",
+        )
+    return health_dsn, health_db_config.table_name
+
+
 def _run_paper_autonomous_investment_ledger_db_history_health(
     *,
     dsn: str,
@@ -9422,6 +9565,176 @@ def _run_paper_autonomous_investment_ledger_db_history_health(
             limit=limit,
             table_name=table_name,
             config=config,
+            generated_at=generated_at,
+        )
+    except Exception as exc:
+        raise _redacted_paper_autonomous_investment_ledger_error(
+            exc,
+            broker_dsn=dsn,
+            broker_table_name=table_name,
+        ) from None
+    finally:
+        try:
+            connection.close()
+        except Exception:
+            pass
+
+
+def _run_paper_autonomous_investment_ledger_db_history_health_trend(
+    *,
+    dsn: str,
+    table_name: str,
+    limit: int,
+    runner: (
+        PaperAutonomousInvestmentLedgerDbHistoryHealthTrendRunner | None
+    ) = None,
+) -> object:
+    command_name = "paper-autonomous-investment-ledger-db-history-health-trend"
+    if isinstance(limit, bool) or type(limit) is not int or limit < 1:
+        raise ValueError(f"{command_name} limit must be positive")
+    generated_at = datetime.now(UTC)
+
+    from polymarket_alpha_lab.paper_autonomous_investment_ledger_db_history_health import (
+        PaperAutonomousInvestmentLedgerDbHistoryHealthConfig,
+    )
+    from polymarket_alpha_lab.paper_autonomous_investment_ledger_db_history_health_trend import (
+        PaperAutonomousInvestmentLedgerDbHistoryHealthTrendConfig,
+    )
+
+    health_config = PaperAutonomousInvestmentLedgerDbHistoryHealthConfig()
+    trend_config = PaperAutonomousInvestmentLedgerDbHistoryHealthTrendConfig()
+    if runner is not None:
+        try:
+            return runner(
+                dsn=dsn,
+                table_name=table_name,
+                limit=limit,
+                health_config=health_config,
+                trend_config=trend_config,
+                generated_at=generated_at,
+            )
+        except Exception as exc:
+            raise _redacted_paper_autonomous_investment_ledger_error(
+                exc,
+                broker_dsn=dsn,
+                broker_table_name=table_name,
+            ) from None
+
+    from polymarket_alpha_lab.paper_autonomous_investment_ledger_db_history_health_trend_load import (
+        load_paper_autonomous_investment_ledger_db_history_health_trend_report,
+    )
+
+    try:
+        import psycopg
+    except ModuleNotFoundError as exc:
+        if exc.name != "psycopg":
+            raise
+        raise RuntimeError(
+            "psycopg is required to use the paper autonomous investment ledger "
+            "DB history health trend read adapter; install the postgres extra.",
+        ) from exc
+    try:
+        connection = psycopg.connect(dsn, autocommit=True)
+    except Exception:
+        raise RuntimeError(
+            "failed to connect to the paper autonomous investment ledger "
+            "DB-history health report database",
+        ) from None
+    try:
+        return load_paper_autonomous_investment_ledger_db_history_health_trend_report(
+            connection,
+            limit=limit,
+            table_name=table_name,
+            health_config=health_config,
+            trend_config=trend_config,
+            generated_at=generated_at,
+        )
+    except Exception as exc:
+        raise _redacted_paper_autonomous_investment_ledger_error(
+            exc,
+            broker_dsn=dsn,
+            broker_table_name=table_name,
+        ) from None
+    finally:
+        try:
+            connection.close()
+        except Exception:
+            pass
+
+
+def _run_paper_autonomous_investment_ledger_db_history_health_trend_gate(
+    *,
+    dsn: str,
+    table_name: str,
+    limit: int,
+    runner: (
+        PaperAutonomousInvestmentLedgerDbHistoryHealthTrendGateRunner | None
+    ) = None,
+) -> object:
+    command_name = "paper-autonomous-investment-ledger-db-history-health-trend-gate"
+    if isinstance(limit, bool) or type(limit) is not int or limit < 1:
+        raise ValueError(f"{command_name} limit must be positive")
+    generated_at = datetime.now(UTC)
+
+    from polymarket_alpha_lab.paper_autonomous_investment_ledger_db_history_health import (
+        PaperAutonomousInvestmentLedgerDbHistoryHealthConfig,
+    )
+    from polymarket_alpha_lab.paper_autonomous_investment_ledger_db_history_health_trend import (
+        PaperAutonomousInvestmentLedgerDbHistoryHealthTrendConfig,
+    )
+    from polymarket_alpha_lab.paper_autonomous_investment_ledger_db_history_health_trend_gate import (
+        PaperAutonomousInvestmentLedgerDbHistoryHealthTrendGateConfig,
+    )
+
+    health_config = PaperAutonomousInvestmentLedgerDbHistoryHealthConfig()
+    trend_config = PaperAutonomousInvestmentLedgerDbHistoryHealthTrendConfig()
+    gate_config = PaperAutonomousInvestmentLedgerDbHistoryHealthTrendGateConfig()
+    if runner is not None:
+        try:
+            return runner(
+                dsn=dsn,
+                table_name=table_name,
+                limit=limit,
+                health_config=health_config,
+                trend_config=trend_config,
+                gate_config=gate_config,
+                generated_at=generated_at,
+            )
+        except Exception as exc:
+            raise _redacted_paper_autonomous_investment_ledger_error(
+                exc,
+                broker_dsn=dsn,
+                broker_table_name=table_name,
+            ) from None
+
+    from polymarket_alpha_lab.paper_autonomous_investment_ledger_db_history_health_trend_gate_load import (
+        load_paper_autonomous_investment_ledger_db_history_health_trend_gate_report,
+    )
+
+    try:
+        import psycopg
+    except ModuleNotFoundError as exc:
+        if exc.name != "psycopg":
+            raise
+        raise RuntimeError(
+            "psycopg is required to use the paper autonomous investment ledger "
+            "DB history health trend gate read adapter; install the postgres extra.",
+        ) from exc
+    try:
+        connection = psycopg.connect(dsn, autocommit=True)
+    except Exception:
+        raise RuntimeError(
+            "failed to connect to the paper autonomous investment ledger "
+            "DB-history health report database",
+        ) from None
+    try:
+        return load_paper_autonomous_investment_ledger_db_history_health_trend_gate_report(
+            connection,
+            limit=limit,
+            table_name=table_name,
+            health_config=health_config,
+            trend_config=trend_config,
+            gate_config=gate_config,
             generated_at=generated_at,
         )
     except Exception as exc:
@@ -9557,6 +9870,97 @@ def _print_paper_autonomous_investment_ledger_db_history_health_summary(
         for row in report.reason_code_counts
     )
     print(f"reason_code_counts: {reason_code_counts or 'none'}")
+
+
+def _print_paper_autonomous_investment_ledger_db_history_health_trend_summary(
+    report: object,
+) -> None:
+    latest_reason_code_counts = ",".join(
+        f"{reason_code}={count}" for reason_code, count in report.latest_reason_code_counts
+    )
+    summary_parts = [
+        "paper-autonomous-investment-ledger-db-history-health-trend:",
+        f"trend_count={report.source_health_report_count}",
+        f"latest_health_status={_none_or_value(report.latest_health_status)}",
+        "ledger_report_count_delta="
+        f"{_none_or_value(report.ledger_report_count_delta)}",
+        "pass_ledger_report_count_delta="
+        f"{_none_or_value(report.pass_ledger_report_count_delta)}",
+        "watch_ledger_report_count_delta="
+        f"{_none_or_value(report.watch_ledger_report_count_delta)}",
+        "blocked_ledger_report_count_delta="
+        f"{_none_or_value(report.blocked_ledger_report_count_delta)}",
+        "latest_source_record_count_delta="
+        f"{_none_or_value(report.latest_source_record_count_delta)}",
+        "latest_submitted_count_delta="
+        f"{_none_or_value(report.latest_submitted_count_delta)}",
+        f"latest_held_count_delta={_none_or_value(report.latest_held_count_delta)}",
+        "latest_blocked_count_delta="
+        f"{_none_or_value(report.latest_blocked_count_delta)}",
+        "latest_total_submitted_notional_delta="
+        f"{_none_or_value(report.latest_total_submitted_notional_delta)}",
+        "latest_source_generated_at_delta_seconds="
+        f"{_none_or_value(report.latest_source_generated_at_delta_seconds)}",
+        "latest_source_age_seconds_delta="
+        f"{_none_or_value(report.latest_source_age_seconds_delta)}",
+        "max_source_age_seconds_delta="
+        f"{_none_or_value(report.max_source_age_seconds_delta)}",
+        "duplicate_latest_generated_at_count_delta="
+        f"{_none_or_value(report.duplicate_latest_generated_at_count_delta)}",
+        f"duplicate_generated_at_count={report.duplicate_generated_at_count}",
+        "consecutive_latest_watch_count="
+        f"{report.consecutive_latest_watch_count}",
+        "consecutive_latest_blocked_count="
+        f"{report.consecutive_latest_blocked_count}",
+        "latest_reason_code_counts="
+        f"{latest_reason_code_counts or 'none'}",
+    ]
+    print(" ".join(summary_parts))
+
+
+def _print_paper_autonomous_investment_ledger_db_history_health_trend_gate_summary(
+    report: object,
+) -> None:
+    reason_code_counts = " ".join(
+        f"{row.reason_code}={_reason_code_report_count(row)}"
+        for row in report.reason_code_counts
+    )
+    summary_parts = [
+        "paper-autonomous-investment-ledger-db-history-health-trend-gate:",
+        f"gate_status={report.gate_status}",
+        f"recommended_next_step={report.recommended_next_step}",
+        f"source_health_report_count={report.source_health_report_count}",
+        f"latest_health_status={_none_or_value(report.latest_health_status)}",
+        f"latest_source_age_seconds={_none_or_value(report.latest_source_age_seconds)}",
+        f"duplicate_generated_at_count={report.duplicate_generated_at_count}",
+        "consecutive_latest_watch_count="
+        f"{report.consecutive_latest_watch_count}",
+        "consecutive_latest_blocked_count="
+        f"{report.consecutive_latest_blocked_count}",
+        "watch_ledger_report_count_delta="
+        f"{_none_or_value(report.watch_ledger_report_count_delta)}",
+        "blocked_ledger_report_count_delta="
+        f"{_none_or_value(report.blocked_ledger_report_count_delta)}",
+        "latest_source_record_count_delta="
+        f"{_none_or_value(report.latest_source_record_count_delta)}",
+        "latest_submitted_count_delta="
+        f"{_none_or_value(report.latest_submitted_count_delta)}",
+        f"latest_held_count_delta={_none_or_value(report.latest_held_count_delta)}",
+        "latest_blocked_count_delta="
+        f"{_none_or_value(report.latest_blocked_count_delta)}",
+        "latest_total_submitted_notional_delta="
+        f"{_none_or_value(report.latest_total_submitted_notional_delta)}",
+        "latest_source_generated_at_delta_seconds="
+        f"{_none_or_value(report.latest_source_generated_at_delta_seconds)}",
+        "latest_source_age_seconds_delta="
+        f"{_none_or_value(report.latest_source_age_seconds_delta)}",
+        "max_source_age_seconds_delta="
+        f"{_none_or_value(report.max_source_age_seconds_delta)}",
+        "duplicate_latest_generated_at_count_delta="
+        f"{_none_or_value(report.duplicate_latest_generated_at_count_delta)}",
+        f"reason_code_counts={reason_code_counts or 'none'}",
+    ]
+    print(" ".join(summary_parts))
 
 
 def _print_paper_autonomous_screening_decision_support_gate_summary(

@@ -517,6 +517,31 @@ no account reads, no order construction, no order signing, no order submission,
 no order cancellation, no exchange mutation, not financial advice,
 not investment ranking, not order instruction, and not execution authorization.
 
+Investment Ledger DB History Health Trend:
+
+```bash
+.venv/bin/polymarket-alpha-lab paper-autonomous-investment-ledger-db-history-health-trend --limit 25
+```
+
+Investment Ledger DB History Health Trend Gate:
+
+```bash
+.venv/bin/polymarket-alpha-lab paper-autonomous-investment-ledger-db-history-health-trend-gate --limit 25
+```
+
+The trend and trend-gate commands read persisted investment-ledger DB-history
+health reports, not raw investment-ledger reports. Required DB-history health DB
+env: `POLYMARKET_ALPHA_LAB_PAPER_AUTONOMOUS_INVESTMENT_LEDGER_DB_HISTORY_HEALTH_DB_ENABLED`,
+`POLYMARKET_ALPHA_LAB_PAPER_AUTONOMOUS_INVESTMENT_LEDGER_DB_HISTORY_HEALTH_DB_DSN`,
+and optional
+`POLYMARKET_ALPHA_LAB_PAPER_AUTONOMOUS_INVESTMENT_LEDGER_DB_HISTORY_HEALTH_DB_TABLE`.
+The default table is
+`paper_autonomous_investment_ledger_db_history_health_reports`. Both commands
+are env-only, read-only, paper-only/report-only/readonly, and accept only
+`--limit`. They do not accept DSN/table CLI flags, `--persist`, live/auth/wallet
+or order/trade/execution flags, and they do not write reports or authorize
+trading.
+
 ## Level 1B Node 1 Status
 
 Level 1B Node 1 adds configurable paper-only risk gates and append-only rejected-candidate logs. It does not place orders, authenticate, handle private keys, cancel orders, open user WebSockets, run heartbeat logic, or create live-trading proposals.
