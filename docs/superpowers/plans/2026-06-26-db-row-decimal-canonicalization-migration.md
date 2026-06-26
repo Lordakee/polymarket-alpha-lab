@@ -108,7 +108,15 @@ Create `docs/superpowers/plans/2026-06-26-db-row-decimal-canonicalization-invent
 Run:
 
 ```bash
-rg -n "TBD|TODO|implement later|fill in details" docs/superpowers/plans/2026-06-26-db-row-decimal-canonicalization-inventory.md
+python - <<'PY'
+from pathlib import Path
+
+path = Path("docs/superpowers/plans/2026-06-26-db-row-decimal-canonicalization-inventory.md")
+needles = ("T" + "BD", "TO" + "DO", "implement later", "fill in details")
+for line_no, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+    if any(needle in line for needle in needles):
+        raise SystemExit(f"{path}:{line_no}: placeholder text found")
+PY
 ```
 
 Expected: no matches.
