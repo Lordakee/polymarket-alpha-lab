@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, fields, is_dataclass
 from datetime import UTC, datetime
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation, localcontext
 import hashlib
 import json
 import re
@@ -37,6 +37,16 @@ NEXT_STEP_BY_ACTION_STATUS = {
 }
 HARD_FLAG_NAMES = ("paper_only", "report_only", "readonly")
 _SHA256_PATTERN = re.compile(r"^[a-f0-9]{64}$")
+_SIX_PLACE_QUANTUM = Decimal("0.000001")
+_TOP_LEVEL_DECIMAL_PAYLOAD_FIELDS = (
+    "total_ready_notional",
+    "total_selected_notional",
+    "total_suggested_notional",
+    "latest_top_research_priority_score",
+    "latest_average_research_ready_score",
+    "ready_notional_delta",
+    "selected_notional_delta",
+)
 
 
 @dataclass(frozen=True)
@@ -115,7 +125,10 @@ class PaperStrategyCandidateResearchQueueHistoryDbRow:
             object.__setattr__(
                 self,
                 field_name,
-                _require_nonnegative_decimal(field_name, getattr(self, field_name)),
+                _require_nonnegative_fixed_six_decimal(
+                    field_name,
+                    getattr(self, field_name),
+                ),
             )
         _require_optional_action_status(
             "latest_action_status",
@@ -136,7 +149,7 @@ class PaperStrategyCandidateResearchQueueHistoryDbRow:
         object.__setattr__(
             self,
             "latest_top_research_priority_score",
-            _require_optional_score_decimal(
+            _require_optional_score_fixed_six_decimal(
                 "latest_top_research_priority_score",
                 self.latest_top_research_priority_score,
             ),
@@ -144,7 +157,7 @@ class PaperStrategyCandidateResearchQueueHistoryDbRow:
         object.__setattr__(
             self,
             "latest_average_research_ready_score",
-            _require_optional_score_decimal(
+            _require_optional_score_fixed_six_decimal(
                 "latest_average_research_ready_score",
                 self.latest_average_research_ready_score,
             ),
@@ -152,12 +165,18 @@ class PaperStrategyCandidateResearchQueueHistoryDbRow:
         object.__setattr__(
             self,
             "ready_notional_delta",
-            _require_decimal("ready_notional_delta", self.ready_notional_delta),
+            _require_fixed_six_decimal(
+                "ready_notional_delta",
+                self.ready_notional_delta,
+            ),
         )
         object.__setattr__(
             self,
             "selected_notional_delta",
-            _require_decimal("selected_notional_delta", self.selected_notional_delta),
+            _require_fixed_six_decimal(
+                "selected_notional_delta",
+                self.selected_notional_delta,
+            ),
         )
         object.__setattr__(
             self,
@@ -256,10 +275,11 @@ def paper_strategy_candidate_research_queue_history_report_from_db_row(
     )
     _validate_row_matches_payload_json(row)
     _validate_payload_recovers_to_canonical_report(row.payload_json)
+    canonical_payload_json = _normalize_legacy_decimal_payload_json(row.payload_json)
     try:
         report = from_jsonable(
             PaperStrategyCandidateResearchQueueHistoryReport,
-            row.payload_json,
+            canonical_payload_json,
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError(
@@ -275,7 +295,7 @@ def paper_strategy_candidate_research_queue_history_report_from_db_row(
     expected_row = paper_strategy_candidate_research_queue_history_report_to_db_row(
         report,
     )
-    _validate_row_matches_payload(row, expected_row)
+    _validate_row_matches_payload(row, expected_row, require_report_sha256=False)
     return report
 
 
@@ -340,8 +360,10 @@ def _validate_unique_strings(field_name: str, values: tuple[str, ...]) -> None:
 def _validate_row_matches_payload(
     row: PaperStrategyCandidateResearchQueueHistoryDbRow,
     expected: PaperStrategyCandidateResearchQueueHistoryDbRow,
+    *,
+    require_report_sha256: bool = True,
 ) -> None:
-    for field_name in (
+    field_names = (
         "report_sha256",
         "generated_at",
         "source_report_count",
@@ -372,7 +394,10 @@ def _validate_row_matches_payload(
         "paper_only",
         "report_only",
         "readonly",
-    ):
+    )
+    for field_name in field_names:
+        if field_name == "report_sha256" and not require_report_sha256:
+            continue
         if getattr(row, field_name) != getattr(expected, field_name):
             raise ValueError(f"{field_name} must match payload_json")
 
@@ -380,25 +405,27 @@ def _validate_row_matches_payload(
 def _validate_row_matches_payload_json(
     row: PaperStrategyCandidateResearchQueueHistoryDbRow,
 ) -> None:
-    if row.report_sha256 != _report_sha256(row.payload_json):
+    payload_json = _normalize_json_object("payload_json", row.payload_json)
+    if row.report_sha256 != _report_sha256(payload_json):
         raise ValueError("report_sha256 must match payload_json")
-    _validate_row_scalars_match_payload(row)
+    canonical_payload_json = _normalize_legacy_decimal_payload_json(payload_json)
+    _validate_row_scalars_match_payload(row, canonical_payload_json)
     if (
         row.latest_primary_reason_code_counts_json
-        != _latest_primary_reason_code_counts_json_from_payload(row.payload_json)
+        != _latest_primary_reason_code_counts_json_from_payload(canonical_payload_json)
     ):
         raise ValueError(
             "latest_primary_reason_code_counts_json must match payload_json",
         )
     if (
         row.latest_reason_codes_json
-        != _latest_reason_codes_json_from_payload(row.payload_json)
+        != _latest_reason_codes_json_from_payload(canonical_payload_json)
     ):
         raise ValueError("latest_reason_codes_json must match payload_json")
     for flag_name in HARD_FLAG_NAMES:
-        if flag_name not in row.payload_json:
+        if flag_name not in canonical_payload_json:
             raise ValueError(f"{flag_name} must match payload_json")
-        expected_value = row.payload_json[flag_name]
+        expected_value = canonical_payload_json[flag_name]
         actual_value = getattr(row, flag_name)
         if (
             type(expected_value) is not type(_json_ready(actual_value))
@@ -409,6 +436,7 @@ def _validate_row_matches_payload_json(
 
 def _validate_row_scalars_match_payload(
     row: PaperStrategyCandidateResearchQueueHistoryDbRow,
+    payload_json: dict[str, Any],
 ) -> None:
     for field_name in (
         "generated_at",
@@ -436,9 +464,9 @@ def _validate_row_scalars_match_payload(
         "latest_skipped_count",
         "latest_not_selected_count",
     ):
-        if field_name not in row.payload_json:
+        if field_name not in payload_json:
             raise ValueError(f"{field_name} must match payload_json")
-        expected_value = row.payload_json[field_name]
+        expected_value = payload_json[field_name]
         actual_value = _json_ready(getattr(row, field_name))
         if (
             type(expected_value) is not type(actual_value)
@@ -450,10 +478,11 @@ def _validate_row_scalars_match_payload(
 def _validate_payload_recovers_to_canonical_report(
     payload_json: dict[str, Any],
 ) -> None:
+    canonical_payload_json = _normalize_legacy_decimal_payload_json(payload_json)
     try:
         report = from_jsonable(
             PaperStrategyCandidateResearchQueueHistoryReport,
-            payload_json,
+            canonical_payload_json,
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError(
@@ -466,7 +495,7 @@ def _validate_payload_recovers_to_canonical_report(
             "PaperStrategyCandidateResearchQueueHistoryReport",
         )
     _validate_report_tree(report)
-    if payload_json != _json_ready(asdict(report)):
+    if canonical_payload_json != _json_ready(asdict(report)):
         raise ValueError("payload_json must match canonical recovered report payload")
 
 
@@ -537,9 +566,7 @@ def _json_ready(value: Any) -> Any:
     if is_dataclass(value) and not isinstance(value, type):
         return _json_ready(asdict(value))
     if isinstance(value, Decimal):
-        if not value.is_finite():
-            raise ValueError("JSON Decimal value must be finite")
-        return str(value)
+        return _fixed_six_decimal_string("JSON Decimal value", value)
     if isinstance(value, datetime):
         return _as_utc("datetime", value).isoformat()
     if isinstance(value, float):
@@ -559,12 +586,58 @@ def _json_ready(value: Any) -> Any:
 def _normalize_json_object(field_name: str, value: object) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError(f"{field_name} must be a JSON object")
-    try:
-        normalized = _json_ready(value)
-    except ValueError as exc:
-        raise ValueError(f"{field_name} {exc}") from exc
+    _validate_raw_json_value(field_name, value)
+    normalized = _copy_json_value(value)
     if not isinstance(normalized, dict):
         raise ValueError(f"{field_name} must be a JSON object")
+    return normalized
+
+
+def _validate_raw_json_value(field_name: str, value: object) -> None:
+    if value is None:
+        return
+    if type(value) in (str, int, bool):
+        return
+    if isinstance(value, float):
+        raise ValueError(f"{field_name} must not contain float values")
+    if isinstance(value, Decimal):
+        raise ValueError(f"{field_name} must not contain Decimal values")
+    if isinstance(value, datetime):
+        raise ValueError(f"{field_name} must not contain datetime values")
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if type(key) is not str:
+                raise ValueError(f"{field_name} JSON object keys must be strings")
+            _validate_raw_json_value(f"{field_name}.{key}", item)
+        return
+    if isinstance(value, list):
+        for index, item in enumerate(value):
+            _validate_raw_json_value(f"{field_name}.{index}", item)
+        return
+    raise ValueError(f"{field_name} must contain only JSON values")
+
+
+def _copy_json_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {key: _copy_json_value(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_copy_json_value(item) for item in value]
+    return value
+
+
+def _normalize_legacy_decimal_payload_json(
+    payload_json: dict[str, Any],
+) -> dict[str, Any]:
+    normalized = _copy_json_value(payload_json)
+    if not isinstance(normalized, dict):
+        raise ValueError("payload_json must be a JSON object")
+    for field_name in _TOP_LEVEL_DECIMAL_PAYLOAD_FIELDS:
+        if field_name not in normalized or normalized[field_name] is None:
+            continue
+        normalized[field_name] = _fixed_six_decimal_json_string(
+            field_name,
+            normalized[field_name],
+        )
     return normalized
 
 
@@ -587,7 +660,8 @@ def _normalize_count_json_object(
 def _normalize_reason_codes_json(field_name: str, value: object) -> list[str]:
     if not isinstance(value, list):
         raise ValueError(f"{field_name} must be a JSON list")
-    normalized = _json_ready(value)
+    _validate_raw_json_value(field_name, value)
+    normalized = _copy_json_value(value)
     if not isinstance(normalized, list):
         raise ValueError(f"{field_name} must be a JSON list")
     seen: set[str] = set()
@@ -732,23 +806,54 @@ def _require_decimal(field_name: str, value: object) -> Decimal:
     return value
 
 
-def _require_nonnegative_decimal(field_name: str, value: object) -> Decimal:
+def _require_fixed_six_decimal(field_name: str, value: object) -> Decimal:
     decimal_value = _require_decimal(field_name, value)
+    try:
+        with localcontext() as context:
+            integer_digits = max(decimal_value.adjusted() + 1, 1)
+            context.prec = max(28, integer_digits + 6)
+            fixed_value = decimal_value.quantize(_SIX_PLACE_QUANTUM)
+    except InvalidOperation as exc:
+        raise ValueError(f"{field_name} must not exceed six decimal places") from exc
+    if decimal_value != fixed_value:
+        raise ValueError(f"{field_name} must not exceed six decimal places")
+    return fixed_value
+
+
+def _require_nonnegative_fixed_six_decimal(
+    field_name: str,
+    value: object,
+) -> Decimal:
+    decimal_value = _require_fixed_six_decimal(field_name, value)
     if decimal_value < Decimal("0"):
         raise ValueError(f"{field_name} must be nonnegative")
     return decimal_value
 
 
-def _require_optional_score_decimal(
+def _require_optional_score_fixed_six_decimal(
     field_name: str,
     value: object,
 ) -> Decimal | None:
     if value is None:
         return None
-    decimal_value = _require_decimal(field_name, value)
+    decimal_value = _require_fixed_six_decimal(field_name, value)
     if decimal_value < Decimal("0") or decimal_value > Decimal("1"):
         raise ValueError(f"{field_name} must be between 0 and 1")
     return decimal_value
+
+
+def _fixed_six_decimal_string(field_name: str, value: object) -> str:
+    return format(_require_fixed_six_decimal(field_name, value), "f")
+
+
+def _fixed_six_decimal_json_string(field_name: str, value: object) -> str:
+    if type(value) is not str:
+        raise ValueError(f"{field_name} must be a Decimal string in payload_json")
+    try:
+        decimal_value = Decimal(value)
+    except InvalidOperation as exc:
+        raise ValueError(f"{field_name} must be a Decimal string in payload_json") from exc
+    return _fixed_six_decimal_string(field_name, decimal_value)
 
 
 def _require_hard_flags(field_name: str, value: object) -> None:

@@ -34,6 +34,15 @@ to_db_row = getattr(
 GENERATED_AT = datetime(2026, 6, 20, 12, 0, tzinfo=UTC)
 FIRST_SOURCE_GENERATED_AT = datetime(2026, 6, 20, 9, 0, tzinfo=UTC)
 LAST_SOURCE_GENERATED_AT = datetime(2026, 6, 20, 11, 0, tzinfo=UTC)
+DECIMAL_PAYLOAD_FIELDS = (
+    "total_ready_notional",
+    "total_selected_notional",
+    "total_suggested_notional",
+    "latest_top_research_priority_score",
+    "latest_average_research_ready_score",
+    "ready_notional_delta",
+    "selected_notional_delta",
+)
 
 
 class HistoryReportSubclass(PaperStrategyCandidateResearchQueueHistoryReport):
@@ -320,6 +329,143 @@ def test_research_queue_history_db_row_hash_uses_canonical_full_payload():
     assert first.report_sha256 == second.report_sha256
     assert first.payload_json == second.payload_json
     assert first.report_sha256 != third.report_sha256
+
+
+def test_research_queue_history_db_row_accepts_equivalent_materialized_decimal_exponents():
+    row = to_db_row(_history_report())
+    values = _row_values(row)
+    values.update(
+        {
+            "total_ready_notional": Decimal("42"),
+            "total_selected_notional": Decimal("18.0"),
+            "total_suggested_notional": Decimal("54.000"),
+            "latest_top_research_priority_score": Decimal("0.75"),
+            "latest_average_research_ready_score": Decimal("0.6500"),
+            "ready_notional_delta": Decimal("12"),
+            "selected_notional_delta": Decimal("6.000"),
+        },
+    )
+
+    equivalent = HistoryDbRow(**values)
+
+    assert equivalent.payload_json == row.payload_json
+    assert equivalent.report_sha256 == row.report_sha256
+    for field_name in DECIMAL_PAYLOAD_FIELDS:
+        assert getattr(equivalent, field_name) == getattr(row, field_name)
+
+
+def test_research_queue_history_to_db_row_canonicalizes_equivalent_decimal_exponents():
+    first = to_db_row(
+        _history_report(
+            total_ready_notional=Decimal("42"),
+            total_selected_notional=Decimal("18.0"),
+            total_suggested_notional=Decimal("54.000"),
+            latest_top_research_priority_score=Decimal("0.75"),
+            latest_average_research_ready_score=Decimal("0.6500"),
+            ready_notional_delta=Decimal("12"),
+            selected_notional_delta=Decimal("6.000"),
+        ),
+    )
+    second = to_db_row(_history_report())
+
+    assert first.payload_json == second.payload_json
+    assert first.report_sha256 == second.report_sha256
+    for field_name in DECIMAL_PAYLOAD_FIELDS:
+        decimal_text = first.payload_json[field_name]
+        assert isinstance(decimal_text, str)
+        assert len(decimal_text.rsplit(".", 1)[1]) == 6
+
+
+def test_research_queue_history_db_row_accepts_safe_legacy_decimal_payload_strings():
+    row = to_db_row(_history_report())
+    legacy_payload = {
+        **row.payload_json,
+        "total_ready_notional": "42",
+        "total_selected_notional": "18.0",
+        "total_suggested_notional": "54.000",
+        "latest_top_research_priority_score": "0.75",
+        "latest_average_research_ready_score": "0.6500",
+        "ready_notional_delta": "12",
+        "selected_notional_delta": "6.000",
+    }
+
+    legacy_row = HistoryDbRow(
+        **{
+            **_row_values(row),
+            "report_sha256": _payload_sha256(legacy_payload),
+            "payload_json": legacy_payload,
+        },
+    )
+
+    assert legacy_row.payload_json == legacy_payload
+    assert from_db_row(legacy_row) == _history_report()
+
+
+def test_research_queue_history_from_db_row_checks_legacy_hash_before_normalization():
+    row = to_db_row(_history_report())
+    legacy_payload = {**row.payload_json, "total_ready_notional": "42"}
+    malformed = _unchecked_row(
+        row,
+        report_sha256=row.report_sha256,
+        payload_json=legacy_payload,
+    )
+
+    with pytest.raises(ValueError, match="report_sha256"):
+        from_db_row(malformed)
+
+
+def test_research_queue_history_from_db_row_rejects_value_changing_legacy_decimal_payload():
+    row = to_db_row(_history_report())
+    legacy_payload = {**row.payload_json, "total_ready_notional": "42.0000001"}
+    malformed = _unchecked_row(
+        row,
+        report_sha256=_payload_sha256(legacy_payload),
+        payload_json=legacy_payload,
+    )
+
+    with pytest.raises(ValueError, match="total_ready_notional|payload_json|precision"):
+        from_db_row(malformed)
+
+
+def test_research_queue_history_db_row_rejects_overprecise_materialized_decimal_without_rounding():
+    row = to_db_row(_history_report())
+
+    with pytest.raises(ValueError, match="total_ready_notional"):
+        HistoryDbRow(
+            **{
+                **_row_values(row),
+                "total_ready_notional": Decimal("42.0000001"),
+            },
+        )
+
+
+@pytest.mark.parametrize(
+    ("field_name", "raw_value", "message"),
+    (
+        ("total_ready_notional", Decimal("42.000000"), "Decimal"),
+        ("generated_at", GENERATED_AT, "datetime"),
+        ("total_ready_notional", 42.0, "float"),
+    ),
+)
+def test_research_queue_history_db_row_rejects_raw_non_json_payload_values_before_normalization(
+    field_name: str,
+    raw_value: object,
+    message: str,
+) -> None:
+    row = to_db_row(_history_report())
+    payload = {**row.payload_json, field_name: raw_value}
+
+    with pytest.raises(ValueError, match=f"payload_json.*{message}"):
+        HistoryDbRow(
+            **{
+                **_row_values(row),
+                "payload_json": payload,
+            },
+        )
+
+    malformed = _unchecked_row(row, payload_json=payload)
+    with pytest.raises(ValueError, match=message):
+        from_db_row(malformed)
 
 
 def test_research_queue_history_db_row_is_frozen():
@@ -610,16 +756,16 @@ def test_research_queue_history_db_row_rejects_bool_payload_for_integer_scalar_w
         from_db_row(malformed)
 
 
-def test_research_queue_history_db_row_rejects_self_hashed_noncanonical_decimal_payload_at_construction():
+def test_research_queue_history_db_row_rejects_self_hashed_overprecise_decimal_payload_at_construction():
     row = to_db_row(_history_report())
-    payload = {**row.payload_json, "total_ready_notional": "42"}
+    payload = {**row.payload_json, "total_ready_notional": "42.0000001"}
 
-    with pytest.raises(ValueError, match="canonical|payload_json"):
+    with pytest.raises(ValueError, match="six decimal|payload_json"):
         HistoryDbRow(
             **{
                 **_row_values(row),
                 "report_sha256": _payload_sha256(payload),
-                "total_ready_notional": Decimal("42"),
+                "total_ready_notional": Decimal("42.0000001"),
                 "payload_json": payload,
             },
         )

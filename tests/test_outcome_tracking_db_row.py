@@ -3,7 +3,10 @@ from __future__ import annotations
 from dataclasses import FrozenInstanceError
 from datetime import UTC, datetime
 from decimal import Decimal
+import hashlib
+import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -77,6 +80,84 @@ def _empty_report() -> OutcomeTrackingReport:
     )
 
 
+def _resolved_report_with_probability(probability: Decimal) -> OutcomeTrackingReport:
+    observation = PaperForecastEvidenceObservation(
+        observed_at=GENERATED_AT,
+        source_packet_id="packet-1",
+        condition_id="condition-1",
+        token_id="token-1",
+        market_slug="market-1",
+        strategy_type="market_quality",
+        risk_tags=("liquidity",),
+        predicted_probability=probability,
+        actual_outcome_value=Decimal("1.0"),
+    )
+    evidence_report = build_paper_forecast_evidence_report(
+        (observation,),
+        config=PaperForecastEvidenceConfig(
+            config_version=CONFIG_VERSION,
+            min_probability_observations=1,
+            min_edge_observations=0,
+        ),
+        generated_at=GENERATED_AT,
+    )
+    return OutcomeTrackingReport(
+        generated_at=GENERATED_AT,
+        config_version=CONFIG_VERSION,
+        total_markets_checked=1,
+        resolved_count=1,
+        pending_count=0,
+        observations=(observation,),
+        forecast_evidence_report=evidence_report,
+    )
+
+
+def _payload_sha256(payload_json: dict[str, Any]) -> str:
+    encoded = json.dumps(
+        payload_json,
+        allow_nan=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _stored_row_from_payload(
+    row: OutcomeTrackingReportDbRow,
+    payload_json: dict[str, Any],
+    *,
+    report_sha256: str | None = None,
+) -> OutcomeTrackingReportDbRow:
+    return OutcomeTrackingReportDbRow(
+        report_sha256=report_sha256 or _payload_sha256(payload_json),
+        generated_at=row.generated_at,
+        config_version=row.config_version,
+        total_markets_checked=row.total_markets_checked,
+        resolved_count=row.resolved_count,
+        pending_count=row.pending_count,
+        observation_count=row.observation_count,
+        forecast_evidence_status=row.forecast_evidence_status,
+        payload_json=payload_json,
+        paper_only=row.paper_only,
+    )
+
+
+def _bypassed_row(
+    row: OutcomeTrackingReportDbRow,
+    *,
+    payload_json: dict[str, Any] | None = None,
+    report_sha256: str | None = None,
+) -> OutcomeTrackingReportDbRow:
+    malformed = object.__new__(OutcomeTrackingReportDbRow)
+    for field_name, value in row.__dict__.items():
+        object.__setattr__(malformed, field_name, value)
+    if payload_json is not None:
+        object.__setattr__(malformed, "payload_json", payload_json)
+    if report_sha256 is not None:
+        object.__setattr__(malformed, "report_sha256", report_sha256)
+    return malformed
+
+
 def _assert_no_floats(value: object) -> None:
     if isinstance(value, float):
         pytest.fail("DB payload must not contain floats")
@@ -130,12 +211,188 @@ def test_outcome_tracking_db_row_serializes_summary_payload_and_round_trips():
     assert row.payload_json["paper_only"] is True
     assert row.payload_json["report_only"] is True
     assert row.payload_json["readonly"] is True
-    assert row.payload_json["observations"][0]["predicted_probability"] == "0.6000"
-    assert row.payload_json["observations"][0]["actual_outcome_value"] == "1"
+    assert row.payload_json["observations"][0]["predicted_probability"] == "0.600000"
+    assert row.payload_json["observations"][0]["actual_outcome_value"] == "1.000000"
     assert row.payload_json["forecast_evidence_report"]["paper_only"] is True
     _assert_no_floats(row.payload_json)
 
     assert outcome_tracking_report_from_db_row(row) == report
+
+
+def test_outcome_tracking_db_row_writes_fixed_six_place_decimal_payloads():
+    row = outcome_tracking_report_to_db_row(_resolved_report())
+
+    observation = row.payload_json["observations"][0]
+    forecast_evidence_report = row.payload_json["forecast_evidence_report"]
+    assert isinstance(forecast_evidence_report, dict)
+    bucket = forecast_evidence_report["buckets"][0]
+
+    assert observation["predicted_probability"] == "0.600000"
+    assert observation["actual_outcome_value"] == "1.000000"
+    assert forecast_evidence_report["mean_probability_loss"] == "0.160000"
+    assert forecast_evidence_report["worst_bucket_error"] == "0.400000"
+    assert bucket["lower_probability"] == "0.600000"
+    assert bucket["upper_probability"] == "0.800000"
+    assert bucket["mean_predicted_probability"] == "0.600000"
+    assert bucket["observed_frequency"] == "1.000000"
+    assert bucket["bucket_error"] == "0.400000"
+    assert bucket["mean_probability_loss"] == "0.160000"
+
+
+def test_outcome_tracking_db_row_equivalent_decimal_exponents_hash_identically():
+    first = outcome_tracking_report_to_db_row(
+        _resolved_report_with_probability(Decimal("0.6")),
+    )
+    second = outcome_tracking_report_to_db_row(
+        _resolved_report_with_probability(Decimal("0.600000")),
+    )
+
+    assert first.payload_json == second.payload_json
+    assert first.report_sha256 == second.report_sha256
+
+
+def test_outcome_tracking_db_row_rejects_overprecision_decimal_writes():
+    with pytest.raises(ValueError, match="six decimal places|overprecision"):
+        outcome_tracking_report_to_db_row(
+            _resolved_report_with_probability(Decimal("0.6000001")),
+        )
+
+
+def test_outcome_tracking_db_row_accepts_semantically_safe_legacy_decimal_strings():
+    row = outcome_tracking_report_to_db_row(_resolved_report())
+    legacy_payload = {
+        **row.payload_json,
+        "observations": [
+            {
+                **row.payload_json["observations"][0],
+                "predicted_probability": "0.6000",
+                "actual_outcome_value": "1",
+            },
+        ],
+    }
+    legacy_row = _stored_row_from_payload(row, legacy_payload)
+
+    assert outcome_tracking_report_from_db_row(legacy_row) == _resolved_report()
+
+
+def test_outcome_tracking_db_row_rejects_legacy_decimal_strings_outside_allowlist():
+    row = outcome_tracking_report_to_db_row(_resolved_report())
+    legacy_payload = {
+        **row.payload_json,
+        "forecast_evidence_report": {
+            **row.payload_json["forecast_evidence_report"],
+            "gate_results": [
+                {
+                    **row.payload_json["forecast_evidence_report"]["gate_results"][0],
+                    "observed_value": "1.0",
+                },
+                *row.payload_json["forecast_evidence_report"]["gate_results"][1:],
+            ],
+        },
+    }
+
+    with pytest.raises(ValueError, match="payload_json|observed_value"):
+        outcome_tracking_report_from_db_row(_stored_row_from_payload(row, legacy_payload))
+
+
+def test_outcome_tracking_db_row_rejects_raw_payload_values_before_normalization():
+    row = outcome_tracking_report_to_db_row(_resolved_report())
+
+    for raw_value in (Decimal("0.600000"), GENERATED_AT, 0.6):
+        payload_json = {
+            **row.payload_json,
+            "observations": [
+                {
+                    **row.payload_json["observations"][0],
+                    "predicted_probability": raw_value,
+                },
+            ],
+        }
+        try:
+            report_sha256 = _payload_sha256(payload_json)
+        except TypeError:
+            report_sha256 = row.report_sha256
+        with pytest.raises(ValueError, match="payload_json"):
+            _stored_row_from_payload(
+                row,
+                payload_json,
+                report_sha256=report_sha256,
+            )
+
+
+def test_outcome_tracking_from_db_row_validates_raw_hash_before_legacy_normalization():
+    row = outcome_tracking_report_to_db_row(_resolved_report())
+    legacy_payload = {
+        **row.payload_json,
+        "observations": [
+            {
+                **row.payload_json["observations"][0],
+                "predicted_probability": "0.6000",
+                "actual_outcome_value": "1",
+            },
+        ],
+    }
+    stale_row = _bypassed_row(
+        row,
+        payload_json=legacy_payload,
+        report_sha256=row.report_sha256,
+    )
+
+    with pytest.raises(ValueError, match="report_sha256"):
+        outcome_tracking_report_from_db_row(stale_row)
+
+
+def test_outcome_tracking_db_row_rejects_value_changing_legacy_payloads():
+    row = outcome_tracking_report_to_db_row(_resolved_report())
+    value_changing_payload = {
+        **row.payload_json,
+        "observations": [
+            {
+                **row.payload_json["observations"][0],
+                "predicted_probability": "0.6000001",
+            },
+        ],
+    }
+
+    with pytest.raises(ValueError, match="six decimal places|payload_json"):
+        outcome_tracking_report_from_db_row(
+            _stored_row_from_payload(row, value_changing_payload),
+        )
+
+
+def test_outcome_tracking_db_row_rejects_bool_int_confusion_and_missing_vs_null():
+    row = outcome_tracking_report_to_db_row(_resolved_report())
+    bool_payload = {**row.payload_json, "total_markets_checked": True}
+    with pytest.raises(ValueError, match="total_markets_checked"):
+        outcome_tracking_report_from_db_row(
+            _bypassed_row(
+                row,
+                payload_json=bool_payload,
+                report_sha256=_payload_sha256(bool_payload),
+            ),
+        )
+
+    null_observations_payload = {**row.payload_json, "observations": None}
+    with pytest.raises(ValueError, match="observations|observation_count|payload_json"):
+        outcome_tracking_report_from_db_row(
+            _bypassed_row(
+                row,
+                payload_json=null_observations_payload,
+                report_sha256=_payload_sha256(null_observations_payload),
+            ),
+        )
+
+    missing_observations_payload = {
+        key: value for key, value in row.payload_json.items() if key != "observations"
+    }
+    with pytest.raises(ValueError, match="observations|observation_count|payload_json"):
+        outcome_tracking_report_from_db_row(
+            _bypassed_row(
+                row,
+                payload_json=missing_observations_payload,
+                report_sha256=_payload_sha256(missing_observations_payload),
+            ),
+        )
 
 
 def test_outcome_tracking_db_row_handles_empty_report_without_evidence_status():
