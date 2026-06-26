@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 import json
 from dataclasses import FrozenInstanceError, replace
 from datetime import UTC, datetime
@@ -459,6 +460,34 @@ def test_action_gated_queue_db_row_hash_uses_canonical_full_payload():
     assert first.report_sha256 != third.report_sha256
 
 
+def test_action_gated_queue_db_row_canonicalizes_nested_decimal_payload_writes():
+    row = paper_action_gated_strategy_recommendation_queue_report_to_db_row(
+        _ready_report(),
+    )
+
+    assessment_row = row.payload_json["candidate_assessment_report"]["assessment_rows"][0]
+    blocked_assessment_row = row.payload_json["candidate_assessment_report"][
+        "assessment_rows"
+    ][2]
+    queue_row = row.payload_json["queue_summary_report"]["queue_rows"][0]
+
+    assert row.payload_json["total_ready_notional"] == "4.400000"
+    assert assessment_row["confidence"] == "0.900000"
+    assert assessment_row["spread"] == "0.010000"
+    assert assessment_row["resolution_risk"] == "0.020000"
+    assert blocked_assessment_row["readiness_score"] == "0.000000"
+    assert row.payload_json["bundle_report"]["total_selected_notional"] == "4.400000"
+    assert queue_row["suggested_notional"] == "4.400000"
+
+
+def test_action_gated_queue_db_row_rejects_overprecision_decimal_writes():
+    report = _ready_report()
+    object.__setattr__(report, "total_ready_notional", Decimal("4.4000004"))
+
+    with pytest.raises(ValueError, match="Decimal|six decimal|quantized"):
+        paper_action_gated_strategy_recommendation_queue_report_to_db_row(report)
+
+
 def test_action_gated_queue_db_row_is_frozen():
     row = paper_action_gated_strategy_recommendation_queue_report_to_db_row(
         _watch_report(),
@@ -581,21 +610,25 @@ def test_action_gated_queue_db_row_constructor_rejects_bool_payload_int_count():
         )
 
 
-def test_action_gated_queue_db_row_constructor_rejects_self_hashed_noncanonical_decimal():
+def test_action_gated_queue_db_row_constructor_accepts_self_hashed_legacy_decimal_payload():
     row = paper_action_gated_strategy_recommendation_queue_report_to_db_row(
         _watch_report(),
     )
     payload_json = {**row.payload_json, "total_ready_notional": "0"}
 
-    with pytest.raises(ValueError, match="payload_json|total_ready_notional"):
-        PaperActionGatedStrategyRecommendationQueueDbRow(
-            **{
-                **_row_values(row),
-                "report_sha256": _payload_sha256(payload_json),
-                "total_ready_notional": Decimal("0"),
-                "payload_json": payload_json,
-            },
-        )
+    legacy_row = PaperActionGatedStrategyRecommendationQueueDbRow(
+        **{
+            **_row_values(row),
+            "report_sha256": _payload_sha256(payload_json),
+            "total_ready_notional": Decimal("0"),
+            "payload_json": payload_json,
+        },
+    )
+
+    assert (
+        paper_action_gated_strategy_recommendation_queue_report_from_db_row(legacy_row)
+        == _watch_report()
+    )
 
 
 def test_action_gated_queue_db_row_replace_revalidates_payload_consistency():
@@ -694,14 +727,151 @@ def test_action_gated_queue_db_row_from_db_row_rejects_bypassed_bool_materialize
         paper_action_gated_strategy_recommendation_queue_report_from_db_row(malformed)
 
 
-def test_action_gated_queue_db_row_from_db_row_rejects_bypassed_noncanonical_materialized_decimal():
+def test_action_gated_queue_db_row_from_db_row_accepts_equivalent_materialized_decimal_scale():
     row = paper_action_gated_strategy_recommendation_queue_report_to_db_row(
-        _watch_report(),
+        _ready_report(),
     )
-    malformed = _bypassed_queue_row(row, total_ready_notional=Decimal("0"))
+    equivalent = _bypassed_queue_row(row, total_ready_notional=Decimal("4.4000000"))
 
-    with pytest.raises(ValueError, match="total_ready_notional"):
-        paper_action_gated_strategy_recommendation_queue_report_from_db_row(malformed)
+    assert (
+        paper_action_gated_strategy_recommendation_queue_report_from_db_row(equivalent)
+        == _ready_report()
+    )
+
+
+def test_action_gated_queue_db_row_from_db_row_accepts_self_hashed_nested_legacy_decimal_payload():
+    row = paper_action_gated_strategy_recommendation_queue_report_to_db_row(
+        _ready_report(),
+    )
+    payload_json = deepcopy(row.payload_json)
+    payload_json["total_ready_notional"] = "4.4"
+    payload_json["candidate_assessment_report"]["assessment_rows"][0][
+        "confidence"
+    ] = "0.9000"
+    payload_json["candidate_assessment_report"]["assessment_rows"][0]["spread"] = "0.0100"
+    payload_json["candidate_assessment_report"]["assessment_rows"][2][
+        "readiness_score"
+    ] = "0"
+    payload_json["bundle_report"]["total_selected_notional"] = "4.4"
+    payload_json["queue_summary_report"]["total_ready_notional"] = "4.4"
+    payload_json["queue_summary_report"]["queue_rows"][0]["suggested_notional"] = "4.4"
+    legacy_row = _bypassed_queue_row(
+        row,
+        report_sha256=_payload_sha256(payload_json),
+        total_ready_notional=Decimal("4.4"),
+        payload_json=payload_json,
+    )
+
+    assert (
+        paper_action_gated_strategy_recommendation_queue_report_from_db_row(legacy_row)
+        == _ready_report()
+    )
+
+
+def test_action_gated_queue_db_row_from_db_row_rejects_stale_legacy_decimal_payload_hash():
+    row = paper_action_gated_strategy_recommendation_queue_report_to_db_row(
+        _ready_report(),
+    )
+    payload_json = {**row.payload_json, "total_ready_notional": "4.4"}
+
+    with pytest.raises(ValueError, match="report_sha256"):
+        paper_action_gated_strategy_recommendation_queue_report_from_db_row(
+            _bypassed_queue_row(row, payload_json=payload_json),
+        )
+
+
+def test_action_gated_queue_db_row_from_db_row_rejects_value_changing_legacy_decimal_payload():
+    row = paper_action_gated_strategy_recommendation_queue_report_to_db_row(
+        _ready_report(),
+    )
+    payload_json = deepcopy(row.payload_json)
+    payload_json["queue_summary_report"]["queue_rows"][0]["suggested_notional"] = (
+        "4.400001"
+    )
+
+    with pytest.raises(ValueError, match="suggested_notional|payload_json"):
+        PaperActionGatedStrategyRecommendationQueueDbRow(
+            **{
+                **_row_values(row),
+                "report_sha256": _payload_sha256(payload_json),
+                "payload_json": payload_json,
+            },
+        )
+
+
+def test_action_gated_queue_db_row_rejects_raw_decimal_payload_before_normalization():
+    row = paper_action_gated_strategy_recommendation_queue_report_to_db_row(
+        _ready_report(),
+    )
+    payload_json = deepcopy(row.payload_json)
+    payload_json["total_ready_notional"] = Decimal("4.400000")
+
+    with pytest.raises(ValueError, match="Decimal|JSON"):
+        PaperActionGatedStrategyRecommendationQueueDbRow(
+            **{
+                **_row_values(row),
+                "payload_json": payload_json,
+            },
+        )
+
+    with pytest.raises(ValueError, match="Decimal|JSON"):
+        paper_action_gated_strategy_recommendation_queue_report_from_db_row(
+            _bypassed_queue_row(row, payload_json=payload_json),
+        )
+
+
+def test_action_gated_queue_db_row_rejects_raw_datetime_payload_before_normalization():
+    row = paper_action_gated_strategy_recommendation_queue_report_to_db_row(
+        _ready_report(),
+    )
+    payload_json = deepcopy(row.payload_json)
+    payload_json["generated_at"] = GENERATED_AT
+
+    with pytest.raises(ValueError, match="datetime|JSON"):
+        PaperActionGatedStrategyRecommendationQueueDbRow(
+            **{
+                **_row_values(row),
+                "payload_json": payload_json,
+            },
+        )
+
+    with pytest.raises(ValueError, match="datetime|JSON"):
+        paper_action_gated_strategy_recommendation_queue_report_from_db_row(
+            _bypassed_queue_row(row, payload_json=payload_json),
+        )
+
+
+def test_action_gated_queue_db_row_from_db_row_rejects_bypassed_non_datetime_generated_at():
+    row = paper_action_gated_strategy_recommendation_queue_report_to_db_row(
+        _ready_report(),
+    )
+
+    with pytest.raises(ValueError, match="generated_at"):
+        paper_action_gated_strategy_recommendation_queue_report_from_db_row(
+            _bypassed_queue_row(
+                row,
+                generated_at="2026-06-20T12:00:00+00:00",
+            ),
+        )
+
+
+def test_action_gated_queue_db_row_from_db_row_rejects_bypassed_overprecision_payload():
+    row = paper_action_gated_strategy_recommendation_queue_report_to_db_row(
+        _ready_report(),
+    )
+    payload_json = deepcopy(row.payload_json)
+    payload_json["queue_summary_report"]["queue_rows"][0][
+        "suggested_notional"
+    ] = "4.4000004"
+
+    with pytest.raises(ValueError, match="suggested_notional|payload_json"):
+        paper_action_gated_strategy_recommendation_queue_report_from_db_row(
+            _bypassed_queue_row(
+                row,
+                report_sha256=_payload_sha256(payload_json),
+                payload_json=payload_json,
+            ),
+        )
 
 
 def test_action_gated_queue_db_row_from_db_row_rejects_bypassed_missing_nested_payload_hard_flag():

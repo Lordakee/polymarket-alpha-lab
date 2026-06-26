@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, fields, is_dataclass
 from datetime import UTC, datetime
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation, localcontext
 import hashlib
 import json
 import re
@@ -35,6 +35,89 @@ NEXT_STEP_BY_ACTION_STATUS = {
     "blocked": "repair_cycle_evidence",
 }
 _SHA256_PATTERN = re.compile(r"^[a-f0-9]{64}$")
+_DECIMAL_QUANTUM = Decimal("0.000001")
+_MISSING = object()
+_DECIMAL_PAYLOAD_PATTERNS = frozenset(
+    {
+        ("total_ready_notional",),
+        (
+            "candidate_assessment_report",
+            "assessment_rows",
+            "*",
+            "screening_score",
+        ),
+        (
+            "candidate_assessment_report",
+            "assessment_rows",
+            "*",
+            "net_edge_per_share",
+        ),
+        (
+            "candidate_assessment_report",
+            "assessment_rows",
+            "*",
+            "total_cost_per_share",
+        ),
+        ("candidate_assessment_report", "assessment_rows", "*", "confidence"),
+        ("candidate_assessment_report", "assessment_rows", "*", "spread"),
+        ("candidate_assessment_report", "assessment_rows", "*", "resolution_risk"),
+        ("candidate_assessment_report", "assessment_rows", "*", "readiness_score"),
+        ("bundle_report", "total_selected_notional"),
+        (
+            "bundle_report",
+            "recommendation_report",
+            "recommendation_rows",
+            "*",
+            "recommendation_score",
+        ),
+        ("bundle_report", "selection_policy_report", "total_selected_notional"),
+        (
+            "bundle_report",
+            "selection_policy_report",
+            "selection_rows",
+            "*",
+            "recommendation_score",
+        ),
+        (
+            "bundle_report",
+            "selection_policy_report",
+            "selection_rows",
+            "*",
+            "suggested_position_notional",
+        ),
+        (
+            "bundle_report",
+            "selection_policy_report",
+            "selection_rows",
+            "*",
+            "selected_position_notional",
+        ),
+        ("bundle_report", "selection_policy_report", "total_suggested_notional"),
+        ("bundle_report", "selection_policy_report", "skipped_suggested_notional"),
+        ("bundle_report", "selection_policy_report", "remaining_total_notional"),
+        ("bundle_report", "selection_policy_report", "total_notional_utilization"),
+        (
+            "bundle_report",
+            "explanation_report",
+            "explanation_rows",
+            "*",
+            "recommendation_score",
+        ),
+        ("bundle_report", "total_suggested_notional"),
+        ("bundle_report", "skipped_suggested_notional"),
+        ("bundle_report", "remaining_total_notional"),
+        ("queue_summary_report", "total_ready_notional"),
+        ("queue_summary_report", "top_score"),
+        ("queue_summary_report", "average_ready_score"),
+        (
+            "queue_summary_report",
+            "queue_rows",
+            "*",
+            "recommendation_score",
+        ),
+        ("queue_summary_report", "queue_rows", "*", "suggested_notional"),
+    },
+)
 
 
 @dataclass(frozen=True)
@@ -134,29 +217,41 @@ def paper_action_gated_strategy_recommendation_queue_report_from_db_row(
 ) -> PaperActionGatedStrategyRecommendationQueueReport:
     if type(row) is not PaperActionGatedStrategyRecommendationQueueDbRow:
         raise ValueError("row must be a PaperActionGatedStrategyRecommendationQueueDbRow")
-    _reject_json_floats(row.payload_json)
-    _validate_payload_json_contract(row)
-    _validate_payload_recovers_to_canonical_report(row.payload_json)
-    try:
-        report = from_jsonable(
-            PaperActionGatedStrategyRecommendationQueueReport,
-            row.payload_json,
-        )
-    except (KeyError, TypeError, ValueError) as exc:
-        raise ValueError(
-            f"payload_json is not a valid action-gated queue report: {exc}",
-        ) from exc
-    if type(report) is not PaperActionGatedStrategyRecommendationQueueReport:
-        raise ValueError(
-            "payload_json must recover a "
-            "PaperActionGatedStrategyRecommendationQueueReport",
-        )
-    _validate_report_tree(report)
+    _validate_row_core_fields(row)
+    payload_json = _normalize_json_object("payload_json", row.payload_json)
+    _validate_payload_json_contract(row, payload_json)
+    report = _validate_payload_recovers_to_compatible_report(payload_json)
     expected_row = paper_action_gated_strategy_recommendation_queue_report_to_db_row(
         report,
     )
-    _validate_row_matches_payload(row, expected_row)
+    _validate_row_matches_payload(row, expected_row, payload_json)
     return report
+
+
+def _validate_row_core_fields(
+    row: PaperActionGatedStrategyRecommendationQueueDbRow,
+) -> None:
+    _require_sha256("report_sha256", row.report_sha256)
+    _as_utc("generated_at", row.generated_at)
+    _require_canonical_string("config_version", row.config_version)
+    _require_canonical_string("source_config_version", row.source_config_version)
+    _require_action_status("action_status", row.action_status)
+    _require_recommended_next_step("recommended_next_step", row.recommended_next_step)
+    if row.recommended_next_step != NEXT_STEP_BY_ACTION_STATUS[row.action_status]:
+        raise ValueError("recommended_next_step must match action_status")
+    for field_name in (
+        "candidate_count",
+        "ready_count",
+        "watch_count",
+        "blocked_count",
+    ):
+        _require_nonnegative_int(field_name, getattr(row, field_name))
+    _require_nonnegative_decimal("total_ready_notional", row.total_ready_notional)
+    _normalize_reason_code_counts_json(
+        "reason_code_counts_json",
+        row.reason_code_counts_json,
+    )
+    _require_hard_flags("DB row", row)
 
 
 def _validate_report_tree(
@@ -203,9 +298,11 @@ def _validate_unique_reason_code_counts(
 def _validate_row_matches_payload(
     row: PaperActionGatedStrategyRecommendationQueueDbRow,
     expected: PaperActionGatedStrategyRecommendationQueueDbRow,
+    payload_json: dict[str, Any] | None = None,
 ) -> None:
+    if payload_json is None:
+        payload_json = row.payload_json
     for field_name in (
-        "report_sha256",
         "generated_at",
         "config_version",
         "source_config_version",
@@ -215,7 +312,6 @@ def _validate_row_matches_payload(
         "ready_count",
         "watch_count",
         "blocked_count",
-        "total_ready_notional",
         "reason_code_counts_json",
         "paper_only",
         "report_only",
@@ -226,13 +322,21 @@ def _validate_row_matches_payload(
             _json_ready(getattr(expected, field_name)),
         ):
             raise ValueError(f"{field_name} must match payload_json")
+    _require_materialized_decimal_match(
+        "total_ready_notional",
+        row.total_ready_notional,
+        payload_json.get("total_ready_notional", _MISSING),
+    )
 
 
 def _validate_payload_json_contract(
     row: PaperActionGatedStrategyRecommendationQueueDbRow,
+    payload_json: dict[str, Any] | None = None,
 ) -> None:
-    _validate_json_hard_flags(row.payload_json, "payload_json")
-    if row.report_sha256 != _report_sha256(row.payload_json):
+    if payload_json is None:
+        payload_json = row.payload_json
+    _validate_json_hard_flags(payload_json, "payload_json")
+    if row.report_sha256 != _report_sha256(payload_json):
         raise ValueError("report_sha256 must match payload_json")
     for field_name in (
         "generated_at",
@@ -244,25 +348,29 @@ def _validate_payload_json_contract(
         "ready_count",
         "watch_count",
         "blocked_count",
-        "total_ready_notional",
         "paper_only",
         "report_only",
         "readonly",
     ):
-        _validate_payload_field_matches_row(row, field_name)
+        _validate_payload_field_matches_row(row, field_name, payload_json)
+    _require_materialized_decimal_match(
+        "total_ready_notional",
+        row.total_ready_notional,
+        payload_json.get("total_ready_notional", _MISSING),
+    )
     if not _json_values_match(
         _normalize_payload_reason_code_counts(
             "payload_json reason_code_counts",
-            row.payload_json.get("reason_code_counts"),
+            payload_json.get("reason_code_counts"),
         ),
         row.reason_code_counts_json,
     ):
         raise ValueError("reason_code_counts_json must match payload_json")
 
 
-def _validate_payload_recovers_to_canonical_report(
+def _validate_payload_recovers_to_compatible_report(
     payload_json: dict[str, Any],
-) -> None:
+) -> PaperActionGatedStrategyRecommendationQueueReport:
     try:
         report = from_jsonable(
             PaperActionGatedStrategyRecommendationQueueReport,
@@ -278,18 +386,54 @@ def _validate_payload_recovers_to_canonical_report(
             "PaperActionGatedStrategyRecommendationQueueReport",
         )
     _validate_report_tree(report)
-    if payload_json != _json_ready(asdict(report)):
-        raise ValueError("payload_json must match canonical recovered report payload")
+    _validate_payload_compatible_with_canonical_payload(
+        payload_json,
+        _canonical_report_payload(report),
+    )
+    return report
+
+
+def _validate_payload_recovers_to_canonical_report(
+    payload_json: dict[str, Any],
+) -> None:
+    _validate_payload_recovers_to_compatible_report(payload_json)
+
+
+def _canonical_report_payload(
+    report: PaperActionGatedStrategyRecommendationQueueReport,
+) -> dict[str, Any]:
+    payload = _json_ready(asdict(report))
+    if not isinstance(payload, dict):
+        raise ValueError("payload_json must recover a JSON object")
+    return payload
 
 
 def _validate_payload_field_matches_row(
     row: PaperActionGatedStrategyRecommendationQueueDbRow,
     field_name: str,
+    payload_json: dict[str, Any] | None = None,
 ) -> None:
+    if payload_json is None:
+        payload_json = row.payload_json
     if not _json_values_match(
-        row.payload_json.get(field_name),
+        payload_json.get(field_name),
         _json_ready(getattr(row, field_name)),
     ):
+        raise ValueError(f"{field_name} must match payload_json")
+
+
+def _require_materialized_decimal_match(
+    field_name: str,
+    row_value: Decimal,
+    payload_value: object,
+) -> None:
+    if type(payload_value) is not str:
+        raise ValueError(f"{field_name} must match payload_json")
+    try:
+        payload_decimal = Decimal(payload_value)
+    except InvalidOperation as exc:
+        raise ValueError(f"{field_name} must match payload_json") from exc
+    if not payload_decimal.is_finite() or payload_decimal != row_value:
         raise ValueError(f"{field_name} must match payload_json")
 
 
@@ -308,6 +452,89 @@ def _json_values_match(left: object, right: object) -> bool:
             for left_item, right_item in zip(left, right, strict=True)
         )
     return left == right
+
+
+def _validate_payload_compatible_with_canonical_payload(
+    payload_json: dict[str, Any],
+    expected_payload_json: dict[str, Any],
+) -> None:
+    try:
+        _validate_json_compatible((), payload_json, expected_payload_json)
+    except ValueError as exc:
+        raise ValueError(
+            "payload_json must match canonical action-gated queue report: "
+            f"{exc}",
+        ) from exc
+
+
+def _validate_json_compatible(
+    path: tuple[str, ...],
+    actual: object,
+    expected: object,
+) -> None:
+    if _is_decimal_payload_path(path):
+        _validate_compatible_decimal_path(".".join(path), actual, expected)
+        return
+    if type(actual) is not type(expected):
+        raise ValueError(f"{'.'.join(path) or 'payload_json'} has wrong JSON type")
+    if isinstance(actual, dict):
+        if actual.keys() != expected.keys():  # type: ignore[union-attr]
+            raise ValueError(f"{'.'.join(path) or 'payload_json'} keys differ")
+        for key in actual:
+            _validate_json_compatible(
+                (*path, key),
+                actual[key],
+                expected[key],  # type: ignore[index]
+            )
+        return
+    if isinstance(actual, list):
+        if len(actual) != len(expected):  # type: ignore[arg-type]
+            raise ValueError(f"{'.'.join(path) or 'payload_json'} length differs")
+        for index, item in enumerate(actual):
+            _validate_json_compatible(
+                (*path, str(index)),
+                item,
+                expected[index],  # type: ignore[index]
+            )
+        return
+    if actual != expected:
+        raise ValueError(f"{'.'.join(path) or 'payload_json'} differs")
+
+
+def _is_decimal_payload_path(path: tuple[str, ...]) -> bool:
+    for pattern in _DECIMAL_PAYLOAD_PATTERNS:
+        if len(path) != len(pattern):
+            continue
+        if all(
+            pattern_part == "*" or pattern_part == path_part
+            for pattern_part, path_part in zip(pattern, path, strict=True)
+        ):
+            return True
+    return False
+
+
+def _validate_compatible_decimal_path(
+    field_name: str,
+    actual: object,
+    expected: object,
+) -> None:
+    if actual is None or expected is None:
+        if actual is not expected:
+            raise ValueError(f"{field_name} differs")
+        return
+    if type(actual) is not str or type(expected) is not str:
+        raise ValueError(f"{field_name} has wrong JSON type")
+    try:
+        actual_decimal = Decimal(actual)
+        expected_decimal = Decimal(expected)
+    except InvalidOperation as exc:
+        raise ValueError(f"{field_name} is not a Decimal string") from exc
+    if (
+        not actual_decimal.is_finite()
+        or not expected_decimal.is_finite()
+        or actual_decimal != expected_decimal
+    ):
+        raise ValueError(f"{field_name} differs")
 
 
 def _normalize_payload_reason_code_counts(
@@ -351,9 +578,7 @@ def _json_ready(value: Any) -> Any:
     if is_dataclass(value) and not isinstance(value, type):
         return _json_ready(asdict(value))
     if isinstance(value, Decimal):
-        if not value.is_finite():
-            raise ValueError("JSON Decimal value must be finite")
-        return str(value)
+        return _decimal_to_json(value)
     if isinstance(value, datetime):
         return _as_utc("datetime", value).isoformat()
     if isinstance(value, float):
@@ -374,10 +599,49 @@ def _normalize_json_object(field_name: str, value: object) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError(f"{field_name} must be a JSON object")
     try:
-        _reject_json_floats(value)
+        normalized = _copy_json_payload(value)
     except ValueError as exc:
-        raise ValueError(f"{field_name} must not contain floats") from exc
-    return {key: _json_ready(item) for key, item in value.items()}
+        raise ValueError(f"{field_name} {exc}") from exc
+    if not isinstance(normalized, dict):
+        raise ValueError(f"{field_name} must be a JSON object")
+    return normalized
+
+
+def _decimal_to_json(value: Decimal) -> str:
+    if not value.is_finite():
+        raise ValueError("JSON Decimal value must be finite")
+    with localcontext() as context:
+        context.prec = max(
+            28,
+            len(value.as_tuple().digits) + abs(value.as_tuple().exponent) + 6,
+        )
+        quantized = value.quantize(_DECIMAL_QUANTUM)
+    if value != quantized:
+        raise ValueError("JSON Decimal value must be quantized to six decimal places")
+    return format(quantized, "f")
+
+
+def _copy_json_payload(value: Any) -> Any:
+    if value is None:
+        return None
+    if isinstance(value, Decimal):
+        raise ValueError("JSON value must not contain Decimal")
+    if isinstance(value, float):
+        raise ValueError("JSON value must not be a float")
+    if isinstance(value, datetime):
+        raise ValueError("JSON value must not contain datetime")
+    if type(value) in (str, int, bool):
+        return value
+    if isinstance(value, dict):
+        copied: dict[str, Any] = {}
+        for key, item in value.items():
+            if type(key) is not str:
+                raise ValueError("JSON object keys must be strings")
+            copied[key] = _copy_json_payload(item)
+        return copied
+    if isinstance(value, list):
+        return [_copy_json_payload(item) for item in value]
+    raise ValueError("JSON value must be a dict, list, string, int, bool, or null")
 
 
 def _normalize_reason_code_counts_json(
@@ -406,17 +670,6 @@ def _validate_json_hard_flags(value: Any, field_name: str) -> None:
         elif isinstance(item, list):
             for index, element in enumerate(item):
                 _validate_json_hard_flags(element, f"{child_name} {index}")
-
-
-def _reject_json_floats(value: Any) -> None:
-    if isinstance(value, float):
-        raise ValueError("JSON value must not be a float")
-    if isinstance(value, dict):
-        for item in value.values():
-            _reject_json_floats(item)
-    elif isinstance(value, list):
-        for item in value:
-            _reject_json_floats(item)
 
 
 def _as_utc(field_name: str, value: object) -> datetime:
