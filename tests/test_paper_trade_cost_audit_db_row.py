@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import FrozenInstanceError, replace
 from datetime import UTC, datetime, timezone, timedelta
 from decimal import Decimal
@@ -76,6 +77,28 @@ def _empty_report() -> PaperTradeCostAuditReport:
         partial_fill_count=0,
         negative_cost_adjusted_edge_count=0,
         largest_single_trade_cost_drag=None,
+    )
+
+
+def _equivalent_exponent_report() -> PaperTradeCostAuditReport:
+    return replace(
+        _report(),
+        fill_rate=d("0.8000000"),
+        mean_theoretical_edge=d("0.0600000"),
+        mean_cost_adjusted_edge=d("0.0300000"),
+        mean_edge_cost_drag=d("0.0300000"),
+        total_edge_cost_drag=d("6.6000000"),
+        mean_research_slippage=d("0.0046670"),
+        mean_fill_slippage=d("0.0090000"),
+        largest_single_trade_cost_drag=d("3.0000000"),
+    )
+
+
+def _signed_zero_empty_report() -> PaperTradeCostAuditReport:
+    return replace(
+        _empty_report(),
+        total_filled_size=d("-0"),
+        total_requested_size=d("-0"),
     )
 
 
@@ -213,6 +236,36 @@ def test_db_row_hash_uses_full_canonical_payload_and_is_deterministic() -> None:
     assert first.total_edge_cost_drag == different.total_edge_cost_drag
 
 
+def test_db_row_canonicalizes_equivalent_quantized_decimal_exponents_on_write() -> None:
+    first = paper_trade_cost_audit_report_to_db_row(_report())
+    second = paper_trade_cost_audit_report_to_db_row(_equivalent_exponent_report())
+
+    assert second.payload_json["fill_rate"] == "0.800000"
+    assert second.payload_json["mean_theoretical_edge"] == "0.060000"
+    assert second.payload_json["mean_cost_adjusted_edge"] == "0.030000"
+    assert second.payload_json["mean_edge_cost_drag"] == "0.030000"
+    assert second.payload_json["total_edge_cost_drag"] == "6.600000"
+    assert second.payload_json["mean_research_slippage"] == "0.004667"
+    assert second.payload_json["mean_fill_slippage"] == "0.009000"
+    assert second.payload_json["largest_single_trade_cost_drag"] == "3.000000"
+    assert second.payload_json == first.payload_json
+    assert second.report_sha256 == first.report_sha256
+
+
+def test_db_row_canonicalizes_signed_zero_size_decimals_on_write() -> None:
+    row = paper_trade_cost_audit_report_to_db_row(_signed_zero_empty_report())
+
+    assert row.payload_json["total_filled_size"] == "0"
+    assert row.payload_json["total_requested_size"] == "0"
+
+
+def test_db_row_rejects_overprecision_quantized_new_write_without_rounding() -> None:
+    report = replace(_report(), mean_theoretical_edge=d("0.0600004"))
+
+    with pytest.raises(ValueError, match="canonical|six decimal places|payload_json"):
+        paper_trade_cost_audit_report_to_db_row(report)
+
+
 def test_db_row_is_frozen() -> None:
     row = paper_trade_cost_audit_report_to_db_row(_empty_report())
 
@@ -320,15 +373,143 @@ def test_db_row_readback_rejects_object_new_bypass_mismatch() -> None:
         ("largest_single_trade_cost_drag", d("3.0000000")),
     ),
 )
-def test_db_row_from_db_row_rejects_bypassed_noncanonical_materialized_decimal(
+def test_db_row_from_db_row_accepts_equivalent_materialized_decimal_exponents(
     field_name: str,
     value: Decimal,
 ) -> None:
     row = paper_trade_cost_audit_report_to_db_row(_report())
-    malformed = _unchecked_row(row, **{field_name: value})
+    equivalent = _unchecked_row(row, **{field_name: value})
 
-    with pytest.raises(ValueError, match=field_name):
-        paper_trade_cost_audit_report_from_db_row(malformed)
+    assert paper_trade_cost_audit_report_from_db_row(equivalent) == _report()
+
+
+def test_db_row_from_db_row_accepts_self_hashed_legacy_decimal_payload_strings() -> None:
+    row = paper_trade_cost_audit_report_to_db_row(_report())
+    payload = deepcopy(row.payload_json)
+    payload.update(
+        {
+            "total_filled_size": "240.000000",
+            "total_requested_size": "300.0",
+            "fill_rate": "0.8000000",
+            "mean_theoretical_edge": "0.06",
+            "mean_cost_adjusted_edge": "0.0300000",
+            "mean_edge_cost_drag": "0.03",
+            "total_edge_cost_drag": "6.6000000",
+            "mean_research_slippage": "0.0046670",
+            "mean_fill_slippage": "0.009",
+            "largest_single_trade_cost_drag": "3",
+        },
+    )
+
+    legacy_row = PaperTradeCostAuditReportDbRow(
+        **{
+            **row.__dict__,
+            "report_sha256": _canonical_payload_sha256(payload),
+            "payload_json": payload,
+        },
+    )
+
+    assert paper_trade_cost_audit_report_from_db_row(legacy_row) == _report()
+
+
+def test_db_row_from_db_row_rejects_stale_legacy_decimal_payload_hash() -> None:
+    row = paper_trade_cost_audit_report_to_db_row(_report())
+    payload = deepcopy(row.payload_json)
+    payload["fill_rate"] = "0.8000000"
+
+    with pytest.raises(ValueError, match="report_sha256"):
+        PaperTradeCostAuditReportDbRow(**{**row.__dict__, "payload_json": payload})
+
+    with pytest.raises(ValueError, match="report_sha256"):
+        paper_trade_cost_audit_report_from_db_row(
+            _unchecked_row(row, payload_json=payload),
+        )
+
+
+def test_db_row_from_db_row_rejects_value_changing_legacy_payload() -> None:
+    row = paper_trade_cost_audit_report_to_db_row(_report())
+    payload = deepcopy(row.payload_json)
+    payload["mean_theoretical_edge"] = "0.060001"
+
+    with pytest.raises(ValueError, match="mean_theoretical_edge"):
+        PaperTradeCostAuditReportDbRow(
+            **{
+                **row.__dict__,
+                "report_sha256": _canonical_payload_sha256(payload),
+                "payload_json": payload,
+            },
+        )
+
+
+def test_db_row_rejects_raw_decimal_payload_before_normalization() -> None:
+    row = paper_trade_cost_audit_report_to_db_row(_report())
+    payload = deepcopy(row.payload_json)
+    payload["fill_rate"] = Decimal("0.800000")
+
+    with pytest.raises(ValueError, match="Decimal|JSON"):
+        PaperTradeCostAuditReportDbRow(**{**row.__dict__, "payload_json": payload})
+
+    with pytest.raises(ValueError, match="Decimal|JSON"):
+        paper_trade_cost_audit_report_from_db_row(
+            _unchecked_row(row, payload_json=payload),
+        )
+
+
+def test_db_row_rejects_raw_datetime_payload_before_normalization() -> None:
+    row = paper_trade_cost_audit_report_to_db_row(_report())
+    payload = deepcopy(row.payload_json)
+    payload["generated_at"] = GENERATED_AT
+
+    with pytest.raises(ValueError, match="datetime|JSON"):
+        PaperTradeCostAuditReportDbRow(**{**row.__dict__, "payload_json": payload})
+
+    with pytest.raises(ValueError, match="datetime|JSON"):
+        paper_trade_cost_audit_report_from_db_row(
+            _unchecked_row(row, payload_json=payload),
+        )
+
+
+def test_db_row_from_db_row_rejects_bool_int_confusion_in_bypassed_row() -> None:
+    row = paper_trade_cost_audit_report_to_db_row(_report())
+
+    with pytest.raises(ValueError, match="paper_only"):
+        paper_trade_cost_audit_report_from_db_row(_unchecked_row(row, paper_only=1))
+
+    payload = deepcopy(row.payload_json)
+    payload["trade_count"] = True
+    with pytest.raises(ValueError, match="trade_count"):
+        paper_trade_cost_audit_report_from_db_row(
+            _unchecked_row(
+                row,
+                report_sha256=_canonical_payload_sha256(payload),
+                payload_json=payload,
+            ),
+        )
+
+
+def test_db_row_from_db_row_rejects_bypassed_non_datetime_generated_at() -> None:
+    row = paper_trade_cost_audit_report_to_db_row(_report())
+
+    with pytest.raises(ValueError, match="generated_at"):
+        paper_trade_cost_audit_report_from_db_row(
+            _unchecked_row(row, generated_at="2026-06-20T00:30:00+00:00"),
+        )
+
+
+def test_db_row_from_db_row_rejects_bypassed_overprecision_payload() -> None:
+    row = paper_trade_cost_audit_report_to_db_row(_report())
+    payload = deepcopy(row.payload_json)
+    payload["mean_theoretical_edge"] = "0.0600004"
+
+    with pytest.raises(ValueError, match="mean_theoretical_edge|payload_json"):
+        paper_trade_cost_audit_report_from_db_row(
+            _unchecked_row(
+                row,
+                report_sha256=_canonical_payload_sha256(payload),
+                mean_theoretical_edge=d("0.0600004"),
+                payload_json=payload,
+            ),
+        )
 
 
 @pytest.mark.parametrize(
@@ -339,7 +520,7 @@ def test_db_row_from_db_row_rejects_bypassed_noncanonical_materialized_decimal(
             {"negative_cost_adjusted_edge_count": True},
             "negative_cost_adjusted_edge_count",
         ),
-        ({"fill_rate": "0.8000000"}, "canonical|fill_rate"),
+        ({"fill_rate": "0.8000004"}, "canonical|fill_rate"),
     ),
 )
 def test_db_row_rejects_type_loose_or_noncanonical_payload_values(
@@ -387,14 +568,14 @@ def test_db_row_rejects_nested_all_missing_hard_flags() -> None:
 
 def test_db_row_from_db_row_rejects_unchecked_raw_hash_bypass() -> None:
     row = paper_trade_cost_audit_report_to_db_row(_report())
-    payload = {**row.payload_json, "fill_rate": "0.8000000"}
+    payload = {**row.payload_json, "fill_rate": "0.800001"}
     malformed = _unchecked_row(
         row,
         report_sha256=_canonical_payload_sha256(payload),
         payload_json=payload,
     )
 
-    with pytest.raises(ValueError, match="payload_json must be canonical|report_sha256"):
+    with pytest.raises(ValueError, match="fill_rate|payload_json"):
         paper_trade_cost_audit_report_from_db_row(malformed)
 
 
