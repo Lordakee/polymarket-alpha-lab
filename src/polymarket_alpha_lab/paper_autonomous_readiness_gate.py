@@ -311,6 +311,10 @@ def _validate_readiness_report(report: PaperAutonomousReadinessGateReport) -> No
         raise ValueError("readiness_status must match source statuses")
     if report.reason_codes != _readiness_reason_codes(report.source_statuses):
         raise ValueError("reason_codes must match source statuses")
+    if report.source_config_versions != tuple(
+        (row.source_name, row.config_version) for row in report.source_statuses
+    ):
+        raise ValueError("source_config_versions must match source_statuses")
 
 
 def _normalize_source_statuses(

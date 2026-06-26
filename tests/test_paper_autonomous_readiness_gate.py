@@ -470,6 +470,21 @@ def test_readiness_gate_dataclasses_are_frozen_and_validate_hard_flags():
         replace(reason_count, readonly=False)
     with pytest.raises(ValueError, match="readiness report .*paper_only"):
         replace(report, paper_only=False)
+    with pytest.raises(ValueError, match="source_config_versions must match source_statuses"):
+        replace(
+            report,
+            source_config_versions=(
+                ("screening_decision_support_gate_db_history_health", "other-v0"),
+                (
+                    "allocation_proposal_db_history_health_trend_gate",
+                    "allocation-trend-gate-v0",
+                ),
+                (
+                    "investment_ledger_db_history_health_trend_gate",
+                    "ledger-trend-gate-v0",
+                ),
+            ),
+        )
 
 
 def test_readiness_gate_rejects_subclassed_and_wrong_source_types():
