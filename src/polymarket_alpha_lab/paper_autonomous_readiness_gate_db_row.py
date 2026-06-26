@@ -101,6 +101,8 @@ class PaperAutonomousReadinessGateDbRow:
             _normalize_json_object("payload_json", self.payload_json),
         )
         _require_hard_flags("DB row", self)
+        _validate_materialized_fields_match_payload(self)
+        _validate_json_hard_flags(self.payload_json, "payload_json")
 
 
 def paper_autonomous_readiness_gate_to_db_row(
@@ -212,6 +214,43 @@ def _validate_row_matches_payload(
 ) -> None:
     for field_name in _MATERIALIZED_FIELDS:
         if getattr(row, field_name) != getattr(expected, field_name):
+            raise ValueError(f"{field_name} must match payload_json")
+
+
+def _validate_materialized_fields_match_payload(
+    row: PaperAutonomousReadinessGateDbRow,
+) -> None:
+    payload_json = row.payload_json
+    expected_values = {
+        "report_sha256": _report_sha256(payload_json),
+        "generated_at": payload_json.get("generated_at"),
+        "config_version": payload_json.get("config_version"),
+        "readiness_status": payload_json.get("readiness_status"),
+        "recommended_next_step": payload_json.get("recommended_next_step"),
+        "source_statuses_json": payload_json.get("source_statuses"),
+        "source_config_versions_json": payload_json.get("source_config_versions"),
+        "reason_code_counts_json": payload_json.get("reason_code_counts"),
+        "reason_codes_json": payload_json.get("reason_codes"),
+        "paper_only": payload_json.get("paper_only"),
+        "report_only": payload_json.get("report_only"),
+        "readonly": payload_json.get("readonly"),
+    }
+    actual_values = {
+        "report_sha256": row.report_sha256,
+        "generated_at": row.generated_at.isoformat(),
+        "config_version": row.config_version,
+        "readiness_status": row.readiness_status,
+        "recommended_next_step": row.recommended_next_step,
+        "source_statuses_json": row.source_statuses_json,
+        "source_config_versions_json": row.source_config_versions_json,
+        "reason_code_counts_json": row.reason_code_counts_json,
+        "reason_codes_json": row.reason_codes_json,
+        "paper_only": row.paper_only,
+        "report_only": row.report_only,
+        "readonly": row.readonly,
+    }
+    for field_name in _MATERIALIZED_FIELDS:
+        if actual_values[field_name] != expected_values[field_name]:
             raise ValueError(f"{field_name} must match payload_json")
 
 

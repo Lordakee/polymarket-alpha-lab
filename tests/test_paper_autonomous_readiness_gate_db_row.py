@@ -281,29 +281,68 @@ def test_readiness_gate_db_row_rejects_corrupted_stored_payload_flags() -> None:
             *row.payload_json["source_statuses"][1:],
         ],
     }
-    malformed = codec.PaperAutonomousReadinessGateDbRow(
-        **{
-            **_row_values(row),
-            "report_sha256": _canonical_payload_sha256(payload),
-            "payload_json": payload,
-            "source_statuses_json": payload["source_statuses"],
-        },
-    )
+
+    with pytest.raises(ValueError, match="paper_only"):
+        codec.PaperAutonomousReadinessGateDbRow(
+            **{
+                **_row_values(row),
+                "report_sha256": _canonical_payload_sha256(payload),
+                "payload_json": payload,
+                "source_statuses_json": payload["source_statuses"],
+            },
+        )
+
+
+def test_readiness_gate_from_db_row_rejects_bypassed_corrupted_payload_flags() -> None:
+    codec = _codec_module()
+    row = codec.to_db_row(_report())
+    payload = {
+        **row.payload_json,
+        "source_statuses": [
+            {**row.payload_json["source_statuses"][0], "paper_only": False},
+            *row.payload_json["source_statuses"][1:],
+        ],
+    }
+    malformed = object.__new__(codec.PaperAutonomousReadinessGateDbRow)
+    for key, value in {
+        **_row_values(row),
+        "report_sha256": _canonical_payload_sha256(payload),
+        "payload_json": payload,
+        "source_statuses_json": payload["source_statuses"],
+    }.items():
+        object.__setattr__(malformed, key, value)
 
     with pytest.raises(ValueError, match="paper_only"):
         codec.from_db_row(malformed)
 
 
-def test_readiness_gate_db_row_rejects_non_materialized_payload_hash_mismatch() -> None:
+def test_readiness_gate_db_row_rejects_payload_hash_mismatch_before_read() -> None:
     codec = _codec_module()
     row = codec.to_db_row(_report())
     payload = {**row.payload_json, "paper_only": False}
-    malformed = codec.PaperAutonomousReadinessGateDbRow(
-        **{**_row_values(row), "payload_json": payload},
-    )
 
     with pytest.raises(ValueError, match="report_sha256"):
-        codec.from_db_row(malformed)
+        codec.PaperAutonomousReadinessGateDbRow(
+            **{**_row_values(row), "payload_json": payload},
+        )
+
+
+@pytest.mark.parametrize("flag_name", ("paper_only", "report_only", "readonly"))
+def test_readiness_gate_db_row_rejects_payload_flag_mismatches_before_read(
+    flag_name: str,
+) -> None:
+    codec = _codec_module()
+    row = codec.to_db_row(_report())
+    payload = {**row.payload_json, flag_name: False}
+
+    with pytest.raises(ValueError, match=flag_name):
+        codec.PaperAutonomousReadinessGateDbRow(
+            **{
+                **_row_values(row),
+                "report_sha256": _canonical_payload_sha256(payload),
+                "payload_json": payload,
+            },
+        )
 
 
 def test_readiness_gate_db_row_rejects_recursive_floats_in_json_payloads() -> None:
@@ -373,12 +412,11 @@ def test_readiness_gate_db_row_rejects_materialized_payload_mismatches(
 ) -> None:
     codec = _codec_module()
     row = codec.to_db_row(_report())
-    malformed = codec.PaperAutonomousReadinessGateDbRow(
-        **{**_row_values(row), **overrides},
-    )
 
     with pytest.raises(ValueError, match=message):
-        codec.from_db_row(malformed)
+        codec.PaperAutonomousReadinessGateDbRow(
+            **{**_row_values(row), **overrides},
+        )
 
 
 @pytest.mark.parametrize(
