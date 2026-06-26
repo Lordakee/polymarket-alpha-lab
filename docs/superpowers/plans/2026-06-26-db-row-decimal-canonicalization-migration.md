@@ -16,7 +16,9 @@
 - No live trading, auth, wallet/private-key/account reads, order placement/signing/submission/cancel/replace, or exchange mutation.
 - Use `Decimal` only for money/probability/cost arithmetic; do not introduce `float`.
 - Preserve existing `from_db_row` read compatibility unless a task explicitly documents a migration boundary and tests it.
-- For each task, run affected tests, full suite, opencode review with model `zhipuai-coding-plan/glm-5.2 --variant max`, CodeGraph sync, commit, push, and a handoff document.
+- Group A compatibility-reader design gate: Task 3 must be reviewed and committed before any Group A codec implementation begins. If branch policy requires remote landing, push only under the push policy below.
+- For each task, run affected tests, full suite, opencode review with model `zhipuai-coding-plan/glm-5.2 --variant max`, an explicit `codegraph sync` step, commit, and a handoff document.
+- Push policy: push only when explicitly authorized. This project thread currently has explicit user authorization to push verified nodes; without active explicit authorization, stop after the verified local commit and report the push command instead of running it.
 
 ---
 
@@ -32,6 +34,8 @@
 ### Group A: Definite Snapshot/Hash Change
 
 These files have direct tests or known payloads using non-six-place strings. They require explicit compatibility decisions before changing output:
+
+No Group A implementation may start until `docs/superpowers/plans/2026-06-26-db-row-decimal-compatibility-reader-design.md` has landed through Task 3 review and commit.
 
 - `src/polymarket_alpha_lab/paper_nav_snapshot_db_row.py`
 - `src/polymarket_alpha_lab/paper_trade_journal_db_row.py`
@@ -90,6 +94,7 @@ Create `docs/superpowers/plans/2026-06-26-db-row-decimal-canonicalization-invent
 - New writes should prefer six-place canonical Decimal strings.
 - Existing rows must remain readable unless this document marks a codec as requiring a hash migration.
 - `from_db_row` may accept legacy payload strings only when the raw `report_sha256` matches the legacy payload exactly and recovered report validation proves the payload is semantically safe.
+- The inventory matrix must contain one row for every tracked `src/polymarket_alpha_lab/*_db_row.py` file and must verify that count against `git ls-files`.
 
 ## Codec Matrix
 
@@ -108,11 +113,11 @@ Create `docs/superpowers/plans/2026-06-26-db-row-decimal-canonicalization-invent
 Run:
 
 ```bash
-python - <<'PY'
+python3 - <<'PY'
 from pathlib import Path
 
 path = Path("docs/superpowers/plans/2026-06-26-db-row-decimal-canonicalization-inventory.md")
-needles = ("T" + "BD", "TO" + "DO", "implement later", "fill in details")
+needles = ("T" + "BD", "TO" + "DO", "implement " + "later", "fill in " + "details")
 for line_no, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
     if any(needle in line for needle in needles):
         raise SystemExit(f"{path}:{line_no}: placeholder text found")
@@ -121,7 +126,42 @@ PY
 
 Expected: no matches.
 
-- [ ] **Step 3: Commit inventory only**
+- [ ] **Step 3: Verify inventory row count matches tracked DB row codecs**
+
+Run:
+
+```bash
+python3 - <<'PY'
+from pathlib import Path
+import subprocess
+
+path = Path("docs/superpowers/plans/2026-06-26-db-row-decimal-canonicalization-inventory.md")
+tracked = subprocess.check_output(
+    ["git", "ls-files", "src/polymarket_alpha_lab/*_db_row.py"],
+    text=True,
+).splitlines()
+matrix_rows = [
+    line for line in path.read_text(encoding="utf-8").splitlines()
+    if line.startswith("| `") and line.endswith("|")
+]
+if len(matrix_rows) != len(tracked):
+    raise SystemExit(f"matrix row count {len(matrix_rows)} != tracked DB row count {len(tracked)}")
+PY
+```
+
+Expected: matrix row count equals tracked DB row codec count.
+
+- [ ] **Step 4: Sync CodeGraph after inventory review**
+
+Run:
+
+```bash
+codegraph sync
+```
+
+Expected: sync completes successfully, or reports no indexed source changes for this docs-only task.
+
+- [ ] **Step 5: Commit inventory only**
 
 Run:
 
@@ -143,9 +183,9 @@ Expected: commit succeeds with only the inventory document staged.
 - Consumes: Task 1 compatibility policy.
 - Produces: one proven pattern for six-place new writes while preserving current `from_db_row` safety.
 
-- [ ] **Step 1: Write RED test for canonical new write**
+- [ ] **Step 1: Write RED tests for canonical new writes and legacy-payload read guard**
 
-Add this test to `tests/test_action_gated_strategy_recommendation_queue_history_db_row.py`:
+Add these tests to `tests/test_action_gated_strategy_recommendation_queue_history_db_row.py`:
 
 ```python
 def test_action_gated_queue_history_db_row_canonicalizes_equivalent_decimal_new_writes():
@@ -166,19 +206,52 @@ def test_action_gated_queue_history_db_row_canonicalizes_equivalent_decimal_new_
     assert first.payload_json["ready_notional_delta"] == "12.000000"
     assert first.payload_json == second.payload_json
     assert first.report_sha256 == second.report_sha256
+
+
+def test_action_gated_queue_history_db_row_from_db_row_rejects_legacy_decimal_payload():
+    row = to_db_row(
+        _history_report(),
+    )
+    legacy_payload_json = {
+        **row.payload_json,
+        "total_ready_notional": "42",
+        "ready_notional_delta": "12",
+    }
+    legacy_row = _bypassed_history_row(
+        row,
+        report_sha256=_payload_sha256(legacy_payload_json),
+        total_ready_notional=Decimal("42"),
+        ready_notional_delta=Decimal("12"),
+        payload_json=legacy_payload_json,
+    )
+
+    with pytest.raises(ValueError, match="payload_json|total_ready_notional|ready_notional_delta"):
+        from_db_row(
+            legacy_row,
+        )
 ```
 
-- [ ] **Step 2: Run RED test**
+- [ ] **Step 2: Run RED tests**
 
 Run:
 
 ```bash
-PYTHONDONTWRITEBYTECODE=1 PYTEST_ADDOPTS='-p no:cacheprovider' PYTHONPATH=src /home/ubuntu/test-sandbox/.venv/bin/python -m pytest -q tests/test_action_gated_strategy_recommendation_queue_history_db_row.py::test_action_gated_queue_history_db_row_canonicalizes_equivalent_decimal_new_writes
+PYTHONDONTWRITEBYTECODE=1 PYTEST_ADDOPTS='-p no:cacheprovider' PYTHONPATH=src /home/ubuntu/test-sandbox/.venv/bin/python -m pytest -q tests/test_action_gated_strategy_recommendation_queue_history_db_row.py::test_action_gated_queue_history_db_row_canonicalizes_equivalent_decimal_new_writes tests/test_action_gated_strategy_recommendation_queue_history_db_row.py::test_action_gated_queue_history_db_row_from_db_row_rejects_legacy_decimal_payload
 ```
 
-Expected: fails because current `_json_ready(Decimal("42"))` returns `"42"`.
+Expected: both tests fail because current `_json_ready(Decimal("42"))` returns `"42"` and a self-hashed legacy payload still reads successfully.
 
-- [ ] **Step 3: Implement minimal six-place new-write output**
+- [ ] **Step 3: Confirm `_DECIMAL_QUANTUM` name is free**
+
+Run:
+
+```bash
+rg -n '\b_DECIMAL_QUANTUM\b' src/polymarket_alpha_lab/action_gated_strategy_recommendation_queue_history_db_row.py tests/test_action_gated_strategy_recommendation_queue_history_db_row.py
+```
+
+Expected: no matches.
+
+- [ ] **Step 4: Implement minimal six-place new-write output and legacy read guard**
 
 In `src/polymarket_alpha_lab/action_gated_strategy_recommendation_queue_history_db_row.py`, add:
 
@@ -195,7 +268,7 @@ Then change the Decimal branch in `_json_ready` to:
         return format(value.quantize(_DECIMAL_QUANTUM), "f")
 ```
 
-- [ ] **Step 4: Run GREEN tests**
+- [ ] **Step 5: Run GREEN tests**
 
 Run:
 
@@ -205,7 +278,7 @@ PYTHONDONTWRITEBYTECODE=1 PYTEST_ADDOPTS='-p no:cacheprovider' PYTHONPATH=src /h
 
 Expected: all tests in that file pass.
 
-- [ ] **Step 5: Run affected and full tests**
+- [ ] **Step 6: Run affected and full tests**
 
 Run:
 
@@ -216,7 +289,7 @@ PYTHONDONTWRITEBYTECODE=1 PYTEST_ADDOPTS='-p no:cacheprovider' PYTHONPATH=src /h
 
 Expected: both commands pass.
 
-- [ ] **Step 6: Review, commit, push, handoff**
+- [ ] **Step 7: Review with opencode**
 
 Run opencode read-only review with:
 
@@ -224,16 +297,40 @@ Run opencode read-only review with:
 opencode run --format json --model zhipuai-coding-plan/glm-5.2 --variant max --dir /home/ubuntu/polymarket-alpha-lab "<read-only Decimal canonicalization review prompt>"
 ```
 
-Then:
+Expected: approved or returns blockers that are resolved before commit.
+
+- [ ] **Step 8: Sync CodeGraph**
+
+Run:
 
 ```bash
 codegraph sync
+```
+
+Expected: CodeGraph refresh completes and includes the changed codec/test symbols.
+
+- [ ] **Step 9: Commit verified node**
+
+Run:
+
+```bash
 git add src/polymarket_alpha_lab/action_gated_strategy_recommendation_queue_history_db_row.py tests/test_action_gated_strategy_recommendation_queue_history_db_row.py
 git commit -m "fix: canonicalize action-gated history Decimal payloads"
+```
+
+Expected: commit succeeds with only the selected codec and matching test staged.
+
+- [ ] **Step 10: Push only when explicitly authorized and write handoff**
+
+Because this project thread currently has explicit user authorization to push verified nodes, run the push only after the RED/GREEN tests, affected/full tests, opencode review, CodeGraph sync, and commit have all succeeded:
+
+```bash
 git push origin main
 ```
 
-Expected: remote `origin/main` matches local HEAD.
+If active explicit authorization is absent in a future execution thread, do not run the push; record the verified local commit hash and the exact push command in the handoff note instead.
+
+Expected when pushed: remote `origin/main` matches local HEAD.
 
 ### Task 3: Decide Group A Compatibility Reader Design
 
@@ -263,8 +360,8 @@ Use dual canonicality:
 ## Non-Goals
 
 - No live migration SQL in this task.
-- No changing order placement or trading behavior.
-- No new persistence backend.
+- No live trading, auth, wallet/private-key/account reads, order placement/signing/submission/cancel/replace, or exchange mutation.
+- No SQLite, file DB, hosted/generic DB abstraction, SQLAlchemy, Redis, Mongo, or non-local Supabase/Postgres persistence.
 
 ## First Group A Candidate
 
@@ -285,14 +382,35 @@ opencode run --format json --model zhipuai-coding-plan/glm-5.2 --variant max --d
 
 Expected: approved or actionable blockers.
 
-- [ ] **Step 3: Commit design**
+- [ ] **Step 3: Sync CodeGraph after design review**
+
+Run:
+
+```bash
+codegraph sync
+```
+
+Expected: sync completes successfully, or reports no indexed source changes for this docs-only task.
+
+- [ ] **Step 4: Commit design**
 
 Run:
 
 ```bash
 git add docs/superpowers/plans/2026-06-26-db-row-decimal-compatibility-reader-design.md
 git commit -m "docs: design DB row Decimal compatibility reader"
+```
+
+Expected: commit succeeds with only the design document staged.
+
+- [ ] **Step 5: Push design only when explicitly authorized**
+
+Because this project thread currently has explicit user authorization to push verified nodes, run:
+
+```bash
 git push origin main
 ```
 
-Expected: commit and push succeed.
+If active explicit authorization is absent in a future execution thread, do not run the push; record the verified local commit hash and the exact push command in the handoff note instead.
+
+Expected when pushed: remote `origin/main` matches local HEAD.
