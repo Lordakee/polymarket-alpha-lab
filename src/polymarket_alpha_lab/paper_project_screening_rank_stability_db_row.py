@@ -109,6 +109,7 @@ class PaperProjectScreeningRankStabilityDbRow:
             _normalize_json_object("payload_json", self.payload_json),
         )
         _require_hard_flags("DB row", self)
+        _validate_constructor_payload_consistency(self)
 
 
 def paper_project_screening_rank_stability_to_db_row(
@@ -239,6 +240,18 @@ def _validate_row_matches_payload(
             raise ValueError(f"{field_name} must match payload_json")
 
 
+def _validate_constructor_payload_consistency(
+    row: PaperProjectScreeningRankStabilityDbRow,
+) -> None:
+    _validate_json_hard_flags(row.payload_json, "payload_json")
+    for flag_name in ("paper_only", "report_only", "readonly"):
+        _require_payload_value(row.payload_json, flag_name, getattr(row, flag_name))
+    if row.report_sha256 != _report_sha256(row.payload_json):
+        raise ValueError("report_sha256 must match payload_json")
+    _require_payload_value(row.payload_json, "rows", row.rows_json, row_field_name="rows_json")
+    _validate_row_scalars_match_payload(row)
+
+
 def _validate_row_scalars_match_payload(
     row: PaperProjectScreeningRankStabilityDbRow,
 ) -> None:
@@ -260,10 +273,27 @@ def _validate_row_scalars_match_payload(
         "latest_generated_at",
         "top_stable_market_slug",
     ):
-        if row.payload_json.get(field_name) != _json_ready(getattr(row, field_name)):
-            raise ValueError(f"{field_name} must match payload_json")
-    if row.payload_json.get("reason_codes") != row.reason_codes_json:
-        raise ValueError("reason_codes_json must match payload_json")
+        _require_payload_value(row.payload_json, field_name, getattr(row, field_name))
+    _require_payload_value(
+        row.payload_json,
+        "reason_codes",
+        row.reason_codes_json,
+        row_field_name="reason_codes_json",
+    )
+
+
+def _require_payload_value(
+    payload_json: dict[str, Any],
+    payload_field_name: str,
+    value: Any,
+    *,
+    row_field_name: str | None = None,
+) -> None:
+    field_name = row_field_name or payload_field_name
+    if payload_field_name not in payload_json:
+        raise ValueError(f"{field_name} must match payload_json")
+    if payload_json[payload_field_name] != _json_ready(value):
+        raise ValueError(f"{field_name} must match payload_json")
 
 
 def _report_sha256(payload_json: dict[str, Any]) -> str:

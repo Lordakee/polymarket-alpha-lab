@@ -34,6 +34,7 @@ FORECAST_EVIDENCE_STATUSES = (
     "paper_review_ready",
 )
 _SHA256_PATTERN = re.compile(r"^[a-f0-9]{64}$")
+_MISSING = object()
 
 
 @dataclass(frozen=True)
@@ -69,6 +70,7 @@ class OutcomeTrackingReportDbRow:
             "payload_json",
             _normalize_json_object("payload_json", self.payload_json),
         )
+        _validate_json_hard_flags(self.payload_json, "payload_json")
         if self.paper_only is not True:
             raise ValueError("paper_only must be True")
         if self.resolved_count + self.pending_count != self.total_markets_checked:
@@ -77,6 +79,7 @@ class OutcomeTrackingReportDbRow:
             )
         if self.observation_count != self.resolved_count:
             raise ValueError("observation_count must equal resolved_count")
+        _validate_materialized_fields_match_payload(self)
 
 
 def outcome_tracking_report_to_db_row(
@@ -166,6 +169,48 @@ def _validate_row_matches_payload(
         "paper_only",
     ):
         if getattr(row, field_name) != getattr(expected, field_name):
+            raise ValueError(f"{field_name} must match payload_json")
+
+
+def _validate_materialized_fields_match_payload(
+    row: OutcomeTrackingReportDbRow,
+) -> None:
+    payload_json = row.payload_json
+    forecast_evidence_report = payload_json.get("forecast_evidence_report", _MISSING)
+    expected_forecast_evidence_status = _MISSING
+    if forecast_evidence_report is None:
+        expected_forecast_evidence_status = None
+    elif isinstance(forecast_evidence_report, dict):
+        expected_forecast_evidence_status = forecast_evidence_report.get(
+            "status",
+            _MISSING,
+        )
+    expected_values = {
+        "report_sha256": _report_sha256(payload_json),
+        "generated_at": payload_json.get("generated_at", _MISSING),
+        "config_version": payload_json.get("config_version", _MISSING),
+        "total_markets_checked": payload_json.get("total_markets_checked", _MISSING),
+        "resolved_count": payload_json.get("resolved_count", _MISSING),
+        "pending_count": payload_json.get("pending_count", _MISSING),
+        "observation_count": len(payload_json.get("observations", ()))
+        if isinstance(payload_json.get("observations", _MISSING), list)
+        else _MISSING,
+        "forecast_evidence_status": expected_forecast_evidence_status,
+        "paper_only": payload_json.get("paper_only", _MISSING),
+    }
+    actual_values = {
+        "report_sha256": row.report_sha256,
+        "generated_at": row.generated_at.isoformat(),
+        "config_version": row.config_version,
+        "total_markets_checked": row.total_markets_checked,
+        "resolved_count": row.resolved_count,
+        "pending_count": row.pending_count,
+        "observation_count": row.observation_count,
+        "forecast_evidence_status": row.forecast_evidence_status,
+        "paper_only": row.paper_only,
+    }
+    for field_name, actual_value in actual_values.items():
+        if actual_value != expected_values[field_name]:
             raise ValueError(f"{field_name} must match payload_json")
 
 

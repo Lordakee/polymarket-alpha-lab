@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -122,6 +122,13 @@ def _empty_report() -> PaperResearchPacketQualityReport:
 
 def _row_values(row: object) -> dict[str, object]:
     return dict(row.__dict__)
+
+
+def _bypassed_row(row: object, **overrides: object) -> object:
+    malformed = object.__new__(type(row))
+    for field_name, value in {**_row_values(row), **overrides}.items():
+        object.__setattr__(malformed, field_name, value)
+    return malformed
 
 
 def _assert_no_floats(value: object) -> None:
@@ -329,21 +336,37 @@ def test_quality_db_row_rejects_false_nested_report_flags_before_write() -> None
 def test_quality_db_row_rejects_corrupted_nested_payload_flags() -> None:
     codec = _codec_module()
     row = codec.to_db_row(_report())
-    malformed = codec.PaperResearchPacketQualityDbRow(
-        **{
-            **_row_values(row),
-            "payload_json": {
-                **row.payload_json,
-                "check_rows": [
-                    {**row.payload_json["check_rows"][0], "readonly": False},
-                    *row.payload_json["check_rows"][1:],
-                ],
-            },
-        },
-    )
 
     with pytest.raises(ValueError, match="readonly"):
-        codec.from_db_row(malformed)
+        codec.PaperResearchPacketQualityDbRow(
+            **{
+                **_row_values(row),
+                "payload_json": {
+                    **row.payload_json,
+                    "check_rows": [
+                        {**row.payload_json["check_rows"][0], "readonly": False},
+                        *row.payload_json["check_rows"][1:],
+                    ],
+                },
+            },
+        )
+
+
+def test_quality_db_row_rejects_missing_payload_hard_flags() -> None:
+    codec = _codec_module()
+    row = codec.to_db_row(_report())
+
+    with pytest.raises(ValueError, match="paper_only"):
+        codec.PaperResearchPacketQualityDbRow(
+            **{
+                **_row_values(row),
+                "payload_json": {
+                    key: value
+                    for key, value in row.payload_json.items()
+                    if key not in {"paper_only", "report_only", "readonly"}
+                },
+            },
+        )
 
 
 def test_quality_db_row_rejects_missing_selected_check_row_hard_flags() -> None:
@@ -407,11 +430,45 @@ def test_quality_db_row_rejects_payload_mismatches(
 ) -> None:
     codec = _codec_module()
     row = codec.to_db_row(_report())
-    malformed = codec.PaperResearchPacketQualityDbRow(
-        **{**_row_values(row), **overrides},
-    )
 
     with pytest.raises(ValueError, match=message):
+        codec.PaperResearchPacketQualityDbRow(
+            **{**_row_values(row), **overrides},
+        )
+
+
+def test_quality_db_row_rejects_replacement_payload_mismatches() -> None:
+    codec = _codec_module()
+    row = codec.to_db_row(_report())
+
+    with pytest.raises(ValueError, match="quality_status"):
+        replace(row, quality_status="watch")
+
+
+def test_quality_from_db_row_rejects_object_new_bypassed_mismatches() -> None:
+    codec = _codec_module()
+    row = codec.to_db_row(_report())
+    malformed = _bypassed_row(row, report_sha256="b" * 64)
+
+    with pytest.raises(ValueError, match="report_sha256"):
+        codec.from_db_row(malformed)
+
+
+def test_quality_from_db_row_rejects_object_new_bypassed_payload_flags() -> None:
+    codec = _codec_module()
+    row = codec.to_db_row(_report())
+    malformed = _bypassed_row(
+        row,
+        payload_json={
+            **row.payload_json,
+            "check_rows": [
+                {**row.payload_json["check_rows"][0], "readonly": False},
+                *row.payload_json["check_rows"][1:],
+            ],
+        },
+    )
+
+    with pytest.raises(ValueError, match="readonly"):
         codec.from_db_row(malformed)
 
 

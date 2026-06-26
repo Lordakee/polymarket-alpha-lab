@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -114,6 +114,13 @@ def _empty_report() -> PaperResearchPacketReport:
 
 def _row_values(row: object) -> dict[str, object]:
     return dict(row.__dict__)
+
+
+def _bypassed_row(row: object, **overrides: object) -> object:
+    malformed = object.__new__(type(row))
+    for field_name, value in {**_row_values(row), **overrides}.items():
+        object.__setattr__(malformed, field_name, value)
+    return malformed
 
 
 def _assert_no_floats(value: object) -> None:
@@ -286,42 +293,63 @@ def test_research_packet_db_row_rejects_false_report_flags_before_write(
 def test_research_packet_db_row_rejects_corrupted_nested_payload_flags() -> None:
     codec = _codec_module()
     row = codec.to_db_row(_report())
-    malformed = codec.PaperResearchPacketDbRow(
-        **{
-            **_row_values(row),
-            "payload_json": {
-                **row.payload_json,
-                "packet_rows": [
-                    {
-                        **row.payload_json["packet_rows"][0],
-                        "readonly": False,
-                    },
-                    *row.payload_json["packet_rows"][1:],
-                ],
-            },
-        },
-    )
 
     with pytest.raises(ValueError, match="readonly"):
-        codec.from_db_row(malformed)
+        codec.PaperResearchPacketDbRow(
+            **{
+                **_row_values(row),
+                "payload_json": {
+                    **row.payload_json,
+                    "packet_rows": [
+                        {
+                            **row.payload_json["packet_rows"][0],
+                            "readonly": False,
+                        },
+                        *row.payload_json["packet_rows"][1:],
+                    ],
+                },
+            },
+        )
 
 
 def test_research_packet_db_row_rejects_missing_payload_hard_flags() -> None:
     codec = _codec_module()
     row = codec.to_db_row(_report())
-    malformed = codec.PaperResearchPacketDbRow(
-        **{
-            **_row_values(row),
-            "payload_json": {
-                key: value
-                for key, value in row.payload_json.items()
-                if key not in {"paper_only", "report_only", "readonly"}
-            },
-        },
-    )
 
     with pytest.raises(ValueError, match="paper_only"):
-        codec.from_db_row(malformed)
+        codec.PaperResearchPacketDbRow(
+            **{
+                **_row_values(row),
+                "payload_json": {
+                    key: value
+                    for key, value in row.payload_json.items()
+                    if key not in {"paper_only", "report_only", "readonly"}
+                },
+            },
+        )
+
+
+def test_research_packet_db_row_rejects_missing_payload_packet_row_hard_flags() -> None:
+    codec = _codec_module()
+    row = codec.to_db_row(_report())
+
+    with pytest.raises(ValueError, match="paper_only"):
+        codec.PaperResearchPacketDbRow(
+            **{
+                **_row_values(row),
+                "payload_json": {
+                    **row.payload_json,
+                    "packet_rows": [
+                        {
+                            key: value
+                            for key, value in row.payload_json["packet_rows"][0].items()
+                            if key not in {"paper_only", "report_only", "readonly"}
+                        },
+                        *row.payload_json["packet_rows"][1:],
+                    ],
+                },
+            },
+        )
 
 
 def test_research_packet_db_row_rejects_missing_packet_rows_json_hard_flags() -> None:
@@ -397,11 +425,45 @@ def test_research_packet_db_row_rejects_payload_mismatches(
 ) -> None:
     codec = _codec_module()
     row = codec.to_db_row(_report())
-    malformed = codec.PaperResearchPacketDbRow(
-        **{**_row_values(row), **overrides},
-    )
 
     with pytest.raises(ValueError, match=message):
+        codec.PaperResearchPacketDbRow(
+            **{**_row_values(row), **overrides},
+        )
+
+
+def test_research_packet_db_row_rejects_replacement_payload_mismatches() -> None:
+    codec = _codec_module()
+    row = codec.to_db_row(_report())
+
+    with pytest.raises(ValueError, match="included_count"):
+        replace(row, included_count=row.included_count + 1)
+
+
+def test_research_packet_from_db_row_rejects_object_new_bypassed_mismatches() -> None:
+    codec = _codec_module()
+    row = codec.to_db_row(_report())
+    malformed = _bypassed_row(row, report_sha256="b" * 64)
+
+    with pytest.raises(ValueError, match="report_sha256"):
+        codec.from_db_row(malformed)
+
+
+def test_research_packet_from_db_row_rejects_object_new_bypassed_payload_flags() -> None:
+    codec = _codec_module()
+    row = codec.to_db_row(_report())
+    malformed = _bypassed_row(
+        row,
+        payload_json={
+            **row.payload_json,
+            "packet_rows": [
+                {**row.payload_json["packet_rows"][0], "readonly": False},
+                *row.payload_json["packet_rows"][1:],
+            ],
+        },
+    )
+
+    with pytest.raises(ValueError, match="readonly"):
         codec.from_db_row(malformed)
 
 

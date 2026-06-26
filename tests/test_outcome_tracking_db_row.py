@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import FrozenInstanceError
 from datetime import UTC, datetime
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 
@@ -85,6 +86,27 @@ def _assert_no_floats(value: object) -> None:
     elif isinstance(value, (list, tuple)):
         for item in value:
             _assert_no_floats(item)
+
+
+def test_outcome_tracking_db_row_module_is_pure_paper_only_codec() -> None:
+    source = Path(
+        "src/polymarket_alpha_lab/outcome_tracking_db_row.py",
+    ).read_text(encoding="utf-8")
+
+    for banned in (
+        "psycopg",
+        "sqlite",
+        "sqlalchemy",
+        "private_key",
+        "wallet",
+        "api_key",
+        "submit_order",
+        "cancel_order",
+        "replace_order",
+        "live_trading",
+        "exchange",
+    ):
+        assert banned not in source.lower()
 
 
 def test_outcome_tracking_db_row_serializes_summary_payload_and_round_trips():
@@ -174,42 +196,66 @@ def test_outcome_tracking_db_row_rejects_false_report_flags(flag_name: str):
 
 def test_outcome_tracking_db_row_rejects_unsafe_stored_flags():
     row = outcome_tracking_report_to_db_row(_empty_report())
-    malformed = OutcomeTrackingReportDbRow(
-        report_sha256="a" * 64,
-        generated_at=row.generated_at,
-        config_version=row.config_version,
-        total_markets_checked=row.total_markets_checked,
-        resolved_count=row.resolved_count,
-        pending_count=row.pending_count,
-        observation_count=row.observation_count,
-        forecast_evidence_status=row.forecast_evidence_status,
-        payload_json={**row.payload_json, "readonly": False},
-    )
 
     with pytest.raises(ValueError, match="readonly"):
-        outcome_tracking_report_from_db_row(malformed)
+        OutcomeTrackingReportDbRow(
+            report_sha256=row.report_sha256,
+            generated_at=row.generated_at,
+            config_version=row.config_version,
+            total_markets_checked=row.total_markets_checked,
+            resolved_count=row.resolved_count,
+            pending_count=row.pending_count,
+            observation_count=row.observation_count,
+            forecast_evidence_status=row.forecast_evidence_status,
+            payload_json={**row.payload_json, "readonly": False},
+        )
+
+
+def test_outcome_tracking_db_row_rejects_nested_payload_hard_flag_corruption():
+    row = outcome_tracking_report_to_db_row(_resolved_report())
+    forecast_evidence_report = row.payload_json["forecast_evidence_report"]
+    assert isinstance(forecast_evidence_report, dict)
+    payload_json = {
+        **row.payload_json,
+        "forecast_evidence_report": {
+            **forecast_evidence_report,
+            "readonly": False,
+        },
+    }
+
+    with pytest.raises(ValueError, match="readonly"):
+        OutcomeTrackingReportDbRow(
+            report_sha256=row.report_sha256,
+            generated_at=row.generated_at,
+            config_version=row.config_version,
+            total_markets_checked=row.total_markets_checked,
+            resolved_count=row.resolved_count,
+            pending_count=row.pending_count,
+            observation_count=row.observation_count,
+            forecast_evidence_status=row.forecast_evidence_status,
+            payload_json=payload_json,
+        )
 
 
 def test_outcome_tracking_db_row_wraps_payload_recovery_errors_as_value_error():
     row = outcome_tracking_report_to_db_row(_empty_report())
-    malformed = OutcomeTrackingReportDbRow(
-        report_sha256="a" * 64,
-        generated_at=row.generated_at,
-        config_version=row.config_version,
-        total_markets_checked=row.total_markets_checked,
-        resolved_count=row.resolved_count,
-        pending_count=row.pending_count,
-        observation_count=row.observation_count,
-        forecast_evidence_status=row.forecast_evidence_status,
-        payload_json={
-            key: value
-            for key, value in row.payload_json.items()
-            if key != "observations"
-        },
-    )
 
-    with pytest.raises(ValueError, match="payload_json"):
-        outcome_tracking_report_from_db_row(malformed)
+    with pytest.raises(ValueError, match="observation_count|payload_json"):
+        OutcomeTrackingReportDbRow(
+            report_sha256=row.report_sha256,
+            generated_at=row.generated_at,
+            config_version=row.config_version,
+            total_markets_checked=row.total_markets_checked,
+            resolved_count=row.resolved_count,
+            pending_count=row.pending_count,
+            observation_count=row.observation_count,
+            forecast_evidence_status=row.forecast_evidence_status,
+            payload_json={
+                key: value
+                for key, value in row.payload_json.items()
+                if key != "observations"
+            },
+        )
 
 
 def test_outcome_tracking_db_row_validates_row_shape_and_rejects_floats():
@@ -240,3 +286,44 @@ def test_outcome_tracking_db_row_validates_row_shape_and_rejects_floats():
             forecast_evidence_status=row.forecast_evidence_status,
             payload_json={**row.payload_json, "bad_float": 0.1},
         )
+
+
+def test_outcome_tracking_db_row_rejects_materialized_payload_mismatches():
+    row = outcome_tracking_report_to_db_row(_resolved_report())
+
+    with pytest.raises(ValueError, match="report_sha256"):
+        OutcomeTrackingReportDbRow(
+            report_sha256=row.report_sha256,
+            generated_at=row.generated_at,
+            config_version=row.config_version,
+            total_markets_checked=row.total_markets_checked,
+            resolved_count=row.resolved_count,
+            pending_count=row.pending_count,
+            observation_count=row.observation_count,
+            forecast_evidence_status=row.forecast_evidence_status,
+            payload_json={**row.payload_json, "pending_count": 1},
+        )
+
+    with pytest.raises(ValueError, match="observation_count"):
+        OutcomeTrackingReportDbRow(
+            report_sha256=row.report_sha256,
+            generated_at=row.generated_at,
+            config_version=row.config_version,
+            total_markets_checked=row.total_markets_checked,
+            resolved_count=row.resolved_count,
+            pending_count=row.pending_count,
+            observation_count=2,
+            forecast_evidence_status=row.forecast_evidence_status,
+            payload_json=row.payload_json,
+        )
+
+
+def test_outcome_tracking_from_db_row_defends_against_bypassed_mismatch():
+    row = outcome_tracking_report_to_db_row(_resolved_report())
+    malformed = object.__new__(OutcomeTrackingReportDbRow)
+    for field_name, value in row.__dict__.items():
+        object.__setattr__(malformed, field_name, value)
+    object.__setattr__(malformed, "observation_count", 2)
+
+    with pytest.raises(ValueError, match="observation_count"):
+        outcome_tracking_report_from_db_row(malformed)

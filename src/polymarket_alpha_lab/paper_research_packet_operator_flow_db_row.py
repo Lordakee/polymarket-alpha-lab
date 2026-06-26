@@ -122,6 +122,7 @@ class PaperResearchPacketOperatorFlowDbRow:
         )
         _validate_timeline(self)
         _require_hard_flags("DB row", self)
+        _validate_row_payload_consistency(self)
 
 
 def paper_research_packet_operator_flow_report_to_db_row(
@@ -171,20 +172,8 @@ def paper_research_packet_operator_flow_report_from_db_row(
         raise ValueError("row must be a PaperResearchPacketOperatorFlowDbRow")
     _reject_json_floats(row.reason_codes_json)
     _reject_json_floats(row.payload_json)
-    _validate_json_hard_flags(row.payload_json, "payload_json")
-    try:
-        report = from_jsonable(PaperResearchPacketOperatorFlowReport, row.payload_json)
-    except (KeyError, TypeError, ValueError) as exc:
-        raise ValueError(
-            f"payload_json is not a valid paper research packet operator-flow report: {exc}",
-        ) from exc
-    if type(report) is not PaperResearchPacketOperatorFlowReport:
-        raise ValueError(
-            "payload_json must recover a PaperResearchPacketOperatorFlowReport",
-        )
-    _validate_report_tree(report)
-    expected_row = paper_research_packet_operator_flow_report_to_db_row(report)
-    _validate_row_matches_payload(row, expected_row)
+    report = _report_from_payload_json(row.payload_json)
+    _validate_row_matches_payload(row, _expected_row_values_from_report(report))
     return report
 
 
@@ -222,7 +211,7 @@ def _validate_report_tree(value: Any, field_name: str = "report") -> None:
 
 def _validate_row_matches_payload(
     row: PaperResearchPacketOperatorFlowDbRow,
-    expected: PaperResearchPacketOperatorFlowDbRow,
+    expected: dict[str, Any],
 ) -> None:
     for field_name in (
         "report_sha256",
@@ -255,8 +244,81 @@ def _validate_row_matches_payload(
         "report_only",
         "readonly",
     ):
-        if getattr(row, field_name) != getattr(expected, field_name):
+        if getattr(row, field_name) != expected[field_name]:
             raise ValueError(f"{field_name} must match payload_json")
+
+
+def _validate_row_payload_consistency(row: PaperResearchPacketOperatorFlowDbRow) -> None:
+    report = _report_from_payload_json(row.payload_json)
+    _validate_row_matches_payload(row, _expected_row_values_from_report(report))
+
+
+def _report_from_payload_json(
+    payload_json: dict[str, Any],
+) -> PaperResearchPacketOperatorFlowReport:
+    _reject_json_floats(payload_json)
+    _require_json_hard_flags(payload_json, "payload_json")
+    _validate_json_hard_flags(payload_json, "payload_json")
+    try:
+        report = from_jsonable(PaperResearchPacketOperatorFlowReport, payload_json)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(
+            f"payload_json is not a valid paper research packet operator-flow report: {exc}",
+        ) from exc
+    if type(report) is not PaperResearchPacketOperatorFlowReport:
+        raise ValueError(
+            "payload_json must recover a PaperResearchPacketOperatorFlowReport",
+        )
+    _validate_report_tree(report)
+    return report
+
+
+def _expected_row_values_from_report(
+    report: PaperResearchPacketOperatorFlowReport,
+) -> dict[str, Any]:
+    payload_json = _json_ready(asdict(report))
+    if not isinstance(payload_json, dict):
+        raise ValueError("payload_json must be a JSON object")
+    return {
+        "report_sha256": _report_sha256(payload_json),
+        "generated_at": _as_utc("generated_at", report.generated_at),
+        "config_version": report.config_version,
+        "flow_status": report.flow_status,
+        "packet_generated_at": _as_utc(
+            "packet_generated_at",
+            report.packet_generated_at,
+        ),
+        "packet_config_version": report.packet_config_version,
+        "packet_persisted": report.packet_persisted,
+        "packet_row_count": report.packet_row_count,
+        "included_count": report.included_count,
+        "skipped_count": report.skipped_count,
+        "quality_generated_at": _as_utc(
+            "quality_generated_at",
+            report.quality_generated_at,
+        ),
+        "quality_config_version": report.quality_config_version,
+        "quality_status": report.quality_status,
+        "quality_persisted": report.quality_persisted,
+        "quality_check_count": report.quality_check_count,
+        "quality_pass_count": report.quality_pass_count,
+        "quality_watch_count": report.quality_watch_count,
+        "quality_blocked_count": report.quality_blocked_count,
+        "history_generated_at": _as_utc(
+            "history_generated_at",
+            report.history_generated_at,
+        ),
+        "history_config_version": report.history_config_version,
+        "history_status": report.history_status,
+        "history_source_report_count": report.history_source_report_count,
+        "history_latest_quality_status": report.history_latest_quality_status,
+        "reason_codes_json": list(report.reason_codes),
+        "reason_code_count": len(report.reason_codes),
+        "payload_json": payload_json,
+        "paper_only": report.paper_only,
+        "report_only": report.report_only,
+        "readonly": report.readonly,
+    }
 
 
 def _validate_timeline(row: PaperResearchPacketOperatorFlowDbRow) -> None:

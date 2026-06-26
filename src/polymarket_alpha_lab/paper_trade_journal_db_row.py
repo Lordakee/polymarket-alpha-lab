@@ -23,6 +23,7 @@ __all__ = (
 _SHA256_PATTERN = re.compile(r"^[a-f0-9]{64}$")
 _ORDER_SIDES = ("buy", "sell")
 _FILL_STATUSES = ("complete", "partial")
+_MISSING = object()
 
 
 @dataclass(frozen=True)
@@ -69,6 +70,7 @@ class PaperTradeJournalDbRow:
         )
         if self.paper_only is not True:
             raise ValueError("paper_only must be True")
+        _validate_materialized_fields_match_payload(self)
 
 
 def paper_trade_record_to_db_row(record: PaperTradeRecord) -> PaperTradeJournalDbRow:
@@ -125,6 +127,49 @@ def paper_trade_record_from_db_row(row: PaperTradeJournalDbRow) -> PaperTradeRec
         if getattr(row, field_name) != getattr(expected, field_name):
             raise ValueError(f"{field_name} must match payload_json")
     return record
+
+
+def _validate_materialized_fields_match_payload(row: PaperTradeJournalDbRow) -> None:
+    payload_json = row.payload_json
+    expected_values = {
+        "record_sha256": _record_sha256(payload_json),
+        "packet_id": payload_json.get("packet_id", _MISSING),
+        "decision_timestamp_utc": payload_json.get(
+            "decision_timestamp_utc",
+            _MISSING,
+        ),
+        "condition_id": payload_json.get("condition_id", _MISSING),
+        "token_id": payload_json.get("token_id", _MISSING),
+        "market_slug": payload_json.get("market_slug", _MISSING),
+        "outcome_name": payload_json.get("outcome_name", _MISSING),
+        "order_side": payload_json.get("order_side", _MISSING),
+        "fill_status": payload_json.get("fill_status", _MISSING),
+        "fill_filled_size": payload_json.get("fill_filled_size", _MISSING),
+        "fill_average_price": payload_json.get("fill_average_price", _MISSING),
+        "account_equity_before_trade": payload_json.get(
+            "account_equity_before_trade",
+            _MISSING,
+        ),
+    }
+    actual_values = {
+        "record_sha256": row.record_sha256,
+        "packet_id": row.packet_id,
+        "decision_timestamp_utc": row.decision_timestamp_utc.isoformat(),
+        "condition_id": row.condition_id,
+        "token_id": row.token_id,
+        "market_slug": row.market_slug,
+        "outcome_name": row.outcome_name,
+        "order_side": row.order_side,
+        "fill_status": row.fill_status,
+        "fill_filled_size": _json_ready(row.fill_filled_size),
+        "fill_average_price": _json_ready(row.fill_average_price),
+        "account_equity_before_trade": _json_ready(
+            row.account_equity_before_trade,
+        ),
+    }
+    for field_name, actual_value in actual_values.items():
+        if actual_value != expected_values[field_name]:
+            raise ValueError(f"{field_name} must match payload_json")
 
 
 def _record_sha256(payload_json: dict[str, Any]) -> str:

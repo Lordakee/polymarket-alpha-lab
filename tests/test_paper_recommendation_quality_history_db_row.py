@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -276,18 +276,21 @@ def test_quality_history_db_row_rejects_false_nested_report_flags_before_write()
 def test_quality_history_db_row_rejects_corrupted_payload_flags() -> None:
     codec = _codec_module()
     row = codec.to_db_row(_report())
-    malformed = codec.PaperRecommendationQualityHistoryDbRow(
-        **{
-            **_row_values(row),
-            "payload_json": {
-                **row.payload_json,
-                "nested_audit": {"paper_only": True, "report_only": True, "readonly": False},
-            },
-        },
-    )
 
     with pytest.raises(ValueError, match="readonly"):
-        codec.from_db_row(malformed)
+        codec.PaperRecommendationQualityHistoryDbRow(
+            **{
+                **_row_values(row),
+                "payload_json": {
+                    **row.payload_json,
+                    "nested_audit": {
+                        "paper_only": True,
+                        "report_only": True,
+                        "readonly": False,
+                    },
+                },
+            },
+        )
 
 
 def test_quality_history_db_row_rejects_floats_in_json_payloads() -> None:
@@ -325,11 +328,53 @@ def test_quality_history_db_row_rejects_payload_mismatches(
 ) -> None:
     codec = _codec_module()
     row = codec.to_db_row(_report())
-    malformed = codec.PaperRecommendationQualityHistoryDbRow(
-        **{**_row_values(row), **overrides},
-    )
 
     with pytest.raises(ValueError, match=message):
+        codec.PaperRecommendationQualityHistoryDbRow(
+            **{**_row_values(row), **overrides},
+        )
+
+
+def test_quality_history_db_row_rejects_replaced_payload_mismatches() -> None:
+    codec = _codec_module()
+    row = codec.to_db_row(_report())
+
+    with pytest.raises(ValueError, match="pass_summary_count"):
+        replace(row, pass_summary_count=3)
+
+
+def test_quality_history_from_db_row_rejects_bypassed_payload_mismatches() -> None:
+    codec = _codec_module()
+    row = codec.to_db_row(_report())
+    malformed = object.__new__(codec.PaperRecommendationQualityHistoryDbRow)
+    for field_name, value in {
+        **_row_values(row),
+        "pass_summary_count": 3,
+    }.items():
+        object.__setattr__(malformed, field_name, value)
+
+    with pytest.raises(ValueError, match="pass_summary_count"):
+        codec.from_db_row(malformed)
+
+
+def test_quality_history_from_db_row_rejects_bypassed_nested_payload_flags() -> None:
+    codec = _codec_module()
+    row = codec.to_db_row(_report())
+    malformed = object.__new__(codec.PaperRecommendationQualityHistoryDbRow)
+    for field_name, value in {
+        **_row_values(row),
+        "payload_json": {
+            **row.payload_json,
+            "nested_audit": {
+                "paper_only": True,
+                "report_only": True,
+                "readonly": False,
+            },
+        },
+    }.items():
+        object.__setattr__(malformed, field_name, value)
+
+    with pytest.raises(ValueError, match="readonly"):
         codec.from_db_row(malformed)
 
 

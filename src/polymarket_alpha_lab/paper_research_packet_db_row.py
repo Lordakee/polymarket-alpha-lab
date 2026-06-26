@@ -81,6 +81,7 @@ class PaperResearchPacketDbRow:
             _normalize_json_object("payload_json", self.payload_json),
         )
         _require_hard_flags("DB row", self)
+        _validate_row_payload_consistency(self)
 
 
 def paper_research_packet_to_db_row(
@@ -114,21 +115,11 @@ def paper_research_packet_from_db_row(
 ) -> PaperResearchPacketReport:
     if type(row) is not PaperResearchPacketDbRow:
         raise ValueError("row must be a PaperResearchPacketDbRow")
+    _reject_json_floats(row.packet_rows_json)
     _reject_json_floats(row.payload_json)
-    _validate_payload_json_hard_flags(row.payload_json)
     _validate_packet_rows_json_hard_flags(row.packet_rows_json)
-    _validate_json_hard_flags(row.payload_json, "payload_json")
-    try:
-        report = from_jsonable(PaperResearchPacketReport, row.payload_json)
-    except (KeyError, TypeError, ValueError) as exc:
-        raise ValueError(
-            f"payload_json is not a valid paper research packet report: {exc}",
-        ) from exc
-    if type(report) is not PaperResearchPacketReport:
-        raise ValueError("payload_json must recover a PaperResearchPacketReport")
-    _validate_report_tree(report)
-    expected_row = paper_research_packet_to_db_row(report)
-    _validate_row_matches_payload(row, expected_row)
+    report = _report_from_payload_json(row.payload_json)
+    _validate_row_matches_payload(row, _expected_row_values_from_report(report))
     return report
 
 
@@ -165,7 +156,7 @@ def _validate_report_tree(value: Any, field_name: str = "report") -> None:
 
 def _validate_row_matches_payload(
     row: PaperResearchPacketDbRow,
-    expected: PaperResearchPacketDbRow,
+    expected: dict[str, Any],
 ) -> None:
     for field_name in (
         "report_sha256",
@@ -184,8 +175,57 @@ def _validate_row_matches_payload(
         "report_only",
         "readonly",
     ):
-        if getattr(row, field_name) != getattr(expected, field_name):
+        if getattr(row, field_name) != expected[field_name]:
             raise ValueError(f"{field_name} must match payload_json")
+
+
+def _validate_row_payload_consistency(row: PaperResearchPacketDbRow) -> None:
+    report = _report_from_payload_json(row.payload_json)
+    _validate_row_matches_payload(row, _expected_row_values_from_report(report))
+
+
+def _report_from_payload_json(payload_json: dict[str, Any]) -> PaperResearchPacketReport:
+    _reject_json_floats(payload_json)
+    _validate_payload_json_hard_flags(payload_json)
+    _validate_json_hard_flags(payload_json, "payload_json")
+    try:
+        report = from_jsonable(PaperResearchPacketReport, payload_json)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(
+            f"payload_json is not a valid paper research packet report: {exc}",
+        ) from exc
+    if type(report) is not PaperResearchPacketReport:
+        raise ValueError("payload_json must recover a PaperResearchPacketReport")
+    _validate_report_tree(report)
+    return report
+
+
+def _expected_row_values_from_report(
+    report: PaperResearchPacketReport,
+) -> dict[str, Any]:
+    payload_json = _json_ready(asdict(report))
+    if not isinstance(payload_json, dict):
+        raise ValueError("payload_json must be a JSON object")
+    packet_rows_json = payload_json.get("packet_rows")
+    if not isinstance(packet_rows_json, list):
+        raise ValueError("payload_json packet_rows must be a JSON list")
+    return {
+        "report_sha256": _report_sha256(payload_json),
+        "generated_at": _as_utc("generated_at", report.generated_at),
+        "config_version": report.config_version,
+        "input_row_count": report.input_row_count,
+        "packet_row_count": report.packet_row_count,
+        "included_count": report.included_count,
+        "skipped_count": report.skipped_count,
+        "high_priority_count": report.high_priority_count,
+        "medium_priority_count": report.medium_priority_count,
+        "low_priority_count": report.low_priority_count,
+        "packet_rows_json": list(packet_rows_json),
+        "payload_json": payload_json,
+        "paper_only": report.paper_only,
+        "report_only": report.report_only,
+        "readonly": report.readonly,
+    }
 
 
 def _report_sha256(payload_json: dict[str, Any]) -> str:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -65,8 +65,57 @@ def _report() -> PaperProbabilitySelectionSummaryHistoryReport:
     )
 
 
+def _empty_report() -> PaperProbabilitySelectionSummaryHistoryReport:
+    return PaperProbabilitySelectionSummaryHistoryReport(
+        generated_at=GENERATED_AT,
+        config_version="paper-probability-selection-summary-history-v0",
+        source_report_count=0,
+        first_generated_at=None,
+        latest_generated_at=None,
+        history_span_seconds=None,
+        latest_age_seconds=None,
+        latest_queue_count=0,
+        latest_selected_count=0,
+        latest_pending_count=0,
+        latest_rejected_count=0,
+        latest_skipped_count=0,
+        aggregate_queue_count=0,
+        aggregate_selected_count=0,
+        aggregate_pending_count=0,
+        aggregate_rejected_count=0,
+        aggregate_skipped_count=0,
+        latest_selected_share=d("0.000000"),
+        average_selected_share=d("0.000000"),
+        distinct_config_versions=(),
+        reason_code_counts=(),
+        history_status="blocked",
+        recommended_next_step="collect_more_history",
+        reason_codes=(
+            "no_selection_summary_history",
+            "insufficient_selection_summary_history",
+        ),
+    )
+
+
 def _row_values(row: object) -> dict[str, object]:
     return dict(row.__dict__)
+
+
+def _bypassed_row(row: object, **overrides: object) -> object:
+    bypassed = object.__new__(type(row))
+    for field_name, value in {**_row_values(row), **overrides}.items():
+        object.__setattr__(bypassed, field_name, value)
+    return bypassed
+
+
+def _canonical_payload_sha256(payload_json: dict[str, object]) -> str:
+    encoded = json.dumps(
+        payload_json,
+        allow_nan=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def _assert_no_floats(value: object) -> None:
@@ -126,13 +175,7 @@ def test_history_db_row_serializes_payload_and_round_trips() -> None:
     _assert_no_floats(row.payload_json)
     _assert_no_floats(row.reason_codes_json)
 
-    encoded = json.dumps(
-        row.payload_json,
-        allow_nan=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
-    assert row.report_sha256 == hashlib.sha256(encoded).hexdigest()
+    assert row.report_sha256 == _canonical_payload_sha256(row.payload_json)
     assert codec.from_db_row(row) == report
     assert codec.paper_probability_selection_summary_history_report_to_db_row(report) == row
     assert codec.paper_probability_selection_summary_history_report_from_db_row(row) == report
@@ -199,18 +242,59 @@ def test_history_db_row_rejects_false_report_flags_before_write(flag_name: str) 
 def test_history_db_row_rejects_corrupted_payload_flags() -> None:
     codec = _codec_module()
     row = codec.to_db_row(_report())
-    malformed = codec.PaperProbabilitySelectionSummaryHistoryDbRow(
-        **{
-            **_row_values(row),
-            "payload_json": {
-                **row.payload_json,
-                "readonly": False,
-            },
-        },
-    )
+    payload = {
+        **row.payload_json,
+        "readonly": False,
+    }
 
     with pytest.raises(ValueError, match="readonly"):
-        codec.from_db_row(malformed)
+        codec.PaperProbabilitySelectionSummaryHistoryDbRow(
+            **{
+                **_row_values(row),
+                "report_sha256": _canonical_payload_sha256(payload),
+                "payload_json": payload,
+            },
+        )
+
+
+@pytest.mark.parametrize("flag_name", ("paper_only", "report_only", "readonly"))
+def test_history_db_row_rejects_missing_payload_flags_at_construction(
+    flag_name: str,
+) -> None:
+    codec = _codec_module()
+    row = codec.to_db_row(_report())
+    payload = {
+        key: value for key, value in row.payload_json.items() if key != flag_name
+    }
+
+    with pytest.raises(ValueError, match=flag_name):
+        codec.PaperProbabilitySelectionSummaryHistoryDbRow(
+            **{
+                **_row_values(row),
+                "report_sha256": _canonical_payload_sha256(payload),
+                "payload_json": payload,
+            },
+        )
+
+
+@pytest.mark.parametrize("field_name", ("latest_generated_at", "latest_age_seconds"))
+def test_history_db_row_rejects_missing_none_payload_fields_at_construction(
+    field_name: str,
+) -> None:
+    codec = _codec_module()
+    row = codec.to_db_row(_empty_report())
+    payload = {
+        key: value for key, value in row.payload_json.items() if key != field_name
+    }
+
+    with pytest.raises(ValueError, match=field_name):
+        codec.PaperProbabilitySelectionSummaryHistoryDbRow(
+            **{
+                **_row_values(row),
+                "report_sha256": _canonical_payload_sha256(payload),
+                "payload_json": payload,
+            },
+        )
 
 
 def test_history_db_row_rejects_floats_in_json_payloads() -> None:
@@ -247,11 +331,44 @@ def test_history_db_row_rejects_payload_mismatches(
 ) -> None:
     codec = _codec_module()
     row = codec.to_db_row(_report())
-    malformed = codec.PaperProbabilitySelectionSummaryHistoryDbRow(
-        **{**_row_values(row), **overrides},
-    )
 
     with pytest.raises(ValueError, match=message):
+        codec.PaperProbabilitySelectionSummaryHistoryDbRow(
+            **{**_row_values(row), **overrides},
+        )
+
+
+def test_history_db_row_rejects_payload_mismatch_on_replace() -> None:
+    codec = _codec_module()
+    row = codec.to_db_row(_report())
+
+    with pytest.raises(ValueError, match="latest_queue_count"):
+        replace(row, latest_queue_count=5)
+
+
+def test_history_from_db_row_rejects_constructor_bypassed_mismatch() -> None:
+    codec = _codec_module()
+    row = codec.to_db_row(_report())
+    malformed = _bypassed_row(row, latest_queue_count=5)
+
+    with pytest.raises(ValueError, match="latest_queue_count"):
+        codec.from_db_row(malformed)
+
+
+def test_history_from_db_row_rejects_constructor_bypassed_payload_flags() -> None:
+    codec = _codec_module()
+    row = codec.to_db_row(_report())
+    payload = {
+        **row.payload_json,
+        "readonly": False,
+    }
+    malformed = _bypassed_row(
+        row,
+        report_sha256=_canonical_payload_sha256(payload),
+        payload_json=payload,
+    )
+
+    with pytest.raises(ValueError, match="readonly"):
         codec.from_db_row(malformed)
 
 

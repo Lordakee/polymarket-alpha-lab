@@ -134,7 +134,9 @@ class PaperRecommendationQualityHistoryDbRow:
             "payload_json",
             _normalize_json_object("payload_json", self.payload_json),
         )
+        _validate_json_hard_flags(self.payload_json, "payload_json")
         _require_hard_flags("DB row", self)
+        _validate_row_matches_payload(self, _row_values_from_payload(self.payload_json))
 
 
 def paper_recommendation_quality_history_to_db_row(
@@ -185,19 +187,8 @@ def paper_recommendation_quality_history_from_db_row(
 ) -> PaperRecommendationQualityHistoryReport:
     if type(row) is not PaperRecommendationQualityHistoryDbRow:
         raise ValueError("row must be a PaperRecommendationQualityHistoryDbRow")
-    _reject_json_floats(row.payload_json)
-    _validate_json_hard_flags(row.payload_json, "payload_json")
-    try:
-        report = from_jsonable(PaperRecommendationQualityHistoryReport, row.payload_json)
-    except (KeyError, TypeError, ValueError) as exc:
-        raise ValueError(
-            f"payload_json is not a valid quality history report: {exc}",
-        ) from exc
-    if type(report) is not PaperRecommendationQualityHistoryReport:
-        raise ValueError("payload_json must recover a PaperRecommendationQualityHistoryReport")
-    _validate_report_tree(report)
-    expected_row = paper_recommendation_quality_history_to_db_row(report)
-    _validate_row_matches_payload(row, expected_row)
+    report = _report_from_payload_json(row.payload_json)
+    _validate_row_matches_payload(row, _row_values_from_report(report))
     return report
 
 
@@ -232,7 +223,7 @@ def _validate_report_tree(value: Any, field_name: str = "report") -> None:
 
 def _validate_row_matches_payload(
     row: PaperRecommendationQualityHistoryDbRow,
-    expected: PaperRecommendationQualityHistoryDbRow,
+    expected: dict[str, Any],
 ) -> None:
     for field_name in (
         "report_sha256",
@@ -258,8 +249,69 @@ def _validate_row_matches_payload(
         "report_only",
         "readonly",
     ):
-        if getattr(row, field_name) != getattr(expected, field_name):
+        if getattr(row, field_name) != expected[field_name]:
             raise ValueError(f"{field_name} must match payload_json")
+
+
+def _report_from_payload_json(
+    payload_json: dict[str, Any],
+) -> PaperRecommendationQualityHistoryReport:
+    _reject_json_floats(payload_json)
+    _validate_json_hard_flags(payload_json, "payload_json")
+    try:
+        report = from_jsonable(PaperRecommendationQualityHistoryReport, payload_json)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(
+            f"payload_json is not a valid quality history report: {exc}",
+        ) from exc
+    if type(report) is not PaperRecommendationQualityHistoryReport:
+        raise ValueError("payload_json must recover a PaperRecommendationQualityHistoryReport")
+    _validate_report_tree(report)
+    return report
+
+
+def _row_values_from_payload(payload_json: dict[str, Any]) -> dict[str, Any]:
+    return _row_values_from_report(_report_from_payload_json(payload_json))
+
+
+def _row_values_from_report(
+    report: PaperRecommendationQualityHistoryReport,
+) -> dict[str, Any]:
+    payload_json = _json_ready(asdict(report))
+    status_counts = {
+        row.summary_status: row.status_count
+        for row in report.summary_status_rows
+    }
+    reason_codes_json = list(payload_json["reason_codes"])
+    recurring_incomplete_subreports_json = list(
+        payload_json["recurring_incomplete_subreports"],
+    )
+    return {
+        "report_sha256": _report_sha256(payload_json),
+        "generated_at": report.generated_at,
+        "config_version": report.config_version,
+        "history_status": report.history_status,
+        "source_report_count": report.source_report_count,
+        "first_source_generated_at": report.first_source_generated_at,
+        "latest_source_generated_at": report.latest_source_generated_at,
+        "summary_status_rows_json": list(payload_json["summary_status_rows"]),
+        "pass_summary_count": status_counts["pass"],
+        "watch_summary_count": status_counts["watch"],
+        "blocked_summary_count": status_counts["blocked"],
+        "incomplete_summary_count": status_counts["incomplete"],
+        "duplicate_generated_at_count": report.duplicate_generated_at_count,
+        "recurring_blocked_reason_codes_json": list(
+            payload_json["recurring_blocked_reason_codes"],
+        ),
+        "recurring_incomplete_subreports_json": recurring_incomplete_subreports_json,
+        "recurring_incomplete_subreport_count": len(recurring_incomplete_subreports_json),
+        "reason_codes_json": reason_codes_json,
+        "reason_code_count": len(reason_codes_json),
+        "payload_json": payload_json,
+        "paper_only": report.paper_only,
+        "report_only": report.report_only,
+        "readonly": report.readonly,
+    }
 
 
 def _report_sha256(payload_json: dict[str, Any]) -> str:

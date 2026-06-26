@@ -96,6 +96,7 @@ class PaperRecommendationHealthDbRow:
             _normalize_json_object("payload_json", self.payload_json),
         )
         _require_hard_flags("DB row", self)
+        _validate_row_payload_consistency(self)
 
 
 def paper_recommendation_health_to_db_row(
@@ -132,10 +133,10 @@ def paper_recommendation_health_from_db_row(
 ) -> PaperRecommendationHealthReport:
     if type(row) is not PaperRecommendationHealthDbRow:
         raise ValueError("row must be a PaperRecommendationHealthDbRow")
-    _reject_json_floats(row.payload_json)
-    _validate_json_hard_flags(row.payload_json, "payload_json")
+    payload_json = _validate_row_payload_consistency(row)
+    _reject_json_floats(payload_json)
     try:
-        report = from_jsonable(PaperRecommendationHealthReport, row.payload_json)
+        report = from_jsonable(PaperRecommendationHealthReport, payload_json)
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError(
             f"payload_json is not a valid health report: {exc}",
@@ -197,8 +198,50 @@ def _validate_row_matches_payload(
         "report_only",
         "readonly",
     ):
-        if getattr(row, field_name) != getattr(expected, field_name):
+        if _row_field(row, field_name) != getattr(expected, field_name):
             raise ValueError(f"{field_name} must match payload_json")
+
+
+def _validate_row_payload_consistency(
+    row: PaperRecommendationHealthDbRow,
+) -> dict[str, Any]:
+    payload_json = _normalize_json_object(
+        "payload_json",
+        _row_field(row, "payload_json"),
+    )
+    _validate_json_hard_flags(payload_json, "payload_json")
+    for field_name, payload_key in (
+        ("generated_at", "generated_at"),
+        ("config_version", "config_version"),
+        ("health_status", "health_status"),
+        ("row_count", "row_count"),
+        ("recommend_count", "recommend_count"),
+        ("watch_count", "watch_count"),
+        ("reject_count", "reject_count"),
+        ("average_net_probability_edge", "average_net_probability_edge"),
+        ("average_total_cost_per_share", "average_total_cost_per_share"),
+        ("top_recommendation_score", "top_recommendation_score"),
+        ("reason_code_counts_json", "reason_code_counts"),
+        ("max_average_cost_per_share", "max_average_cost_per_share"),
+        ("min_recommend_share", "min_recommend_share"),
+        ("paper_only", "paper_only"),
+        ("report_only", "report_only"),
+        ("readonly", "readonly"),
+    ):
+        if payload_key not in payload_json:
+            raise ValueError(f"{field_name} must match payload_json")
+        if _json_ready(_row_field(row, field_name)) != payload_json[payload_key]:
+            raise ValueError(f"{field_name} must match payload_json")
+    if _row_field(row, "report_sha256") != _report_sha256(payload_json):
+        raise ValueError("report_sha256 must match payload_json")
+    return payload_json
+
+
+def _row_field(row: PaperRecommendationHealthDbRow, field_name: str) -> Any:
+    try:
+        return getattr(row, field_name)
+    except AttributeError as exc:
+        raise ValueError(f"{field_name} is required") from exc
 
 
 def _report_sha256(payload_json: dict[str, Any]) -> str:

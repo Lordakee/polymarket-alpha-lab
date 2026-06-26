@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -233,6 +233,13 @@ def _row_values(row: object) -> dict[str, object]:
     return dict(row.__dict__)
 
 
+def _bypassed_row(row: object, **overrides: object) -> object:
+    malformed = object.__new__(type(row))
+    for field_name, value in {**_row_values(row), **overrides}.items():
+        object.__setattr__(malformed, field_name, value)
+    return malformed
+
+
 def test_operator_flow_db_row_serializes_payload_and_round_trips() -> None:
     codec = _codec_module()
     report = _report()
@@ -362,15 +369,47 @@ def test_operator_flow_db_row_rejects_false_report_flags_before_write(
 def test_operator_flow_db_row_rejects_corrupted_payload_hard_flags() -> None:
     codec = _codec_module()
     row = codec.to_db_row(_report())
-    malformed = codec.PaperResearchPacketOperatorFlowDbRow(
-        **{
-            **_row_values(row),
-            "payload_json": {**row.payload_json, "readonly": False},
-        },
-    )
 
     with pytest.raises(ValueError, match="readonly"):
-        codec.from_db_row(malformed)
+        codec.PaperResearchPacketOperatorFlowDbRow(
+            **{
+                **_row_values(row),
+                "payload_json": {**row.payload_json, "readonly": False},
+            },
+        )
+
+
+def test_operator_flow_db_row_rejects_missing_payload_hard_flags() -> None:
+    codec = _codec_module()
+    row = codec.to_db_row(_report())
+
+    with pytest.raises(ValueError, match="paper_only"):
+        codec.PaperResearchPacketOperatorFlowDbRow(
+            **{
+                **_row_values(row),
+                "payload_json": {
+                    key: value
+                    for key, value in row.payload_json.items()
+                    if key not in {"paper_only", "report_only", "readonly"}
+                },
+            },
+        )
+
+
+def test_operator_flow_db_row_rejects_nested_payload_hard_flag_corruption() -> None:
+    codec = _codec_module()
+    row = codec.to_db_row(_report())
+
+    with pytest.raises(ValueError, match="readonly"):
+        codec.PaperResearchPacketOperatorFlowDbRow(
+            **{
+                **_row_values(row),
+                "payload_json": {
+                    **row.payload_json,
+                    "nested_probe": {"paper_only": True, "report_only": True, "readonly": False},
+                },
+            },
+        )
 
 
 def test_operator_flow_db_row_rejects_floats_in_json_payloads() -> None:
@@ -428,11 +467,35 @@ def test_operator_flow_db_row_rejects_payload_mismatches(
             **overrides,
             "payload_json": {**row.payload_json, **overrides["payload_json"]},  # type: ignore[arg-type]
         }
-    malformed = codec.PaperResearchPacketOperatorFlowDbRow(
-        **{**_row_values(row), **overrides},
-    )
-
     with pytest.raises(ValueError, match=message):
+        codec.PaperResearchPacketOperatorFlowDbRow(
+            **{**_row_values(row), **overrides},
+        )
+
+
+def test_operator_flow_db_row_rejects_replacement_payload_mismatches() -> None:
+    codec = _codec_module()
+    row = codec.to_db_row(_report())
+
+    with pytest.raises(ValueError, match="flow_status"):
+        replace(row, flow_status="watch")
+
+
+def test_operator_flow_from_db_row_rejects_object_new_bypassed_mismatches() -> None:
+    codec = _codec_module()
+    row = codec.to_db_row(_report())
+    malformed = _bypassed_row(row, report_sha256="b" * 64)
+
+    with pytest.raises(ValueError, match="report_sha256"):
+        codec.from_db_row(malformed)
+
+
+def test_operator_flow_from_db_row_rejects_object_new_bypassed_payload_flags() -> None:
+    codec = _codec_module()
+    row = codec.to_db_row(_report())
+    malformed = _bypassed_row(row, payload_json={**row.payload_json, "readonly": False})
+
+    with pytest.raises(ValueError, match="readonly"):
         codec.from_db_row(malformed)
 
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import FrozenInstanceError, replace
 from datetime import UTC, datetime, timezone, timedelta
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 
@@ -80,6 +81,27 @@ def _assert_no_floats(value: object) -> None:
     elif isinstance(value, (list, tuple)):
         for item in value:
             _assert_no_floats(item)
+
+
+def test_nav_snapshot_db_row_module_is_pure_paper_only_codec() -> None:
+    source = Path(
+        "src/polymarket_alpha_lab/paper_nav_snapshot_db_row.py",
+    ).read_text(encoding="utf-8")
+
+    for banned in (
+        "psycopg",
+        "sqlite",
+        "sqlalchemy",
+        "private_key",
+        "wallet",
+        "api_key",
+        "submit_order",
+        "cancel_order",
+        "replace_order",
+        "live_trading",
+        "exchange",
+    ):
+        assert banned not in source.lower()
 
 
 def test_nav_snapshot_db_row_serializes_canonical_payload_and_round_trips() -> None:
@@ -165,14 +187,15 @@ def test_nav_snapshot_db_row_rejects_malformed_stored_payload_flags() -> None:
 
 def test_nav_snapshot_db_row_wraps_payload_recovery_errors_as_value_error() -> None:
     row = paper_nav_snapshot_to_db_row(_snapshot())
-    malformed = replace(
-        row,
-        snapshot_sha256="a" * 64,
-        payload_json={key: value for key, value in row.payload_json.items() if key != "marks"},
-    )
 
-    with pytest.raises(ValueError, match="payload_json"):
-        paper_nav_snapshot_from_db_row(malformed)
+    with pytest.raises(ValueError, match="mark_count|payload_json"):
+        replace(
+            row,
+            snapshot_sha256="a" * 64,
+            payload_json={
+                key: value for key, value in row.payload_json.items() if key != "marks"
+            },
+        )
 
 
 def test_nav_snapshot_db_row_validates_row_shape_and_summary_matches_payload() -> None:
@@ -184,11 +207,22 @@ def test_nav_snapshot_db_row_validates_row_shape_and_summary_matches_payload() -
     with pytest.raises(ValueError, match="payload_json"):
         replace(row, payload_json={**row.payload_json, "bad_float": 0.1})
 
-    with pytest.raises(ValueError, match="summary"):
-        paper_nav_snapshot_from_db_row(replace(row, mark_count=2))
+    with pytest.raises(ValueError, match="mark_count"):
+        replace(row, mark_count=2)
 
     with pytest.raises(FrozenInstanceError):
         row.mark_count = 2  # type: ignore[misc]
+
+
+def test_nav_snapshot_from_db_row_defends_against_bypassed_summary_mismatch() -> None:
+    row = paper_nav_snapshot_to_db_row(_snapshot())
+    malformed = object.__new__(PaperNavSnapshotDbRow)
+    for field_name, value in row.__dict__.items():
+        object.__setattr__(malformed, field_name, value)
+    object.__setattr__(malformed, "mark_count", 2)
+
+    with pytest.raises(ValueError, match="summary|mark_count"):
+        paper_nav_snapshot_from_db_row(malformed)
 
 
 def test_nav_snapshot_db_row_does_not_require_report_only_or_readonly_flags() -> None:

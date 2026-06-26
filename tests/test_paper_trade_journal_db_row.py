@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import FrozenInstanceError
 from datetime import UTC, datetime
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 
@@ -101,6 +102,27 @@ def assert_no_floats(value: object) -> None:
     elif isinstance(value, (list, tuple)):
         for item in value:
             assert_no_floats(item)
+
+
+def test_paper_trade_journal_db_row_module_is_pure_paper_only_codec() -> None:
+    source = Path(
+        "src/polymarket_alpha_lab/paper_trade_journal_db_row.py",
+    ).read_text(encoding="utf-8")
+
+    for banned in (
+        "psycopg",
+        "sqlite",
+        "sqlalchemy",
+        "private_key",
+        "wallet",
+        "api_key",
+        "submit_order",
+        "cancel_order",
+        "replace_order",
+        "live_trading",
+        "exchange",
+    ):
+        assert banned not in source.lower()
 
 
 def row_copy(row: PaperTradeJournalDbRow, **changes: object) -> PaperTradeJournalDbRow:
@@ -205,25 +227,38 @@ def test_paper_trade_journal_db_row_rejects_record_floats_before_persistence() -
 
 def test_paper_trade_journal_db_row_rejects_malformed_stored_payload() -> None:
     row = paper_trade_record_to_db_row(record_from())
-    malformed = row_copy(
-        row,
-        payload_json={
-            key: value
-            for key, value in row.payload_json.items()
-            if key != "packet_id"
-        },
-    )
 
-    with pytest.raises(ValueError, match="payload_json"):
-        paper_trade_record_from_db_row(malformed)
+    with pytest.raises(ValueError, match="packet_id|payload_json"):
+        row_copy(
+            row,
+            payload_json={
+                key: value
+                for key, value in row.payload_json.items()
+                if key != "packet_id"
+            },
+        )
 
 
 def test_paper_trade_journal_db_row_rejects_hash_mismatch() -> None:
     row = paper_trade_record_to_db_row(record_from())
-    mismatched = row_copy(
-        row,
-        payload_json={**row.payload_json, "token_id": "222"},
-    )
 
     with pytest.raises(ValueError, match="record_sha256"):
-        paper_trade_record_from_db_row(mismatched)
+        row_copy(
+            row,
+            payload_json={**row.payload_json, "token_id": "222"},
+        )
+
+
+def test_paper_trade_journal_from_db_row_defends_against_bypassed_hash_mismatch() -> None:
+    row = paper_trade_record_to_db_row(record_from())
+    malformed = object.__new__(PaperTradeJournalDbRow)
+    for field_name, value in row.__dict__.items():
+        object.__setattr__(malformed, field_name, value)
+    object.__setattr__(
+        malformed,
+        "payload_json",
+        {**row.payload_json, "token_id": "222"},
+    )
+
+    with pytest.raises(ValueError, match="record_sha256|token_id"):
+        paper_trade_record_from_db_row(malformed)

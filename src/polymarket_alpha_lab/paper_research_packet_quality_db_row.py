@@ -135,6 +135,7 @@ class PaperResearchPacketQualityDbRow:
             _normalize_json_object("payload_json", self.payload_json),
         )
         _require_hard_flags("DB row", self)
+        _validate_row_payload_consistency(self)
 
 
 def paper_research_packet_quality_to_db_row(
@@ -191,23 +192,8 @@ def paper_research_packet_quality_from_db_row(
     _reject_json_floats(row.payload_json)
     _validate_json_hard_flags(row.check_rows_json, "check_rows_json")
     _validate_json_hard_flags(row.reason_code_counts_json, "reason_code_counts_json")
-    _validate_json_hard_flags(row.payload_json, "payload_json")
-    try:
-        report = from_jsonable(
-            PaperResearchPacketQualityReport,
-            _recover_report_payload_json_values(row.payload_json),
-        )
-    except (KeyError, TypeError, ValueError) as exc:
-        raise ValueError(
-            f"payload_json is not a valid paper research packet quality report: {exc}",
-        ) from exc
-    if type(report) is not PaperResearchPacketQualityReport:
-        raise ValueError(
-            "payload_json must recover a PaperResearchPacketQualityReport",
-        )
-    _validate_report_tree(report)
-    expected_row = paper_research_packet_quality_to_db_row(report)
-    _validate_row_matches_payload(row, expected_row)
+    report = _report_from_payload_json(row.payload_json)
+    _validate_row_matches_payload(row, _expected_row_values_from_report(report))
     return report
 
 
@@ -253,7 +239,7 @@ def _validate_report_tree(value: Any, field_name: str = "report") -> None:
 
 def _validate_row_matches_payload(
     row: PaperResearchPacketQualityDbRow,
-    expected: PaperResearchPacketQualityDbRow,
+    expected: dict[str, Any],
 ) -> None:
     for field_name in (
         "report_sha256",
@@ -285,8 +271,86 @@ def _validate_row_matches_payload(
         "report_only",
         "readonly",
     ):
-        if getattr(row, field_name) != getattr(expected, field_name):
+        if getattr(row, field_name) != expected[field_name]:
             raise ValueError(f"{field_name} must match payload_json")
+
+
+def _validate_row_payload_consistency(row: PaperResearchPacketQualityDbRow) -> None:
+    report = _report_from_payload_json(row.payload_json)
+    _validate_row_matches_payload(row, _expected_row_values_from_report(report))
+
+
+def _report_from_payload_json(
+    payload_json: dict[str, Any],
+) -> PaperResearchPacketQualityReport:
+    _reject_json_floats(payload_json)
+    _require_json_hard_flags(payload_json, "payload_json")
+    _validate_json_hard_flags(payload_json, "payload_json")
+    try:
+        report = from_jsonable(
+            PaperResearchPacketQualityReport,
+            _recover_report_payload_json_values(payload_json),
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(
+            f"payload_json is not a valid paper research packet quality report: {exc}",
+        ) from exc
+    if type(report) is not PaperResearchPacketQualityReport:
+        raise ValueError(
+            "payload_json must recover a PaperResearchPacketQualityReport",
+        )
+    _validate_report_tree(report)
+    return report
+
+
+def _expected_row_values_from_report(
+    report: PaperResearchPacketQualityReport,
+) -> dict[str, Any]:
+    payload_json = _json_ready(asdict(report))
+    if not isinstance(payload_json, dict):
+        raise ValueError("payload_json must be a JSON object")
+    check_rows_json = payload_json.get("check_rows")
+    if not isinstance(check_rows_json, list):
+        raise ValueError("payload_json check_rows must be a JSON list")
+    reason_code_counts_json = payload_json.get("reason_code_counts")
+    if not isinstance(reason_code_counts_json, list):
+        raise ValueError("payload_json reason_code_counts must be a JSON list")
+    reason_codes_json = [
+        item["reason_code"] for item in reason_code_counts_json if isinstance(item, dict)
+    ]
+    return {
+        "report_sha256": _report_sha256(payload_json),
+        "generated_at": _as_utc("generated_at", report.generated_at),
+        "config_version": report.config_version,
+        "source_generated_at": _as_utc(
+            "source_generated_at",
+            report.source_generated_at,
+        ),
+        "source_config_version": report.source_config_version,
+        "input_row_count": report.input_row_count,
+        "packet_row_count": report.packet_row_count,
+        "included_count": report.included_count,
+        "skipped_count": report.skipped_count,
+        "high_priority_count": report.high_priority_count,
+        "medium_priority_count": report.medium_priority_count,
+        "low_priority_count": report.low_priority_count,
+        "source_age_seconds": report.source_age_seconds,
+        "included_share": _normalize_ratio("included_share", report.included_share),
+        "skipped_share": _normalize_ratio("skipped_share", report.skipped_share),
+        "check_count": report.check_count,
+        "pass_count": report.pass_count,
+        "watch_count": report.watch_count,
+        "blocked_count": report.blocked_count,
+        "quality_status": report.quality_status,
+        "check_rows_json": list(check_rows_json),
+        "reason_code_counts_json": list(reason_code_counts_json),
+        "reason_codes_json": reason_codes_json,
+        "reason_code_count": len(reason_codes_json),
+        "payload_json": payload_json,
+        "paper_only": report.paper_only,
+        "report_only": report.report_only,
+        "readonly": report.readonly,
+    }
 
 
 def _report_sha256(payload_json: dict[str, Any]) -> str:

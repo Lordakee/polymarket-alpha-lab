@@ -132,6 +132,13 @@ def _row_values(row: object) -> dict[str, object]:
     return dict(row.__dict__)
 
 
+def _bypassed_row(row: object, **overrides: object) -> object:
+    bypassed = object.__new__(type(row))
+    for field_name, value in {**_row_values(row), **overrides}.items():
+        object.__setattr__(bypassed, field_name, value)
+    return bypassed
+
+
 def _canonical_payload_sha256(payload_json: dict[str, object]) -> str:
     encoded = json.dumps(
         payload_json,
@@ -311,17 +318,57 @@ def test_project_rank_stability_db_row_rejects_corrupted_stored_payload_flags() 
             {**row.payload_json["rows"][1], "paper_only": False},
         ],
     }
-    malformed = codec.PaperProjectScreeningRankStabilityDbRow(
-        **{
-            **_row_values(row),
-            "report_sha256": _canonical_payload_sha256(payload),
-            "payload_json": payload,
-            "rows_json": payload["rows"],
-        },
-    )
-
     with pytest.raises(ValueError, match="paper_only"):
-        codec.from_db_row(malformed)
+        codec.PaperProjectScreeningRankStabilityDbRow(
+            **{
+                **_row_values(row),
+                "report_sha256": _canonical_payload_sha256(payload),
+                "payload_json": payload,
+                "rows_json": payload["rows"],
+            },
+        )
+
+
+@pytest.mark.parametrize("flag_name", ("paper_only", "report_only", "readonly"))
+def test_project_rank_stability_db_row_rejects_missing_payload_flags_at_construction(
+    flag_name: str,
+) -> None:
+    from polymarket_alpha_lab import paper_project_screening_rank_stability_db_row as codec
+
+    row = codec.to_db_row(_report())
+    payload = {
+        key: value for key, value in row.payload_json.items() if key != flag_name
+    }
+
+    with pytest.raises(ValueError, match=flag_name):
+        codec.PaperProjectScreeningRankStabilityDbRow(
+            **{
+                **_row_values(row),
+                "report_sha256": _canonical_payload_sha256(payload),
+                "payload_json": payload,
+            },
+        )
+
+
+@pytest.mark.parametrize("field_name", ("latest_generated_at", "top_stable_market_slug"))
+def test_project_rank_stability_db_row_rejects_missing_none_payload_fields_at_construction(
+    field_name: str,
+) -> None:
+    from polymarket_alpha_lab import paper_project_screening_rank_stability_db_row as codec
+
+    row = codec.to_db_row(_empty_report())
+    payload = {
+        key: value for key, value in row.payload_json.items() if key != field_name
+    }
+
+    with pytest.raises(ValueError, match=field_name):
+        codec.PaperProjectScreeningRankStabilityDbRow(
+            **{
+                **_row_values(row),
+                "report_sha256": _canonical_payload_sha256(payload),
+                "payload_json": payload,
+            },
+        )
 
 
 def test_project_rank_stability_db_row_rejects_recursive_floats_in_json_payloads() -> None:
@@ -346,16 +393,14 @@ def test_project_rank_stability_db_row_rejects_malformed_stored_payload() -> Non
 
     row = codec.to_db_row(_report())
     payload = {key: value for key, value in row.payload_json.items() if key != "rows"}
-    malformed = codec.PaperProjectScreeningRankStabilityDbRow(
-        **{
-            **_row_values(row),
-            "report_sha256": _canonical_payload_sha256(payload),
-            "payload_json": payload,
-        },
-    )
-
-    with pytest.raises(ValueError, match="payload_json"):
-        codec.from_db_row(malformed)
+    with pytest.raises(ValueError, match="rows_json"):
+        codec.PaperProjectScreeningRankStabilityDbRow(
+            **{
+                **_row_values(row),
+                "report_sha256": _canonical_payload_sha256(payload),
+                "payload_json": payload,
+            },
+        )
 
 
 @pytest.mark.parametrize(
@@ -388,11 +433,51 @@ def test_project_rank_stability_db_row_rejects_materialized_payload_mismatches(
     from polymarket_alpha_lab import paper_project_screening_rank_stability_db_row as codec
 
     row = codec.to_db_row(_report())
-    malformed = codec.PaperProjectScreeningRankStabilityDbRow(
-        **{**_row_values(row), **overrides},
-    )
 
     with pytest.raises(ValueError, match=message):
+        codec.PaperProjectScreeningRankStabilityDbRow(
+            **{**_row_values(row), **overrides},
+        )
+
+
+def test_project_rank_stability_db_row_rejects_payload_mismatch_on_replace() -> None:
+    from polymarket_alpha_lab import paper_project_screening_rank_stability_db_row as codec
+
+    row = codec.to_db_row(_report())
+
+    with pytest.raises(ValueError, match="candidate_count"):
+        replace(row, candidate_count=3)
+
+
+def test_project_rank_stability_from_db_row_rejects_constructor_bypassed_mismatch() -> None:
+    from polymarket_alpha_lab import paper_project_screening_rank_stability_db_row as codec
+
+    row = codec.to_db_row(_report())
+    malformed = _bypassed_row(row, candidate_count=3)
+
+    with pytest.raises(ValueError, match="candidate_count"):
+        codec.from_db_row(malformed)
+
+
+def test_project_rank_stability_from_db_row_rejects_constructor_bypassed_payload_flags() -> None:
+    from polymarket_alpha_lab import paper_project_screening_rank_stability_db_row as codec
+
+    row = codec.to_db_row(_report())
+    payload = {
+        **row.payload_json,
+        "rows": [
+            row.payload_json["rows"][0],
+            {**row.payload_json["rows"][1], "paper_only": False},
+        ],
+    }
+    malformed = _bypassed_row(
+        row,
+        report_sha256=_canonical_payload_sha256(payload),
+        payload_json=payload,
+        rows_json=payload["rows"],
+    )
+
+    with pytest.raises(ValueError, match="paper_only"):
         codec.from_db_row(malformed)
 
 

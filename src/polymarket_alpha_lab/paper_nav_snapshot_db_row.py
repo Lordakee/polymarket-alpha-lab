@@ -22,6 +22,7 @@ __all__ = (
 
 
 _SHA256_PATTERN = re.compile(r"^[a-f0-9]{64}$")
+_MISSING = object()
 
 
 @dataclass(frozen=True)
@@ -54,6 +55,7 @@ class PaperNavSnapshotDbRow:
             _normalize_json_object("payload_json", self.payload_json),
         )
         _require_paper_only("DB row", self)
+        _validate_materialized_fields_match_payload(self)
 
 
 def paper_nav_snapshot_to_db_row(snapshot: PaperNavSnapshot) -> PaperNavSnapshotDbRow:
@@ -109,6 +111,39 @@ def _summary_values(row: PaperNavSnapshotDbRow) -> tuple[Any, ...]:
         row.mark_count,
         row.paper_only,
     )
+
+
+def _validate_materialized_fields_match_payload(row: PaperNavSnapshotDbRow) -> None:
+    payload_json = row.payload_json
+    expected_values = {
+        "snapshot_sha256": _snapshot_sha256(payload_json),
+        "marked_at": payload_json.get("marked_at", _MISSING),
+        "starting_cash": payload_json.get("starting_cash", _MISSING),
+        "cash_balance": payload_json.get("cash_balance", _MISSING),
+        "exit_nav": payload_json.get("exit_nav", _MISSING),
+        "midpoint_nav": payload_json.get("midpoint_nav", _MISSING),
+        "total_cost_basis": payload_json.get("total_cost_basis", _MISSING),
+        "unrealized_exit_pnl": payload_json.get("unrealized_exit_pnl", _MISSING),
+        "mark_count": len(payload_json.get("marks", ()))
+        if isinstance(payload_json.get("marks", _MISSING), list)
+        else _MISSING,
+        "paper_only": payload_json.get("paper_only", _MISSING),
+    }
+    actual_values = {
+        "snapshot_sha256": row.snapshot_sha256,
+        "marked_at": row.marked_at.isoformat(),
+        "starting_cash": _json_ready(row.starting_cash),
+        "cash_balance": _json_ready(row.cash_balance),
+        "exit_nav": _json_ready(row.exit_nav),
+        "midpoint_nav": _json_ready(row.midpoint_nav),
+        "total_cost_basis": _json_ready(row.total_cost_basis),
+        "unrealized_exit_pnl": _json_ready(row.unrealized_exit_pnl),
+        "mark_count": row.mark_count,
+        "paper_only": row.paper_only,
+    }
+    for field_name, actual_value in actual_values.items():
+        if actual_value != expected_values[field_name]:
+            raise ValueError(f"{field_name} must match payload_json")
 
 
 def _snapshot_sha256(payload_json: dict[str, Any]) -> str:

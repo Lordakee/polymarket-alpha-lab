@@ -54,6 +54,14 @@ def _row_values(row: object) -> dict[str, object]:
     return dict(row.__dict__)
 
 
+def _bypassed_row(codec: object, row: object, **overrides: object) -> object:
+    row_type = codec.PaperRecommendationReasonTrendHealthDbRow
+    bypassed = object.__new__(row_type)
+    for field_name, value in {**_row_values(row), **overrides}.items():
+        object.__setattr__(bypassed, field_name, value)
+    return bypassed
+
+
 def _assert_no_floats(value: object) -> None:
     if isinstance(value, float):
         pytest.fail("DB payload must not contain floats")
@@ -177,21 +185,42 @@ def test_reason_trend_health_db_row_rejects_false_report_flags_before_write(
         codec.to_db_row(report)
 
 
-def test_reason_trend_health_db_row_rejects_corrupted_payload_flags() -> None:
+def test_reason_trend_health_db_row_constructor_rejects_corrupted_payload_flags() -> None:
     codec = _codec_module()
     row = codec.to_db_row(_report())
-    malformed = codec.PaperRecommendationReasonTrendHealthDbRow(
-        **{
-            **_row_values(row),
-            "payload_json": {
-                **row.payload_json,
-                "nested_audit": {"paper_only": True, "report_only": True, "readonly": False},
-            },
-        },
-    )
 
     with pytest.raises(ValueError, match="readonly"):
-        codec.from_db_row(malformed)
+        codec.PaperRecommendationReasonTrendHealthDbRow(
+            **{
+                **_row_values(row),
+                "payload_json": {
+                    **row.payload_json,
+                    "nested_audit": {
+                        "paper_only": True,
+                        "report_only": True,
+                        "readonly": False,
+                    },
+                },
+            },
+        )
+
+
+@pytest.mark.parametrize("flag_name", ("paper_only", "report_only", "readonly"))
+def test_reason_trend_health_db_row_constructor_rejects_top_level_payload_flag_mismatches(
+    flag_name: str,
+) -> None:
+    codec = _codec_module()
+    row = codec.to_db_row(_report())
+
+    with pytest.raises(ValueError, match=flag_name):
+        codec.PaperRecommendationReasonTrendHealthDbRow(
+            **{
+                **_row_values(row),
+                "payload_json": {
+                    key: value for key, value in row.payload_json.items() if key != flag_name
+                },
+            },
+        )
 
 
 def test_reason_trend_health_db_row_rejects_floats_in_json_payloads() -> None:
@@ -225,17 +254,82 @@ def test_reason_trend_health_db_row_rejects_floats_in_json_payloads() -> None:
         ({"max_transition_count": 2}, "max_transition_count"),
     ),
 )
-def test_reason_trend_health_db_row_rejects_payload_mismatches(
+def test_reason_trend_health_db_row_constructor_rejects_payload_mismatches(
     overrides: dict[str, object],
     message: str,
 ) -> None:
     codec = _codec_module()
     row = codec.to_db_row(_report())
-    malformed = codec.PaperRecommendationReasonTrendHealthDbRow(
-        **{**_row_values(row), **overrides},
-    )
 
     with pytest.raises(ValueError, match=message):
+        codec.PaperRecommendationReasonTrendHealthDbRow(
+            **{**_row_values(row), **overrides},
+        )
+
+
+def test_reason_trend_health_db_row_constructor_rejects_optional_none_payload_mismatch() -> None:
+    codec = _codec_module()
+    report = PaperRecommendationReasonTrendHealthReport(
+        **{
+            **_report().__dict__,
+            "blocked_status_share": None,
+            "reject_status_share": None,
+        },
+    )
+    row = codec.to_db_row(report)
+
+    with pytest.raises(ValueError, match="blocked_status_share"):
+        codec.PaperRecommendationReasonTrendHealthDbRow(
+            **{**_row_values(row), "blocked_status_share": Decimal("0.000000")},
+        )
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    (
+        ({"report_sha256": "b" * 64}, "report_sha256"),
+        ({"source_report_count": 4}, "source_report_count"),
+        (
+            {
+                "payload_json": {
+                    "nested_audit": {
+                        "paper_only": True,
+                        "report_only": True,
+                        "readonly": False,
+                    },
+                },
+            },
+            "readonly",
+        ),
+    ),
+)
+def test_reason_trend_health_from_db_row_rejects_bypassed_constructor_payload_corruption(
+    overrides: dict[str, object],
+    message: str,
+) -> None:
+    codec = _codec_module()
+    row = codec.to_db_row(_report())
+    if "payload_json" in overrides:
+        overrides = {
+            **overrides,
+            "payload_json": {**row.payload_json, **overrides["payload_json"]},
+        }
+    malformed = _bypassed_row(codec, row, **overrides)
+
+    with pytest.raises(ValueError, match=message):
+        codec.from_db_row(malformed)
+
+
+@pytest.mark.parametrize("missing_field", ("payload_json", "source_report_count"))
+def test_reason_trend_health_from_db_row_rejects_bypassed_constructor_missing_fields(
+    missing_field: str,
+) -> None:
+    codec = _codec_module()
+    row = codec.to_db_row(_report())
+    malformed = _bypassed_row(codec, row)
+    object.__delattr__(malformed, missing_field)
+
+    with pytest.raises(ValueError, match=missing_field):
         codec.from_db_row(malformed)
 
 
