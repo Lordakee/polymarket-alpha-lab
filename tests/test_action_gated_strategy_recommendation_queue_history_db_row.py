@@ -3,7 +3,7 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -130,6 +130,25 @@ def _assert_no_floats(value: object) -> None:
     elif isinstance(value, (list, tuple)):
         for item in value:
             _assert_no_floats(item)
+
+
+def _payload_sha256(payload_json: dict[str, object]) -> str:
+    encoded = json.dumps(
+        payload_json,
+        allow_nan=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _bypassed_history_row(row: HistoryDbRow, **overrides: object) -> HistoryDbRow:
+    values = _row_values(row)
+    values.update(overrides)
+    bypassed = object.__new__(HistoryDbRow)
+    for field_name, value in values.items():
+        object.__setattr__(bypassed, field_name, value)
+    return bypassed
 
 
 def test_action_gated_queue_history_db_row_serializes_payload_and_round_trips():
@@ -316,24 +335,106 @@ def test_action_gated_queue_history_db_row_rejects_false_report_flags(flag_name:
 
 
 @pytest.mark.parametrize("flag_name", ("paper_only", "report_only", "readonly"))
-def test_action_gated_queue_history_db_row_rejects_unsafe_stored_payload_flags(
+def test_action_gated_queue_history_db_row_constructor_rejects_unsafe_stored_payload_flags(
     flag_name: str,
 ):
     row = to_db_row(
         _history_report(),
     )
-    malformed = HistoryDbRow(
-        **{
-            **_row_values(row),
-            "report_sha256": "a" * 64,
-            "payload_json": {**row.payload_json, flag_name: False},
-        },
-    )
+    payload_json = {**row.payload_json, flag_name: False}
 
     with pytest.raises(ValueError, match=flag_name):
-        from_db_row(
-            malformed,
+        HistoryDbRow(
+            **{
+                **_row_values(row),
+                "report_sha256": _payload_sha256(payload_json),
+                "payload_json": payload_json,
+            },
         )
+
+
+def test_action_gated_queue_history_db_row_constructor_rejects_latest_nested_payload_flags():
+    row = to_db_row(
+        _history_report(),
+    )
+    latest_reason_code_counts = list(row.payload_json["latest_reason_code_counts"])
+    latest_reason_code_counts[0] = {
+        **latest_reason_code_counts[0],
+        "paper_only": True,
+        "report_only": True,
+        "readonly": False,
+    }
+    payload_json = {
+        **row.payload_json,
+        "latest_reason_code_counts": latest_reason_code_counts,
+    }
+
+    with pytest.raises(ValueError, match="readonly"):
+        HistoryDbRow(
+            **{
+                **_row_values(row),
+                "report_sha256": _payload_sha256(payload_json),
+                "payload_json": payload_json,
+            },
+        )
+
+
+def test_action_gated_queue_history_db_row_constructor_rejects_payload_that_cannot_recover():
+    row = to_db_row(
+        _history_report(),
+    )
+    payload_json = {**row.payload_json, "unexpected_field": "not-a-report-field"}
+
+    with pytest.raises(ValueError, match="payload_json"):
+        HistoryDbRow(
+            **{
+                **_row_values(row),
+                "report_sha256": _payload_sha256(payload_json),
+                "payload_json": payload_json,
+            },
+        )
+
+
+def test_action_gated_queue_history_db_row_constructor_rejects_bool_payload_int_count():
+    row = to_db_row(
+        _history_report(),
+    )
+    payload_json = {**row.payload_json, "research_ready_count": True}
+
+    with pytest.raises(ValueError, match="payload_json|research_ready_count"):
+        HistoryDbRow(
+            **{
+                **_row_values(row),
+                "report_sha256": _payload_sha256(payload_json),
+                "payload_json": payload_json,
+            },
+        )
+
+
+def test_action_gated_queue_history_db_row_constructor_rejects_self_hashed_noncanonical_decimal():
+    row = to_db_row(
+        _history_report(),
+    )
+    payload_json = {**row.payload_json, "total_ready_notional": "42"}
+
+    with pytest.raises(ValueError, match="payload_json|total_ready_notional"):
+        HistoryDbRow(
+            **{
+                **_row_values(row),
+                "report_sha256": _payload_sha256(payload_json),
+                "total_ready_notional": Decimal("42"),
+                "payload_json": payload_json,
+            },
+        )
+
+
+def test_action_gated_queue_history_db_row_replace_revalidates_payload_consistency():
+    row = to_db_row(
+        _history_report(),
+    )
+
+    with pytest.raises(ValueError, match="source_report_count"):
+        replace(row, source_report_count=row.source_report_count + 1)
 
 
 @pytest.mark.parametrize(
@@ -381,9 +482,244 @@ def test_action_gated_queue_history_db_row_rejects_materialized_payload_mismatch
     )
     values = _row_values(row)
     values.update(overrides)
-    malformed = HistoryDbRow(**values)
 
     with pytest.raises(ValueError, match=message):
+        HistoryDbRow(**values)
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    (
+        ({"source_report_count": 4}, "action status counts"),
+        (
+            {"first_source_generated_at": None},
+            "first_source_generated_at",
+        ),
+        (
+            {"last_source_generated_at": datetime(2026, 6, 20, 8, 0, tzinfo=UTC)},
+            "last_source_generated_at",
+        ),
+        ({"latest_action_status": None, "latest_recommended_next_step": None}, "latest_action_status"),
+        ({"status_transition_count": 3}, "status_transition_count"),
+    ),
+)
+def test_action_gated_queue_history_db_row_constructor_rejects_history_invariants(
+    overrides: dict[str, object],
+    message: str,
+) -> None:
+    row = to_db_row(
+        _history_report(),
+    )
+    values = _row_values(row)
+    values.update(overrides)
+    payload_overrides = {
+        field_name: values[field_name]
+        for field_name in overrides
+        if field_name in row.payload_json
+    }
+    payload_json = {
+        **row.payload_json,
+        **{
+            field_name: (
+                value.isoformat() if isinstance(value, datetime) else str(value)
+                if isinstance(value, Decimal)
+                else value
+            )
+            for field_name, value in payload_overrides.items()
+        },
+    }
+    values.update(
+        {
+            "report_sha256": _payload_sha256(payload_json),
+            "payload_json": payload_json,
+        },
+    )
+
+    with pytest.raises(ValueError, match=message):
+        HistoryDbRow(**values)
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    (
+        (
+            {"first_source_generated_at": FIRST_SOURCE_GENERATED_AT},
+            "first_source_generated_at",
+        ),
+        (
+            {"last_source_generated_at": LAST_SOURCE_GENERATED_AT},
+            "last_source_generated_at",
+        ),
+        (
+            {"latest_action_status": "watch", "latest_recommended_next_step": "await_fresh_cycle_evidence"},
+            "latest_action_status",
+        ),
+        (
+            {"total_ready_notional": Decimal("1.000000")},
+            "total_ready_notional",
+        ),
+        (
+            {"ready_notional_delta": Decimal("1.000000")},
+            "ready_notional_delta",
+        ),
+        (
+            {"latest_reason_code_counts_json": {"cycle_review_passed": 1}},
+            "latest_reason_code_counts_json",
+        ),
+    ),
+)
+def test_action_gated_queue_history_empty_db_row_constructor_rejects_history_invariants(
+    overrides: dict[str, object],
+    message: str,
+) -> None:
+    row = to_db_row(
+        _empty_history_report(),
+    )
+    values = _row_values(row)
+    values.update(overrides)
+    payload_json = {
+        **row.payload_json,
+        **{
+            field_name: (
+                value.isoformat() if isinstance(value, datetime) else str(value)
+                if isinstance(value, Decimal)
+                else value
+            )
+            for field_name, value in overrides.items()
+            if field_name in row.payload_json
+        },
+    }
+    if "latest_reason_code_counts_json" in overrides:
+        payload_json["latest_reason_code_counts"] = [
+            {"reason_code": reason_code, "count": count}
+            for reason_code, count in values[
+                "latest_reason_code_counts_json"
+            ].items()
+        ]
+    values.update(
+        {
+            "report_sha256": _payload_sha256(payload_json),
+            "payload_json": payload_json,
+        },
+    )
+
+    with pytest.raises(ValueError, match=message):
+        HistoryDbRow(**values)
+
+
+def test_action_gated_queue_history_db_row_from_db_row_rejects_bypassed_payload_mismatch():
+    row = to_db_row(
+        _history_report(),
+    )
+    malformed = _bypassed_history_row(
+        row,
+        source_report_count=row.source_report_count + 1,
+    )
+
+    with pytest.raises(ValueError, match="source_report_count"):
+        from_db_row(
+            malformed,
+        )
+
+
+def test_action_gated_queue_history_db_row_from_db_row_rejects_bypassed_payload_recovery_error():
+    row = to_db_row(
+        _history_report(),
+    )
+    payload_json = {**row.payload_json, "unexpected_field": "not-a-report-field"}
+    malformed = _bypassed_history_row(
+        row,
+        report_sha256=_payload_sha256(payload_json),
+        payload_json=payload_json,
+    )
+
+    with pytest.raises(ValueError, match="payload_json"):
+        from_db_row(
+            malformed,
+        )
+
+
+def test_action_gated_queue_history_db_row_from_db_row_rejects_bypassed_bool_materialized_int():
+    row = to_db_row(
+        _history_report(),
+    )
+    malformed = _bypassed_history_row(row, research_ready_count=True)
+
+    with pytest.raises(ValueError, match="research_ready_count"):
+        from_db_row(
+            malformed,
+        )
+
+
+def test_action_gated_queue_history_db_row_from_db_row_rejects_bypassed_bool_materialized_reason_count():
+    row = to_db_row(
+        _history_report(),
+    )
+    malformed = _bypassed_history_row(
+        row,
+        latest_reason_code_counts_json={"cycle_review_passed": True},
+    )
+
+    with pytest.raises(ValueError, match="latest_reason_code_counts_json"):
+        from_db_row(
+            malformed,
+        )
+
+
+def test_action_gated_queue_history_db_row_from_db_row_rejects_bypassed_noncanonical_materialized_decimal():
+    row = to_db_row(
+        _history_report(),
+    )
+    malformed = _bypassed_history_row(row, total_ready_notional=Decimal("42"))
+
+    with pytest.raises(ValueError, match="total_ready_notional"):
+        from_db_row(
+            malformed,
+        )
+
+
+def test_action_gated_queue_history_db_row_from_db_row_rejects_bypassed_missing_nested_payload_hard_flag():
+    row = to_db_row(
+        _history_report(),
+    )
+    latest_reason_code_counts = list(row.payload_json["latest_reason_code_counts"])
+    latest_reason_code_counts[0] = {
+        **latest_reason_code_counts[0],
+        "paper_only": True,
+        "report_only": True,
+    }
+    payload_json = {
+        **row.payload_json,
+        "latest_reason_code_counts": latest_reason_code_counts,
+    }
+    malformed = _bypassed_history_row(
+        row,
+        report_sha256=_payload_sha256(payload_json),
+        payload_json=payload_json,
+    )
+
+    with pytest.raises(ValueError, match="readonly"):
+        from_db_row(
+            malformed,
+        )
+
+
+def test_action_gated_queue_history_db_row_from_db_row_rejects_bypassed_missing_all_payload_hard_flags():
+    row = to_db_row(
+        _history_report(),
+    )
+    payload_json = {
+        key: value
+        for key, value in row.payload_json.items()
+        if key not in ("paper_only", "report_only", "readonly")
+    }
+    malformed = _bypassed_history_row(
+        row,
+        report_sha256=row.report_sha256,
+        payload_json=payload_json,
+    )
+
+    with pytest.raises(ValueError, match="report_sha256|payload_json"):
         from_db_row(
             malformed,
         )
@@ -393,21 +729,19 @@ def test_action_gated_queue_history_db_row_wraps_payload_recovery_errors():
     row = to_db_row(
         _history_report(),
     )
-    malformed = HistoryDbRow(
-        **{
-            **_row_values(row),
-            "report_sha256": "a" * 64,
-            "payload_json": {
-                key: value
-                for key, value in row.payload_json.items()
-                if key != "latest_reason_code_counts"
-            },
-        },
-    )
+    payload_json = {
+        key: value
+        for key, value in row.payload_json.items()
+        if key != "latest_reason_code_counts"
+    }
 
     with pytest.raises(ValueError, match="payload_json"):
-        from_db_row(
-            malformed,
+        HistoryDbRow(
+            **{
+                **_row_values(row),
+                "report_sha256": _payload_sha256(payload_json),
+                "payload_json": payload_json,
+            },
         )
 
 

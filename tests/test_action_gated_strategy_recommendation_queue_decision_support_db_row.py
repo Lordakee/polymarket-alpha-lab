@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -219,6 +219,34 @@ def _row_values(
     row: PaperActionGatedStrategyRecommendationQueueDecisionSupportDbRow,
 ) -> dict[str, object]:
     return dict(row.__dict__)
+
+
+def _bypassed_row(
+    row: PaperActionGatedStrategyRecommendationQueueDecisionSupportDbRow,
+    **overrides: object,
+) -> PaperActionGatedStrategyRecommendationQueueDecisionSupportDbRow:
+    bypassed = object.__new__(
+        PaperActionGatedStrategyRecommendationQueueDecisionSupportDbRow,
+    )
+    for field_name, value in {**_row_values(row), **overrides}.items():
+        object.__setattr__(bypassed, field_name, value)
+    return bypassed
+
+
+def _canonical_snapshot_sha256(
+    priority_payload_json: dict[str, object],
+    risk_payload_json: dict[str, object],
+) -> str:
+    encoded = json.dumps(
+        {
+            "priority_payload_json": priority_payload_json,
+            "risk_payload_json": risk_payload_json,
+        },
+        allow_nan=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def test_decision_support_db_row_serializes_canonical_payloads_and_round_trips():
@@ -533,27 +561,130 @@ def test_decision_support_db_row_rejects_false_risk_report_flags_before_write():
         )
 
 
-def test_decision_support_db_row_rejects_corrupted_stored_payload_flags():
+def test_decision_support_db_row_rejects_corrupted_payload_flags_at_construction():
     row = (
         paper_action_gated_strategy_recommendation_queue_decision_support_to_db_row(
             _priority_report(),
             _risk_report(),
         )
     )
-    malformed = PaperActionGatedStrategyRecommendationQueueDecisionSupportDbRow(
-        **{
-            **_row_values(row),
-            "priority_payload_json": {
-                **row.priority_payload_json,
-                "priority_rows": [
-                    {**row.priority_payload_json["priority_rows"][0], "readonly": False},
-                    row.priority_payload_json["priority_rows"][1],
-                ],
+    corrupted_priority_payload = {
+        **row.priority_payload_json,
+        "priority_rows": [
+            {**row.priority_payload_json["priority_rows"][0], "readonly": False},
+            row.priority_payload_json["priority_rows"][1],
+        ],
+    }
+    corrupted_risk_payload = {
+        **row.risk_payload_json,
+        "readonly": False,
+    }
+
+    with pytest.raises(ValueError, match="readonly"):
+        PaperActionGatedStrategyRecommendationQueueDecisionSupportDbRow(
+            **{
+                **_row_values(row),
+                "priority_payload_json": corrupted_priority_payload,
             },
+        )
+    with pytest.raises(ValueError, match="readonly"):
+        replace(row, risk_payload_json=corrupted_risk_payload)
+
+
+def test_decision_support_from_db_row_rejects_bypassed_payload_flag_corruption():
+    row = (
+        paper_action_gated_strategy_recommendation_queue_decision_support_to_db_row(
+            _priority_report(),
+            _risk_report(),
+        )
+    )
+    malformed = _bypassed_row(
+        row,
+        priority_payload_json={
+            **row.priority_payload_json,
+            "priority_rows": [
+                {**row.priority_payload_json["priority_rows"][0], "readonly": False},
+                row.priority_payload_json["priority_rows"][1],
+            ],
         },
     )
 
     with pytest.raises(ValueError, match="readonly"):
+        paper_action_gated_strategy_recommendation_queue_decision_support_from_db_row(
+            malformed,
+        )
+
+
+def test_decision_support_from_db_row_rejects_nested_priority_row_missing_all_flags():
+    row = (
+        paper_action_gated_strategy_recommendation_queue_decision_support_to_db_row(
+            _priority_report(),
+            _risk_report(),
+        )
+    )
+    corrupted_priority_payload = {
+        **row.priority_payload_json,
+        "priority_rows": [
+            {
+                key: value
+                for key, value in row.priority_payload_json["priority_rows"][0].items()
+                if key not in {"paper_only", "report_only", "readonly"}
+            },
+            row.priority_payload_json["priority_rows"][1],
+        ],
+    }
+    malformed = _bypassed_row(
+        row,
+        snapshot_sha256=_canonical_snapshot_sha256(
+            corrupted_priority_payload,
+            row.risk_payload_json,
+        ),
+        priority_payload_json=corrupted_priority_payload,
+    )
+
+    with pytest.raises(ValueError, match="priority_payload_json.*paper_only"):
+        paper_action_gated_strategy_recommendation_queue_decision_support_from_db_row(
+            malformed,
+        )
+
+
+def test_decision_support_db_row_rejects_decimal_payload_values_before_normalization():
+    row = (
+        paper_action_gated_strategy_recommendation_queue_decision_support_to_db_row(
+            _priority_report(),
+            _risk_report(),
+        )
+    )
+    priority_payload_json = {
+        **row.priority_payload_json,
+        "total_ready_notional": Decimal("42.000000"),
+    }
+
+    with pytest.raises(ValueError, match="priority_payload_json"):
+        PaperActionGatedStrategyRecommendationQueueDecisionSupportDbRow(
+            **{
+                **_row_values(row),
+                "priority_payload_json": priority_payload_json,
+            },
+        )
+
+    malformed = _bypassed_row(row, priority_payload_json=priority_payload_json)
+    with pytest.raises(ValueError, match="priority_payload_json"):
+        paper_action_gated_strategy_recommendation_queue_decision_support_from_db_row(
+            malformed,
+        )
+
+
+def test_decision_support_from_db_row_rejects_bypassed_bool_int_json_mismatch():
+    row = (
+        paper_action_gated_strategy_recommendation_queue_decision_support_to_db_row(
+            _priority_report(),
+            _risk_report(),
+        )
+    )
+    malformed = _bypassed_row(row, priority_source_report_count=True)
+
+    with pytest.raises(ValueError, match="priority_source_report_count"):
         paper_action_gated_strategy_recommendation_queue_decision_support_from_db_row(
             malformed,
         )
@@ -632,7 +763,7 @@ def test_decision_support_db_row_rejects_duplicate_or_invalid_risk_reason_codes(
         ({"risk_reason_codes_json": ["queue_risk_passed"]}, "risk_reason_codes_json"),
     ),
 )
-def test_decision_support_db_row_rejects_materialized_payload_mismatches(
+def test_decision_support_db_row_rejects_materialized_payload_mismatches_at_construction(
     overrides: dict[str, object],
     message: str,
 ):
@@ -642,9 +773,79 @@ def test_decision_support_db_row_rejects_materialized_payload_mismatches(
             _risk_report(),
         )
     )
-    malformed = PaperActionGatedStrategyRecommendationQueueDecisionSupportDbRow(
-        **{**_row_values(row), **overrides},
+
+    with pytest.raises(ValueError, match=message):
+        PaperActionGatedStrategyRecommendationQueueDecisionSupportDbRow(
+            **{**_row_values(row), **overrides},
+        )
+
+
+def test_decision_support_db_row_rejects_payload_mismatches_on_replace():
+    row = (
+        paper_action_gated_strategy_recommendation_queue_decision_support_to_db_row(
+            _priority_report(),
+            _risk_report(),
+        )
     )
+
+    with pytest.raises(ValueError, match="priority_research_ready_count"):
+        replace(row, priority_research_ready_count=2)
+    with pytest.raises(ValueError, match="risk_reason_codes_json"):
+        replace(row, risk_reason_codes_json=["queue_risk_passed"])
+
+
+def test_decision_support_db_row_rejects_risk_payload_generated_at_mismatch():
+    row = (
+        paper_action_gated_strategy_recommendation_queue_decision_support_to_db_row(
+            _priority_report(),
+            _risk_report(),
+        )
+    )
+    risk_payload_json = {
+        **row.risk_payload_json,
+        "generated_at": "2026-06-20T12:01:00+00:00",
+    }
+    snapshot_sha256 = _canonical_snapshot_sha256(
+        row.priority_payload_json,
+        risk_payload_json,
+    )
+
+    with pytest.raises(ValueError, match="risk_report.generated_at"):
+        PaperActionGatedStrategyRecommendationQueueDecisionSupportDbRow(
+            **{
+                **_row_values(row),
+                "snapshot_sha256": snapshot_sha256,
+                "risk_payload_json": risk_payload_json,
+            },
+        )
+    with pytest.raises(ValueError, match="risk_report.generated_at"):
+        replace(
+            row,
+            snapshot_sha256=snapshot_sha256,
+            risk_payload_json=risk_payload_json,
+        )
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    (
+        ({"snapshot_sha256": "b" * 64}, "snapshot_sha256"),
+        ({"priority_source_report_count": 3}, "priority_source_report_count"),
+        ({"risk_candidate_count": 5}, "risk_candidate_count"),
+        ({"risk_reason_codes_json": ["queue_risk_passed"]}, "risk_reason_codes_json"),
+    ),
+)
+def test_decision_support_from_db_row_rejects_bypassed_materialized_mismatches(
+    overrides: dict[str, object],
+    message: str,
+):
+    row = (
+        paper_action_gated_strategy_recommendation_queue_decision_support_to_db_row(
+            _priority_report(),
+            _risk_report(),
+        )
+    )
+    malformed = _bypassed_row(row, **overrides)
 
     with pytest.raises(ValueError, match=message):
         paper_action_gated_strategy_recommendation_queue_decision_support_from_db_row(
@@ -659,15 +860,18 @@ def test_decision_support_db_row_wraps_payload_recovery_errors_as_value_error():
             _risk_report(),
         )
     )
-    malformed = PaperActionGatedStrategyRecommendationQueueDecisionSupportDbRow(
-        **{
-            **_row_values(row),
-            "risk_payload_json": {
-                key: value
-                for key, value in row.risk_payload_json.items()
-                if key != "reason_codes"
-            },
-        },
+    risk_payload_json = {
+        key: value
+        for key, value in row.risk_payload_json.items()
+        if key != "reason_codes"
+    }
+    malformed = _bypassed_row(
+        row,
+        snapshot_sha256=_canonical_snapshot_sha256(
+            row.priority_payload_json,
+            risk_payload_json,
+        ),
+        risk_payload_json=risk_payload_json,
     )
 
     with pytest.raises(ValueError, match="risk_payload_json"):

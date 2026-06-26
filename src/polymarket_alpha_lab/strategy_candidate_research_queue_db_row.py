@@ -33,6 +33,70 @@ QUEUE_NEXT_STEPS = (
     "await_fresh_cycle_evidence",
     "repair_cycle_evidence",
 )
+HARD_FLAG_NAMES = ("paper_only", "report_only", "readonly")
+RESEARCH_QUEUE_ROW_PAYLOAD_FIELDS = frozenset(
+    (
+        "research_rank",
+        "queue_rank",
+        "market_slug",
+        "question",
+        "selected_side",
+        "scoring_side",
+        "source_action",
+        "decision",
+        "queue_status",
+        "research_status",
+        "research_bucket",
+        "assessment_status",
+        "source_status",
+        "readiness_status",
+        "recommendation_score",
+        "readiness_score",
+        "screening_score",
+        "net_edge_per_share",
+        "total_cost_per_share",
+        "confidence",
+        "spread",
+        "resolution_risk",
+        "suggested_notional",
+        "selected_position_notional",
+        "primary_reason_code",
+        "research_priority_score",
+        "evidence_gap_codes",
+        "reason_codes",
+        "explanation",
+    ),
+)
+RESEARCH_QUEUE_ROW_PAYLOAD_ALL_FIELDS = RESEARCH_QUEUE_ROW_PAYLOAD_FIELDS | frozenset(
+    HARD_FLAG_NAMES,
+)
+REPORT_PAYLOAD_FIELDS = frozenset(
+    (
+        "generated_at",
+        "config_version",
+        "source_config_version",
+        "action_status",
+        "recommended_next_step",
+        "source_reason_code_counts",
+        "research_status",
+        "candidate_count",
+        "research_ready_count",
+        "watch_count",
+        "blocked_count",
+        "selected_count",
+        "skipped_count",
+        "not_selected_count",
+        "total_ready_notional",
+        "total_selected_notional",
+        "total_suggested_notional",
+        "top_research_priority_score",
+        "average_research_ready_score",
+        "primary_reason_code_counts",
+        "rows",
+        "reason_codes",
+        *HARD_FLAG_NAMES,
+    ),
+)
 NEXT_STEP_BY_ACTION_STATUS = {
     "research_ready": "review_candidate_research_queue",
     "watch": "await_fresh_cycle_evidence",
@@ -142,6 +206,12 @@ class PaperStrategyCandidateResearchQueueDbRow:
             _normalize_json_object("payload_json", self.payload_json),
         )
         _require_hard_flags("DB row", self)
+        _validate_json_hard_flags(self.payload_json, "payload_json")
+        _validate_payload_rows_hard_flags(self.payload_json)
+        _validate_payload_schema(self.payload_json)
+        _validate_payload_duplicate_shapes(self.payload_json)
+        _validate_materialized_fields_match_payload(self)
+        _validate_canonical_recovered_payload(self.payload_json)
 
 
 def paper_strategy_candidate_research_queue_report_to_db_row(
@@ -194,22 +264,11 @@ def paper_strategy_candidate_research_queue_report_from_db_row(
         raise ValueError("row must be a PaperStrategyCandidateResearchQueueDbRow")
     _reject_json_floats(row.payload_json)
     _validate_json_hard_flags(row.payload_json, "payload_json")
+    _validate_payload_rows_hard_flags(row.payload_json)
+    _validate_payload_schema(row.payload_json)
     _validate_payload_duplicate_shapes(row.payload_json)
-    payload_for_recovery = _payload_for_recovery(row.payload_json)
-    try:
-        report = from_jsonable(
-            PaperStrategyCandidateResearchQueueReport,
-            payload_for_recovery,
-        )
-    except (KeyError, TypeError, ValueError) as exc:
-        raise ValueError(
-            f"payload_json is not a valid strategy candidate research queue report: {exc}",
-        ) from exc
-    if type(report) is not PaperStrategyCandidateResearchQueueReport:
-        raise ValueError(
-            "payload_json must recover a PaperStrategyCandidateResearchQueueReport",
-        )
-    _validate_report_tree(report)
+    _validate_materialized_fields_match_payload(row)
+    report = _validate_canonical_recovered_payload(row.payload_json)
     expected_row = paper_strategy_candidate_research_queue_report_to_db_row(report)
     _validate_row_matches_payload(row, expected_row)
     return report
@@ -326,8 +385,145 @@ def _validate_row_matches_payload(
         "report_only",
         "readonly",
     ):
-        if getattr(row, field_name) != getattr(expected, field_name):
+        if not _strict_equal(getattr(row, field_name), getattr(expected, field_name)):
             raise ValueError(f"{field_name} must match payload_json")
+    if not _strict_equal(row.payload_json, expected.payload_json):
+        raise ValueError("payload_json must match recovered canonical payload")
+
+
+def _validate_materialized_fields_match_payload(
+    row: PaperStrategyCandidateResearchQueueDbRow,
+) -> None:
+    payload_json = row.payload_json
+    expected_values = {
+        "report_sha256": _report_sha256(payload_json),
+        "generated_at": payload_json.get("generated_at"),
+        "config_version": payload_json.get("config_version"),
+        "source_config_version": payload_json.get("source_config_version"),
+        "action_status": payload_json.get("action_status"),
+        "recommended_next_step": payload_json.get("recommended_next_step"),
+        "research_status": payload_json.get("research_status"),
+        "candidate_count": payload_json.get("candidate_count"),
+        "research_ready_count": payload_json.get("research_ready_count"),
+        "watch_count": payload_json.get("watch_count"),
+        "blocked_count": payload_json.get("blocked_count"),
+        "selected_count": payload_json.get("selected_count"),
+        "skipped_count": payload_json.get("skipped_count"),
+        "not_selected_count": payload_json.get("not_selected_count"),
+        "total_ready_notional": payload_json.get("total_ready_notional"),
+        "total_selected_notional": payload_json.get("total_selected_notional"),
+        "total_suggested_notional": payload_json.get("total_suggested_notional"),
+        "top_research_priority_score": payload_json.get("top_research_priority_score"),
+        "average_research_ready_score": payload_json.get(
+            "average_research_ready_score",
+        ),
+        "source_reason_code_counts_json": _source_reason_code_counts_from_payload(
+            payload_json,
+        ),
+        "primary_reason_code_counts_json": _primary_reason_code_counts_from_payload(
+            payload_json,
+        ),
+        "reason_codes_json": payload_json.get("reason_codes"),
+        "rows_json": payload_json.get("rows"),
+        "paper_only": payload_json.get("paper_only"),
+        "report_only": payload_json.get("report_only"),
+        "readonly": payload_json.get("readonly"),
+    }
+    try:
+        actual_values = {
+            "report_sha256": row.report_sha256,
+            "generated_at": row.generated_at.isoformat(),
+            "config_version": row.config_version,
+            "source_config_version": row.source_config_version,
+            "action_status": row.action_status,
+            "recommended_next_step": row.recommended_next_step,
+            "research_status": row.research_status,
+            "candidate_count": row.candidate_count,
+            "research_ready_count": row.research_ready_count,
+            "watch_count": row.watch_count,
+            "blocked_count": row.blocked_count,
+            "selected_count": row.selected_count,
+            "skipped_count": row.skipped_count,
+            "not_selected_count": row.not_selected_count,
+            "total_ready_notional": _json_ready(row.total_ready_notional),
+            "total_selected_notional": _json_ready(row.total_selected_notional),
+            "total_suggested_notional": _json_ready(row.total_suggested_notional),
+            "top_research_priority_score": _json_ready(row.top_research_priority_score),
+            "average_research_ready_score": _json_ready(
+                row.average_research_ready_score,
+            ),
+            "source_reason_code_counts_json": row.source_reason_code_counts_json,
+            "primary_reason_code_counts_json": row.primary_reason_code_counts_json,
+            "reason_codes_json": row.reason_codes_json,
+            "rows_json": row.rows_json,
+            "paper_only": row.paper_only,
+            "report_only": row.report_only,
+            "readonly": row.readonly,
+        }
+    except (AttributeError, ValueError) as exc:
+        raise ValueError("materialized fields must match payload_json") from exc
+    for field_name, actual_value in actual_values.items():
+        if not _strict_equal(actual_value, expected_values[field_name]):
+            raise ValueError(f"{field_name} must match payload_json")
+
+
+def _source_reason_code_counts_from_payload(
+    payload_json: dict[str, Any],
+) -> dict[str, int] | None:
+    source_reason_code_counts = payload_json.get("source_reason_code_counts")
+    if not isinstance(source_reason_code_counts, list):
+        return None
+    counts: dict[str, int] = {}
+    for item in source_reason_code_counts:
+        if not isinstance(item, dict):
+            return None
+        reason_code = item.get("reason_code")
+        count = item.get("count")
+        if not isinstance(reason_code, str) or type(count) is not int:
+            return None
+        counts[reason_code] = count
+    return counts
+
+
+def _primary_reason_code_counts_from_payload(
+    payload_json: dict[str, Any],
+) -> dict[str, int] | None:
+    primary_reason_code_counts = payload_json.get("primary_reason_code_counts")
+    if not isinstance(primary_reason_code_counts, list):
+        return None
+    counts: dict[str, int] = {}
+    for item in primary_reason_code_counts:
+        if not isinstance(item, list) or len(item) != 2:
+            return None
+        reason_code, count = item
+        if not isinstance(reason_code, str) or type(count) is not int:
+            return None
+        counts[reason_code] = count
+    return counts
+
+
+def _validate_canonical_recovered_payload(
+    payload_json: dict[str, Any],
+) -> PaperStrategyCandidateResearchQueueReport:
+    payload_for_recovery = _payload_for_recovery(payload_json)
+    try:
+        report = from_jsonable(
+            PaperStrategyCandidateResearchQueueReport,
+            payload_for_recovery,
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(
+            f"payload_json is not a valid strategy candidate research queue report: {exc}",
+        ) from exc
+    if type(report) is not PaperStrategyCandidateResearchQueueReport:
+        raise ValueError(
+            "payload_json must recover a PaperStrategyCandidateResearchQueueReport",
+        )
+    _validate_report_tree(report)
+    canonical_payload = _json_ready(asdict(report))
+    if not _strict_equal(payload_json, canonical_payload):
+        raise ValueError("payload_json must match recovered canonical payload")
+    return report
 
 
 def _report_sha256(payload_json: dict[str, Any]) -> str:
@@ -438,6 +634,34 @@ def _validate_payload_reason_codes(field_name: str, value: object) -> None:
         seen.add(item)
 
 
+def _validate_payload_schema(payload_json: dict[str, Any]) -> None:
+    if set(payload_json) != REPORT_PAYLOAD_FIELDS:
+        raise ValueError("payload_json must contain the canonical report fields")
+    _validate_payload_decimal_strings(payload_json)
+    rows = payload_json.get("rows")
+    if type(rows) is not list:
+        raise ValueError("payload_json rows must be a JSON array")
+    for index, item in enumerate(rows):
+        if type(item) is not dict:
+            raise ValueError(f"payload_json rows {index} must be a JSON object")
+        if set(item) != RESEARCH_QUEUE_ROW_PAYLOAD_ALL_FIELDS:
+            missing = sorted(RESEARCH_QUEUE_ROW_PAYLOAD_ALL_FIELDS - set(item))
+            if missing:
+                raise ValueError(f"payload_json rows {index} {missing[0]} is required")
+            extra = sorted(set(item) - RESEARCH_QUEUE_ROW_PAYLOAD_ALL_FIELDS)
+            raise ValueError(f"payload_json rows {index} {extra[0]} is not allowed")
+        _validate_payload_decimal_strings(item, f"payload_json rows {index}")
+
+
+def _validate_payload_decimal_strings(
+    value: dict[str, Any],
+    field_name: str = "payload_json",
+) -> None:
+    for key, item in value.items():
+        if key in _DECIMAL_PAYLOAD_KEYS and item is not None and type(item) is not str:
+            raise ValueError(f"{field_name} {key} must be a canonical decimal string")
+
+
 def _json_ready(value: Any) -> Any:
     if value is None:
         return None
@@ -468,8 +692,9 @@ def _normalize_json_object(field_name: str, value: object) -> dict[str, Any]:
         raise ValueError(f"{field_name} must be a JSON object")
     try:
         _reject_json_floats(value)
+        _reject_json_decimals(value)
     except ValueError as exc:
-        raise ValueError(f"{field_name} must not contain floats") from exc
+        raise ValueError(f"{field_name} must contain stored JSON values: {exc}") from exc
     return {key: _json_ready(item) for key, item in value.items()}
 
 
@@ -506,8 +731,8 @@ def _normalize_rows_json(field_name: str, value: object) -> list[dict[str, Any]]
 def _validate_json_hard_flags(value: Any, field_name: str) -> None:
     if not isinstance(value, dict):
         return
-    if any(flag_name in value for flag_name in ("paper_only", "report_only", "readonly")):
-        for flag_name in ("paper_only", "report_only", "readonly"):
+    if any(flag_name in value for flag_name in HARD_FLAG_NAMES):
+        for flag_name in HARD_FLAG_NAMES:
             if value.get(flag_name) is not True:
                 raise ValueError(f"{field_name} {flag_name} must be present and true")
     for key, item in value.items():
@@ -519,6 +744,71 @@ def _validate_json_hard_flags(value: Any, field_name: str) -> None:
                 _validate_json_hard_flags(element, f"{child_name} {index}")
 
 
+def _validate_payload_rows_hard_flags(payload_json: dict[str, Any]) -> None:
+    _validate_research_queue_row_hard_flags(payload_json, "payload_json")
+
+
+def _validate_research_queue_row_hard_flags(
+    value: Any,
+    field_name: str,
+) -> None:
+    if isinstance(value, dict):
+        if _is_research_queue_row_payload(value):
+            for flag_name in HARD_FLAG_NAMES:
+                if value.get(flag_name) is not True:
+                    raise ValueError(
+                        f"{field_name} {flag_name} must be present and true",
+                    )
+        for key, item in value.items():
+            _validate_research_queue_row_hard_flags(item, f"{field_name} {key}")
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            _validate_research_queue_row_hard_flags(item, f"{field_name} {index}")
+
+
+def _is_research_queue_row_payload(value: dict[str, Any]) -> bool:
+    return RESEARCH_QUEUE_ROW_PAYLOAD_FIELDS.issubset(value)
+
+
+_DECIMAL_PAYLOAD_KEYS = frozenset(
+    (
+        "total_ready_notional",
+        "total_selected_notional",
+        "total_suggested_notional",
+        "top_research_priority_score",
+        "average_research_ready_score",
+        "recommendation_score",
+        "readiness_score",
+        "screening_score",
+        "net_edge_per_share",
+        "total_cost_per_share",
+        "confidence",
+        "spread",
+        "resolution_risk",
+        "suggested_notional",
+        "selected_position_notional",
+        "research_priority_score",
+    ),
+)
+
+
+def _strict_equal(left: object, right: object) -> bool:
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, dict):
+        if set(left) != set(right):
+            return False
+        return all(_strict_equal(left[key], right[key]) for key in left)
+    if isinstance(left, (list, tuple)):
+        if len(left) != len(right):
+            return False
+        return all(
+            _strict_equal(left_item, right_item)
+            for left_item, right_item in zip(left, right, strict=True)
+        )
+    return left == right
+
+
 def _reject_json_floats(value: Any) -> None:
     if isinstance(value, float):
         raise ValueError("JSON value must not be a float")
@@ -528,6 +818,17 @@ def _reject_json_floats(value: Any) -> None:
     elif isinstance(value, list):
         for item in value:
             _reject_json_floats(item)
+
+
+def _reject_json_decimals(value: Any, field_name: str = "JSON value") -> None:
+    if isinstance(value, Decimal):
+        raise ValueError(f"{field_name} must not be a Decimal")
+    if isinstance(value, dict):
+        for key, item in value.items():
+            _reject_json_decimals(item, f"{field_name} {key}")
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            _reject_json_decimals(item, f"{field_name} {index}")
 
 
 def _as_utc(field_name: str, value: object) -> datetime:

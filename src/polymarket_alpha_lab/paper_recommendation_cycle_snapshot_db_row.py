@@ -26,6 +26,21 @@ __all__ = (
 STATUSES = ("pass", "watch", "blocked")
 _SHA256_PATTERN = re.compile(r"^[a-f0-9]{64}$")
 _TOKEN_PATTERN = re.compile(r"[^a-z0-9]+")
+_JSON_INTEGER_FIELDS = frozenset(
+    {
+        "artifact_count",
+        "blocked_artifact_count",
+        "blocked_count",
+        "input_count",
+        "item_count",
+        "output_count",
+        "pass_count",
+        "row_count",
+        "stage_count",
+        "watch_artifact_count",
+        "watch_count",
+    },
+)
 
 
 @dataclass(frozen=True)
@@ -82,7 +97,11 @@ class PaperRecommendationCycleSnapshotDbRow:
             _normalize_json_object("payload_json", self.payload_json),
         )
         _require_hard_flags("DB row", self)
+        _validate_json_hard_flags(self.payload_json, "payload_json")
+        _validate_payload_count_fields(self.payload_json)
         _validate_count_objects(self)
+        _report_from_payload_json(self.payload_json)
+        _validate_materialized_fields_match_payload(self)
 
 
 def paper_recommendation_cycle_snapshot_to_db_row(
@@ -124,18 +143,9 @@ def paper_recommendation_cycle_snapshot_from_db_row(
 ) -> PaperRecommendationCycleSnapshotReport:
     if type(row) is not PaperRecommendationCycleSnapshotDbRow:
         raise ValueError("row must be a PaperRecommendationCycleSnapshotDbRow")
-    _reject_json_floats(row.payload_json)
-    _validate_json_hard_flags(row.payload_json, "payload_json")
-    try:
-        report = from_jsonable(PaperRecommendationCycleSnapshotReport, row.payload_json)
-    except (KeyError, TypeError, ValueError) as exc:
-        raise ValueError(f"payload_json is not a valid snapshot report: {exc}") from exc
-    if type(report) is not PaperRecommendationCycleSnapshotReport:
-        raise ValueError("payload_json must recover a PaperRecommendationCycleSnapshotReport")
-    _validate_report_tree(report)
+    report = _report_from_payload_json(row.payload_json)
     expected_row = paper_recommendation_cycle_snapshot_to_db_row(report)
-    if row.snapshot_sha256 != expected_row.snapshot_sha256:
-        raise ValueError("snapshot_sha256 must match payload_json")
+    _validate_row_matches_payload(row, expected_row)
     return report
 
 
@@ -183,6 +193,163 @@ def _validate_count_objects(row: PaperRecommendationCycleSnapshotDbRow) -> None:
         raise ValueError("artifact_counts_json must contain nonnegative int counts")
 
 
+def _validate_row_matches_payload(
+    row: PaperRecommendationCycleSnapshotDbRow,
+    expected: PaperRecommendationCycleSnapshotDbRow,
+) -> None:
+    for field_name in (
+        "snapshot_sha256",
+        "generated_at",
+        "config_version",
+        "final_status",
+        "stage_count",
+        "artifact_count",
+        "blocked_artifact_count",
+        "watch_artifact_count",
+        "reason_codes",
+        "stage_counts_json",
+        "artifact_counts_json",
+        "paper_only",
+        "report_only",
+        "readonly",
+    ):
+        if not _values_match_type_strict(
+            getattr(row, field_name),
+            getattr(expected, field_name),
+        ):
+            raise ValueError(f"{field_name} must match payload_json")
+
+
+def _validate_materialized_fields_match_payload(
+    row: PaperRecommendationCycleSnapshotDbRow,
+) -> None:
+    if row.snapshot_sha256 != _snapshot_sha256(row.payload_json):
+        raise ValueError("snapshot_sha256 must match payload_json")
+    for field_name in (
+        "generated_at",
+        "config_version",
+        "final_status",
+    ):
+        if not _values_match_type_strict(
+            row.payload_json.get(field_name),
+            _json_ready(getattr(row, field_name)),
+        ):
+            raise ValueError(f"{field_name} must match payload_json")
+    for field_name in (
+        "stage_count",
+        "artifact_count",
+        "blocked_artifact_count",
+        "watch_artifact_count",
+    ):
+        payload_value = row.payload_json.get(field_name)
+        _require_json_nonnegative_int(f"payload_json {field_name}", payload_value)
+        if not _values_match_type_strict(payload_value, getattr(row, field_name)):
+            raise ValueError(f"{field_name} must match payload_json")
+    if not _values_match_type_strict(
+        row.payload_json.get("reason_codes"),
+        _json_ready(row.reason_codes),
+    ):
+        raise ValueError("reason_codes must match payload_json")
+    if not _values_match_type_strict(
+        row.stage_counts_json,
+        _stage_counts_from_payload(row.payload_json),
+    ):
+        raise ValueError("stage_counts_json must match payload_json")
+    if not _values_match_type_strict(
+        row.artifact_counts_json,
+        _artifact_counts_from_payload(row.payload_json),
+    ):
+        raise ValueError("artifact_counts_json must match payload_json")
+    for flag_name in ("paper_only", "report_only", "readonly"):
+        if not _values_match_type_strict(
+            getattr(row, flag_name),
+            row.payload_json.get(flag_name),
+        ):
+            raise ValueError(f"{flag_name} must match payload_json")
+
+
+def _report_from_payload_json(
+    payload_json: object,
+) -> PaperRecommendationCycleSnapshotReport:
+    payload_json = _normalize_json_object("payload_json", payload_json)
+    _validate_json_hard_flags(payload_json, "payload_json")
+    _validate_payload_count_fields(payload_json)
+    try:
+        report = from_jsonable(PaperRecommendationCycleSnapshotReport, payload_json)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(f"payload_json is not a valid snapshot report: {exc}") from exc
+    if type(report) is not PaperRecommendationCycleSnapshotReport:
+        raise ValueError("payload_json must recover a PaperRecommendationCycleSnapshotReport")
+    _validate_report_tree(report)
+    if not _values_match_type_strict(payload_json, _json_ready(asdict(report))):
+        raise ValueError("payload_json must be canonical")
+    return report
+
+
+def _stage_counts_from_payload(payload_json: dict[str, Any]) -> dict[str, int]:
+    pipeline_report = payload_json.get("pipeline_report")
+    if not isinstance(pipeline_report, dict):
+        raise ValueError("payload_json pipeline_report must be a JSON object")
+    counts = {
+        "stage_count": pipeline_report.get("stage_count"),
+        "pass_count": pipeline_report.get("pass_count"),
+        "watch_count": pipeline_report.get("watch_count"),
+        "blocked_count": pipeline_report.get("blocked_count"),
+    }
+    for key, value in counts.items():
+        _require_json_nonnegative_int(f"payload_json pipeline_report {key}", value)
+    return counts
+
+
+def _artifact_counts_from_payload(payload_json: dict[str, Any]) -> dict[str, int]:
+    artifact_index_report = payload_json.get("artifact_index_report")
+    if not isinstance(artifact_index_report, dict):
+        raise ValueError("payload_json artifact_index_report must be a JSON object")
+    counts = {
+        "artifact_count": artifact_index_report.get("row_count"),
+        "pass_count": artifact_index_report.get("pass_count"),
+        "watch_count": artifact_index_report.get("watch_count"),
+        "blocked_count": artifact_index_report.get("blocked_count"),
+    }
+    for key, value in counts.items():
+        _require_json_nonnegative_int(f"payload_json artifact_index_report {key}", value)
+    return counts
+
+
+def _validate_payload_count_fields(payload_json: dict[str, Any]) -> None:
+    _validate_json_integer_fields(payload_json, "payload_json")
+    for field_name in (
+        "stage_count",
+        "artifact_count",
+        "blocked_artifact_count",
+        "watch_artifact_count",
+    ):
+        _require_json_nonnegative_int(
+            f"payload_json {field_name}",
+            payload_json.get(field_name),
+        )
+    _stage_counts_from_payload(payload_json)
+    _artifact_counts_from_payload(payload_json)
+
+
+def _require_json_nonnegative_int(field_name: str, value: object) -> None:
+    if type(value) is not int or value < 0:
+        raise ValueError(f"{field_name} must be a nonnegative int")
+
+
+def _validate_json_integer_fields(value: Any, field_name: str) -> None:
+    if isinstance(value, dict):
+        for key, item in value.items():
+            child_name = f"{field_name} {key}"
+            if key in _JSON_INTEGER_FIELDS:
+                _require_json_nonnegative_int(child_name, item)
+            else:
+                _validate_json_integer_fields(item, child_name)
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            _validate_json_integer_fields(item, f"{field_name} {index}")
+
+
 def _json_ready(value: Any) -> Any:
     if value is None:
         return None
@@ -211,11 +378,7 @@ def _json_ready(value: Any) -> Any:
 def _normalize_json_object(field_name: str, value: object) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError(f"{field_name} must be a JSON object")
-    try:
-        _reject_json_floats(value)
-    except ValueError as exc:
-        raise ValueError(f"{field_name} must not contain floats") from exc
-    return {key: _json_ready(item) for key, item in value.items()}
+    return _canonical_json_value(field_name, value)
 
 
 def _normalize_int_json_object(field_name: str, value: object) -> dict[str, int]:
@@ -226,10 +389,56 @@ def _normalize_int_json_object(field_name: str, value: object) -> dict[str, int]
     return normalized
 
 
+def _canonical_json_value(field_name: str, value: object) -> Any:
+    if value is None:
+        return None
+    if type(value) in (str, int, bool):
+        return value
+    if type(value) is float:
+        raise ValueError(f"{field_name} must not contain floats")
+    if isinstance(value, dict):
+        normalized: dict[str, Any] = {}
+        for key, item in value.items():
+            if type(key) is not str:
+                raise ValueError("JSON object keys must be strings")
+            normalized[key] = _canonical_json_value(f"{field_name} {key}", item)
+        return normalized
+    if isinstance(value, list):
+        return [
+            _canonical_json_value(f"{field_name} {index}", item)
+            for index, item in enumerate(value)
+        ]
+    raise ValueError(f"{field_name} must contain canonical JSON values")
+
+
+def _values_match_type_strict(actual: object, expected: object) -> bool:
+    if type(actual) is not type(expected):
+        return False
+    if isinstance(actual, dict):
+        if actual.keys() != expected.keys():
+            return False
+        return all(
+            _values_match_type_strict(actual[key], expected[key])
+            for key in actual
+        )
+    if isinstance(actual, (list, tuple)):
+        if len(actual) != len(expected):
+            return False
+        return all(
+            _values_match_type_strict(actual_item, expected_item)
+            for actual_item, expected_item in zip(actual, expected, strict=True)
+        )
+    return actual == expected
+
+
 def _validate_json_hard_flags(value: Any, field_name: str) -> None:
     if not isinstance(value, dict):
         return
-    if any(flag_name in value for flag_name in ("paper_only", "report_only", "readonly")):
+    if _json_object_requires_hard_flags(field_name):
+        for flag_name in ("paper_only", "report_only", "readonly"):
+            if value.get(flag_name) is not True:
+                raise ValueError(f"{field_name} {flag_name} must be present and true")
+    elif any(flag_name in value for flag_name in ("paper_only", "report_only", "readonly")):
         for flag_name in ("paper_only", "report_only", "readonly"):
             if value.get(flag_name) is not True:
                 raise ValueError(f"{field_name} {flag_name} must be present and true")
@@ -240,6 +449,16 @@ def _validate_json_hard_flags(value: Any, field_name: str) -> None:
         elif isinstance(item, list):
             for index, element in enumerate(item):
                 _validate_json_hard_flags(element, f"{child_name} {index}")
+
+
+def _json_object_requires_hard_flags(field_name: str) -> bool:
+    if field_name in (
+        "payload_json",
+        "payload_json pipeline_report",
+        "payload_json artifact_index_report",
+    ):
+        return True
+    return field_name.startswith("payload_json pipeline_report stages ")
 
 
 def _reject_json_floats(value: Any) -> None:

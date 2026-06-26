@@ -31,6 +31,7 @@ __all__ = (
 
 _LEDGER_STATUSES = ("pass", "watch", "blocked")
 _SHA256_PATTERN = r"^[a-f0-9]{64}$"
+_DECIMAL_QUANTUM = Decimal("0.000001")
 
 
 @dataclass(frozen=True)
@@ -110,6 +111,7 @@ class PaperAutonomousInvestmentLedgerDbRow:
             _normalize_json_object("payload_json", self.payload_json),
         )
         _require_hard_flags("DB row", self)
+        _validate_materialized_fields_match_payload(self)
 
 
 def paper_autonomous_investment_ledger_to_db_row(
@@ -163,6 +165,7 @@ def paper_autonomous_investment_ledger_from_db_row(
     _reject_json_floats(row.reason_codes_json)
     _reject_json_floats(row.payload_json)
     _validate_json_hard_flags(row.payload_json, "payload_json")
+    _validate_materialized_fields_match_payload(row)
     try:
         report = from_jsonable(PaperAutonomousInvestmentLedgerReport, row.payload_json)
     except (KeyError, TypeError, ValueError) as exc:
@@ -213,8 +216,84 @@ def _validate_row_matches_payload(
     expected: PaperAutonomousInvestmentLedgerDbRow,
 ) -> None:
     for field_name in _MATERIALIZED_FIELDS:
-        if getattr(row, field_name) != getattr(expected, field_name):
+        row_value = _json_ready_field(field_name, getattr(row, field_name))
+        expected_value = _json_ready_field(field_name, getattr(expected, field_name))
+        if not _json_values_equal(row_value, expected_value):
             raise ValueError(f"{field_name} must match payload_json")
+
+
+def _validate_materialized_fields_match_payload(
+    row: PaperAutonomousInvestmentLedgerDbRow,
+) -> None:
+    payload_json = row.payload_json
+    if not isinstance(payload_json, dict):
+        raise ValueError("payload_json must be a JSON object")
+    _validate_json_hard_flags(payload_json, "payload_json")
+    _validate_payload_dataclass_hard_flags(payload_json)
+
+    actual_values = {"report_sha256": row.report_sha256}
+    expected_values = {"report_sha256": _report_sha256(payload_json)}
+
+    for field_name in _PAYLOAD_SCALAR_FIELDS:
+        actual_values[field_name] = _json_ready_field(
+            field_name,
+            getattr(row, field_name),
+        )
+        expected_values[field_name] = _payload_value(payload_json, field_name)
+
+    for row_field_name, payload_field_name in _PAYLOAD_JSON_FIELDS:
+        actual_values[row_field_name] = _json_ready_field(
+            row_field_name,
+            getattr(row, row_field_name),
+        )
+        expected_values[row_field_name] = _payload_value(
+            payload_json,
+            payload_field_name,
+        )
+
+    for field_name in actual_values:
+        if not _json_values_equal(actual_values[field_name], expected_values[field_name]):
+            raise ValueError(f"{field_name} must match payload_json")
+
+
+def _payload_value(payload_json: dict[str, Any], field_name: str) -> Any:
+    if field_name not in payload_json:
+        return _MISSING_PAYLOAD_VALUE
+    return payload_json[field_name]
+
+
+def _json_ready_field(field_name: str, value: Any) -> Any:
+    try:
+        return _json_ready(value)
+    except ValueError as exc:
+        raise ValueError(f"{field_name} {exc}") from exc
+
+
+def _validate_payload_dataclass_hard_flags(payload_json: dict[str, Any]) -> None:
+    for payload_field_name in _PAYLOAD_DATACLASS_ARRAY_FIELDS:
+        value = _payload_value(payload_json, payload_field_name)
+        if value is _MISSING_PAYLOAD_VALUE or not isinstance(value, list):
+            continue
+        _require_json_array_hard_flags(f"payload_json {payload_field_name}", value)
+
+
+def _json_values_equal(left: Any, right: Any) -> bool:
+    if left is _MISSING_PAYLOAD_VALUE or right is _MISSING_PAYLOAD_VALUE:
+        return left is right
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, dict):
+        if left.keys() != right.keys():
+            return False
+        return all(_json_values_equal(left[key], right[key]) for key in left)
+    if isinstance(left, list):
+        if len(left) != len(right):
+            return False
+        return all(
+            _json_values_equal(left_item, right_item)
+            for left_item, right_item in zip(left, right, strict=True)
+        )
+    return left == right
 
 
 def _report_sha256(payload_json: dict[str, Any]) -> str:
@@ -233,8 +312,7 @@ def _json_ready(value: Any) -> Any:
     if is_dataclass(value) and not isinstance(value, type):
         return _json_ready(asdict(value))
     if isinstance(value, Decimal):
-        if not value.is_finite():
-            raise ValueError("JSON Decimal value must be finite")
+        _require_canonical_decimal("JSON Decimal value", value)
         return str(value)
     if isinstance(value, datetime):
         return _as_utc("datetime", value).isoformat()
@@ -300,10 +378,11 @@ def _normalize_dataclass_json_objects(
     if not isinstance(value, (list, tuple)):
         raise ValueError(f"{field_name} must be a JSON array")
     normalized: list[dict[str, Any]] = []
-    for item in value:
+    for index, item in enumerate(value):
         if not isinstance(item, dict):
             raise ValueError(f"{field_name} must contain JSON objects")
         _validate_json_hard_flags(item, field_name)
+        _require_json_hard_flags(f"{field_name} {index}", item)
         try:
             recovered = from_jsonable(row_type, item)
         except (KeyError, TypeError, ValueError) as exc:
@@ -343,9 +422,7 @@ def _validate_json_hard_flags(value: Any, field_name: str) -> None:
     if not isinstance(value, dict):
         return
     if any(flag_name in value for flag_name in ("paper_only", "report_only", "readonly")):
-        for flag_name in ("paper_only", "report_only", "readonly"):
-            if value.get(flag_name) is not True:
-                raise ValueError(f"{field_name} {flag_name} must be present and true")
+        _require_json_hard_flags(field_name, value)
     for key, item in value.items():
         child_name = f"{field_name} {key}"
         if isinstance(item, dict):
@@ -353,6 +430,18 @@ def _validate_json_hard_flags(value: Any, field_name: str) -> None:
         elif isinstance(item, list):
             for index, element in enumerate(item):
                 _validate_json_hard_flags(element, f"{child_name} {index}")
+
+
+def _require_json_array_hard_flags(field_name: str, value: list[Any]) -> None:
+    for index, item in enumerate(value):
+        if isinstance(item, dict):
+            _require_json_hard_flags(f"{field_name} {index}", item)
+
+
+def _require_json_hard_flags(field_name: str, value: dict[str, Any]) -> None:
+    for flag_name in ("paper_only", "report_only", "readonly"):
+        if value.get(flag_name) is not True:
+            raise ValueError(f"{field_name} {flag_name} must be present and true")
 
 
 def _reject_json_floats(value: Any) -> None:
@@ -427,12 +516,20 @@ def _require_optional_nonnegative_int(field_name: str, value: object) -> None:
 
 
 def _require_nonnegative_decimal(field_name: str, value: object) -> Decimal:
+    decimal = _require_canonical_decimal(field_name, value)
+    if decimal < Decimal("0"):
+        raise ValueError(f"{field_name} must be nonnegative")
+    return decimal
+
+
+def _require_canonical_decimal(field_name: str, value: object) -> Decimal:
     if type(value) is not Decimal:
         raise ValueError(f"{field_name} must be a Decimal")
     if not value.is_finite():
         raise ValueError(f"{field_name} must be finite")
-    if value < Decimal("0"):
-        raise ValueError(f"{field_name} must be nonnegative")
+    canonical = value.quantize(_DECIMAL_QUANTUM)
+    if str(value) != str(canonical):
+        raise ValueError(f"{field_name} must be canonical")
     return value
 
 
@@ -459,6 +556,35 @@ _MATERIALIZED_FIELDS = (
     "report_only",
     "readonly",
 )
+
+_PAYLOAD_SCALAR_FIELDS = (
+    "generated_at",
+    "config_version",
+    "ledger_status",
+    "recommended_next_step",
+    "source_record_count",
+    "submitted_count",
+    "held_count",
+    "blocked_count",
+    "total_submitted_notional",
+    "held_zero_notional_count",
+    "blocked_zero_notional_count",
+    "latest_generated_at",
+    "latest_age_seconds",
+    "paper_only",
+    "report_only",
+    "readonly",
+)
+
+_PAYLOAD_JSON_FIELDS = (
+    ("reason_code_counts_json", "reason_code_counts"),
+    ("entries_json", "entries"),
+    ("reason_codes_json", "reason_codes"),
+)
+
+_PAYLOAD_DATACLASS_ARRAY_FIELDS = ("reason_code_counts", "entries")
+
+_MISSING_PAYLOAD_VALUE = object()
 
 
 paper_autonomous_investment_ledger_report_to_db_row = (

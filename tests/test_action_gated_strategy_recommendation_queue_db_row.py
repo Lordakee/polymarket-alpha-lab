@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -296,6 +296,51 @@ def _assert_no_floats(value: object) -> None:
             _assert_no_floats(item)
 
 
+def _payload_sha256(payload_json: dict[str, object]) -> str:
+    encoded = json.dumps(
+        payload_json,
+        allow_nan=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return __import__("hashlib").sha256(encoded).hexdigest()
+
+
+def _row_values(
+    row: PaperActionGatedStrategyRecommendationQueueDbRow,
+) -> dict[str, object]:
+    return {
+        "report_sha256": row.report_sha256,
+        "generated_at": row.generated_at,
+        "config_version": row.config_version,
+        "source_config_version": row.source_config_version,
+        "action_status": row.action_status,
+        "recommended_next_step": row.recommended_next_step,
+        "candidate_count": row.candidate_count,
+        "ready_count": row.ready_count,
+        "watch_count": row.watch_count,
+        "blocked_count": row.blocked_count,
+        "total_ready_notional": row.total_ready_notional,
+        "reason_code_counts_json": row.reason_code_counts_json,
+        "payload_json": row.payload_json,
+        "paper_only": row.paper_only,
+        "report_only": row.report_only,
+        "readonly": row.readonly,
+    }
+
+
+def _bypassed_queue_row(
+    row: PaperActionGatedStrategyRecommendationQueueDbRow,
+    **overrides: object,
+) -> PaperActionGatedStrategyRecommendationQueueDbRow:
+    values = _row_values(row)
+    values.update(overrides)
+    bypassed = object.__new__(PaperActionGatedStrategyRecommendationQueueDbRow)
+    for field_name, value in values.items():
+        object.__setattr__(bypassed, field_name, value)
+    return bypassed
+
+
 def test_action_gated_queue_db_row_serializes_ready_payload_and_round_trips():
     report = _ready_report()
 
@@ -467,28 +512,99 @@ def test_action_gated_queue_db_row_rejects_duplicate_reason_code_counts_before_w
         paper_action_gated_strategy_recommendation_queue_report_to_db_row(report)
 
 
-def test_action_gated_queue_db_row_rejects_unsafe_stored_flags():
+def test_action_gated_queue_db_row_constructor_rejects_unsafe_stored_flags():
     row = paper_action_gated_strategy_recommendation_queue_report_to_db_row(
         _watch_report(),
     )
-    malformed = PaperActionGatedStrategyRecommendationQueueDbRow(
-        report_sha256="a" * 64,
-        generated_at=row.generated_at,
-        config_version=row.config_version,
-        source_config_version=row.source_config_version,
-        action_status=row.action_status,
-        recommended_next_step=row.recommended_next_step,
-        candidate_count=row.candidate_count,
-        ready_count=row.ready_count,
-        watch_count=row.watch_count,
-        blocked_count=row.blocked_count,
-        total_ready_notional=row.total_ready_notional,
-        reason_code_counts_json=row.reason_code_counts_json,
-        payload_json={**row.payload_json, "readonly": False},
-    )
+    payload_json = {**row.payload_json, "readonly": False}
 
     with pytest.raises(ValueError, match="readonly"):
-        paper_action_gated_strategy_recommendation_queue_report_from_db_row(malformed)
+        PaperActionGatedStrategyRecommendationQueueDbRow(
+            **{
+                **_row_values(row),
+                "report_sha256": _payload_sha256(payload_json),
+                "payload_json": payload_json,
+            },
+        )
+
+
+def test_action_gated_queue_db_row_constructor_rejects_nested_payload_flags():
+    row = paper_action_gated_strategy_recommendation_queue_report_to_db_row(
+        _ready_report(),
+    )
+    candidate_assessment_report = dict(row.payload_json["candidate_assessment_report"])
+    candidate_assessment_report["readonly"] = False
+    payload_json = {
+        **row.payload_json,
+        "candidate_assessment_report": candidate_assessment_report,
+    }
+
+    with pytest.raises(ValueError, match="readonly"):
+        PaperActionGatedStrategyRecommendationQueueDbRow(
+            **{
+                **_row_values(row),
+                "report_sha256": _payload_sha256(payload_json),
+                "payload_json": payload_json,
+            },
+        )
+
+
+def test_action_gated_queue_db_row_constructor_rejects_payload_that_cannot_recover():
+    row = paper_action_gated_strategy_recommendation_queue_report_to_db_row(
+        _watch_report(),
+    )
+    payload_json = {**row.payload_json, "unexpected_field": "not-a-report-field"}
+
+    with pytest.raises(ValueError, match="payload_json"):
+        PaperActionGatedStrategyRecommendationQueueDbRow(
+            **{
+                **_row_values(row),
+                "report_sha256": _payload_sha256(payload_json),
+                "payload_json": payload_json,
+            },
+        )
+
+
+def test_action_gated_queue_db_row_constructor_rejects_bool_payload_int_count():
+    row = paper_action_gated_strategy_recommendation_queue_report_to_db_row(
+        _ready_report(),
+    )
+    payload_json = {**row.payload_json, "ready_count": True}
+
+    with pytest.raises(ValueError, match="payload_json|ready_count"):
+        PaperActionGatedStrategyRecommendationQueueDbRow(
+            **{
+                **_row_values(row),
+                "report_sha256": _payload_sha256(payload_json),
+                "payload_json": payload_json,
+            },
+        )
+
+
+def test_action_gated_queue_db_row_constructor_rejects_self_hashed_noncanonical_decimal():
+    row = paper_action_gated_strategy_recommendation_queue_report_to_db_row(
+        _watch_report(),
+    )
+    payload_json = {**row.payload_json, "total_ready_notional": "0"}
+
+    with pytest.raises(ValueError, match="payload_json|total_ready_notional"):
+        PaperActionGatedStrategyRecommendationQueueDbRow(
+            **{
+                **_row_values(row),
+                "report_sha256": _payload_sha256(payload_json),
+                "total_ready_notional": Decimal("0"),
+                "payload_json": payload_json,
+            },
+        )
+
+
+def test_action_gated_queue_db_row_replace_revalidates_payload_consistency():
+    row = paper_action_gated_strategy_recommendation_queue_report_to_db_row(
+        _watch_report(),
+    )
+
+    with pytest.raises(ValueError, match="candidate_count"):
+        replace(row, candidate_count=row.candidate_count + 1)
 
 
 @pytest.mark.parametrize(
@@ -523,28 +639,111 @@ def test_action_gated_queue_db_row_rejects_materialized_payload_mismatches(
     row = paper_action_gated_strategy_recommendation_queue_report_to_db_row(
         _watch_report(),
     )
-    values = {
-        "report_sha256": row.report_sha256,
-        "generated_at": row.generated_at,
-        "config_version": row.config_version,
-        "source_config_version": row.source_config_version,
-        "action_status": row.action_status,
-        "recommended_next_step": row.recommended_next_step,
-        "candidate_count": row.candidate_count,
-        "ready_count": row.ready_count,
-        "watch_count": row.watch_count,
-        "blocked_count": row.blocked_count,
-        "total_ready_notional": row.total_ready_notional,
-        "reason_code_counts_json": row.reason_code_counts_json,
-        "payload_json": row.payload_json,
-        "paper_only": row.paper_only,
-        "report_only": row.report_only,
-        "readonly": row.readonly,
-    }
+    values = _row_values(row)
     values.update(overrides)
-    malformed = PaperActionGatedStrategyRecommendationQueueDbRow(**values)
 
     with pytest.raises(ValueError, match=message):
+        PaperActionGatedStrategyRecommendationQueueDbRow(**values)
+
+
+def test_action_gated_queue_db_row_from_db_row_rejects_bypassed_payload_mismatch():
+    row = paper_action_gated_strategy_recommendation_queue_report_to_db_row(
+        _watch_report(),
+    )
+    malformed = _bypassed_queue_row(row, candidate_count=row.candidate_count + 1)
+
+    with pytest.raises(ValueError, match="candidate_count"):
+        paper_action_gated_strategy_recommendation_queue_report_from_db_row(malformed)
+
+
+def test_action_gated_queue_db_row_from_db_row_rejects_bypassed_payload_recovery_error():
+    row = paper_action_gated_strategy_recommendation_queue_report_to_db_row(
+        _watch_report(),
+    )
+    payload_json = {**row.payload_json, "unexpected_field": "not-a-report-field"}
+    malformed = _bypassed_queue_row(
+        row,
+        report_sha256=_payload_sha256(payload_json),
+        payload_json=payload_json,
+    )
+
+    with pytest.raises(ValueError, match="payload_json"):
+        paper_action_gated_strategy_recommendation_queue_report_from_db_row(malformed)
+
+
+def test_action_gated_queue_db_row_from_db_row_rejects_bypassed_bool_materialized_int():
+    row = paper_action_gated_strategy_recommendation_queue_report_to_db_row(
+        _ready_report(),
+    )
+    malformed = _bypassed_queue_row(row, ready_count=True)
+
+    with pytest.raises(ValueError, match="ready_count"):
+        paper_action_gated_strategy_recommendation_queue_report_from_db_row(malformed)
+
+
+def test_action_gated_queue_db_row_from_db_row_rejects_bypassed_bool_materialized_reason_count():
+    row = paper_action_gated_strategy_recommendation_queue_report_to_db_row(
+        _ready_report(),
+    )
+    malformed = _bypassed_queue_row(
+        row,
+        reason_code_counts_json={"cycle_review_pass": True},
+    )
+
+    with pytest.raises(ValueError, match="reason_code_counts_json"):
+        paper_action_gated_strategy_recommendation_queue_report_from_db_row(malformed)
+
+
+def test_action_gated_queue_db_row_from_db_row_rejects_bypassed_noncanonical_materialized_decimal():
+    row = paper_action_gated_strategy_recommendation_queue_report_to_db_row(
+        _watch_report(),
+    )
+    malformed = _bypassed_queue_row(row, total_ready_notional=Decimal("0"))
+
+    with pytest.raises(ValueError, match="total_ready_notional"):
+        paper_action_gated_strategy_recommendation_queue_report_from_db_row(malformed)
+
+
+def test_action_gated_queue_db_row_from_db_row_rejects_bypassed_missing_nested_payload_hard_flag():
+    row = paper_action_gated_strategy_recommendation_queue_report_to_db_row(
+        _ready_report(),
+    )
+    candidate_assessment_report = dict(row.payload_json["candidate_assessment_report"])
+    del candidate_assessment_report["readonly"]
+    payload_json = {
+        **row.payload_json,
+        "candidate_assessment_report": candidate_assessment_report,
+    }
+    malformed = _bypassed_queue_row(
+        row,
+        report_sha256=_payload_sha256(payload_json),
+        payload_json=payload_json,
+    )
+
+    with pytest.raises(ValueError, match="readonly"):
+        paper_action_gated_strategy_recommendation_queue_report_from_db_row(malformed)
+
+
+def test_action_gated_queue_db_row_from_db_row_rejects_bypassed_missing_all_nested_payload_hard_flags():
+    row = paper_action_gated_strategy_recommendation_queue_report_to_db_row(
+        _ready_report(),
+    )
+    candidate_assessment_report = {
+        key: value
+        for key, value in row.payload_json["candidate_assessment_report"].items()
+        if key not in ("paper_only", "report_only", "readonly")
+    }
+    payload_json = {
+        **row.payload_json,
+        "candidate_assessment_report": candidate_assessment_report,
+    }
+    malformed = _bypassed_queue_row(
+        row,
+        report_sha256=row.report_sha256,
+        payload_json=payload_json,
+    )
+
+    with pytest.raises(ValueError, match="report_sha256|payload_json"):
         paper_action_gated_strategy_recommendation_queue_report_from_db_row(malformed)
 
 
@@ -552,28 +751,20 @@ def test_action_gated_queue_db_row_wraps_payload_recovery_errors_as_value_error(
     row = paper_action_gated_strategy_recommendation_queue_report_to_db_row(
         _watch_report(),
     )
-    malformed = PaperActionGatedStrategyRecommendationQueueDbRow(
-        report_sha256="a" * 64,
-        generated_at=row.generated_at,
-        config_version=row.config_version,
-        source_config_version=row.source_config_version,
-        action_status=row.action_status,
-        recommended_next_step=row.recommended_next_step,
-        candidate_count=row.candidate_count,
-        ready_count=row.ready_count,
-        watch_count=row.watch_count,
-        blocked_count=row.blocked_count,
-        total_ready_notional=row.total_ready_notional,
-        reason_code_counts_json=row.reason_code_counts_json,
-        payload_json={
+    payload_json = {
             key: value
             for key, value in row.payload_json.items()
             if key != "reason_code_counts"
-        },
-    )
+        }
 
     with pytest.raises(ValueError, match="payload_json"):
-        paper_action_gated_strategy_recommendation_queue_report_from_db_row(malformed)
+        PaperActionGatedStrategyRecommendationQueueDbRow(
+            **{
+                **_row_values(row),
+                "report_sha256": _payload_sha256(payload_json),
+                "payload_json": payload_json,
+            },
+        )
 
 
 def test_action_gated_queue_db_row_validates_row_shape_and_rejects_floats():

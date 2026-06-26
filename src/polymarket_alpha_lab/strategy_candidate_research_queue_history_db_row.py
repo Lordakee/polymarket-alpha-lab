@@ -181,6 +181,13 @@ class PaperStrategyCandidateResearchQueueHistoryDbRow:
             _normalize_json_object("payload_json", self.payload_json),
         )
         _require_hard_flags("DB row", self)
+        _validate_json_hard_flags(
+            self.payload_json,
+            "payload_json",
+            require_hard_flags=True,
+        )
+        _validate_row_matches_payload_json(self)
+        _validate_payload_recovers_to_canonical_report(self.payload_json)
 
 
 def paper_strategy_candidate_research_queue_history_report_to_db_row(
@@ -247,6 +254,8 @@ def paper_strategy_candidate_research_queue_history_report_from_db_row(
         "payload_json",
         require_hard_flags=True,
     )
+    _validate_row_matches_payload_json(row)
+    _validate_payload_recovers_to_canonical_report(row.payload_json)
     try:
         report = from_jsonable(
             PaperStrategyCandidateResearchQueueHistoryReport,
@@ -368,6 +377,150 @@ def _validate_row_matches_payload(
             raise ValueError(f"{field_name} must match payload_json")
 
 
+def _validate_row_matches_payload_json(
+    row: PaperStrategyCandidateResearchQueueHistoryDbRow,
+) -> None:
+    if row.report_sha256 != _report_sha256(row.payload_json):
+        raise ValueError("report_sha256 must match payload_json")
+    _validate_row_scalars_match_payload(row)
+    if (
+        row.latest_primary_reason_code_counts_json
+        != _latest_primary_reason_code_counts_json_from_payload(row.payload_json)
+    ):
+        raise ValueError(
+            "latest_primary_reason_code_counts_json must match payload_json",
+        )
+    if (
+        row.latest_reason_codes_json
+        != _latest_reason_codes_json_from_payload(row.payload_json)
+    ):
+        raise ValueError("latest_reason_codes_json must match payload_json")
+    for flag_name in HARD_FLAG_NAMES:
+        if flag_name not in row.payload_json:
+            raise ValueError(f"{flag_name} must match payload_json")
+        expected_value = row.payload_json[flag_name]
+        actual_value = getattr(row, flag_name)
+        if (
+            type(expected_value) is not type(_json_ready(actual_value))
+            or actual_value != expected_value
+        ):
+            raise ValueError(f"{flag_name} must match payload_json")
+
+
+def _validate_row_scalars_match_payload(
+    row: PaperStrategyCandidateResearchQueueHistoryDbRow,
+) -> None:
+    for field_name in (
+        "generated_at",
+        "source_report_count",
+        "first_source_generated_at",
+        "last_source_generated_at",
+        "action_status_research_ready_count",
+        "action_status_watch_count",
+        "action_status_blocked_count",
+        "research_status_ready_count",
+        "research_status_watch_count",
+        "research_status_blocked_count",
+        "total_ready_notional",
+        "total_selected_notional",
+        "total_suggested_notional",
+        "latest_action_status",
+        "latest_recommended_next_step",
+        "latest_research_status",
+        "latest_top_research_priority_score",
+        "latest_average_research_ready_score",
+        "status_transition_count",
+        "ready_notional_delta",
+        "selected_notional_delta",
+        "latest_selected_count",
+        "latest_skipped_count",
+        "latest_not_selected_count",
+    ):
+        if field_name not in row.payload_json:
+            raise ValueError(f"{field_name} must match payload_json")
+        expected_value = row.payload_json[field_name]
+        actual_value = _json_ready(getattr(row, field_name))
+        if (
+            type(expected_value) is not type(actual_value)
+            or expected_value != actual_value
+        ):
+            raise ValueError(f"{field_name} must match payload_json")
+
+
+def _validate_payload_recovers_to_canonical_report(
+    payload_json: dict[str, Any],
+) -> None:
+    try:
+        report = from_jsonable(
+            PaperStrategyCandidateResearchQueueHistoryReport,
+            payload_json,
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(
+            "payload_json is not a valid strategy candidate research queue "
+            f"history report: {exc}",
+        ) from exc
+    if type(report) is not PaperStrategyCandidateResearchQueueHistoryReport:
+        raise ValueError(
+            "payload_json must recover a "
+            "PaperStrategyCandidateResearchQueueHistoryReport",
+        )
+    _validate_report_tree(report)
+    if payload_json != _json_ready(asdict(report)):
+        raise ValueError("payload_json must match canonical recovered report payload")
+
+
+def _latest_primary_reason_code_counts_json_from_payload(
+    payload_json: dict[str, Any],
+) -> dict[str, int]:
+    rows = payload_json.get("latest_primary_reason_code_counts")
+    if not isinstance(rows, list):
+        raise ValueError(
+            "latest_primary_reason_code_counts_json must match payload_json",
+        )
+    result: dict[str, int] = {}
+    for item in rows:
+        if not isinstance(item, list) or len(item) != 2:
+            raise ValueError(
+                "latest_primary_reason_code_counts_json must match payload_json",
+            )
+        reason_code, count = item
+        _require_canonical_token(
+            "payload_json latest_primary_reason_code_counts reason_code",
+            reason_code,
+        )
+        if type(count) is not int or count <= 0:
+            raise ValueError(
+                "payload_json latest_primary_reason_code_counts count must be positive",
+            )
+        if reason_code in result:
+            raise ValueError(
+                "payload_json latest_primary_reason_code_counts "
+                "must not contain duplicate reason codes",
+            )
+        result[reason_code] = count
+    return result
+
+
+def _latest_reason_codes_json_from_payload(
+    payload_json: dict[str, Any],
+) -> list[str]:
+    values = payload_json.get("latest_reason_codes")
+    if not isinstance(values, list):
+        raise ValueError("latest_reason_codes_json must match payload_json")
+    seen: set[str] = set()
+    result: list[str] = []
+    for item in values:
+        _require_canonical_token("payload_json latest_reason_codes item", item)
+        if item in seen:
+            raise ValueError(
+                "payload_json latest_reason_codes must not contain duplicates",
+            )
+        seen.add(item)
+        result.append(item)
+    return result
+
+
 def _report_sha256(payload_json: dict[str, object]) -> str:
     encoded = json.dumps(
         payload_json,
@@ -454,6 +607,10 @@ def _validate_json_hard_flags(
     *,
     require_hard_flags: bool = False,
 ) -> None:
+    if isinstance(value, list):
+        for index, element in enumerate(value):
+            _validate_json_hard_flags(element, f"{field_name} {index}")
+        return
     if not isinstance(value, dict):
         return
     if require_hard_flags or any(flag_name in value for flag_name in HARD_FLAG_NAMES):

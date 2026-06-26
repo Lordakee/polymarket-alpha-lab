@@ -85,6 +85,10 @@ def _install_fake_reducer_module() -> None:
     module = ModuleType(REDUCER_MODULE_NAME)
     module.datetime = datetime
     module.Decimal = Decimal
+    module.DEFAULT_PAPER_AUTONOMOUS_SCREENING_DECISION_SUPPORT_GATE_CONFIG_VERSION = (
+        "paper-autonomous-screening-decision-support-gate-v0"
+    )
+    module.GATE_STATUSES = ("pass", "watch", "blocked")
     PaperAutonomousScreeningDecisionSupportGateReasonCodeCount.__module__ = (
         REDUCER_MODULE_NAME
     )
@@ -378,14 +382,21 @@ def test_autonomous_screening_gate_db_row_rejects_corrupted_stored_payload_flags
             },
         ],
     }
-    malformed = codec.PaperAutonomousScreeningDecisionSupportGateDbRow(
-        **{
-            **_row_values(row),
-            "report_sha256": _canonical_payload_sha256(payload),
-            "payload_json": payload,
-            "reason_code_counts_json": payload["reason_code_counts"],
-        },
-    )
+    values = {
+        **_row_values(row),
+        "report_sha256": _canonical_payload_sha256(payload),
+        "payload_json": payload,
+        "reason_code_counts_json": payload["reason_code_counts"],
+    }
+
+    with pytest.raises(ValueError, match="paper_only"):
+        codec.PaperAutonomousScreeningDecisionSupportGateDbRow(**values)
+    with pytest.raises(ValueError, match="paper_only"):
+        replace(row, **values)
+
+    malformed = object.__new__(codec.PaperAutonomousScreeningDecisionSupportGateDbRow)
+    for field_name, value in values.items():
+        object.__setattr__(malformed, field_name, value)
 
     with pytest.raises(ValueError, match="paper_only"):
         codec.from_db_row(malformed)
@@ -433,11 +444,65 @@ def test_autonomous_screening_gate_db_row_rejects_materialized_payload_mismatche
     import polymarket_alpha_lab.paper_autonomous_screening_decision_support_gate_db_row as codec
 
     row = codec.to_db_row(_report())
-    malformed = codec.PaperAutonomousScreeningDecisionSupportGateDbRow(
-        **{**_row_values(row), **overrides},
-    )
 
     with pytest.raises(ValueError, match=message):
+        codec.PaperAutonomousScreeningDecisionSupportGateDbRow(
+            **{**_row_values(row), **overrides},
+        )
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    (
+        ({"report_sha256": "b" * 64}, "report_sha256"),
+        ({"queue_ready_count": 2}, "queue_ready_count"),
+        ({"reason_code_counts_json": []}, "reason_code_counts_json"),
+    ),
+)
+def test_autonomous_screening_gate_db_row_replace_rejects_materialized_payload_mismatches(
+    overrides: dict[str, object],
+    message: str,
+) -> None:
+    import polymarket_alpha_lab.paper_autonomous_screening_decision_support_gate_db_row as codec
+
+    row = codec.to_db_row(_report())
+
+    with pytest.raises(ValueError, match=message):
+        replace(row, **overrides)
+
+
+def test_autonomous_screening_gate_db_row_from_db_row_rejects_bypassed_payload_mismatch() -> None:
+    import polymarket_alpha_lab.paper_autonomous_screening_decision_support_gate_db_row as codec
+
+    row = codec.to_db_row(_report())
+    malformed = object.__new__(
+        codec.PaperAutonomousScreeningDecisionSupportGateDbRow,
+    )
+    for field_name, value in _row_values(row).items():
+        object.__setattr__(malformed, field_name, value)
+    object.__setattr__(malformed, "queue_source_report_count", 2)
+
+    with pytest.raises(ValueError, match="queue_source_report_count"):
+        codec.from_db_row(malformed)
+
+
+def test_autonomous_screening_gate_from_db_row_rejects_bypassed_missing_payload_flags() -> None:
+    import polymarket_alpha_lab.paper_autonomous_screening_decision_support_gate_db_row as codec
+
+    row = codec.to_db_row(_report())
+    payload = {
+        key: value
+        for key, value in row.payload_json.items()
+        if key not in {"paper_only", "report_only", "readonly"}
+    }
+    malformed = object.__new__(
+        codec.PaperAutonomousScreeningDecisionSupportGateDbRow,
+    )
+    for field_name, value in _row_values(row).items():
+        object.__setattr__(malformed, field_name, value)
+    object.__setattr__(malformed, "payload_json", payload)
+
+    with pytest.raises(ValueError, match="paper_only"):
         codec.from_db_row(malformed)
 
 

@@ -28,6 +28,22 @@ __all__ = (
 
 
 _SHA256_PATTERN = re.compile(r"^[a-f0-9]{64}$")
+_MATERIALIZED_FIELDS = (
+    "report_sha256",
+    "generated_at",
+    "config_version",
+    "strategy_evidence_snapshot_count",
+    "strategy_evidence_latest_status",
+    "outcome_freshness_status",
+    "outcome_report_count",
+    "nav_risk_status",
+    "nav_risk_report_count",
+    "paper_trade_cost_status",
+    "paper_trade_cost_report_count",
+    "paper_only",
+    "report_only",
+    "readonly",
+)
 
 
 @dataclass(frozen=True)
@@ -89,10 +105,9 @@ class LocalObservabilityTrendsDbRow:
             _normalize_json_object("payload_json", self.payload_json),
         )
         _validate_json_hard_flags(self.payload_json, "payload_json")
+        _validate_materialized_fields_match_payload(self)
+        _validate_payload_recovers_to_expected_row(self)
         _require_hard_flags("DB row", self)
-        expected_sha256 = _report_sha256(self.payload_json)
-        if self.report_sha256 != expected_sha256:
-            raise ValueError("report_sha256 must match payload_json")
 
 
 def local_observability_trends_report_to_db_row(
@@ -132,6 +147,7 @@ def local_observability_trends_report_from_db_row(
         raise ValueError("row must be a LocalObservabilityTrendsDbRow")
     _reject_json_floats(row.payload_json)
     _validate_json_hard_flags(row.payload_json, "payload_json")
+    _validate_materialized_fields_match_payload(row)
     try:
         report = from_jsonable(LocalObservabilityTrendsReport, row.payload_json)
     except (KeyError, TypeError, ValueError) as exc:
@@ -180,24 +196,95 @@ def _validate_row_matches_payload(
     row: LocalObservabilityTrendsDbRow,
     expected: LocalObservabilityTrendsDbRow,
 ) -> None:
-    for field_name in (
-        "report_sha256",
-        "generated_at",
-        "config_version",
-        "strategy_evidence_snapshot_count",
-        "strategy_evidence_latest_status",
-        "outcome_freshness_status",
-        "outcome_report_count",
-        "nav_risk_status",
-        "nav_risk_report_count",
-        "paper_trade_cost_status",
-        "paper_trade_cost_report_count",
-        "paper_only",
-        "report_only",
-        "readonly",
-    ):
+    for field_name in _MATERIALIZED_FIELDS:
         if getattr(row, field_name) != getattr(expected, field_name):
             raise ValueError(f"{field_name} must match payload_json")
+
+
+def _validate_materialized_fields_match_payload(
+    row: LocalObservabilityTrendsDbRow,
+) -> None:
+    payload_json = row.payload_json
+    strategy_evidence_trend = _require_json_object(
+        "payload_json strategy_evidence_trend",
+        payload_json.get("strategy_evidence_trend"),
+    )
+    outcome_freshness = _require_json_object(
+        "payload_json outcome_freshness",
+        payload_json.get("outcome_freshness"),
+    )
+    nav_risk_trend = _require_json_object(
+        "payload_json nav_risk_trend",
+        payload_json.get("nav_risk_trend"),
+    )
+    paper_trade_cost_trend = _require_json_object(
+        "payload_json paper_trade_cost_trend",
+        payload_json.get("paper_trade_cost_trend"),
+    )
+    expected_values = {
+        "report_sha256": _report_sha256(payload_json),
+        "generated_at": payload_json.get("generated_at"),
+        "config_version": payload_json.get("config_version"),
+        "strategy_evidence_snapshot_count": strategy_evidence_trend.get(
+            "snapshot_report_count",
+        ),
+        "strategy_evidence_latest_status": strategy_evidence_trend.get(
+            "latest_status",
+        ),
+        "outcome_freshness_status": outcome_freshness.get("status"),
+        "outcome_report_count": outcome_freshness.get("outcome_report_count"),
+        "nav_risk_status": nav_risk_trend.get("status"),
+        "nav_risk_report_count": nav_risk_trend.get("nav_risk_report_count"),
+        "paper_trade_cost_status": paper_trade_cost_trend.get("status"),
+        "paper_trade_cost_report_count": paper_trade_cost_trend.get(
+            "cost_audit_report_count",
+        ),
+        "paper_only": payload_json.get("paper_only"),
+        "report_only": payload_json.get("report_only"),
+        "readonly": payload_json.get("readonly"),
+    }
+    actual_values = {
+        "report_sha256": row.report_sha256,
+        "generated_at": row.generated_at.isoformat(),
+        "config_version": row.config_version,
+        "strategy_evidence_snapshot_count": row.strategy_evidence_snapshot_count,
+        "strategy_evidence_latest_status": row.strategy_evidence_latest_status,
+        "outcome_freshness_status": row.outcome_freshness_status,
+        "outcome_report_count": row.outcome_report_count,
+        "nav_risk_status": row.nav_risk_status,
+        "nav_risk_report_count": row.nav_risk_report_count,
+        "paper_trade_cost_status": row.paper_trade_cost_status,
+        "paper_trade_cost_report_count": row.paper_trade_cost_report_count,
+        "paper_only": row.paper_only,
+        "report_only": row.report_only,
+        "readonly": row.readonly,
+    }
+    for field_name in _MATERIALIZED_FIELDS:
+        if actual_values[field_name] != expected_values[field_name]:
+            raise ValueError(f"{field_name} must match payload_json")
+
+
+def _validate_payload_recovers_to_expected_row(
+    row: LocalObservabilityTrendsDbRow,
+) -> None:
+    try:
+        report = from_jsonable(LocalObservabilityTrendsReport, row.payload_json)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(
+            f"payload_json is not a valid local observability trends report: {exc}",
+        ) from exc
+    if type(report) is not LocalObservabilityTrendsReport:
+        raise ValueError("payload_json must recover a LocalObservabilityTrendsReport")
+    _validate_report_tree(report)
+    expected_payload_json = _json_ready(asdict(report))
+    if row.payload_json != expected_payload_json:
+        raise ValueError("payload_json must match canonical recovered report payload")
+
+
+def _require_json_object(field_name: str, value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        raise ValueError(f"{field_name} must be a JSON object")
+    return value
 
 
 def _report_sha256(payload_json: dict[str, object]) -> str:
@@ -258,12 +345,11 @@ def _reject_json_floats(value: Any) -> None:
 
 def _validate_json_hard_flags(value: Any, field_name: str) -> None:
     if isinstance(value, dict):
-        if value.get("paper_only", True) is not True:
-            raise ValueError(f"{field_name} paper_only must be True")
-        if value.get("report_only", True) is not True:
-            raise ValueError(f"{field_name} report_only must be True")
-        if value.get("readonly", True) is not True:
-            raise ValueError(f"{field_name} readonly must be True")
+        hard_flags = ("paper_only", "report_only", "readonly")
+        if any(flag_name in value for flag_name in hard_flags):
+            for flag_name in hard_flags:
+                if value.get(flag_name) is not True:
+                    raise ValueError(f"{field_name} {flag_name} must be present and true")
         for key, item in value.items():
             _validate_json_hard_flags(item, f"{field_name}.{key}")
     elif isinstance(value, (list, tuple)):

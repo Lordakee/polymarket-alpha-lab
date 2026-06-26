@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import FrozenInstanceError, replace
 from datetime import UTC, datetime, timedelta, timezone
 from decimal import Decimal
+import hashlib
+import json
 
 import pytest
 
@@ -179,6 +181,37 @@ def _assert_no_floats(value: object) -> None:
             _assert_no_floats(item)
 
 
+def _payload_sha256(payload_json: dict[str, object]) -> str:
+    encoded = json.dumps(
+        payload_json,
+        allow_nan=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _replace_with_recomputed_payload_hash(
+    row: PaperAutonomousAllocationProposalDbHistoryMetricsEvaluationDbRow,
+    payload_json: dict[str, object],
+    **changes: object,
+) -> PaperAutonomousAllocationProposalDbHistoryMetricsEvaluationDbRow:
+    return replace(
+        row,
+        report_sha256=_payload_sha256(payload_json),
+        payload_json=payload_json,
+        **changes,
+    )
+
+
+def _without_hard_flags(value: dict[str, object]) -> dict[str, object]:
+    return {
+        key: item
+        for key, item in value.items()
+        if key not in {"paper_only", "report_only", "readonly"}
+    }
+
+
 def test_metrics_evaluation_db_row_serializes_canonical_payload_and_round_trips():
     report = _report(
         generated_at=datetime(2026, 6, 24, 12, 0, tzinfo=timezone(timedelta(hours=-4))),
@@ -318,21 +351,268 @@ def test_metrics_evaluation_db_row_rejects_malformed_stored_payload():
     row = paper_autonomous_allocation_proposal_db_history_metrics_evaluation_to_db_row(
         _report(),
     )
-    malformed = PaperAutonomousAllocationProposalDbHistoryMetricsEvaluationDbRow(
-        report_sha256="a" * 64,
-        generated_at=row.generated_at,
-        config_version=row.config_version,
-        evaluation_status=row.evaluation_status,
-        recommended_next_step=row.recommended_next_step,
-        source_report_count=row.source_report_count,
-        latest_report_generated_at=row.latest_report_generated_at,
-        reason_code_counts_json=row.reason_code_counts_json,
-        reason_codes=row.reason_codes,
-        diagnostics_json=row.diagnostics_json,
-        payload_json={**row.payload_json, "readonly": False},
-    )
 
     with pytest.raises(ValueError, match="readonly"):
+        replace(row, payload_json={**row.payload_json, "readonly": False})
+
+
+def test_metrics_evaluation_db_row_rejects_constructor_time_payload_mismatches():
+    row = paper_autonomous_allocation_proposal_db_history_metrics_evaluation_to_db_row(
+        _report(),
+    )
+
+    with pytest.raises(ValueError, match="report_sha256"):
+        replace(row, report_sha256="a" * 64)
+
+    with pytest.raises(ValueError, match="summary columns"):
+        replace(row, source_report_count=999)
+
+    with pytest.raises(ValueError, match="summary columns"):
+        replace(row, latest_report_generated_at=GENERATED_AT)
+
+    with pytest.raises(ValueError, match="reason_code_counts_json"):
+        replace(
+            row,
+            reason_code_counts_json={
+                **row.reason_code_counts_json,
+                "metrics_edge_quality_watch": 1,
+            },
+            reason_codes=(
+                *row.reason_codes,
+                "metrics_edge_quality_watch",
+            ),
+        )
+
+    with pytest.raises(ValueError, match="reason_codes"):
+        replace(row, reason_codes=tuple(reversed(row.reason_codes)))
+
+    with pytest.raises(ValueError, match="diagnostics_json"):
+        replace(
+            row,
+            diagnostics_json={
+                **row.diagnostics_json,
+                "latest_budget_utilization": "0.100000",
+            },
+        )
+
+    with pytest.raises(ValueError, match="paper_only"):
+        replace(row, paper_only=False)
+
+
+@pytest.mark.parametrize(
+    "case",
+    ("malformed", "duplicate", "extra_key", "non_positive", "bool"),
+)
+def test_metrics_evaluation_db_row_rejects_recomputed_hash_payload_reason_code_counts_shape(
+    case: str,
+):
+    row = paper_autonomous_allocation_proposal_db_history_metrics_evaluation_to_db_row(
+        _report(),
+    )
+    original_counts = list(row.payload_json["reason_code_counts"])
+    first_count = dict(original_counts[0])
+    if case == "malformed":
+        reason_code_counts = [*original_counts, "not-a-row"]
+    elif case == "duplicate":
+        reason_code_counts = [*original_counts, first_count]
+    elif case == "extra_key":
+        reason_code_counts = [
+            {**first_count, "unexpected": "accepted-by-loose-summary"},
+            *original_counts[1:],
+        ]
+    elif case == "non_positive":
+        reason_code_counts = [
+            {**first_count, "report_count": 0},
+            *original_counts,
+        ]
+    elif case == "bool":
+        reason_code_counts = [
+            {**first_count, "report_count": True},
+            *original_counts[1:],
+        ]
+    else:
+        raise AssertionError(f"unhandled case {case}")
+    payload_json = {
+        **row.payload_json,
+        "reason_code_counts": reason_code_counts,
+    }
+
+    with pytest.raises(ValueError, match="reason_code_counts"):
+        _replace_with_recomputed_payload_hash(row, payload_json)
+
+
+def test_metrics_evaluation_db_row_rejects_recomputed_hash_payload_missing_nested_hard_flags():
+    row = paper_autonomous_allocation_proposal_db_history_metrics_evaluation_to_db_row(
+        _report(),
+    )
+    payload_json = {
+        **row.payload_json,
+        "reason_code_counts": [
+            {
+                key: value
+                for key, value in item.items()
+                if key not in {"paper_only", "report_only", "readonly"}
+            }
+            for item in row.payload_json["reason_code_counts"]
+        ],
+    }
+
+    with pytest.raises(ValueError, match="reason_code_counts"):
+        _replace_with_recomputed_payload_hash(row, payload_json)
+
+
+def test_metrics_evaluation_db_row_constructor_rejects_recomputed_hash_diagnostics_without_hard_flags():
+    row = paper_autonomous_allocation_proposal_db_history_metrics_evaluation_to_db_row(
+        _report(),
+    )
+    diagnostics_json = _without_hard_flags(row.diagnostics_json)
+    payload_json = {
+        **row.payload_json,
+        "diagnostics": diagnostics_json,
+    }
+
+    with pytest.raises(ValueError, match="diagnostics"):
+        PaperAutonomousAllocationProposalDbHistoryMetricsEvaluationDbRow(
+            report_sha256=_payload_sha256(payload_json),
+            generated_at=row.generated_at,
+            config_version=row.config_version,
+            evaluation_status=row.evaluation_status,
+            recommended_next_step=row.recommended_next_step,
+            source_report_count=row.source_report_count,
+            latest_report_generated_at=row.latest_report_generated_at,
+            reason_code_counts_json=row.reason_code_counts_json,
+            reason_codes=row.reason_codes,
+            diagnostics_json=diagnostics_json,
+            payload_json=payload_json,
+        )
+
+
+def test_metrics_evaluation_db_row_replace_rejects_recomputed_hash_diagnostics_without_hard_flags():
+    row = paper_autonomous_allocation_proposal_db_history_metrics_evaluation_to_db_row(
+        _report(),
+    )
+    diagnostics_json = _without_hard_flags(row.diagnostics_json)
+    payload_json = {
+        **row.payload_json,
+        "diagnostics": diagnostics_json,
+    }
+
+    with pytest.raises(ValueError, match="diagnostics"):
+        _replace_with_recomputed_payload_hash(
+            row,
+            payload_json,
+            diagnostics_json=diagnostics_json,
+        )
+
+
+def test_metrics_evaluation_db_row_constructor_rejects_nonrecoverable_payload():
+    row = paper_autonomous_allocation_proposal_db_history_metrics_evaluation_to_db_row(
+        _report(),
+    )
+    diagnostics_json = {
+        **row.diagnostics_json,
+        "top_reason_code_limit": True,
+    }
+    payload_json = {
+        **row.payload_json,
+        "diagnostics": diagnostics_json,
+    }
+
+    with pytest.raises(ValueError, match="payload_json"):
+        _replace_with_recomputed_payload_hash(
+            row,
+            payload_json,
+            diagnostics_json=diagnostics_json,
+        )
+
+
+def test_metrics_evaluation_from_db_row_defensively_rejects_bypassed_payload_mismatch():
+    row = paper_autonomous_allocation_proposal_db_history_metrics_evaluation_to_db_row(
+        _report(),
+    )
+    malformed = object.__new__(
+        PaperAutonomousAllocationProposalDbHistoryMetricsEvaluationDbRow,
+    )
+    for key, value in row.__dict__.items():
+        object.__setattr__(malformed, key, value)
+    object.__setattr__(
+        malformed,
+        "payload_json",
+        {**row.payload_json, "source_report_count": 999},
+    )
+
+    with pytest.raises(ValueError, match="report_sha256"):
+        paper_autonomous_allocation_proposal_db_history_metrics_evaluation_from_db_row(
+            malformed,
+        )
+
+
+def test_metrics_evaluation_from_db_row_rejects_bypassed_raw_decimal_payload_with_stale_hash():
+    row = paper_autonomous_allocation_proposal_db_history_metrics_evaluation_to_db_row(
+        _report(),
+    )
+    diagnostics_json = {
+        **row.payload_json["diagnostics"],
+        "latest_budget_utilization": d("0.950000"),
+    }
+    payload_json = {**row.payload_json, "diagnostics": diagnostics_json}
+    malformed = object.__new__(
+        PaperAutonomousAllocationProposalDbHistoryMetricsEvaluationDbRow,
+    )
+    for key, value in row.__dict__.items():
+        object.__setattr__(malformed, key, value)
+    object.__setattr__(malformed, "payload_json", payload_json)
+
+    with pytest.raises(ValueError, match="report_sha256|payload_json"):
+        paper_autonomous_allocation_proposal_db_history_metrics_evaluation_from_db_row(
+            malformed,
+        )
+
+
+def test_metrics_evaluation_from_db_row_rejects_bypassed_recomputed_hash_stale_summary():
+    row = paper_autonomous_allocation_proposal_db_history_metrics_evaluation_to_db_row(
+        _report(),
+    )
+    payload_json = {
+        **row.payload_json,
+        "evaluation_status": "watch",
+        "reason_code_counts": [
+            {
+                "reason_code": "metrics_churn_share_watch",
+                "report_count": 1,
+                "paper_only": True,
+                "report_only": True,
+                "readonly": True,
+            },
+            {
+                "reason_code": "metrics_requested_fill_ratio_watch",
+                "report_count": 1,
+                "paper_only": True,
+                "report_only": True,
+                "readonly": True,
+            },
+        ],
+        "reason_codes": [
+            "metrics_churn_share_watch",
+            "metrics_requested_fill_ratio_watch",
+        ],
+        "diagnostics": {
+            **row.payload_json["diagnostics"],
+            "top_reason_codes": [
+                "metrics_churn_share_watch",
+                "metrics_requested_fill_ratio_watch",
+            ],
+        },
+    }
+    malformed = object.__new__(
+        PaperAutonomousAllocationProposalDbHistoryMetricsEvaluationDbRow,
+    )
+    for key, value in row.__dict__.items():
+        object.__setattr__(malformed, key, value)
+    object.__setattr__(malformed, "report_sha256", _payload_sha256(payload_json))
+    object.__setattr__(malformed, "payload_json", payload_json)
+
+    with pytest.raises(ValueError, match="reason_code_counts_json|summary columns"):
         paper_autonomous_allocation_proposal_db_history_metrics_evaluation_from_db_row(
             malformed,
         )
@@ -342,18 +622,15 @@ def test_metrics_evaluation_db_row_wraps_payload_recovery_errors_as_value_error(
     row = paper_autonomous_allocation_proposal_db_history_metrics_evaluation_to_db_row(
         _report(),
     )
-    malformed = PaperAutonomousAllocationProposalDbHistoryMetricsEvaluationDbRow(
-        report_sha256="a" * 64,
-        generated_at=row.generated_at,
-        config_version=row.config_version,
-        evaluation_status=row.evaluation_status,
-        recommended_next_step=row.recommended_next_step,
-        source_report_count=row.source_report_count,
-        latest_report_generated_at=row.latest_report_generated_at,
-        reason_code_counts_json=row.reason_code_counts_json,
-        reason_codes=row.reason_codes,
-        diagnostics_json=row.diagnostics_json,
-        payload_json={
+    malformed = object.__new__(
+        PaperAutonomousAllocationProposalDbHistoryMetricsEvaluationDbRow,
+    )
+    for key, value in row.__dict__.items():
+        object.__setattr__(malformed, key, value)
+    object.__setattr__(
+        malformed,
+        "payload_json",
+        {
             key: value
             for key, value in row.payload_json.items()
             if key != "diagnostics"

@@ -52,6 +52,21 @@ def _row_values(row: object) -> dict[str, object]:
     return dict(row.__dict__)
 
 
+def _without_hard_flags(value: dict[str, object]) -> dict[str, object]:
+    return {
+        key: item
+        for key, item in value.items()
+        if key not in ("paper_only", "report_only", "readonly")
+    }
+
+
+def _bypassed_row(row: object, **overrides: object) -> object:
+    bypassed = object.__new__(type(row))
+    for field_name, value in {**_row_values(row), **overrides}.items():
+        object.__setattr__(bypassed, field_name, value)
+    return bypassed
+
+
 def _canonical_payload_sha256(payload_json: dict[str, object]) -> str:
     encoded = json.dumps(
         payload_json,
@@ -242,17 +257,57 @@ def test_health_db_row_rejects_corrupted_stored_payload_flags() -> None:
         },
     ]
     payload = {**row.payload_json, "reason_code_counts": reason_code_counts}
-    malformed = codec.PaperAutonomousAllocationProposalDbHistoryHealthDbRow(
-        **{
-            **_row_values(row),
-            "report_sha256": _canonical_payload_sha256(payload),
-            "payload_json": payload,
-            "reason_code_counts_json": reason_code_counts,
+    with pytest.raises(ValueError, match="paper_only"):
+        codec.PaperAutonomousAllocationProposalDbHistoryHealthDbRow(
+            **{
+                **_row_values(row),
+                "report_sha256": _canonical_payload_sha256(payload),
+                "payload_json": payload,
+                "reason_code_counts_json": reason_code_counts,
+            },
+        )
+
+
+def test_health_db_row_rejects_nested_json_objects_missing_all_hard_flags() -> None:
+    import polymarket_alpha_lab.paper_autonomous_allocation_proposal_db_history_health_db_row as codec
+
+    row = _db_row()
+    reason_code_counts = [
+        _without_hard_flags(row.payload_json["reason_code_counts"][0]),
+    ]
+    payload = {**row.payload_json, "reason_code_counts": reason_code_counts}
+
+    with pytest.raises(ValueError, match="paper_only"):
+        codec.PaperAutonomousAllocationProposalDbHistoryHealthDbRow(
+            **{
+                **_row_values(row),
+                "report_sha256": _canonical_payload_sha256(payload),
+                "payload_json": payload,
+                "reason_code_counts_json": reason_code_counts,
+            },
+        )
+
+
+def test_health_from_db_row_defends_against_bypassed_payload_flags() -> None:
+    import polymarket_alpha_lab.paper_autonomous_allocation_proposal_db_history_health_db_row as codec
+
+    row = _db_row()
+    reason_code_counts = [
+        {
+            **row.payload_json["reason_code_counts"][0],
+            "paper_only": False,
         },
+    ]
+    payload = {**row.payload_json, "reason_code_counts": reason_code_counts}
+    malformed = _bypassed_row(
+        row,
+        report_sha256=_canonical_payload_sha256(payload),
+        payload_json=payload,
+        reason_code_counts_json=reason_code_counts,
     )
 
     with pytest.raises(ValueError, match="paper_only"):
-        codec.from_db_row(malformed)
+        codec.from_db_row(malformed)  # type: ignore[arg-type]
 
 
 def test_health_db_row_rejects_non_materialized_payload_hash_mismatch() -> None:
@@ -260,15 +315,44 @@ def test_health_db_row_rejects_non_materialized_payload_hash_mismatch() -> None:
 
     row = _db_row()
     payload = {**row.payload_json, "paper_only": False}
-    malformed = codec.PaperAutonomousAllocationProposalDbHistoryHealthDbRow(
-        **{
-            **_row_values(row),
-            "payload_json": payload,
-        },
-    )
+    with pytest.raises(ValueError, match="report_sha256"):
+        codec.PaperAutonomousAllocationProposalDbHistoryHealthDbRow(
+            **{
+                **_row_values(row),
+                "payload_json": payload,
+            },
+        )
+
+
+def test_health_db_row_rejects_self_hashed_noncanonical_decimal_payload() -> None:
+    import polymarket_alpha_lab.paper_autonomous_allocation_proposal_db_history_health_db_row as codec
+
+    row = _db_row()
+    payload = {
+        **row.payload_json,
+        "latest_total_allocated_paper_notional": "42",
+    }
+
+    with pytest.raises(ValueError, match="canonical|payload_json"):
+        codec.PaperAutonomousAllocationProposalDbHistoryHealthDbRow(
+            **{
+                **_row_values(row),
+                "report_sha256": _canonical_payload_sha256(payload),
+                "latest_total_allocated_paper_notional": d("42"),
+                "payload_json": payload,
+            },
+        )
+
+
+def test_health_from_db_row_defends_against_bypassed_payload_hash_mismatch() -> None:
+    import polymarket_alpha_lab.paper_autonomous_allocation_proposal_db_history_health_db_row as codec
+
+    row = _db_row()
+    payload = {**row.payload_json, "paper_only": False}
+    malformed = _bypassed_row(row, payload_json=payload)
 
     with pytest.raises(ValueError, match="report_sha256"):
-        codec.from_db_row(malformed)
+        codec.from_db_row(malformed)  # type: ignore[arg-type]
 
 
 def test_health_db_row_rejects_recursive_floats_in_json_payloads() -> None:
@@ -308,6 +392,36 @@ def test_health_db_row_round_trips_empty_health_reports_with_nullable_latest_fie
     assert codec.from_db_row(row) == report
 
 
+@pytest.mark.parametrize(
+    "field_name",
+    (
+        "latest_history_status",
+        "latest_proposal_status",
+        "latest_allocated_count",
+        "latest_total_allocated_paper_notional",
+        "max_source_age_seconds",
+        "latest_source_age_seconds",
+    ),
+)
+def test_health_db_row_rejects_missing_nullable_root_payload_fields(
+    field_name: str,
+) -> None:
+    import polymarket_alpha_lab.paper_autonomous_allocation_proposal_db_history_health_db_row as codec
+
+    row = codec.to_db_row(_empty_report())
+    assert getattr(row, field_name) is None
+    payload = {key: value for key, value in row.payload_json.items() if key != field_name}
+
+    with pytest.raises(ValueError, match=field_name):
+        codec.PaperAutonomousAllocationProposalDbHistoryHealthDbRow(
+            **{
+                **_row_values(row),
+                "report_sha256": _canonical_payload_sha256(payload),
+                "payload_json": payload,
+            },
+        )
+
+
 def test_health_db_row_normalizes_aware_datetimes_to_utc() -> None:
     import polymarket_alpha_lab.paper_autonomous_allocation_proposal_db_history_health_db_row as codec
 
@@ -320,46 +434,46 @@ def test_health_db_row_normalizes_aware_datetimes_to_utc() -> None:
     assert offset_row.generated_at == GENERATED_AT
 
 
-@pytest.mark.parametrize(
-    ("overrides", "message"),
+HEALTH_MATERIALIZED_MISMATCH_CASES = (
+    ({"report_sha256": "b" * 64}, "report_sha256"),
+    ({"generated_at": GENERATED_AT + timedelta(seconds=1)}, "generated_at"),
     (
-        ({"report_sha256": "b" * 64}, "report_sha256"),
-        ({"generated_at": GENERATED_AT + timedelta(seconds=1)}, "generated_at"),
-        (
-            {"config_version": "paper-autonomous-allocation-proposal-db-history-health-v1"},
-            "config_version",
-        ),
-        (
-            {
-                "health_status": "watch",
-                "recommended_next_step": (
-                    "throttle_paper_autonomous_allocation_proposal_history_review"
-                ),
-            },
-            "health_status",
-        ),
-        (
-            {"history_report_count": 4, "pass_report_count": 4},
-            "history_report_count",
-        ),
-        ({"pass_report_count": 2, "watch_report_count": 1}, "pass_report_count"),
-        ({"latest_history_status": "watch"}, "latest_history_status"),
-        ({"latest_proposal_status": "watch"}, "latest_proposal_status"),
-        ({"latest_allocated_count": 4}, "latest_allocated_count"),
-        (
-            {"latest_total_allocated_paper_notional": d("41.000000")},
-            "latest_total_allocated_paper_notional",
-        ),
-        ({"max_source_age_seconds": 1_799}, "max_source_age_seconds"),
-        ({"latest_source_age_seconds": 599}, "latest_source_age_seconds"),
-        (
-            {"duplicate_latest_report_generated_at_count": 1},
-            "duplicate_latest_report_generated_at_count",
-        ),
-        ({"reason_codes_json": ["stale_allocation_proposal_db_history"]}, "reason_codes_json"),
-        ({"reason_code_counts_json": []}, "reason_code_counts_json"),
+        {"config_version": "paper-autonomous-allocation-proposal-db-history-health-v1"},
+        "config_version",
     ),
+    (
+        {
+            "health_status": "watch",
+            "recommended_next_step": (
+                "throttle_paper_autonomous_allocation_proposal_history_review"
+            ),
+        },
+        "health_status",
+    ),
+    (
+        {"history_report_count": 4, "pass_report_count": 4},
+        "history_report_count",
+    ),
+    ({"pass_report_count": 2, "watch_report_count": 1}, "pass_report_count"),
+    ({"latest_history_status": "watch"}, "latest_history_status"),
+    ({"latest_proposal_status": "watch"}, "latest_proposal_status"),
+    ({"latest_allocated_count": 4}, "latest_allocated_count"),
+    (
+        {"latest_total_allocated_paper_notional": d("41.000000")},
+        "latest_total_allocated_paper_notional",
+    ),
+    ({"max_source_age_seconds": 1_799}, "max_source_age_seconds"),
+    ({"latest_source_age_seconds": 599}, "latest_source_age_seconds"),
+    (
+        {"duplicate_latest_report_generated_at_count": 1},
+        "duplicate_latest_report_generated_at_count",
+    ),
+    ({"reason_codes_json": ["stale_allocation_proposal_db_history"]}, "reason_codes_json"),
+    ({"reason_code_counts_json": []}, "reason_code_counts_json"),
 )
+
+
+@pytest.mark.parametrize(("overrides", "message"), HEALTH_MATERIALIZED_MISMATCH_CASES)
 def test_health_db_row_rejects_materialized_payload_mismatches(
     overrides: dict[str, object],
     message: str,
@@ -367,12 +481,42 @@ def test_health_db_row_rejects_materialized_payload_mismatches(
     import polymarket_alpha_lab.paper_autonomous_allocation_proposal_db_history_health_db_row as codec
 
     row = _db_row()
-    malformed = codec.PaperAutonomousAllocationProposalDbHistoryHealthDbRow(
-        **{**_row_values(row), **overrides},
-    )
 
     with pytest.raises(ValueError, match=message):
-        codec.from_db_row(malformed)
+        codec.PaperAutonomousAllocationProposalDbHistoryHealthDbRow(
+            **{**_row_values(row), **overrides},
+        )
+
+
+@pytest.mark.parametrize(("overrides", "message"), HEALTH_MATERIALIZED_MISMATCH_CASES)
+def test_health_from_db_row_defends_against_bypassed_materialized_mismatches(
+    overrides: dict[str, object],
+    message: str,
+) -> None:
+    import polymarket_alpha_lab.paper_autonomous_allocation_proposal_db_history_health_db_row as codec
+
+    row = _db_row()
+    malformed = _bypassed_row(row, **overrides)
+
+    with pytest.raises(ValueError, match=message):
+        codec.from_db_row(malformed)  # type: ignore[arg-type]
+
+
+def test_health_db_row_replace_rejects_payload_mismatches() -> None:
+    row = _db_row()
+
+    with pytest.raises(ValueError, match="latest_allocated_count"):
+        replace(row, latest_allocated_count=None)
+    with pytest.raises(ValueError, match="latest_source_age_seconds"):
+        replace(row, latest_source_age_seconds=601)
+
+    payload = {key: value for key, value in row.payload_json.items() if key != "readonly"}
+    with pytest.raises(ValueError, match="readonly"):
+        replace(
+            row,
+            report_sha256=_canonical_payload_sha256(payload),
+            payload_json=payload,
+        )
 
 
 @pytest.mark.parametrize(

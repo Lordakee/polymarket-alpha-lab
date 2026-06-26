@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -219,6 +219,16 @@ def _assert_no_floats(value: object) -> None:
             _assert_no_floats(item)
 
 
+def _payload_sha256(payload_json: dict[str, object]) -> str:
+    encoded = json.dumps(
+        payload_json,
+        allow_nan=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
 def _row_values(row: PaperStrategyCandidateResearchQueueDbRow) -> dict[str, object]:
     return {
         "report_sha256": row.report_sha256,
@@ -249,6 +259,18 @@ def _row_values(row: PaperStrategyCandidateResearchQueueDbRow) -> dict[str, obje
         "report_only": row.report_only,
         "readonly": row.readonly,
     }
+
+
+def _unchecked_row(
+    row: PaperStrategyCandidateResearchQueueDbRow,
+    **overrides: object,
+) -> PaperStrategyCandidateResearchQueueDbRow:
+    values = _row_values(row)
+    values.update(overrides)
+    unchecked = object.__new__(PaperStrategyCandidateResearchQueueDbRow)
+    for key, value in values.items():
+        object.__setattr__(unchecked, key, value)
+    return unchecked
 
 
 def test_research_queue_db_row_serializes_ready_payload_and_round_trips_exact_report():
@@ -436,21 +458,32 @@ def test_research_queue_db_row_rejects_duplicate_reason_maps_before_write():
         paper_strategy_candidate_research_queue_report_to_db_row(report)
 
 
-def test_research_queue_db_row_rejects_unsafe_stored_flags():
+def test_research_queue_db_row_constructor_rejects_unsafe_stored_flags():
     row = paper_strategy_candidate_research_queue_report_to_db_row(_watch_report())
-    malformed = PaperStrategyCandidateResearchQueueDbRow(
-        **{
-            **_row_values(row),
-            "report_sha256": "a" * 64,
-            "payload_json": {**row.payload_json, "readonly": False},
-        },
+
+    with pytest.raises(ValueError, match="readonly"):
+        PaperStrategyCandidateResearchQueueDbRow(
+            **{
+                **_row_values(row),
+                "report_sha256": "a" * 64,
+                "payload_json": {**row.payload_json, "readonly": False},
+            },
+        )
+
+
+def test_research_queue_db_row_from_db_row_rejects_bypassed_unsafe_stored_flags():
+    row = paper_strategy_candidate_research_queue_report_to_db_row(_watch_report())
+    malformed = _unchecked_row(
+        row,
+        report_sha256="a" * 64,
+        payload_json={**row.payload_json, "readonly": False},
     )
 
     with pytest.raises(ValueError, match="readonly"):
         paper_strategy_candidate_research_queue_report_from_db_row(malformed)
 
 
-def test_research_queue_db_row_rejects_deep_unsafe_stored_flags():
+def test_research_queue_db_row_constructor_rejects_deep_unsafe_stored_flags():
     row = paper_strategy_candidate_research_queue_report_to_db_row(_ready_report())
     payload = {
         **row.payload_json,
@@ -459,15 +492,207 @@ def test_research_queue_db_row_rejects_deep_unsafe_stored_flags():
             *row.payload_json["rows"][1:],
         ],
     }
-    malformed = PaperStrategyCandidateResearchQueueDbRow(
-        **{
-            **_row_values(row),
-            "report_sha256": "a" * 64,
+
+    with pytest.raises(ValueError, match="readonly"):
+        PaperStrategyCandidateResearchQueueDbRow(
+            **{
+                **_row_values(row),
+                "report_sha256": "a" * 64,
+                "payload_json": payload,
+            },
+        )
+
+
+def test_research_queue_db_row_from_db_row_rejects_bypassed_deep_unsafe_stored_flags():
+    row = paper_strategy_candidate_research_queue_report_to_db_row(_ready_report())
+    payload = {
+        **row.payload_json,
+        "rows": [
+            {**row.payload_json["rows"][0], "readonly": False},
+            *row.payload_json["rows"][1:],
+        ],
+    }
+    malformed = _unchecked_row(row, report_sha256="a" * 64, payload_json=payload)
+
+    with pytest.raises(ValueError, match="readonly"):
+        paper_strategy_candidate_research_queue_report_from_db_row(malformed)
+
+
+def test_research_queue_db_row_constructor_rejects_missing_nullable_row_payload_keys():
+    row = paper_strategy_candidate_research_queue_report_to_db_row(_ready_report())
+    malformed_payload_row = {
+        key: value
+        for key, value in row.payload_json["rows"][0].items()
+        if key != "net_edge_per_share"
+    }
+    payload = {
+        **row.payload_json,
+        "rows": [
+            malformed_payload_row,
+            *row.payload_json["rows"][1:],
+        ],
+    }
+    values = _row_values(row)
+    values.update(
+        {
+            "report_sha256": _payload_sha256(payload),
+            "rows_json": payload["rows"],
             "payload_json": payload,
         },
     )
 
-    with pytest.raises(ValueError, match="readonly"):
+    with pytest.raises(ValueError, match="net_edge_per_share"):
+        PaperStrategyCandidateResearchQueueDbRow(**values)
+
+    with pytest.raises(ValueError, match="net_edge_per_share"):
+        replace(row, **values)
+
+
+def test_research_queue_db_row_from_db_row_rejects_bypassed_missing_nullable_row_payload_keys():
+    row = paper_strategy_candidate_research_queue_report_to_db_row(_ready_report())
+    malformed_payload_row = {
+        key: value
+        for key, value in row.payload_json["rows"][0].items()
+        if key != "net_edge_per_share"
+    }
+    payload = {
+        **row.payload_json,
+        "rows": [
+            malformed_payload_row,
+            *row.payload_json["rows"][1:],
+        ],
+    }
+    malformed = _unchecked_row(
+        row,
+        report_sha256=_payload_sha256(payload),
+        rows_json=payload["rows"],
+        payload_json=payload,
+    )
+
+    with pytest.raises(ValueError, match="net_edge_per_share"):
+        paper_strategy_candidate_research_queue_report_from_db_row(malformed)
+
+
+def test_research_queue_db_row_constructor_and_replace_reject_rows_with_missing_hard_flags():
+    row = paper_strategy_candidate_research_queue_report_to_db_row(_ready_report())
+    stripped_row = {
+        key: value
+        for key, value in row.payload_json["rows"][0].items()
+        if key not in ("paper_only", "report_only", "readonly")
+    }
+    payload = {
+        **row.payload_json,
+        "rows": [
+            stripped_row,
+            *row.payload_json["rows"][1:],
+        ],
+    }
+    encoded = json.dumps(
+        payload,
+        allow_nan=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    overrides = {
+        "report_sha256": hashlib.sha256(encoded).hexdigest(),
+        "rows_json": payload["rows"],
+        "payload_json": payload,
+    }
+    values = _row_values(row)
+    values.update(overrides)
+
+    with pytest.raises(ValueError, match="paper_only"):
+        PaperStrategyCandidateResearchQueueDbRow(**values)
+
+    with pytest.raises(ValueError, match="paper_only"):
+        replace(row, **overrides)
+
+
+def test_research_queue_db_row_rejects_all_missing_hard_flags_nested_inside_lists():
+    row = paper_strategy_candidate_research_queue_report_to_db_row(_ready_report())
+    stripped_row = {
+        key: value
+        for key, value in row.payload_json["rows"][0].items()
+        if key not in ("paper_only", "report_only", "readonly")
+    }
+    payload = {**row.payload_json, "rows": [[stripped_row]]}
+
+    with pytest.raises(ValueError, match="paper_only"):
+        PaperStrategyCandidateResearchQueueDbRow(
+            **{**_row_values(row), "payload_json": payload},
+        )
+
+    malformed = _unchecked_row(row, payload_json=payload)
+    with pytest.raises(ValueError, match="paper_only"):
+        paper_strategy_candidate_research_queue_report_from_db_row(malformed)
+
+
+def test_research_queue_db_row_constructor_rejects_noncanonical_decimal_payload_values():
+    row = paper_strategy_candidate_research_queue_report_to_db_row(_ready_report())
+
+    with pytest.raises(ValueError, match="total_ready_notional"):
+        PaperStrategyCandidateResearchQueueDbRow(
+            **{
+                **_row_values(row),
+                "payload_json": {
+                    **row.payload_json,
+                    "total_ready_notional": Decimal("12.000000"),
+                },
+            },
+        )
+
+
+def test_research_queue_db_row_from_db_row_rejects_bypassed_noncanonical_decimal_payload_values():
+    row = paper_strategy_candidate_research_queue_report_to_db_row(_ready_report())
+    malformed = _unchecked_row(
+        row,
+        payload_json={
+            **row.payload_json,
+            "total_ready_notional": Decimal("12.000000"),
+        },
+    )
+
+    with pytest.raises(ValueError, match="total_ready_notional"):
+        paper_strategy_candidate_research_queue_report_from_db_row(malformed)
+
+
+def test_research_queue_db_row_from_db_row_rejects_bypassed_raw_payload_hash_mismatch():
+    row = paper_strategy_candidate_research_queue_report_to_db_row(_ready_report())
+    payload = {**row.payload_json, "total_ready_notional": "12.0"}
+    malformed = _unchecked_row(row, payload_json=payload)
+
+    with pytest.raises(ValueError, match="report_sha256"):
+        paper_strategy_candidate_research_queue_report_from_db_row(malformed)
+
+
+def test_research_queue_db_row_from_db_row_rejects_bypassed_noncanonical_recovered_payload():
+    row = paper_strategy_candidate_research_queue_report_to_db_row(_ready_report())
+    payload = {**row.payload_json, "total_ready_notional": "12.0"}
+    malformed = _unchecked_row(
+        row,
+        report_sha256=_payload_sha256(payload),
+        payload_json=payload,
+    )
+
+    with pytest.raises(ValueError, match="payload_json"):
+        paper_strategy_candidate_research_queue_report_from_db_row(malformed)
+
+
+def test_research_queue_db_row_constructor_rejects_type_loose_bool_int_payload_matches():
+    row = paper_strategy_candidate_research_queue_report_to_db_row(_ready_report())
+    payload = {**row.payload_json, "research_ready_count": True}
+    values = _row_values(row)
+    values.update({"report_sha256": _payload_sha256(payload), "payload_json": payload})
+
+    with pytest.raises(ValueError, match="research_ready_count"):
+        PaperStrategyCandidateResearchQueueDbRow(**values)
+
+
+def test_research_queue_db_row_from_db_row_rejects_type_loose_bool_int_row_matches():
+    row = paper_strategy_candidate_research_queue_report_to_db_row(_ready_report())
+    malformed = _unchecked_row(row, research_ready_count=True)
+
+    with pytest.raises(ValueError, match="research_ready_count"):
         paper_strategy_candidate_research_queue_report_from_db_row(malformed)
 
 
@@ -516,16 +741,49 @@ def test_research_queue_db_row_rejects_deep_unsafe_stored_flags():
             "primary_reason_code_counts",
         ),
         ({"reason_codes_json": ["different_reason"]}, "reason_codes"),
+        ({"rows_json": []}, "rows"),
     ),
 )
-def test_research_queue_db_row_rejects_materialized_payload_mismatches(
+def test_research_queue_db_row_constructor_and_replace_reject_materialized_payload_mismatches(
     overrides: dict[str, object],
     message: str,
 ) -> None:
     row = paper_strategy_candidate_research_queue_report_to_db_row(_ready_report())
     values = _row_values(row)
     values.update(overrides)
-    malformed = PaperStrategyCandidateResearchQueueDbRow(**values)
+
+    with pytest.raises(ValueError, match=message):
+        PaperStrategyCandidateResearchQueueDbRow(**values)
+
+    with pytest.raises(ValueError, match=message):
+        replace(row, **overrides)
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    (
+        ({"report_sha256": "b" * 64}, "report_sha256"),
+        ({"candidate_count": 1}, "candidate_count"),
+        ({"total_ready_notional": Decimal("1.000000")}, "total_ready_notional"),
+        (
+            {"source_reason_code_counts_json": {"cycle_review_pass": 2}},
+            "source_reason_code_counts",
+        ),
+        (
+            {"primary_reason_code_counts_json": {"recommendation_ready": 3}},
+            "primary_reason_code_counts",
+        ),
+        ({"reason_codes_json": ["different_reason"]}, "reason_codes"),
+        ({"rows_json": []}, "rows"),
+        ({"paper_only": False}, "paper_only"),
+    ),
+)
+def test_research_queue_db_row_from_db_row_rejects_bypassed_materialized_payload_mismatches(
+    overrides: dict[str, object],
+    message: str,
+) -> None:
+    row = paper_strategy_candidate_research_queue_report_to_db_row(_ready_report())
+    malformed = _unchecked_row(row, **overrides)
 
     with pytest.raises(ValueError, match=message):
         paper_strategy_candidate_research_queue_report_from_db_row(malformed)
@@ -544,15 +802,11 @@ def test_research_queue_db_row_rejects_tampered_row_hard_flag_mismatches(
 
 def test_research_queue_db_row_wraps_payload_recovery_errors_as_value_error():
     row = paper_strategy_candidate_research_queue_report_to_db_row(_watch_report())
-    malformed = PaperStrategyCandidateResearchQueueDbRow(
-        **{
-            **_row_values(row),
-            "report_sha256": "a" * 64,
-            "payload_json": {
-                key: value
-                for key, value in row.payload_json.items()
-                if key != "reason_codes"
-            },
+    malformed = _unchecked_row(
+        row,
+        report_sha256="a" * 64,
+        payload_json={
+            key: value for key, value in row.payload_json.items() if key != "reason_codes"
         },
     )
 
@@ -560,21 +814,20 @@ def test_research_queue_db_row_wraps_payload_recovery_errors_as_value_error():
         paper_strategy_candidate_research_queue_report_from_db_row(malformed)
 
 
-def test_research_queue_db_row_rejects_duplicate_stored_reason_shapes():
+def test_research_queue_db_row_constructor_rejects_duplicate_stored_reason_shapes():
     row = paper_strategy_candidate_research_queue_report_to_db_row(_ready_report())
     payload = {
         **row.payload_json,
         "primary_reason_code_counts": [["low_net_edge", 1], ["low_net_edge", 2]],
     }
-    malformed = PaperStrategyCandidateResearchQueueDbRow(
-        **{
-            **_row_values(row),
-            "report_sha256": "a" * 64,
-            "payload_json": payload,
-        },
-    )
     with pytest.raises(ValueError, match="primary_reason_code_counts"):
-        paper_strategy_candidate_research_queue_report_from_db_row(malformed)
+        PaperStrategyCandidateResearchQueueDbRow(
+            **{
+                **_row_values(row),
+                "report_sha256": "a" * 64,
+                "payload_json": payload,
+            },
+        )
 
     payload = {
         **row.payload_json,
@@ -583,15 +836,14 @@ def test_research_queue_db_row_rejects_duplicate_stored_reason_shapes():
             "candidate_research_queue_ready",
         ],
     }
-    malformed = PaperStrategyCandidateResearchQueueDbRow(
-        **{
-            **_row_values(row),
-            "report_sha256": "a" * 64,
-            "payload_json": payload,
-        },
-    )
     with pytest.raises(ValueError, match="reason_codes"):
-        paper_strategy_candidate_research_queue_report_from_db_row(malformed)
+        PaperStrategyCandidateResearchQueueDbRow(
+            **{
+                **_row_values(row),
+                "report_sha256": "a" * 64,
+                "payload_json": payload,
+            },
+        )
 
     payload = {
         **row.payload_json,
@@ -600,14 +852,24 @@ def test_research_queue_db_row_rejects_duplicate_stored_reason_shapes():
             {"reason_code": "cycle_review_pass", "count": 2},
         ],
     }
-    malformed = PaperStrategyCandidateResearchQueueDbRow(
-        **{
-            **_row_values(row),
-            "report_sha256": "a" * 64,
-            "payload_json": payload,
-        },
-    )
     with pytest.raises(ValueError, match="source_reason_code_counts"):
+        PaperStrategyCandidateResearchQueueDbRow(
+            **{
+                **_row_values(row),
+                "report_sha256": "a" * 64,
+                "payload_json": payload,
+            },
+        )
+
+
+def test_research_queue_db_row_from_db_row_rejects_bypassed_duplicate_stored_reason_shapes():
+    row = paper_strategy_candidate_research_queue_report_to_db_row(_ready_report())
+    payload = {
+        **row.payload_json,
+        "primary_reason_code_counts": [["low_net_edge", 1], ["low_net_edge", 2]],
+    }
+    malformed = _unchecked_row(row, report_sha256="a" * 64, payload_json=payload)
+    with pytest.raises(ValueError, match="primary_reason_code_counts"):
         paper_strategy_candidate_research_queue_report_from_db_row(malformed)
 
 

@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
+import hashlib
+import json
 import re
 
 import pytest
@@ -37,6 +39,22 @@ GENERATED_AT = datetime(2026, 6, 20, 18, 30, tzinfo=UTC)
 SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
 
 
+MATERIALIZED_MISMATCHES = (
+    ("generated_at", datetime(2026, 6, 20, 18, 31, tzinfo=UTC)),
+    ("config_version", "local-observability-trends-v1"),
+    ("strategy_evidence_snapshot_count", 1),
+    ("outcome_freshness_status", "latest_outcomes_fresh"),
+    ("outcome_report_count", 1),
+    ("nav_risk_status", "latest_nav_risk_observed"),
+    ("nav_risk_report_count", 1),
+    ("paper_trade_cost_status", "latest_cost_observed"),
+    ("paper_trade_cost_report_count", 1),
+    ("paper_only", False),
+    ("report_only", False),
+    ("readonly", False),
+)
+
+
 def _report() -> LocalObservabilityTrendsReport:
     return LocalObservabilityTrendsReport(
         generated_at=GENERATED_AT,
@@ -69,6 +87,45 @@ def _report() -> LocalObservabilityTrendsReport:
             generated_at=GENERATED_AT,
         ),
     )
+
+
+def _payload_sha256(payload_json):
+    encoded = json.dumps(
+        payload_json,
+        allow_nan=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _row_kwargs(row):
+    return {
+        "report_sha256": row.report_sha256,
+        "generated_at": row.generated_at,
+        "config_version": row.config_version,
+        "strategy_evidence_snapshot_count": row.strategy_evidence_snapshot_count,
+        "strategy_evidence_latest_status": row.strategy_evidence_latest_status,
+        "outcome_freshness_status": row.outcome_freshness_status,
+        "outcome_report_count": row.outcome_report_count,
+        "nav_risk_status": row.nav_risk_status,
+        "nav_risk_report_count": row.nav_risk_report_count,
+        "paper_trade_cost_status": row.paper_trade_cost_status,
+        "paper_trade_cost_report_count": row.paper_trade_cost_report_count,
+        "payload_json": row.payload_json,
+        "paper_only": row.paper_only,
+        "report_only": row.report_only,
+        "readonly": row.readonly,
+    }
+
+
+def _bypassed_row(row, **overrides):
+    values = _row_kwargs(row)
+    values.update(overrides)
+    bypassed = object.__new__(LocalObservabilityTrendsDbRow)
+    for field_name, value in values.items():
+        object.__setattr__(bypassed, field_name, value)
+    return bypassed
 
 
 def test_local_observability_trends_db_row_serializes_payload_and_round_trips():
@@ -153,7 +210,7 @@ def test_local_observability_trends_db_row_rejects_unsafe_stored_payload_flags()
     row = local_observability_trends_report_to_db_row(_report())
     payload = {**row.payload_json, "readonly": False}
 
-    with pytest.raises(ValueError, match="payload_json readonly must be True"):
+    with pytest.raises(ValueError, match="payload_json readonly"):
         replace(row, payload_json=payload)
 
 
@@ -169,8 +226,87 @@ def test_local_observability_trends_db_row_rejects_materialized_payload_mismatch
     row = local_observability_trends_report_to_db_row(_report())
 
     with pytest.raises(ValueError, match="outcome_report_count must match payload_json"):
+        replace(row, outcome_report_count=1)
+
+
+@pytest.mark.parametrize(("field_name", "mismatched_value"), MATERIALIZED_MISMATCHES)
+def test_local_observability_trends_db_row_constructor_rejects_materialized_payload_mismatches(
+    field_name,
+    mismatched_value,
+):
+    row = local_observability_trends_report_to_db_row(_report())
+    kwargs = _row_kwargs(row)
+    kwargs[field_name] = mismatched_value
+    if field_name == "strategy_evidence_snapshot_count":
+        kwargs["strategy_evidence_latest_status"] = "no_local_evidence"
+
+    with pytest.raises(ValueError, match=f"{field_name} must match payload_json"):
+        LocalObservabilityTrendsDbRow(**kwargs)
+
+
+def test_local_observability_trends_db_row_constructor_rejects_nested_latest_status_mismatch():
+    row = local_observability_trends_report_to_db_row(_report())
+    payload = {
+        **row.payload_json,
+        "strategy_evidence_trend": {
+            **row.payload_json["strategy_evidence_trend"],
+            "latest_status": "no_local_evidence",
+        },
+    }
+    kwargs = _row_kwargs(row)
+    kwargs["payload_json"] = payload
+    kwargs["report_sha256"] = _payload_sha256(payload)
+
+    with pytest.raises(
+        ValueError,
+        match="strategy_evidence_latest_status must match payload_json",
+    ):
+        LocalObservabilityTrendsDbRow(**kwargs)
+
+
+def test_local_observability_trends_db_row_constructor_rejects_unrecoverable_payload_with_matching_hash():
+    row = local_observability_trends_report_to_db_row(_report())
+    outcome_freshness = row.payload_json["outcome_freshness"]
+    assert isinstance(outcome_freshness, dict)
+    payload = {
+        **row.payload_json,
+        "outcome_freshness": {
+            **outcome_freshness,
+            "status_rows": [],
+        },
+    }
+    kwargs = _row_kwargs(row)
+    kwargs["payload_json"] = payload
+    kwargs["report_sha256"] = _payload_sha256(payload)
+
+    with pytest.raises(ValueError, match="payload_json|status_rows"):
+        LocalObservabilityTrendsDbRow(**kwargs)
+
+
+def test_local_observability_trends_from_db_row_rejects_bypassed_missing_payload_hard_flags():
+    row = local_observability_trends_report_to_db_row(_report())
+    payload = {
+        key: value
+        for key, value in row.payload_json.items()
+        if key not in {"paper_only", "report_only", "readonly"}
+    }
+    bypassed_row = _bypassed_row(
+        row,
+        report_sha256=_payload_sha256(payload),
+        payload_json=payload,
+    )
+
+    with pytest.raises(ValueError, match="hard flags|paper_only"):
+        local_observability_trends_report_from_db_row(bypassed_row)
+
+
+def test_local_observability_trends_report_from_db_row_still_rejects_bypassed_mismatch():
+    row = local_observability_trends_report_to_db_row(_report())
+    bypassed_row = _bypassed_row(row, outcome_report_count=1)
+
+    with pytest.raises(ValueError, match="outcome_report_count must match payload_json"):
         local_observability_trends_report_from_db_row(
-            replace(row, outcome_report_count=1),
+            bypassed_row,
         )
 
 

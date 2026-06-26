@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import ast
-import hashlib
 import json
-from dataclasses import FrozenInstanceError
+import hashlib
+from dataclasses import FrozenInstanceError, replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -157,6 +157,25 @@ def _row_values(
     }
 
 
+def _unchecked_row(row: HistoryDbRow, **overrides: object) -> HistoryDbRow:
+    values = _row_values(row)
+    values.update(overrides)
+    unchecked = object.__new__(HistoryDbRow)
+    for field_name, value in values.items():
+        object.__setattr__(unchecked, field_name, value)
+    return unchecked
+
+
+def _payload_sha256(payload_json: dict[str, object]) -> str:
+    encoded = json.dumps(
+        payload_json,
+        allow_nan=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
 def _assert_no_floats(value: object) -> None:
     if isinstance(value, float):
         pytest.fail("DB payload must not contain floats")
@@ -240,13 +259,7 @@ def test_research_queue_history_db_row_serializes_payload_and_round_trips():
     assert row.payload_json["readonly"] is True
     _assert_no_floats(row.payload_json)
 
-    encoded = json.dumps(
-        row.payload_json,
-        allow_nan=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
-    assert row.report_sha256 == hashlib.sha256(encoded).hexdigest()
+    assert row.report_sha256 == _payload_sha256(row.payload_json)
     assert from_db_row(row) == report
     assert (
         to_db_row(PaperStrategyCandidateResearchQueueHistoryReport(**report.__dict__))
@@ -372,50 +385,115 @@ def test_research_queue_history_db_row_rejects_duplicate_reason_shapes_before_wr
 
 
 @pytest.mark.parametrize("flag_name", ("paper_only", "report_only", "readonly"))
-def test_research_queue_history_db_row_rejects_unsafe_stored_payload_flags(
+def test_research_queue_history_db_row_rejects_unsafe_payload_flags_at_construction(
     flag_name: str,
 ):
     row = to_db_row(_history_report())
-    malformed = HistoryDbRow(
-        **{
-            **_row_values(row),
-            "report_sha256": "a" * 64,
-            "payload_json": {**row.payload_json, flag_name: False},
-        },
+
+    with pytest.raises(ValueError, match=flag_name):
+        HistoryDbRow(
+            **{
+                **_row_values(row),
+                "report_sha256": "a" * 64,
+                "payload_json": {**row.payload_json, flag_name: False},
+            },
+        )
+
+    with pytest.raises(ValueError, match=flag_name):
+        replace(
+            row,
+            report_sha256="a" * 64,
+            payload_json={**row.payload_json, flag_name: False},
+        )
+
+
+@pytest.mark.parametrize("flag_name", ("paper_only", "report_only", "readonly"))
+def test_research_queue_history_from_db_row_rejects_bypassed_unsafe_payload_flags(
+    flag_name: str,
+):
+    row = to_db_row(_history_report())
+    malformed = _unchecked_row(
+        row,
+        report_sha256="a" * 64,
+        payload_json={**row.payload_json, flag_name: False},
     )
 
     with pytest.raises(ValueError, match=flag_name):
         from_db_row(malformed)
 
 
-def test_research_queue_history_db_row_rejects_missing_stored_payload_hard_flags():
+def test_research_queue_history_db_row_rejects_missing_payload_hard_flags_at_construction():
     row = to_db_row(_history_report())
     payload_without_hard_flags = {
         key: value
         for key, value in row.payload_json.items()
         if key not in ("paper_only", "report_only", "readonly")
     }
-    malformed = HistoryDbRow(
-        **{
-            **_row_values(row),
-            "payload_json": payload_without_hard_flags,
-            "paper_only": True,
-            "report_only": True,
-            "readonly": True,
-        },
+
+    with pytest.raises(ValueError, match="paper_only|hard flags"):
+        HistoryDbRow(
+            **{
+                **_row_values(row),
+                "payload_json": payload_without_hard_flags,
+                "paper_only": True,
+                "report_only": True,
+                "readonly": True,
+            },
+        )
+
+    with pytest.raises(ValueError, match="paper_only|hard flags"):
+        replace(
+            row,
+            payload_json=payload_without_hard_flags,
+            paper_only=True,
+            report_only=True,
+            readonly=True,
+        )
+
+
+def test_research_queue_history_from_db_row_rejects_bypassed_missing_payload_hard_flags():
+    row = to_db_row(_history_report())
+    payload_without_hard_flags = {
+        key: value
+        for key, value in row.payload_json.items()
+        if key not in ("paper_only", "report_only", "readonly")
+    }
+    malformed = _unchecked_row(
+        row,
+        payload_json=payload_without_hard_flags,
+        paper_only=True,
+        report_only=True,
+        readonly=True,
     )
 
     with pytest.raises(ValueError, match="paper_only|hard flags"):
         from_db_row(malformed)
 
 
-def test_research_queue_history_db_row_rejects_deep_unsafe_stored_payload_flags():
+def test_research_queue_history_db_row_rejects_deep_unsafe_payload_flags_at_construction():
     row = to_db_row(_history_report())
-    malformed = HistoryDbRow(
-        **{
-            **_row_values(row),
-            "report_sha256": "a" * 64,
-            "payload_json": {
+
+    with pytest.raises(ValueError, match="readonly"):
+        HistoryDbRow(
+            **{
+                **_row_values(row),
+                "report_sha256": "a" * 64,
+                "payload_json": {
+                    **row.payload_json,
+                    "audit": {
+                        "paper_only": True,
+                        "report_only": True,
+                        "readonly": False,
+                    },
+                },
+            },
+        )
+
+    with pytest.raises(ValueError, match="readonly"):
+        replace(
+            row,
+            report_sha256="a" * 64,
+            payload_json={
                 **row.payload_json,
                 "audit": {
                     "paper_only": True,
@@ -423,10 +501,163 @@ def test_research_queue_history_db_row_rejects_deep_unsafe_stored_payload_flags(
                     "readonly": False,
                 },
             },
+        )
+
+
+def test_research_queue_history_from_db_row_rejects_bypassed_deep_unsafe_payload_flags():
+    row = to_db_row(_history_report())
+    malformed = _unchecked_row(
+        row,
+        report_sha256="a" * 64,
+        payload_json={
+            **row.payload_json,
+            "audit": {
+                "paper_only": True,
+                "report_only": True,
+                "readonly": False,
+            },
         },
     )
 
     with pytest.raises(ValueError, match="readonly"):
+        from_db_row(malformed)
+
+
+def test_research_queue_history_db_row_rejects_payload_hard_flags_inside_nested_lists():
+    row = to_db_row(_history_report())
+    payload = {
+        **row.payload_json,
+        "audit": [
+            [
+                {
+                    "paper_only": True,
+                    "report_only": True,
+                    "readonly": False,
+                },
+            ],
+        ],
+    }
+
+    with pytest.raises(ValueError, match="readonly"):
+        HistoryDbRow(
+            **{
+                **_row_values(row),
+                "report_sha256": _payload_sha256(payload),
+                "payload_json": payload,
+            },
+        )
+
+    malformed = _unchecked_row(
+        row,
+        report_sha256=_payload_sha256(payload),
+        payload_json=payload,
+    )
+    with pytest.raises(ValueError, match="readonly"):
+        from_db_row(malformed)
+
+
+def test_research_queue_history_db_row_rejects_missing_nullable_payload_scalar_with_recomputed_hash():
+    row = to_db_row(_empty_history_report())
+    payload = {
+        key: value
+        for key, value in row.payload_json.items()
+        if key != "first_source_generated_at"
+    }
+
+    with pytest.raises(ValueError, match="first_source_generated_at"):
+        HistoryDbRow(
+            **{
+                **_row_values(row),
+                "report_sha256": _payload_sha256(payload),
+                "payload_json": payload,
+            },
+        )
+
+    malformed = _unchecked_row(
+        row,
+        report_sha256=_payload_sha256(payload),
+        payload_json=payload,
+    )
+    with pytest.raises(ValueError, match="first_source_generated_at"):
+        from_db_row(malformed)
+
+
+def test_research_queue_history_db_row_rejects_bool_payload_for_integer_scalar_with_recomputed_hash():
+    row = to_db_row(_history_report())
+    payload = {**row.payload_json, "action_status_research_ready_count": True}
+
+    with pytest.raises(
+        ValueError,
+        match="action_status_research_ready_count.*match payload_json",
+    ):
+        HistoryDbRow(
+            **{
+                **_row_values(row),
+                "report_sha256": _payload_sha256(payload),
+                "payload_json": payload,
+            },
+        )
+
+    malformed = _unchecked_row(
+        row,
+        report_sha256=_payload_sha256(payload),
+        payload_json=payload,
+    )
+    with pytest.raises(
+        ValueError,
+        match="action_status_research_ready_count.*match payload_json",
+    ):
+        from_db_row(malformed)
+
+
+def test_research_queue_history_db_row_rejects_self_hashed_noncanonical_decimal_payload_at_construction():
+    row = to_db_row(_history_report())
+    payload = {**row.payload_json, "total_ready_notional": "42"}
+
+    with pytest.raises(ValueError, match="canonical|payload_json"):
+        HistoryDbRow(
+            **{
+                **_row_values(row),
+                "report_sha256": _payload_sha256(payload),
+                "total_ready_notional": Decimal("42"),
+                "payload_json": payload,
+            },
+        )
+
+
+def test_research_queue_history_from_db_row_checks_raw_hash_before_recovery():
+    row = to_db_row(_history_report())
+    payload = {
+        key: value
+        for key, value in row.payload_json.items()
+        if key != "latest_reason_codes"
+    }
+    malformed = _unchecked_row(
+        row,
+        report_sha256="a" * 64,
+        payload_json=payload,
+    )
+
+    with pytest.raises(ValueError, match="report_sha256"):
+        from_db_row(malformed)
+
+
+def test_research_queue_history_from_db_row_rejects_raw_malformed_payload_pairs_before_recovery_coercion():
+    row = to_db_row(_history_report())
+    payload = {
+        **row.payload_json,
+        "latest_primary_reason_code_counts": [
+            ["recommendation_ready", 2, "extra"],
+            ["low_net_edge", 1],
+        ],
+    }
+    malformed = _unchecked_row(
+        row,
+        report_sha256=_payload_sha256(payload),
+        payload_json=payload,
+    )
+
+    with pytest.raises(ValueError, match="latest_primary_reason_code_counts"):
         from_db_row(malformed)
 
 
@@ -494,14 +725,94 @@ def test_research_queue_history_db_row_rejects_deep_unsafe_stored_payload_flags(
         ),
     ),
 )
-def test_research_queue_history_db_row_rejects_materialized_payload_mismatches(
+def test_research_queue_history_db_row_rejects_materialized_payload_mismatches_at_construction(
     overrides: dict[str, object],
     message: str,
 ) -> None:
     row = to_db_row(_history_report())
     values = _row_values(row)
     values.update(overrides)
-    malformed = HistoryDbRow(**values)
+
+    with pytest.raises(ValueError, match=message):
+        HistoryDbRow(**values)
+
+    with pytest.raises(ValueError, match=message):
+        replace(row, **overrides)
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    (
+        ({"report_sha256": "b" * 64}, "report_sha256"),
+        (
+            {"generated_at": datetime(2026, 6, 20, 12, 1, tzinfo=UTC)},
+            "generated_at",
+        ),
+        ({"source_report_count": 4}, "source_report_count"),
+        (
+            {"first_source_generated_at": datetime(2026, 6, 20, 8, 0, tzinfo=UTC)},
+            "first_source_generated_at",
+        ),
+        (
+            {"last_source_generated_at": datetime(2026, 6, 20, 10, 0, tzinfo=UTC)},
+            "last_source_generated_at",
+        ),
+        ({"action_status_research_ready_count": 2}, "action_status_research_ready_count"),
+        ({"action_status_watch_count": 2}, "action_status_watch_count"),
+        ({"action_status_blocked_count": 2}, "action_status_blocked_count"),
+        ({"research_status_ready_count": 2}, "research_status_ready_count"),
+        ({"research_status_watch_count": 2}, "research_status_watch_count"),
+        ({"research_status_blocked_count": 2}, "research_status_blocked_count"),
+        ({"total_ready_notional": Decimal("43.000000")}, "total_ready_notional"),
+        ({"total_selected_notional": Decimal("19.000000")}, "total_selected_notional"),
+        (
+            {"total_suggested_notional": Decimal("55.000000")},
+            "total_suggested_notional",
+        ),
+        (
+            {
+                "latest_action_status": "watch",
+                "latest_recommended_next_step": "await_fresh_cycle_evidence",
+            },
+            "latest_action_status",
+        ),
+        ({"latest_research_status": "watch"}, "latest_research_status"),
+        (
+            {"latest_top_research_priority_score": Decimal("0.700000")},
+            "latest_top_research_priority_score",
+        ),
+        (
+            {"latest_average_research_ready_score": Decimal("0.600000")},
+            "latest_average_research_ready_score",
+        ),
+        ({"status_transition_count": 1}, "status_transition_count"),
+        ({"ready_notional_delta": Decimal("13.000000")}, "ready_notional_delta"),
+        (
+            {"selected_notional_delta": Decimal("7.000000")},
+            "selected_notional_delta",
+        ),
+        ({"latest_selected_count": 1}, "latest_selected_count"),
+        ({"latest_skipped_count": 2}, "latest_skipped_count"),
+        ({"latest_not_selected_count": 1}, "latest_not_selected_count"),
+        (
+            {"latest_primary_reason_code_counts_json": {"recommendation_ready": 1}},
+            "latest_primary_reason_code_counts_json",
+        ),
+        (
+            {"latest_reason_codes_json": ["different_reason"]},
+            "latest_reason_codes_json",
+        ),
+        ({"paper_only": False}, "paper_only"),
+        ({"report_only": False}, "report_only"),
+        ({"readonly": False}, "readonly"),
+    ),
+)
+def test_research_queue_history_from_db_row_rejects_bypassed_materialized_payload_mismatches(
+    overrides: dict[str, object],
+    message: str,
+) -> None:
+    row = to_db_row(_history_report())
+    malformed = _unchecked_row(row, **overrides)
 
     with pytest.raises(ValueError, match=message):
         from_db_row(malformed)
@@ -509,16 +820,11 @@ def test_research_queue_history_db_row_rejects_materialized_payload_mismatches(
 
 def test_research_queue_history_db_row_wraps_payload_recovery_errors():
     row = to_db_row(_history_report())
-    malformed = HistoryDbRow(
-        **{
-            **_row_values(row),
-            "report_sha256": "a" * 64,
-            "payload_json": {
-                key: value
-                for key, value in row.payload_json.items()
-                if key != "latest_reason_codes"
-            },
-        },
+    payload = {**row.payload_json, "unexpected_payload_field": "unexpected"}
+    malformed = _unchecked_row(
+        row,
+        report_sha256=_payload_sha256(payload),
+        payload_json=payload,
     )
 
     with pytest.raises(ValueError, match="payload_json"):

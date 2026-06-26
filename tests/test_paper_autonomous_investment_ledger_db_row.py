@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -103,6 +103,52 @@ def _assert_no_floats(value: object) -> None:
             _assert_no_floats(item)
 
 
+def _bypassed_row(row: object, overrides: dict[str, object]) -> object:
+    bypassed = object.__new__(type(row))
+    for field_name, value in {**_row_values(row), **overrides}.items():
+        object.__setattr__(bypassed, field_name, value)
+    return bypassed
+
+
+def _canonical_payload_sha256(payload_json: dict[str, object]) -> str:
+    encoded = json.dumps(
+        payload_json,
+        allow_nan=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _without_hard_flags(value: dict[str, object]) -> dict[str, object]:
+    return {
+        key: item
+        for key, item in value.items()
+        if key not in {"paper_only", "report_only", "readonly"}
+    }
+
+
+def _empty_report() -> PaperAutonomousInvestmentLedgerReport:
+    return PaperAutonomousInvestmentLedgerReport(
+        generated_at=GENERATED_AT,
+        config_version=CONFIG_VERSION,
+        ledger_status="blocked",
+        recommended_next_step="block_paper_autonomous_investment_ledger",
+        source_record_count=0,
+        submitted_count=0,
+        held_count=0,
+        blocked_count=0,
+        total_submitted_notional=d("0.000000"),
+        held_zero_notional_count=0,
+        blocked_zero_notional_count=0,
+        latest_generated_at=None,
+        latest_age_seconds=None,
+        reason_code_counts=(),
+        entries=(),
+        reason_codes=("paper_autonomous_investment_ledger_no_source_records",),
+    )
+
+
 def test_ledger_db_row_serializes_payload_and_round_trips() -> None:
     codec = _codec_module()
     report = _report()
@@ -194,13 +240,7 @@ def test_ledger_db_row_serializes_payload_and_round_trips() -> None:
     _assert_no_floats(row.entries_json)
     _assert_no_floats(row.reason_codes_json)
 
-    encoded = json.dumps(
-        row.payload_json,
-        allow_nan=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
-    assert row.report_sha256 == hashlib.sha256(encoded).hexdigest()
+    assert row.report_sha256 == _canonical_payload_sha256(row.payload_json)
     assert codec.from_db_row(row) == report
     assert codec.paper_autonomous_investment_ledger_report_to_db_row(report) == row
     assert codec.paper_autonomous_investment_ledger_report_from_db_row(row) == report
@@ -267,24 +307,77 @@ def test_ledger_db_row_rejects_false_report_flags_before_write(flag_name: str) -
 def test_ledger_db_row_rejects_corrupted_nested_payload_flags() -> None:
     codec = _codec_module()
     row = codec.to_db_row(_report())
-    malformed = codec.PaperAutonomousInvestmentLedgerDbRow(
-        **{
-            **_row_values(row),
-            "payload_json": {
-                **row.payload_json,
-                "entries": [
-                    {
-                        **row.payload_json["entries"][0],
-                        "readonly": False,
-                    },
-                    *row.payload_json["entries"][1:],
-                ],
+    payload_json = {
+        **row.payload_json,
+        "entries": [
+            {
+                **row.payload_json["entries"][0],
+                "readonly": False,
             },
-        },
-    )
+            *row.payload_json["entries"][1:],
+        ],
+    }
 
     with pytest.raises(ValueError, match="readonly"):
+        codec.PaperAutonomousInvestmentLedgerDbRow(
+            **{**_row_values(row), "payload_json": payload_json},
+        )
+    with pytest.raises(ValueError, match="readonly"):
+        replace(row, payload_json=payload_json)
+    malformed = _bypassed_row(row, {"payload_json": payload_json})
+    with pytest.raises(ValueError, match="readonly"):
         codec.from_db_row(malformed)
+
+
+def test_ledger_db_row_rejects_all_missing_nested_payload_flags() -> None:
+    codec = _codec_module()
+    row = codec.to_db_row(_report())
+    entries = [_without_hard_flags(row.entries_json[0]), *row.entries_json[1:]]
+    payload_json = {**row.payload_json, "entries": entries}
+    report_sha256 = _canonical_payload_sha256(payload_json)
+
+    with pytest.raises(ValueError, match="entries.*paper_only"):
+        codec.PaperAutonomousInvestmentLedgerDbRow(
+            **{
+                **_row_values(row),
+                "report_sha256": report_sha256,
+                "entries_json": entries,
+                "payload_json": payload_json,
+            },
+        )
+    with pytest.raises(ValueError, match="entries.*paper_only"):
+        replace(
+            row,
+            report_sha256=report_sha256,
+            entries_json=entries,
+            payload_json=payload_json,
+        )
+    malformed = _bypassed_row(
+        row,
+        {
+            "report_sha256": report_sha256,
+            "entries_json": entries,
+            "payload_json": payload_json,
+        },
+    )
+    with pytest.raises(ValueError, match="entries.*paper_only"):
+        codec.from_db_row(malformed)
+
+
+def test_ledger_db_row_rejects_all_missing_nested_materialized_flags() -> None:
+    codec = _codec_module()
+    row = codec.to_db_row(_report())
+    reason_code_counts = [
+        _without_hard_flags(row.reason_code_counts_json[0]),
+        *row.reason_code_counts_json[1:],
+    ]
+
+    with pytest.raises(ValueError, match="reason_code_counts_json.*paper_only"):
+        codec.PaperAutonomousInvestmentLedgerDbRow(
+            **{**_row_values(row), "reason_code_counts_json": reason_code_counts},
+        )
+    with pytest.raises(ValueError, match="reason_code_counts_json.*paper_only"):
+        replace(row, reason_code_counts_json=reason_code_counts)
 
 
 def test_ledger_db_row_rejects_floats_in_json_payloads() -> None:
@@ -295,6 +388,98 @@ def test_ledger_db_row_rejects_floats_in_json_payloads() -> None:
         codec.PaperAutonomousInvestmentLedgerDbRow(
             **{**_row_values(row), "payload_json": {**row.payload_json, "bad_float": 0.1}},
         )
+
+
+def test_ledger_db_row_rejects_raw_payload_hash_mismatch() -> None:
+    codec = _codec_module()
+    row = codec.to_db_row(_report())
+    payload_json = {**row.payload_json, "unmaterialized_audit_field": "changed"}
+
+    with pytest.raises(ValueError, match="report_sha256"):
+        codec.PaperAutonomousInvestmentLedgerDbRow(
+            **{**_row_values(row), "payload_json": payload_json},
+        )
+    malformed = _bypassed_row(row, {"payload_json": payload_json})
+    with pytest.raises(ValueError, match="report_sha256"):
+        codec.from_db_row(malformed)
+
+
+def test_ledger_db_row_rejects_missing_nullable_payload_keys() -> None:
+    codec = _codec_module()
+    row = codec.to_db_row(_empty_report())
+    payload_json = {
+        key: value
+        for key, value in row.payload_json.items()
+        if key != "latest_generated_at"
+    }
+    report_sha256 = _canonical_payload_sha256(payload_json)
+
+    with pytest.raises(ValueError, match="latest_generated_at"):
+        codec.PaperAutonomousInvestmentLedgerDbRow(
+            **{
+                **_row_values(row),
+                "report_sha256": report_sha256,
+                "payload_json": payload_json,
+            },
+        )
+    malformed = _bypassed_row(
+        row,
+        {"report_sha256": report_sha256, "payload_json": payload_json},
+    )
+    with pytest.raises(ValueError, match="latest_generated_at"):
+        codec.from_db_row(malformed)
+
+
+def test_ledger_db_row_rejects_bool_for_int_payload_values_strictly() -> None:
+    codec = _codec_module()
+    row = codec.to_db_row(_report())
+    payload_json = {**row.payload_json, "submitted_count": True}
+    report_sha256 = _canonical_payload_sha256(payload_json)
+
+    with pytest.raises(ValueError, match="submitted_count"):
+        codec.PaperAutonomousInvestmentLedgerDbRow(
+            **{
+                **_row_values(row),
+                "report_sha256": report_sha256,
+                "payload_json": payload_json,
+            },
+        )
+    malformed = _bypassed_row(
+        row,
+        {"report_sha256": report_sha256, "payload_json": payload_json},
+    )
+    with pytest.raises(ValueError, match="submitted_count"):
+        codec.from_db_row(malformed)
+
+
+def test_ledger_db_row_rejects_noncanonical_decimal_payload_strings() -> None:
+    codec = _codec_module()
+    row = codec.to_db_row(_report())
+    payload_json = {
+        **row.payload_json,
+        "total_submitted_notional": "12.5000000",
+    }
+    report_sha256 = _canonical_payload_sha256(payload_json)
+
+    with pytest.raises(ValueError, match="total_submitted_notional"):
+        codec.PaperAutonomousInvestmentLedgerDbRow(
+            **{
+                **_row_values(row),
+                "report_sha256": report_sha256,
+                "total_submitted_notional": d("12.5000000"),
+                "payload_json": payload_json,
+            },
+        )
+    malformed = _bypassed_row(
+        row,
+        {
+            "report_sha256": report_sha256,
+            "total_submitted_notional": d("12.5000000"),
+            "payload_json": payload_json,
+        },
+    )
+    with pytest.raises(ValueError, match="payload_json|total_submitted_notional"):
+        codec.from_db_row(malformed)
 
 
 @pytest.mark.parametrize(
@@ -323,10 +508,14 @@ def test_ledger_db_row_rejects_materialized_payload_mismatches(
 ) -> None:
     codec = _codec_module()
     row = codec.to_db_row(_report())
-    malformed = codec.PaperAutonomousInvestmentLedgerDbRow(
-        **{**_row_values(row), **overrides},
-    )
 
+    with pytest.raises(ValueError, match=message):
+        codec.PaperAutonomousInvestmentLedgerDbRow(
+            **{**_row_values(row), **overrides},
+        )
+    with pytest.raises(ValueError, match=message):
+        replace(row, **overrides)
+    malformed = _bypassed_row(row, overrides)
     with pytest.raises(ValueError, match=message):
         codec.from_db_row(malformed)
 

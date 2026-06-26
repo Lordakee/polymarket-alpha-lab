@@ -124,6 +124,9 @@ class PaperActionGatedStrategyRecommendationQueueHistoryDbRow:
             "payload_json",
             _normalize_json_object("payload_json", self.payload_json),
         )
+        _validate_payload_json_contract(self)
+        _validate_history_row(self)
+        _validate_payload_recovers_to_canonical_report(self.payload_json)
         _require_hard_flags("DB row", self)
 
 
@@ -169,7 +172,8 @@ def paper_action_gated_strategy_recommendation_queue_history_report_from_db_row(
             "row must be a PaperActionGatedStrategyRecommendationQueueHistoryDbRow",
         )
     _reject_json_floats(row.payload_json)
-    _validate_json_hard_flags(row.payload_json, "payload_json")
+    _validate_payload_json_contract(row)
+    _validate_payload_recovers_to_canonical_report(row.payload_json)
     try:
         report = from_jsonable(
             PaperActionGatedStrategyRecommendationQueueHistoryReport,
@@ -261,8 +265,177 @@ def _validate_row_matches_payload(
         "report_only",
         "readonly",
     ):
-        if getattr(row, field_name) != getattr(expected, field_name):
+        if not _json_values_match(
+            _json_ready(getattr(row, field_name)),
+            _json_ready(getattr(expected, field_name)),
+        ):
             raise ValueError(f"{field_name} must match payload_json")
+
+
+def _validate_history_row(
+    row: PaperActionGatedStrategyRecommendationQueueHistoryDbRow,
+) -> None:
+    if (
+        row.research_ready_count + row.watch_count + row.blocked_count
+        != row.source_report_count
+    ):
+        raise ValueError("action status counts must match source_report_count")
+    if row.source_report_count == 0:
+        _validate_empty_history_row(row)
+        return
+    _validate_nonempty_history_row(row)
+
+
+def _validate_empty_history_row(
+    row: PaperActionGatedStrategyRecommendationQueueHistoryDbRow,
+) -> None:
+    if row.first_source_generated_at is not None:
+        raise ValueError("first_source_generated_at must be None for empty history")
+    if row.last_source_generated_at is not None:
+        raise ValueError("last_source_generated_at must be None for empty history")
+    if row.latest_action_status is not None:
+        raise ValueError("latest_action_status must be None for empty history")
+    if row.latest_recommended_next_step is not None:
+        raise ValueError(
+            "latest_recommended_next_step must be None for empty history",
+        )
+    if row.status_transition_count != 0:
+        raise ValueError("status_transition_count must be zero for empty history")
+    if row.total_ready_notional != Decimal("0.000000"):
+        raise ValueError("total_ready_notional must be zero for empty history")
+    if row.ready_notional_delta != Decimal("0.000000"):
+        raise ValueError("ready_notional_delta must be zero for empty history")
+    if row.latest_reason_code_counts_json:
+        raise ValueError(
+            "latest_reason_code_counts_json must be empty for empty history",
+        )
+
+
+def _validate_nonempty_history_row(
+    row: PaperActionGatedStrategyRecommendationQueueHistoryDbRow,
+) -> None:
+    if row.first_source_generated_at is None:
+        raise ValueError("first_source_generated_at is required")
+    if row.last_source_generated_at is None:
+        raise ValueError("last_source_generated_at is required")
+    if row.last_source_generated_at < row.first_source_generated_at:
+        raise ValueError("last_source_generated_at must not precede first_source_generated_at")
+    if row.latest_action_status is None:
+        raise ValueError("latest_action_status is required")
+    if row.latest_recommended_next_step is None:
+        raise ValueError("latest_recommended_next_step is required")
+    if row.status_transition_count >= row.source_report_count:
+        raise ValueError("status_transition_count must be below source_report_count")
+
+
+def _validate_payload_json_contract(
+    row: PaperActionGatedStrategyRecommendationQueueHistoryDbRow,
+) -> None:
+    _validate_json_hard_flags(row.payload_json, "payload_json")
+    if row.report_sha256 != _report_sha256(row.payload_json):
+        raise ValueError("report_sha256 must match payload_json")
+    for field_name in (
+        "generated_at",
+        "source_report_count",
+        "first_source_generated_at",
+        "last_source_generated_at",
+        "research_ready_count",
+        "watch_count",
+        "blocked_count",
+        "total_ready_notional",
+        "latest_action_status",
+        "latest_recommended_next_step",
+        "status_transition_count",
+        "ready_notional_delta",
+        "paper_only",
+        "report_only",
+        "readonly",
+    ):
+        _validate_payload_field_matches_row(row, field_name)
+    if not _json_values_match(
+        _normalize_payload_reason_code_counts(
+            "payload_json latest_reason_code_counts",
+            row.payload_json.get("latest_reason_code_counts"),
+        ),
+        row.latest_reason_code_counts_json,
+    ):
+        raise ValueError("latest_reason_code_counts_json must match payload_json")
+
+
+def _validate_payload_recovers_to_canonical_report(
+    payload_json: dict[str, object],
+) -> None:
+    try:
+        report = from_jsonable(
+            PaperActionGatedStrategyRecommendationQueueHistoryReport,
+            payload_json,
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(
+            "payload_json is not a valid action-gated queue history report: "
+            f"{exc}",
+        ) from exc
+    if type(report) is not PaperActionGatedStrategyRecommendationQueueHistoryReport:
+        raise ValueError(
+            "payload_json must recover a "
+            "PaperActionGatedStrategyRecommendationQueueHistoryReport",
+        )
+    _validate_report_tree(report)
+    if payload_json != _json_ready(asdict(report)):
+        raise ValueError("payload_json must match canonical recovered report payload")
+
+
+def _validate_payload_field_matches_row(
+    row: PaperActionGatedStrategyRecommendationQueueHistoryDbRow,
+    field_name: str,
+) -> None:
+    if not _json_values_match(
+        row.payload_json.get(field_name),
+        _json_ready(getattr(row, field_name)),
+    ):
+        raise ValueError(f"{field_name} must match payload_json")
+
+
+def _json_values_match(left: object, right: object) -> bool:
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, dict):
+        if set(left) != set(right):
+            return False
+        return all(_json_values_match(left[key], right[key]) for key in left)
+    if isinstance(left, list):
+        if len(left) != len(right):
+            return False
+        return all(
+            _json_values_match(left_item, right_item)
+            for left_item, right_item in zip(left, right, strict=True)
+        )
+    return left == right
+
+
+def _normalize_payload_reason_code_counts(
+    field_name: str,
+    value: object,
+) -> dict[str, int]:
+    if not isinstance(value, list):
+        raise ValueError(f"{field_name} must be a JSON array")
+    normalized: dict[str, int] = {}
+    for index, item in enumerate(value):
+        if not isinstance(item, dict):
+            raise ValueError(f"{field_name} {index} must be a JSON object")
+        if set(item) != {"reason_code", "count"}:
+            raise ValueError(
+                f"{field_name} {index} must contain reason_code and count",
+            )
+        reason_code = item["reason_code"]
+        count = item["count"]
+        _require_canonical_token(f"{field_name} {index} reason_code", reason_code)
+        if type(count) is not int or count <= 0:
+            raise ValueError(f"{field_name} {index} count must be a positive int")
+        if reason_code in normalized:
+            raise ValueError(f"{field_name} must not contain duplicate reason codes")
+        normalized[reason_code] = count
+    return normalized
 
 
 def _report_sha256(payload_json: dict[str, object]) -> str:

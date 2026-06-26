@@ -25,6 +25,41 @@ _SHA256_PATTERN = re.compile(r"^[a-f0-9]{64}$")
 RATIO_QUANTUM = Decimal("0.000001")
 ZERO = Decimal("0")
 ONE = Decimal("1")
+_MISSING = object()
+_HARD_FLAG_NAMES = ("paper_only", "report_only", "readonly")
+_JSON_INTEGER_FIELDS = frozenset(
+    {
+        "trade_count",
+        "partial_fill_count",
+        "negative_cost_adjusted_edge_count",
+    },
+)
+_JSON_DECIMAL_FIELDS = frozenset(
+    {
+        "total_filled_size",
+        "total_requested_size",
+        "fill_rate",
+        "mean_theoretical_edge",
+        "mean_cost_adjusted_edge",
+        "mean_edge_cost_drag",
+        "total_edge_cost_drag",
+        "mean_research_slippage",
+        "mean_fill_slippage",
+        "largest_single_trade_cost_drag",
+    },
+)
+_JSON_QUANTIZED_DECIMAL_FIELDS = frozenset(
+    {
+        "fill_rate",
+        "mean_theoretical_edge",
+        "mean_cost_adjusted_edge",
+        "mean_edge_cost_drag",
+        "total_edge_cost_drag",
+        "mean_research_slippage",
+        "mean_fill_slippage",
+        "largest_single_trade_cost_drag",
+    },
+)
 
 
 @dataclass(frozen=True)
@@ -89,7 +124,12 @@ class PaperTradeCostAuditReportDbRow:
             _normalize_json_object("payload_json", self.payload_json),
         )
         _require_hard_flags("DB row", self)
+        _validate_payload_integer_fields(self.payload_json, "payload_json")
+        _validate_payload_decimal_strings(self.payload_json, "payload_json")
+        _validate_json_hard_flags(self.payload_json, "payload_json")
         _validate_summary_consistency(self)
+        _validate_materialized_fields_match_payload(self)
+        _validate_payload_recovers_to_canonical_report(self.payload_json)
 
 
 def paper_trade_cost_audit_report_to_db_row(
@@ -129,20 +169,18 @@ def paper_trade_cost_audit_report_from_db_row(
     if type(row) is not PaperTradeCostAuditReportDbRow:
         raise ValueError("row must be a PaperTradeCostAuditReportDbRow")
     _reject_json_floats(row.payload_json)
-    _validate_json_hard_flags(row.payload_json, "payload_json")
+    _validate_payload_integer_fields(row.payload_json, "payload_json")
     try:
-        report = from_jsonable(PaperTradeCostAuditReport, row.payload_json)
-    except (KeyError, TypeError, ValueError) as exc:
-        raise ValueError(
-            f"payload_json is not a valid paper trade cost audit report: {exc}",
-        ) from exc
-    if type(report) is not PaperTradeCostAuditReport:
-        raise ValueError("payload_json must recover a PaperTradeCostAuditReport")
-    _require_hard_flags("report", report)
-    expected_row = paper_trade_cost_audit_report_to_db_row(report)
-    if row.report_sha256 != expected_row.report_sha256:
+        _validate_payload_decimal_strings(row.payload_json, "payload_json")
+    except ValueError as exc:
+        raise ValueError("payload_json must be canonical") from exc
+    if row.report_sha256 != _report_sha256(row.payload_json):
         raise ValueError("report_sha256 must match payload_json")
-    if _summary_values(row) != _summary_values(expected_row):
+    _validate_json_hard_flags(row.payload_json, "payload_json")
+    _validate_materialized_fields_match_payload(row)
+    report = _validate_payload_recovers_to_canonical_report(row.payload_json)
+    expected_row = paper_trade_cost_audit_report_to_db_row(report)
+    if not _json_values_match(_summary_values(row), _summary_values(expected_row)):
         raise ValueError("summary columns must match payload_json")
     return report
 
@@ -168,6 +206,113 @@ def _summary_values(row: PaperTradeCostAuditReportDbRow) -> tuple[Any, ...]:
         row.report_only,
         row.readonly,
     )
+
+
+def _validate_materialized_fields_match_payload(
+    row: PaperTradeCostAuditReportDbRow,
+) -> None:
+    payload_json = row.payload_json
+    expected_values = {
+        "report_sha256": _report_sha256(payload_json),
+        "generated_at": payload_json.get("generated_at", _MISSING),
+        "config_version": payload_json.get("config_version", _MISSING),
+        "trade_count": payload_json.get("trade_count", _MISSING),
+        "total_filled_size": payload_json.get("total_filled_size", _MISSING),
+        "total_requested_size": payload_json.get("total_requested_size", _MISSING),
+        "fill_rate": payload_json.get("fill_rate", _MISSING),
+        "mean_theoretical_edge": payload_json.get("mean_theoretical_edge", _MISSING),
+        "mean_cost_adjusted_edge": payload_json.get(
+            "mean_cost_adjusted_edge",
+            _MISSING,
+        ),
+        "mean_edge_cost_drag": payload_json.get("mean_edge_cost_drag", _MISSING),
+        "total_edge_cost_drag": payload_json.get("total_edge_cost_drag", _MISSING),
+        "mean_research_slippage": payload_json.get(
+            "mean_research_slippage",
+            _MISSING,
+        ),
+        "mean_fill_slippage": payload_json.get("mean_fill_slippage", _MISSING),
+        "partial_fill_count": payload_json.get("partial_fill_count", _MISSING),
+        "negative_cost_adjusted_edge_count": payload_json.get(
+            "negative_cost_adjusted_edge_count",
+            _MISSING,
+        ),
+        "largest_single_trade_cost_drag": payload_json.get(
+            "largest_single_trade_cost_drag",
+            _MISSING,
+        ),
+        "paper_only": payload_json.get("paper_only", _MISSING),
+        "report_only": payload_json.get("report_only", _MISSING),
+        "readonly": payload_json.get("readonly", _MISSING),
+    }
+    actual_values = {
+        "report_sha256": row.report_sha256,
+        "generated_at": row.generated_at.isoformat(),
+        "config_version": row.config_version,
+        "trade_count": row.trade_count,
+        "total_filled_size": _json_ready(row.total_filled_size),
+        "total_requested_size": _json_ready(row.total_requested_size),
+        "fill_rate": _json_ready(row.fill_rate),
+        "mean_theoretical_edge": _json_ready(row.mean_theoretical_edge),
+        "mean_cost_adjusted_edge": _json_ready(row.mean_cost_adjusted_edge),
+        "mean_edge_cost_drag": _json_ready(row.mean_edge_cost_drag),
+        "total_edge_cost_drag": _json_ready(row.total_edge_cost_drag),
+        "mean_research_slippage": _json_ready(row.mean_research_slippage),
+        "mean_fill_slippage": _json_ready(row.mean_fill_slippage),
+        "partial_fill_count": row.partial_fill_count,
+        "negative_cost_adjusted_edge_count": row.negative_cost_adjusted_edge_count,
+        "largest_single_trade_cost_drag": _json_ready(
+            row.largest_single_trade_cost_drag,
+        ),
+        "paper_only": row.paper_only,
+        "report_only": row.report_only,
+        "readonly": row.readonly,
+    }
+    for field_name, actual_value in actual_values.items():
+        if not _json_values_match(actual_value, expected_values[field_name]):
+            raise ValueError(f"{field_name} must match payload_json")
+
+
+def _validate_payload_recovers_to_canonical_report(
+    payload_json: dict[str, Any],
+) -> PaperTradeCostAuditReport:
+    try:
+        report = from_jsonable(PaperTradeCostAuditReport, payload_json)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(
+            f"payload_json is not a valid paper trade cost audit report: {exc}",
+        ) from exc
+    if type(report) is not PaperTradeCostAuditReport:
+        raise ValueError("payload_json must recover a PaperTradeCostAuditReport")
+    _require_hard_flags("report", report)
+    if not _json_values_match(payload_json, _canonical_report_payload(report)):
+        raise ValueError("payload_json must be canonical")
+    return report
+
+
+def _canonical_report_payload(report: PaperTradeCostAuditReport) -> dict[str, Any]:
+    payload = _json_ready(asdict(report))
+    if not isinstance(payload, dict):
+        raise ValueError("payload_json must recover a JSON object")
+    _validate_payload_decimal_strings(payload, "payload_json")
+    return payload
+
+
+def _json_values_match(left: object, right: object) -> bool:
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, dict):
+        if left.keys() != right.keys():
+            return False
+        return all(_json_values_match(left[key], right[key]) for key in left)
+    if isinstance(left, (list, tuple)):
+        if len(left) != len(right):
+            return False
+        return all(
+            _json_values_match(left_item, right_item)
+            for left_item, right_item in zip(left, right, strict=True)
+        )
+    return left == right
 
 
 def _validate_summary_consistency(row: PaperTradeCostAuditReportDbRow) -> None:
@@ -265,12 +410,68 @@ def _normalize_json_object(field_name: str, value: object) -> dict[str, Any]:
     return normalized
 
 
+def _validate_payload_integer_fields(value: Any, field_name: str) -> None:
+    if isinstance(value, dict):
+        for key, item in value.items():
+            child_name = f"{field_name} {key}"
+            if key in _JSON_INTEGER_FIELDS:
+                _require_json_nonnegative_int(child_name, item)
+            else:
+                _validate_payload_integer_fields(item, child_name)
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            _validate_payload_integer_fields(item, f"{field_name} {index}")
+
+
+def _require_json_nonnegative_int(field_name: str, value: object) -> None:
+    if type(value) is not int or value < 0:
+        raise ValueError(f"{field_name} must be a nonnegative int")
+
+
+def _validate_payload_decimal_strings(value: Any, field_name: str) -> None:
+    if isinstance(value, dict):
+        for key, item in value.items():
+            child_name = f"{field_name} {key}"
+            if key in _JSON_DECIMAL_FIELDS and item is not None:
+                _require_canonical_decimal_json_string(
+                    child_name,
+                    item,
+                    quantized=key in _JSON_QUANTIZED_DECIMAL_FIELDS,
+                )
+            _validate_payload_decimal_strings(item, child_name)
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            _validate_payload_decimal_strings(item, f"{field_name} {index}")
+
+
+def _require_canonical_decimal_json_string(
+    field_name: str,
+    value: object,
+    *,
+    quantized: bool,
+) -> None:
+    if type(value) is not str:
+        raise ValueError(f"{field_name} must be a canonical Decimal string")
+    try:
+        decimal = Decimal(value)
+    except ArithmeticError as exc:
+        raise ValueError(f"{field_name} must be a canonical Decimal string") from exc
+    if not decimal.is_finite():
+        raise ValueError(f"{field_name} must be a finite Decimal string")
+    canonical = decimal.quantize(RATIO_QUANTUM) if quantized else decimal
+    if value != str(canonical):
+        raise ValueError(f"{field_name} must be canonical")
+
+
 def _validate_json_hard_flags(value: Any, field_name: str) -> None:
     if not isinstance(value, dict):
         return
-    for flag_name in ("paper_only", "report_only", "readonly"):
-        if flag_name in value and value[flag_name] is not True:
-            raise ValueError(f"{field_name} {flag_name} must be true")
+    if _looks_like_report_payload(
+        value,
+    ) or any(flag_name in value for flag_name in _HARD_FLAG_NAMES):
+        for flag_name in _HARD_FLAG_NAMES:
+            if value.get(flag_name) is not True:
+                raise ValueError(f"{field_name} {flag_name} must be present and true")
     for key, item in value.items():
         child_name = f"{field_name} {key}"
         if isinstance(item, dict):
@@ -278,6 +479,20 @@ def _validate_json_hard_flags(value: Any, field_name: str) -> None:
         elif isinstance(item, list):
             for index, element in enumerate(item):
                 _validate_json_hard_flags(element, f"{child_name} {index}")
+
+
+def _looks_like_report_payload(value: dict[str, Any]) -> bool:
+    return (
+        "generated_at" in value
+        and "config_version" in value
+        and (
+            "reason_codes" in value
+            or "trade_count" in value
+            or "paper_only" in value
+            or "report_only" in value
+            or "readonly" in value
+        )
+    )
 
 
 def _reject_json_floats(value: Any) -> None:

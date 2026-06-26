@@ -70,6 +70,15 @@ def _row_values(row: object) -> dict[str, object]:
     return dict(row.__dict__)
 
 
+def _bypassed_row(row: object, **overrides: object) -> object:
+    import polymarket_alpha_lab.autonomous_market_scorer_db_row as codec
+
+    bypassed = object.__new__(codec.AutonomousMarketScorerDbRow)
+    for field_name, value in {**_row_values(row), **overrides}.items():
+        object.__setattr__(bypassed, field_name, value)
+    return bypassed
+
+
 def _canonical_payload_sha256(payload_json: dict[str, object]) -> str:
     encoded = json.dumps(
         payload_json,
@@ -203,36 +212,99 @@ def test_scorer_db_row_rejects_false_report_flags_before_write(
         codec.to_db_row(report)
 
 
-def test_scorer_db_row_rejects_corrupted_payload_flags() -> None:
+def test_scorer_db_row_rejects_corrupted_payload_flags_at_construction() -> None:
     import polymarket_alpha_lab.autonomous_market_scorer_db_row as codec
 
     row = codec.to_db_row(_report())
     payload = {**row.payload_json, "readonly": False}
-    malformed = codec.AutonomousMarketScorerDbRow(
-        **{
-            **_row_values(row),
-            "report_sha256": _canonical_payload_sha256(payload),
-            "payload_json": payload,
-        },
-    )
 
     with pytest.raises(ValueError, match="readonly"):
-        codec.from_db_row(malformed)
+        codec.AutonomousMarketScorerDbRow(
+            **{
+                **_row_values(row),
+                "report_sha256": _canonical_payload_sha256(payload),
+                "payload_json": payload,
+            },
+        )
+    with pytest.raises(ValueError, match="readonly"):
+        replace(row, report_sha256=_canonical_payload_sha256(payload), payload_json=payload)
 
 
-def test_scorer_db_row_rejects_hash_mismatch() -> None:
+def test_scorer_from_db_row_rejects_bypassed_payload_flag_corruption() -> None:
     import polymarket_alpha_lab.autonomous_market_scorer_db_row as codec
 
     row = codec.to_db_row(_report())
-    malformed = codec.AutonomousMarketScorerDbRow(
-        **{
-            **_row_values(row),
-            "payload_json": {**row.payload_json, "config_version": "changed"},
-        },
+    payload = {**row.payload_json, "readonly": False}
+    malformed = _bypassed_row(
+        row,
+        report_sha256=_canonical_payload_sha256(payload),
+        payload_json=payload,
     )
 
+    with pytest.raises(ValueError, match="readonly"):
+        codec.from_db_row(malformed)  # type: ignore[arg-type]
+
+
+def test_scorer_db_row_rejects_decimal_payload_values_before_normalization() -> None:
+    import polymarket_alpha_lab.autonomous_market_scorer_db_row as codec
+
+    row = codec.to_db_row(_report())
+    payload = {**row.payload_json, "top_total_score": Decimal("0.650000")}
+
+    with pytest.raises(ValueError, match="payload_json"):
+        codec.AutonomousMarketScorerDbRow(
+            **{
+                **_row_values(row),
+                "payload_json": payload,
+            },
+        )
+
+    malformed = _bypassed_row(row, payload_json=payload)
+    with pytest.raises(ValueError, match="payload_json"):
+        codec.from_db_row(malformed)  # type: ignore[arg-type]
+
+
+def test_scorer_from_db_row_rejects_bypassed_decimal_score_rows_json() -> None:
+    import polymarket_alpha_lab.autonomous_market_scorer_db_row as codec
+
+    row = codec.to_db_row(_report())
+    score_rows_json = [
+        {**row.score_rows_json[0], "recommended_notional": Decimal("10.000000")},
+    ]
+    malformed = _bypassed_row(row, score_rows_json=score_rows_json)
+
+    with pytest.raises(ValueError, match="score_rows_json"):
+        codec.from_db_row(malformed)  # type: ignore[arg-type]
+
+
+def test_scorer_from_db_row_rejects_noncanonical_decimal_payload_strings() -> None:
+    import polymarket_alpha_lab.autonomous_market_scorer_db_row as codec
+
+    row = codec.to_db_row(_report())
+    payload = {**row.payload_json, "top_total_score": "0.6500000"}
+    malformed = _bypassed_row(
+        row,
+        report_sha256=_canonical_payload_sha256(payload),
+        top_total_score=Decimal("0.6500000"),
+        payload_json=payload,
+    )
+
+    with pytest.raises(ValueError, match="top_total_score|payload_json"):
+        codec.from_db_row(malformed)  # type: ignore[arg-type]
+
+
+def test_scorer_db_row_rejects_hash_mismatch_at_construction() -> None:
+    import polymarket_alpha_lab.autonomous_market_scorer_db_row as codec
+
+    row = codec.to_db_row(_report())
+
     with pytest.raises(ValueError, match="report_sha256"):
-        codec.from_db_row(malformed)
+        codec.AutonomousMarketScorerDbRow(
+            **{
+                **_row_values(row),
+                "payload_json": {**row.payload_json, "config_version": "changed"},
+            },
+        )
 
 
 def test_scorer_db_row_rejects_recursive_floats_in_json_payloads() -> None:
@@ -268,17 +340,50 @@ def test_scorer_db_row_rejects_recursive_floats_in_json_payloads() -> None:
         ({"score_rows_json": []}, "score_rows_json"),
     ),
 )
-def test_scorer_db_row_rejects_materialized_payload_mismatches(
+def test_scorer_db_row_rejects_materialized_payload_mismatches_at_construction(
     overrides: dict[str, object],
     message: str,
 ) -> None:
     import polymarket_alpha_lab.autonomous_market_scorer_db_row as codec
 
     row = codec.to_db_row(_report())
-    malformed = codec.AutonomousMarketScorerDbRow(**{**_row_values(row), **overrides})
 
     with pytest.raises(ValueError, match=message):
-        codec.from_db_row(malformed)
+        codec.AutonomousMarketScorerDbRow(**{**_row_values(row), **overrides})
+
+
+def test_scorer_db_row_rejects_materialized_payload_mismatches_on_replace() -> None:
+    import polymarket_alpha_lab.autonomous_market_scorer_db_row as codec
+
+    row = codec.to_db_row(_report())
+
+    with pytest.raises(ValueError, match="markets_scored"):
+        replace(row, markets_scored=2)
+    with pytest.raises(ValueError, match="score_rows_json"):
+        replace(row, score_rows_json=[])
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    (
+        ({"report_sha256": "b" * 64}, "report_sha256"),
+        ({"generated_at": datetime(2026, 6, 25, 14, 31, tzinfo=UTC)}, "generated_at"),
+        ({"markets_scored": 2}, "markets_scored"),
+        ({"reason_codes_json": ["other_reason"]}, "reason_codes_json"),
+        ({"score_rows_json": []}, "score_rows_json"),
+    ),
+)
+def test_scorer_from_db_row_rejects_bypassed_materialized_mismatches(
+    overrides: dict[str, object],
+    message: str,
+) -> None:
+    import polymarket_alpha_lab.autonomous_market_scorer_db_row as codec
+
+    row = codec.to_db_row(_report())
+    malformed = _bypassed_row(row, **overrides)
+
+    with pytest.raises(ValueError, match=message):
+        codec.from_db_row(malformed)  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize(

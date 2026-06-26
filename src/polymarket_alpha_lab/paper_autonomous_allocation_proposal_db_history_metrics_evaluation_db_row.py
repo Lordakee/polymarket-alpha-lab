@@ -88,7 +88,12 @@ class PaperAutonomousAllocationProposalDbHistoryMetricsEvaluationDbRow:
             _normalize_json_object("payload_json", self.payload_json),
         )
         _require_hard_flags("DB row", self)
+        _validate_json_hard_flags(self.payload_json, "payload_json")
+        _validate_json_hard_flags(self.diagnostics_json, "diagnostics_json")
+        _require_json_hard_flags("diagnostics_json", self.diagnostics_json)
         _validate_row_json_shape(self)
+        _validate_row_matches_payload_json(self)
+        _validate_payload_json_recoverable(self.payload_json)
 
 
 def paper_autonomous_allocation_proposal_db_history_metrics_evaluation_to_db_row(
@@ -141,6 +146,8 @@ def paper_autonomous_allocation_proposal_db_history_metrics_evaluation_from_db_r
     _reject_json_floats(row.diagnostics_json)
     _validate_json_hard_flags(row.payload_json, "payload_json")
     _validate_json_hard_flags(row.diagnostics_json, "diagnostics_json")
+    _validate_row_matches_payload_json(row)
+    _validate_payload_json_recoverable(row.payload_json)
     try:
         report = from_jsonable(
             PaperAutonomousAllocationProposalDbHistoryMetricsEvaluationReport,
@@ -201,6 +208,30 @@ def _validate_report_tree(
         _require_hard_flags(f"reason_code_counts {index}", count)
 
 
+def _validate_payload_json_recoverable(payload_json: dict[str, Any]) -> None:
+    try:
+        report = from_jsonable(
+            PaperAutonomousAllocationProposalDbHistoryMetricsEvaluationReport,
+            payload_json,
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(
+            "payload_json is not a valid paper autonomous allocation proposal "
+            f"metrics evaluation report: {exc}",
+        ) from exc
+    if (
+        type(report)
+        is not PaperAutonomousAllocationProposalDbHistoryMetricsEvaluationReport
+    ):
+        raise ValueError(
+            "payload_json must recover a "
+            "PaperAutonomousAllocationProposalDbHistoryMetricsEvaluationReport",
+        )
+    _validate_report_tree(report)
+    if _json_ready(asdict(report)) != payload_json:
+        raise ValueError("payload_json must be canonical")
+
+
 def _report_sha256(payload_json: dict[str, Any]) -> str:
     encoded = json.dumps(
         payload_json,
@@ -225,8 +256,122 @@ def _validate_row_json_shape(
             "payload_json diagnostics",
             payload_diagnostics,
         )
+        _require_json_hard_flags(
+            "payload_json diagnostics",
+            normalized_payload_diagnostics,
+        )
         if row.diagnostics_json != normalized_payload_diagnostics:
             raise ValueError("diagnostics_json must match payload_json")
+
+
+def _validate_row_matches_payload_json(
+    row: PaperAutonomousAllocationProposalDbHistoryMetricsEvaluationDbRow,
+) -> None:
+    try:
+        payload_sha256 = _report_sha256(row.payload_json)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("payload_json must be canonical JSON") from exc
+    if row.report_sha256 != payload_sha256:
+        raise ValueError("report_sha256 must match payload_json")
+    _validate_summary_columns_match_payload(row)
+    if row.diagnostics_json != row.payload_json.get("diagnostics"):
+        raise ValueError("diagnostics_json must match payload_json")
+    if row.payload_json.get("paper_only") is not True:
+        raise ValueError("paper_only must match payload_json")
+    if row.payload_json.get("report_only") is not True:
+        raise ValueError("report_only must match payload_json")
+    if row.payload_json.get("readonly") is not True:
+        raise ValueError("readonly must match payload_json")
+    if row.paper_only != row.payload_json.get("paper_only"):
+        raise ValueError("paper_only must match payload_json")
+    if row.report_only != row.payload_json.get("report_only"):
+        raise ValueError("report_only must match payload_json")
+    if row.readonly != row.payload_json.get("readonly"):
+        raise ValueError("readonly must match payload_json")
+
+
+def _validate_summary_columns_match_payload(
+    row: PaperAutonomousAllocationProposalDbHistoryMetricsEvaluationDbRow,
+) -> None:
+    payload_values = _payload_summary_values(row.payload_json)
+    row_values = _row_summary_values_json(row)
+    if payload_values[6] != row_values[6]:
+        raise ValueError("reason_code_counts_json must match payload_json")
+    if payload_values[7] != row_values[7]:
+        raise ValueError("reason_codes must match payload_json")
+    if payload_values != row_values:
+        raise ValueError("summary columns must match payload_json")
+
+
+def _payload_summary_values(payload_json: dict[str, Any]) -> tuple[Any, ...]:
+    return (
+        payload_json.get("generated_at"),
+        payload_json.get("config_version"),
+        payload_json.get("evaluation_status"),
+        payload_json.get("recommended_next_step"),
+        payload_json.get("source_report_count"),
+        payload_json.get("latest_report_generated_at"),
+        _payload_reason_code_counts_json(payload_json.get("reason_code_counts")),
+        tuple(payload_json.get("reason_codes", ())),
+        payload_json.get("paper_only"),
+        payload_json.get("report_only"),
+        payload_json.get("readonly"),
+    )
+
+
+def _payload_reason_code_counts_json(value: object) -> dict[str, int]:
+    if not isinstance(value, list):
+        raise ValueError("payload_json reason_code_counts must be an array")
+    counts: dict[str, int] = {}
+    expected_keys = {
+        "reason_code",
+        "report_count",
+        "paper_only",
+        "report_only",
+        "readonly",
+    }
+    for index, item in enumerate(value):
+        if not isinstance(item, dict):
+            raise ValueError("payload_json reason_code_counts must contain objects")
+        if set(item) != expected_keys:
+            raise ValueError(
+                f"payload_json reason_code_counts {index} must contain exact keys",
+            )
+        for flag_name in ("paper_only", "report_only", "readonly"):
+            if item.get(flag_name) is not True:
+                raise ValueError(
+                    f"payload_json reason_code_counts {index} "
+                    f"{flag_name} must be present and true",
+                )
+        reason_code = _require_reason_code(item.get("reason_code"))
+        report_count = item.get("report_count")
+        if type(report_count) is not int or report_count <= 0:
+            raise ValueError(
+                f"payload_json reason_code_counts {index} "
+                "report_count must be a positive int",
+            )
+        if reason_code in counts:
+            raise ValueError("payload_json reason_code_counts must be unique")
+        counts[reason_code] = report_count
+    return counts
+
+
+def _row_summary_values_json(
+    row: PaperAutonomousAllocationProposalDbHistoryMetricsEvaluationDbRow,
+) -> tuple[Any, ...]:
+    return (
+        _json_ready(row.generated_at),
+        row.config_version,
+        row.evaluation_status,
+        row.recommended_next_step,
+        row.source_report_count,
+        _json_ready(row.latest_report_generated_at),
+        row.reason_code_counts_json,
+        row.reason_codes,
+        row.paper_only,
+        row.report_only,
+        row.readonly,
+    )
 
 
 def _json_ready(value: Any) -> Any:
@@ -290,6 +435,12 @@ def _validate_json_hard_flags(value: Any, field_name: str) -> None:
         elif isinstance(item, list):
             for index, element in enumerate(item):
                 _validate_json_hard_flags(element, f"{child_name} {index}")
+
+
+def _require_json_hard_flags(value_name: str, value: dict[str, Any]) -> None:
+    for flag_name in ("paper_only", "report_only", "readonly"):
+        if value.get(flag_name) is not True:
+            raise ValueError(f"{value_name} {flag_name} must be present and true")
 
 
 def _reject_json_floats(value: Any) -> None:

@@ -166,6 +166,7 @@ class PaperAutonomousAllocationProposalDbRow:
             _normalize_json_object("payload_json", self.payload_json),
         )
         _require_hard_flags("DB row", self)
+        _validate_row_payload_consistency(self)
 
 
 def paper_autonomous_allocation_proposal_to_db_row(
@@ -251,21 +252,7 @@ def paper_autonomous_allocation_proposal_from_db_row(
 ) -> Any:
     if type(row) is not PaperAutonomousAllocationProposalDbRow:
         raise ValueError("row must be a PaperAutonomousAllocationProposalDbRow")
-    _reject_json_floats(row.reason_code_counts_json)
-    _reject_json_floats(row.allocation_rows_json)
-    _reject_json_floats(row.payload_json)
-    if row.report_sha256 != _report_sha256(row.payload_json):
-        raise ValueError("report_sha256 must match payload_json")
-    _validate_json_hard_flags(row.payload_json, "payload_json")
-    allocation_report_json = row.payload_json.get("allocation_report")
-    if not isinstance(allocation_report_json, dict):
-        raise ValueError("payload_json allocation_report must be a JSON object")
-    if row.reason_codes_json != row.payload_json.get("reason_codes"):
-        raise ValueError("reason_codes_json must match payload_json")
-    if row.reason_code_counts_json != row.payload_json.get("reason_code_counts"):
-        raise ValueError("reason_code_counts_json must match payload_json")
-    if row.allocation_rows_json != allocation_report_json.get("rows"):
-        raise ValueError("allocation_rows_json must match payload_json")
+    _validate_row_payload_consistency(row)
 
     report_type = _report_type()
     try:
@@ -347,6 +334,163 @@ def _validate_row_matches_payload(
     for field_name in _MATERIALIZED_FIELDS:
         if getattr(row, field_name) != getattr(expected, field_name):
             raise ValueError(f"{field_name} must match payload_json")
+
+
+def _validate_row_payload_consistency(
+    row: PaperAutonomousAllocationProposalDbRow,
+) -> None:
+    _reject_json_floats(row.reason_code_counts_json)
+    _reject_json_floats(row.allocation_rows_json)
+    _reject_json_floats(row.payload_json)
+    if row.report_sha256 != _report_sha256(row.payload_json):
+        raise ValueError("report_sha256 must match payload_json")
+    _validate_json_hard_flags(row.payload_json, "payload_json")
+    _validate_required_json_hard_flags_array(
+        "reason_code_counts_json",
+        row.reason_code_counts_json,
+    )
+    _validate_required_json_hard_flags_array(
+        "allocation_rows_json",
+        row.allocation_rows_json,
+    )
+    _validate_row_flags_match_payload(row)
+
+    allocation_report_json = row.payload_json.get("allocation_report")
+    if not isinstance(allocation_report_json, dict):
+        raise ValueError("payload_json allocation_report must be a JSON object")
+    _require_json_hard_flags("payload_json allocation_report", allocation_report_json)
+    _validate_optional_required_json_hard_flags_array(
+        "payload_json source_queue_summaries",
+        row.payload_json,
+        "source_queue_summaries",
+    )
+
+    _validate_row_field_matches_payload(
+        "reason_codes_json",
+        row.reason_codes_json,
+        row.payload_json.get("reason_codes"),
+    )
+    _validate_row_field_matches_payload(
+        "reason_code_counts_json",
+        row.reason_code_counts_json,
+        row.payload_json.get("reason_code_counts"),
+    )
+    _validate_row_field_matches_payload(
+        "allocation_rows_json",
+        row.allocation_rows_json,
+        allocation_report_json.get("rows"),
+    )
+    for row_field_name, payload_field_name in _ROOT_PAYLOAD_FIELD_MAP:
+        _validate_row_field_matches_payload(
+            row_field_name,
+            getattr(row, row_field_name),
+            row.payload_json.get(payload_field_name),
+        )
+    _validate_source_queue_count_matches_payload(row)
+    for row_field_name, payload_field_name in _ALLOCATION_REPORT_FIELD_MAP:
+        _validate_row_field_matches_payload(
+            row_field_name,
+            getattr(row, row_field_name),
+            allocation_report_json.get(payload_field_name),
+        )
+
+
+def _validate_row_flags_match_payload(
+    row: PaperAutonomousAllocationProposalDbRow,
+) -> None:
+    for field_name in ("paper_only", "report_only", "readonly"):
+        _validate_row_field_matches_payload(
+            field_name,
+            getattr(row, field_name),
+            row.payload_json.get(field_name),
+        )
+
+
+def _validate_source_queue_count_matches_payload(
+    row: PaperAutonomousAllocationProposalDbRow,
+) -> None:
+    if "source_queue_report_count" in row.payload_json:
+        source_queue_report_count = row.payload_json.get("source_queue_report_count")
+    else:
+        source_queue_report_count = row.payload_json.get("source_queue_count")
+    _validate_row_field_matches_payload(
+        "source_queue_report_count",
+        row.source_queue_report_count,
+        source_queue_report_count,
+    )
+
+    for row_field_name in (
+        "source_queue_ready_count",
+        "source_queue_watch_count",
+        "source_queue_blocked_count",
+    ):
+        if row_field_name in row.payload_json:
+            expected_value = row.payload_json.get(row_field_name)
+        else:
+            expected_value = _source_queue_summary_count(
+                row.payload_json,
+                row_field_name.removeprefix("source_queue_"),
+            )
+        _validate_row_field_matches_payload(
+            row_field_name,
+            getattr(row, row_field_name),
+            expected_value,
+        )
+
+
+def _source_queue_summary_count(
+    payload_json: dict[str, Any],
+    summary_field_name: str,
+) -> int | None:
+    summaries = payload_json.get("source_queue_summaries")
+    if not isinstance(summaries, list):
+        return None
+    total = 0
+    for summary in summaries:
+        if not isinstance(summary, dict):
+            return None
+        value = summary.get(summary_field_name)
+        if type(value) is not int:
+            return None
+        total += value
+    return total
+
+
+def _validate_row_field_matches_payload(
+    field_name: str,
+    row_value: Any,
+    payload_value: Any,
+) -> None:
+    if _json_ready(row_value) != payload_value:
+        raise ValueError(f"{field_name} must match payload_json")
+
+
+def _validate_optional_required_json_hard_flags_array(
+    field_name: str,
+    payload_json: dict[str, Any],
+    payload_key: str,
+) -> None:
+    if payload_key not in payload_json:
+        return
+    _validate_required_json_hard_flags_array(field_name, payload_json[payload_key])
+
+
+def _validate_required_json_hard_flags_array(
+    field_name: str,
+    value: object,
+) -> None:
+    if not isinstance(value, list):
+        raise ValueError(f"{field_name} must be a JSON array")
+    for index, item in enumerate(value):
+        _require_json_hard_flags(f"{field_name} {index}", item)
+
+
+def _require_json_hard_flags(field_name: str, value: object) -> None:
+    if not isinstance(value, dict):
+        raise ValueError(f"{field_name} must be a JSON object")
+    for flag_name in ("paper_only", "report_only", "readonly"):
+        if value.get(flag_name) is not True:
+            raise ValueError(f"{field_name} {flag_name} must be present and true")
 
 
 def _report_sha256(payload_json: dict[str, Any]) -> str:
@@ -568,6 +712,46 @@ _MATERIALIZED_FIELDS = (
     "paper_only",
     "report_only",
     "readonly",
+)
+
+
+_ROOT_PAYLOAD_FIELD_MAP = (
+    ("generated_at", "generated_at"),
+    ("config_version", "config_version"),
+    ("proposal_status", "proposal_status"),
+    ("recommended_next_step", "recommended_next_step"),
+    ("screening_gate_generated_at", "screening_gate_generated_at"),
+    ("screening_gate_config_version", "screening_gate_config_version"),
+    ("screening_gate_status", "screening_gate_status"),
+    ("screening_gate_recommended_next_step", "screening_gate_recommended_next_step"),
+    ("queue_risk_generated_at", "queue_risk_generated_at"),
+    ("queue_risk_config_version", "queue_risk_config_version"),
+    ("queue_risk_status", "queue_risk_status"),
+    ("queue_risk_recommended_next_step", "queue_risk_recommended_next_step"),
+)
+
+
+_ALLOCATION_REPORT_FIELD_MAP = (
+    ("allocation_config_version", "config_version"),
+    ("allocation_generated_at", "generated_at"),
+    ("allocation_input_count", "input_count"),
+    ("allocation_row_count", "row_count"),
+    ("allocation_allocated_count", "allocated_count"),
+    ("allocation_capped_count", "capped_count"),
+    ("allocation_no_budget_count", "no_budget_count"),
+    ("allocation_non_recommend_count", "non_recommend_count"),
+    ("allocation_skipped_count", "skipped_count"),
+    ("allocation_total_requested_paper_notional", "total_requested_paper_notional"),
+    ("allocation_total_allocated_paper_notional", "total_allocated_paper_notional"),
+    ("allocation_remaining_paper_budget", "remaining_paper_budget"),
+    ("allocation_total_paper_budget", "total_paper_budget"),
+    ("allocation_max_paper_notional_per_market", "max_paper_notional_per_market"),
+    ("allocation_max_paper_notional_per_event", "max_paper_notional_per_event"),
+    ("allocation_max_paper_notional_per_theme", "max_paper_notional_per_theme"),
+    (
+        "allocation_max_paper_notional_per_correlation_group",
+        "max_paper_notional_per_correlation_group",
+    ),
 )
 
 

@@ -53,6 +53,13 @@ def _row_values(row: object) -> dict[str, object]:
     return dict(row.__dict__)
 
 
+def _bypassed_row(row: object, overrides: dict[str, object]) -> object:
+    bypassed = object.__new__(type(row))
+    for field_name, value in {**_row_values(row), **overrides}.items():
+        object.__setattr__(bypassed, field_name, value)
+    return bypassed
+
+
 def _canonical_payload_sha256(payload_json: dict[str, object]) -> str:
     encoded = json.dumps(
         payload_json,
@@ -72,6 +79,14 @@ def _assert_no_floats(value: object) -> None:
     elif isinstance(value, (list, tuple)):
         for item in value:
             _assert_no_floats(item)
+
+
+def _without_hard_flags(value: dict[str, object]) -> dict[str, object]:
+    return {
+        key: item
+        for key, item in value.items()
+        if key not in {"paper_only", "report_only", "readonly"}
+    }
 
 
 def test_health_db_row_serializes_payload_and_round_trips() -> None:
@@ -247,17 +262,93 @@ def test_health_db_row_rejects_corrupted_stored_payload_flags() -> None:
         },
     ]
     payload = {**row.payload_json, "reason_code_counts": reason_code_counts}
-    malformed = codec.PaperAutonomousInvestmentLedgerDbHistoryHealthDbRow(
-        **{
-            **_row_values(row),
+
+    with pytest.raises(ValueError, match="paper_only"):
+        codec.PaperAutonomousInvestmentLedgerDbHistoryHealthDbRow(
+            **{
+                **_row_values(row),
+                "report_sha256": _canonical_payload_sha256(payload),
+                "payload_json": payload,
+                "reason_code_counts_json": reason_code_counts,
+            },
+        )
+    with pytest.raises(ValueError, match="paper_only"):
+        replace(
+            row,
+            report_sha256=_canonical_payload_sha256(payload),
+            payload_json=payload,
+            reason_code_counts_json=reason_code_counts,
+        )
+    malformed = _bypassed_row(
+        row,
+        {
             "report_sha256": _canonical_payload_sha256(payload),
             "payload_json": payload,
             "reason_code_counts_json": reason_code_counts,
         },
     )
-
     with pytest.raises(ValueError, match="paper_only"):
         codec.from_db_row(malformed)
+
+
+def test_health_db_row_rejects_missing_nested_reason_count_flags() -> None:
+    import polymarket_alpha_lab.paper_autonomous_investment_ledger_db_history_health_db_row as codec
+
+    row = _db_row()
+    reason_code_counts = [
+        {
+            key: value
+            for key, value in reason_count.items()
+            if key not in {"paper_only", "report_only", "readonly"}
+        }
+        for reason_count in row.reason_code_counts_json
+    ]
+    payload = {**row.payload_json, "reason_code_counts": reason_code_counts}
+    report_sha256 = _canonical_payload_sha256(payload)
+
+    with pytest.raises(ValueError, match="reason_code_counts.*paper_only"):
+        codec.PaperAutonomousInvestmentLedgerDbHistoryHealthDbRow(
+            **{
+                **_row_values(row),
+                "report_sha256": report_sha256,
+                "payload_json": payload,
+                "reason_code_counts_json": reason_code_counts,
+            },
+        )
+    with pytest.raises(ValueError, match="reason_code_counts.*paper_only"):
+        replace(
+            row,
+            report_sha256=report_sha256,
+            payload_json=payload,
+            reason_code_counts_json=reason_code_counts,
+        )
+    malformed = _bypassed_row(
+        row,
+        {
+            "report_sha256": report_sha256,
+            "payload_json": payload,
+            "reason_code_counts_json": reason_code_counts,
+        },
+    )
+    with pytest.raises(ValueError, match="reason_code_counts.*paper_only"):
+        codec.from_db_row(malformed)
+
+
+def test_health_db_row_rejects_all_missing_nested_materialized_flags() -> None:
+    import polymarket_alpha_lab.paper_autonomous_investment_ledger_db_history_health_db_row as codec
+
+    row = _db_row()
+    reason_code_counts = [
+        _without_hard_flags(row.reason_code_counts_json[0]),
+        *row.reason_code_counts_json[1:],
+    ]
+
+    with pytest.raises(ValueError, match="reason_code_counts_json.*paper_only"):
+        codec.PaperAutonomousInvestmentLedgerDbHistoryHealthDbRow(
+            **{**_row_values(row), "reason_code_counts_json": reason_code_counts},
+        )
+    with pytest.raises(ValueError, match="reason_code_counts_json.*paper_only"):
+        replace(row, reason_code_counts_json=reason_code_counts)
 
 
 def test_health_db_row_rejects_non_materialized_payload_hash_mismatch() -> None:
@@ -265,14 +356,96 @@ def test_health_db_row_rejects_non_materialized_payload_hash_mismatch() -> None:
 
     row = _db_row()
     payload = {**row.payload_json, "paper_only": False}
-    malformed = codec.PaperAutonomousInvestmentLedgerDbHistoryHealthDbRow(
-        **{
-            **_row_values(row),
+
+    with pytest.raises(ValueError, match="report_sha256"):
+        codec.PaperAutonomousInvestmentLedgerDbHistoryHealthDbRow(
+            **{**_row_values(row), "payload_json": payload},
+        )
+    with pytest.raises(ValueError, match="report_sha256"):
+        replace(row, payload_json=payload)
+    malformed = _bypassed_row(row, {"payload_json": payload})
+    with pytest.raises(ValueError, match="report_sha256"):
+        codec.from_db_row(malformed)
+
+
+def test_health_db_row_rejects_missing_nullable_payload_keys() -> None:
+    import polymarket_alpha_lab.paper_autonomous_investment_ledger_db_history_health_db_row as codec
+
+    row = codec.to_db_row(_empty_report())
+    payload = {
+        key: value
+        for key, value in row.payload_json.items()
+        if key != "latest_total_submitted_notional"
+    }
+    report_sha256 = _canonical_payload_sha256(payload)
+
+    with pytest.raises(ValueError, match="latest_total_submitted_notional"):
+        codec.PaperAutonomousInvestmentLedgerDbHistoryHealthDbRow(
+            **{
+                **_row_values(row),
+                "report_sha256": report_sha256,
+                "payload_json": payload,
+            },
+        )
+    malformed = _bypassed_row(
+        row,
+        {"report_sha256": report_sha256, "payload_json": payload},
+    )
+    with pytest.raises(ValueError, match="latest_total_submitted_notional"):
+        codec.from_db_row(malformed)
+
+
+def test_health_db_row_rejects_bool_for_int_payload_values_strictly() -> None:
+    import polymarket_alpha_lab.paper_autonomous_investment_ledger_db_history_health_db_row as codec
+
+    row = _db_row()
+    payload = {**row.payload_json, "latest_source_record_count": True}
+    report_sha256 = _canonical_payload_sha256(payload)
+
+    with pytest.raises(ValueError, match="latest_source_record_count"):
+        codec.PaperAutonomousInvestmentLedgerDbHistoryHealthDbRow(
+            **{
+                **_row_values(row),
+                "report_sha256": report_sha256,
+                "payload_json": payload,
+            },
+        )
+    malformed = _bypassed_row(
+        row,
+        {"report_sha256": report_sha256, "payload_json": payload},
+    )
+    with pytest.raises(ValueError, match="latest_source_record_count"):
+        codec.from_db_row(malformed)
+
+
+def test_health_db_row_rejects_noncanonical_decimal_payload_strings() -> None:
+    import polymarket_alpha_lab.paper_autonomous_investment_ledger_db_history_health_db_row as codec
+
+    row = _db_row()
+    payload = {
+        **row.payload_json,
+        "latest_total_submitted_notional": "42.2500000",
+    }
+    report_sha256 = _canonical_payload_sha256(payload)
+
+    with pytest.raises(ValueError, match="latest_total_submitted_notional"):
+        codec.PaperAutonomousInvestmentLedgerDbHistoryHealthDbRow(
+            **{
+                **_row_values(row),
+                "report_sha256": report_sha256,
+                "latest_total_submitted_notional": Decimal("42.2500000"),
+                "payload_json": payload,
+            },
+        )
+    malformed = _bypassed_row(
+        row,
+        {
+            "report_sha256": report_sha256,
+            "latest_total_submitted_notional": Decimal("42.2500000"),
             "payload_json": payload,
         },
     )
-
-    with pytest.raises(ValueError, match="report_sha256"):
+    with pytest.raises(ValueError, match="payload_json|latest_total_submitted_notional"):
         codec.from_db_row(malformed)
 
 
@@ -390,10 +563,14 @@ def test_health_db_row_rejects_materialized_payload_mismatches(
     import polymarket_alpha_lab.paper_autonomous_investment_ledger_db_history_health_db_row as codec
 
     row = _db_row()
-    malformed = codec.PaperAutonomousInvestmentLedgerDbHistoryHealthDbRow(
-        **{**_row_values(row), **overrides},
-    )
 
+    with pytest.raises(ValueError, match=message):
+        codec.PaperAutonomousInvestmentLedgerDbHistoryHealthDbRow(
+            **{**_row_values(row), **overrides},
+        )
+    with pytest.raises(ValueError, match=message):
+        replace(row, **overrides)
+    malformed = _bypassed_row(row, overrides)
     with pytest.raises(ValueError, match=message):
         codec.from_db_row(malformed)
 

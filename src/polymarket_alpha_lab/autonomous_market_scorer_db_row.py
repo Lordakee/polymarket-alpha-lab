@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, fields, is_dataclass
 from datetime import UTC, datetime
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 import hashlib
 import json
 import re
@@ -32,6 +32,22 @@ QUANTUM = Decimal("0.000001")
 GATE_STATUSES = ("pass", "watch", "blocked")
 _SHA256_PATTERN = re.compile(r"^[a-f0-9]{64}$")
 _HARD_FLAG_NAMES = ("paper_only", "report_only", "readonly")
+_REPORT_DECIMAL_FIELDS = (
+    "top_total_score",
+    "average_total_score",
+    "total_recommended_notional",
+)
+_SCORE_ROW_DECIMAL_FIELDS = (
+    "confidence_score",
+    "liquidity_score",
+    "spread_score",
+    "edge_score",
+    "cost_score",
+    "risk_score",
+    "total_score",
+    "recommended_notional",
+    "estimated_edge",
+)
 _MATERIALIZED_FIELDS = (
     "report_sha256",
     "generated_at",
@@ -108,6 +124,7 @@ class AutonomousMarketScorerDbRow:
             _normalize_json_object("payload_json", self.payload_json),
         )
         _require_hard_flags("DB row", self)
+        _validate_row_payload_consistency(self)
 
 
 def autonomous_market_scorer_to_db_row(
@@ -148,18 +165,33 @@ def autonomous_market_scorer_from_db_row(
 ) -> AutonomousMarketScorerReport:
     if type(row) is not AutonomousMarketScorerDbRow:
         raise ValueError("row must be an AutonomousMarketScorerDbRow")
-    _reject_json_floats(row.reason_codes_json)
-    _reject_json_floats(row.score_rows_json)
-    _reject_json_floats(row.payload_json)
-    if row.report_sha256 != _report_sha256(row.payload_json):
+    return _validate_row_payload_consistency(row)
+
+
+def _validate_row_payload_consistency(
+    row: AutonomousMarketScorerDbRow,
+) -> AutonomousMarketScorerReport:
+    _validate_row_shape(row)
+    reason_codes_json = _normalize_string_list(
+        "reason_codes_json",
+        row.reason_codes_json,
+    )
+    score_rows_json = _normalize_json_object_array(
+        "score_rows_json",
+        row.score_rows_json,
+    )
+    payload_json = _normalize_json_object("payload_json", row.payload_json)
+    if row.report_sha256 != _report_sha256(payload_json):
         raise ValueError("report_sha256 must match payload_json")
-    _validate_json_hard_flags(row.payload_json, "payload_json")
-    if row.reason_codes_json != row.payload_json.get("reason_codes"):
+    _validate_json_hard_flags(payload_json, "payload_json")
+    _validate_payload_decimal_strings(payload_json)
+    _require_payload_flags_match_row(payload_json, "payload_json", row)
+    if reason_codes_json != payload_json.get("reason_codes"):
         raise ValueError("reason_codes_json must match payload_json")
-    if row.score_rows_json != row.payload_json.get("score_rows"):
+    if score_rows_json != payload_json.get("score_rows"):
         raise ValueError("score_rows_json must match payload_json")
     try:
-        report = from_jsonable(AutonomousMarketScorerReport, row.payload_json)
+        report = from_jsonable(AutonomousMarketScorerReport, payload_json)
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError(
             f"payload_json is not a valid autonomous market scorer report: {exc}",
@@ -167,9 +199,40 @@ def autonomous_market_scorer_from_db_row(
     if type(report) is not AutonomousMarketScorerReport:
         raise ValueError("payload_json must recover an AutonomousMarketScorerReport")
     _validate_report_tree(report)
-    expected_row = autonomous_market_scorer_to_db_row(report)
-    _validate_row_matches_payload(row, expected_row)
+    _validate_row_matches_payload(row, report)
     return report
+
+
+def _validate_row_shape(row: AutonomousMarketScorerDbRow) -> None:
+    _require_sha256("report_sha256", row.report_sha256)
+    _as_utc("generated_at", row.generated_at)
+    _require_canonical_string("config_version", row.config_version)
+    _require_gate_status("gate_status", row.gate_status)
+    _require_nonnegative_int("markets_scored", row.markets_scored)
+    _require_nonnegative_int("markets_skipped", row.markets_skipped)
+    _require_nonnegative_int("markets_blocked", row.markets_blocked)
+    _require_nonnegative_decimal("top_total_score", row.top_total_score)
+    _require_nonnegative_decimal("average_total_score", row.average_total_score)
+    _require_nonnegative_decimal(
+        "total_recommended_notional",
+        row.total_recommended_notional,
+    )
+    _normalize_string_list("reason_codes_json", row.reason_codes_json)
+    _normalize_json_object_array("score_rows_json", row.score_rows_json)
+    _normalize_json_object("payload_json", row.payload_json)
+    _require_hard_flags("DB row", row)
+
+
+def _require_payload_flags_match_row(
+    payload_json: dict[str, Any],
+    field_name: str,
+    row: AutonomousMarketScorerDbRow,
+) -> None:
+    for flag_name in _HARD_FLAG_NAMES:
+        if flag_name not in payload_json:
+            raise ValueError(f"{field_name} {flag_name} must match DB row")
+        if payload_json[flag_name] is not getattr(row, flag_name):
+            raise ValueError(f"{field_name} {flag_name} must match DB row")
 
 
 def to_db_row(report: AutonomousMarketScorerReport) -> AutonomousMarketScorerDbRow:
@@ -199,10 +262,32 @@ def _validate_report_tree(value: Any, field_name: str = "report") -> None:
 
 def _validate_row_matches_payload(
     row: AutonomousMarketScorerDbRow,
-    expected: AutonomousMarketScorerDbRow,
+    report: AutonomousMarketScorerReport,
 ) -> None:
+    payload_json = _json_ready(asdict(report))
+    expected_values = {
+        "report_sha256": _report_sha256(payload_json),
+        "generated_at": report.generated_at,
+        "config_version": report.config_version,
+        "gate_status": report.gate_status,
+        "markets_scored": report.markets_scored,
+        "markets_skipped": report.markets_skipped,
+        "markets_blocked": report.markets_blocked,
+        "top_total_score": report.top_total_score,
+        "average_total_score": report.average_total_score,
+        "total_recommended_notional": report.total_recommended_notional,
+        "reason_codes_json": report.reason_codes,
+        "score_rows_json": payload_json.get("score_rows"),
+        "payload_json": payload_json,
+        "paper_only": report.paper_only,
+        "report_only": report.report_only,
+        "readonly": report.readonly,
+    }
     for field_name in _MATERIALIZED_FIELDS:
-        if getattr(row, field_name) != getattr(expected, field_name):
+        if not _json_equal_strict(
+            _json_ready(getattr(row, field_name)),
+            _json_ready(expected_values[field_name]),
+        ):
             raise ValueError(f"{field_name} must match payload_json")
 
 
@@ -224,7 +309,7 @@ def _json_ready(value: Any) -> Any:
     if isinstance(value, Decimal):
         if not value.is_finite():
             raise ValueError("JSON Decimal value must be finite")
-        return str(value)
+        return format(value.quantize(QUANTUM), "f")
     if isinstance(value, datetime):
         return _as_utc("datetime", value).isoformat()
     if isinstance(value, float):
@@ -311,15 +396,71 @@ def _validate_json_hard_flags(value: Any, field_name: str) -> None:
                 _validate_json_hard_flags(element, f"{child_name} {index}")
 
 
+def _validate_payload_decimal_strings(payload_json: dict[str, Any]) -> None:
+    for field_name in _REPORT_DECIMAL_FIELDS:
+        _require_json_decimal_string(
+            f"payload_json {field_name}",
+            payload_json.get(field_name),
+        )
+    score_rows_json = payload_json.get("score_rows")
+    if not isinstance(score_rows_json, list):
+        raise ValueError("payload_json score_rows must be a JSON array")
+    for index, score_row in enumerate(score_rows_json):
+        if not isinstance(score_row, dict):
+            raise ValueError(f"payload_json score_rows {index} must be a JSON object")
+        for field_name in _SCORE_ROW_DECIMAL_FIELDS:
+            _require_json_decimal_string(
+                f"payload_json score_rows {index} {field_name}",
+                score_row.get(field_name),
+            )
+
+
+def _require_json_decimal_string(field_name: str, value: object) -> None:
+    if type(value) is not str:
+        raise ValueError(f"{field_name} must be a canonical decimal string")
+    try:
+        decimal = Decimal(value)
+        canonical = decimal.quantize(QUANTUM)
+    except (InvalidOperation, ValueError) as exc:
+        raise ValueError(f"{field_name} must be a canonical decimal string") from exc
+    if not decimal.is_finite() or decimal < ZERO:
+        raise ValueError(f"{field_name} must be a nonnegative finite decimal string")
+    if decimal == ZERO:
+        canonical = ZERO.quantize(QUANTUM)
+    if value != str(canonical):
+        raise ValueError(f"{field_name} must be a canonical decimal string")
+
+
 def _reject_json_floats(value: Any) -> None:
     if isinstance(value, float):
         raise ValueError("JSON value must not be a float")
+    if isinstance(value, Decimal):
+        raise ValueError("JSON value must not be a Decimal")
+    if isinstance(value, datetime):
+        raise ValueError("JSON value must not be a datetime")
     if isinstance(value, dict):
         for item in value.values():
             _reject_json_floats(item)
     elif isinstance(value, (list, tuple)):
         for item in value:
             _reject_json_floats(item)
+
+
+def _json_equal_strict(left: Any, right: Any) -> bool:
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, dict):
+        if left.keys() != right.keys():
+            return False
+        return all(_json_equal_strict(left[key], right[key]) for key in left)
+    if isinstance(left, list):
+        if len(left) != len(right):
+            return False
+        return all(
+            _json_equal_strict(left_item, right_item)
+            for left_item, right_item in zip(left, right, strict=True)
+        )
+    return left == right
 
 
 def _has_hard_flag(value: Any) -> bool:

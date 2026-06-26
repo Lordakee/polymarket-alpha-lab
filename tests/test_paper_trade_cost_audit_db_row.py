@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import FrozenInstanceError, replace
 from datetime import UTC, datetime, timezone, timedelta
 from decimal import Decimal
+import hashlib
+import json
 from pathlib import Path
 import re
 
@@ -86,6 +88,25 @@ def _assert_no_floats(value: object) -> None:
     elif isinstance(value, (list, tuple)):
         for item in value:
             _assert_no_floats(item)
+
+
+def _canonical_payload_sha256(payload_json: dict[str, object]) -> str:
+    encoded = json.dumps(
+        payload_json,
+        allow_nan=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _unchecked_row(row: object, **overrides: object) -> object:
+    values = dict(row.__dict__)
+    values.update(overrides)
+    unchecked = object.__new__(type(row))
+    for field_name, value in values.items():
+        object.__setattr__(unchecked, field_name, value)
+    return unchecked
 
 
 def _migration_table_body() -> str:
@@ -246,12 +267,14 @@ def test_db_row_rejects_false_stored_payload_flags(flag_name: str) -> None:
 
 def test_db_row_wraps_payload_recovery_errors_as_value_error() -> None:
     row = paper_trade_cost_audit_report_to_db_row(_empty_report())
-    malformed = replace(
-        row,
-        report_sha256="a" * 64,
-        payload_json={
-            key: value for key, value in row.payload_json.items() if key != "trade_count"
-        },
+    malformed = object.__new__(PaperTradeCostAuditReportDbRow)
+    for field_name, value in row.__dict__.items():
+        object.__setattr__(malformed, field_name, value)
+    object.__setattr__(malformed, "report_sha256", "a" * 64)
+    object.__setattr__(
+        malformed,
+        "payload_json",
+        {key: value for key, value in row.payload_json.items() if key != "trade_count"},
     )
 
     with pytest.raises(ValueError, match="payload_json"):
@@ -267,8 +290,112 @@ def test_db_row_validates_shape_floats_and_summary_matches_payload() -> None:
     with pytest.raises(ValueError, match="payload_json"):
         replace(row, payload_json={**row.payload_json, "bad_float": 0.1})
 
-    with pytest.raises(ValueError, match="summary columns"):
-        paper_trade_cost_audit_report_from_db_row(replace(row, trade_count=2))
+    with pytest.raises(ValueError, match="trade_count must match payload_json"):
+        replace(row, trade_count=2)
+
+    with pytest.raises(ValueError, match="report_sha256 must match payload_json"):
+        replace(row, report_sha256="b" * 64)
+
+
+def test_db_row_readback_rejects_object_new_bypass_mismatch() -> None:
+    row = paper_trade_cost_audit_report_to_db_row(_report())
+    malformed = _unchecked_row(row, trade_count=2)
+
+    with pytest.raises(ValueError, match="trade_count"):
+        paper_trade_cost_audit_report_from_db_row(malformed)
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value"),
+    (
+        ("total_filled_size", d("240.000000")),
+        ("total_requested_size", d("300.000000")),
+        ("fill_rate", d("0.8000000")),
+        ("mean_theoretical_edge", d("0.0600000")),
+        ("mean_cost_adjusted_edge", d("0.0300000")),
+        ("mean_edge_cost_drag", d("0.0300000")),
+        ("total_edge_cost_drag", d("6.6000000")),
+        ("mean_research_slippage", d("0.0046670")),
+        ("mean_fill_slippage", d("0.0090000")),
+        ("largest_single_trade_cost_drag", d("3.0000000")),
+    ),
+)
+def test_db_row_from_db_row_rejects_bypassed_noncanonical_materialized_decimal(
+    field_name: str,
+    value: Decimal,
+) -> None:
+    row = paper_trade_cost_audit_report_to_db_row(_report())
+    malformed = _unchecked_row(row, **{field_name: value})
+
+    with pytest.raises(ValueError, match=field_name):
+        paper_trade_cost_audit_report_from_db_row(malformed)
+
+
+@pytest.mark.parametrize(
+    ("payload_updates", "expected_message"),
+    (
+        ({"partial_fill_count": True}, "partial_fill_count"),
+        (
+            {"negative_cost_adjusted_edge_count": True},
+            "negative_cost_adjusted_edge_count",
+        ),
+        ({"fill_rate": "0.8000000"}, "canonical|fill_rate"),
+    ),
+)
+def test_db_row_rejects_type_loose_or_noncanonical_payload_values(
+    payload_updates: dict[str, object],
+    expected_message: str,
+) -> None:
+    row = paper_trade_cost_audit_report_to_db_row(_report())
+    payload = {**row.payload_json, **payload_updates}
+
+    with pytest.raises(ValueError, match=expected_message):
+        PaperTradeCostAuditReportDbRow(
+            **{
+                **row.__dict__,
+                "report_sha256": _canonical_payload_sha256(payload),
+                "payload_json": payload,
+            },
+        )
+
+
+def test_db_row_rejects_nested_all_missing_hard_flags() -> None:
+    row = paper_trade_cost_audit_report_to_db_row(_report())
+    payload = {
+        **row.payload_json,
+        "source_report": {
+            "paper_only": True,
+            "report_only": True,
+            "readonly": True,
+            "nested_report": {
+                "generated_at": "2026-06-20T00:30:00+00:00",
+                "config_version": "nested-v0",
+                "reason_codes": [],
+            },
+        },
+    }
+
+    with pytest.raises(ValueError, match="nested_report paper_only"):
+        PaperTradeCostAuditReportDbRow(
+            **{
+                **row.__dict__,
+                "report_sha256": _canonical_payload_sha256(payload),
+                "payload_json": payload,
+            },
+        )
+
+
+def test_db_row_from_db_row_rejects_unchecked_raw_hash_bypass() -> None:
+    row = paper_trade_cost_audit_report_to_db_row(_report())
+    payload = {**row.payload_json, "fill_rate": "0.8000000"}
+    malformed = _unchecked_row(
+        row,
+        report_sha256=_canonical_payload_sha256(payload),
+        payload_json=payload,
+    )
+
+    with pytest.raises(ValueError, match="payload_json must be canonical|report_sha256"):
+        paper_trade_cost_audit_report_from_db_row(malformed)
 
 
 @pytest.mark.parametrize(

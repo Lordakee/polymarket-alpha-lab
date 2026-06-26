@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 from datetime import UTC, datetime
 from decimal import Decimal
 import hashlib
@@ -55,6 +55,15 @@ def _unchecked_record(**overrides: object) -> PaperBrokerExecutionRecord:
 
 def _row_values(row: object) -> dict[str, object]:
     return dict(row.__dict__)
+
+
+def _unchecked_row(row: object, **overrides: object) -> object:
+    values = _row_values(row)
+    values.update(overrides)
+    unchecked = object.__new__(type(row))
+    for name, value in values.items():
+        object.__setattr__(unchecked, name, value)
+    return unchecked
 
 
 def _assert_no_floats(value: object) -> None:
@@ -267,32 +276,167 @@ def test_broker_execution_db_row_rejects_recursive_payload_floats() -> None:
         )
 
 
-def test_broker_execution_db_row_validates_hash_on_readback() -> None:
+def test_broker_execution_db_row_constructor_rejects_noncanonical_recovered_payload() -> None:
     codec = _codec()
     row = codec.to_db_row(_record())
+    payload = {
+        **row.payload_json,
+        "source_proposal_total_notional": "42.5000000",
+        "execution_notional": "42.5000000",
+    }
 
-    with pytest.raises(ValueError, match="record_sha256"):
-        codec.from_db_row(
-            codec.PaperBrokerExecutionDbRow(
-                **{**_row_values(row), "record_sha256": "b" * 64},
-            ),
+    with pytest.raises(ValueError, match="canonical|record_sha256"):
+        codec.PaperBrokerExecutionDbRow(
+            **{
+                **_row_values(row),
+                "record_sha256": row.record_sha256,
+                "payload_json": payload,
+            },
         )
 
 
-def test_broker_execution_db_row_validates_scalar_columns_match_payload() -> None:
+def test_broker_execution_from_db_row_rejects_unchecked_raw_hash_bypass() -> None:
     codec = _codec()
     row = codec.to_db_row(_record())
-    payload = {**row.payload_json, "config_version": "paper-broker-db-test-v1"}
+    payload = {
+        **row.payload_json,
+        "source_proposal_total_notional": "42.5000000",
+        "execution_notional": "42.5000000",
+    }
+    unchecked = _unchecked_row(
+        row,
+        record_sha256=row.record_sha256,
+        payload_json=payload,
+    )
 
-    tampered = codec.PaperBrokerExecutionDbRow(
-        **{
-            **_row_values(row),
+    with pytest.raises(ValueError, match="payload_json must be canonical|record_sha256"):
+        codec.from_db_row(unchecked)
+
+
+@pytest.mark.parametrize(
+    ("overrides", "payload_updates", "expected_field"),
+    (
+        ({"record_sha256": "b" * 64}, {}, "record_sha256"),
+        ({}, {"config_version": "paper-broker-db-test-v1"}, "config_version"),
+        ({}, {"execution_notional": "42.500001"}, "execution_notional"),
+        (
+            {"source_proposal_total_notional": d("42.5000000")},
+            {},
+            "source_proposal_total_notional",
+        ),
+        ({"execution_notional": d("42.5000000")}, {}, "execution_notional"),
+        (
+            {"reason_codes_json": ["paper_broker_execution_alternate"]},
+            {},
+            "reason_codes_json",
+        ),
+        ({"paper_only": False}, {}, "paper_only"),
+        ({"report_only": False}, {}, "report_only"),
+        ({"readonly": False}, {}, "readonly"),
+    ),
+)
+def test_broker_execution_db_row_constructor_rejects_materialized_field_mismatches(
+    overrides: dict[str, object],
+    payload_updates: dict[str, object],
+    expected_field: str,
+) -> None:
+    codec = _codec()
+    row = codec.to_db_row(_record())
+    payload = {**row.payload_json, **payload_updates}
+    values = {
+        **_row_values(row),
+        "record_sha256": _canonical_payload_sha256(payload),
+        "payload_json": payload,
+        **overrides,
+    }
+
+    with pytest.raises(ValueError, match=expected_field):
+        codec.PaperBrokerExecutionDbRow(**values)
+
+
+@pytest.mark.parametrize(
+    ("changes", "payload_updates", "expected_field"),
+    (
+        ({"record_sha256": "b" * 64}, {}, "record_sha256"),
+        ({}, {"config_version": "paper-broker-db-test-v1"}, "config_version"),
+        ({}, {"execution_notional": "42.500001"}, "execution_notional"),
+        (
+            {"source_proposal_total_notional": d("42.5000000")},
+            {},
+            "source_proposal_total_notional",
+        ),
+        ({"execution_notional": d("42.5000000")}, {}, "execution_notional"),
+        (
+            {"reason_codes_json": ["paper_broker_execution_alternate"]},
+            {},
+            "reason_codes_json",
+        ),
+        ({"paper_only": False}, {}, "paper_only"),
+        ({"report_only": False}, {}, "report_only"),
+        ({"readonly": False}, {}, "readonly"),
+    ),
+)
+def test_broker_execution_db_row_replace_rejects_materialized_field_mismatches(
+    changes: dict[str, object],
+    payload_updates: dict[str, object],
+    expected_field: str,
+) -> None:
+    codec = _codec()
+    row = codec.to_db_row(_record())
+    if payload_updates:
+        payload = {**row.payload_json, **payload_updates}
+        changes = {
+            **changes,
             "record_sha256": _canonical_payload_sha256(payload),
             "payload_json": payload,
-        },
+        }
+
+    with pytest.raises(ValueError, match=expected_field):
+        replace(row, **changes)
+
+
+@pytest.mark.parametrize(
+    ("overrides", "payload_updates", "expected_field"),
+    (
+        ({"record_sha256": "b" * 64}, {}, "record_sha256"),
+        ({}, {"config_version": "paper-broker-db-test-v1"}, "config_version"),
+        ({}, {"execution_notional": "42.500001"}, "execution_notional"),
+        (
+            {"source_proposal_total_notional": d("42.5000000")},
+            {},
+            "source_proposal_total_notional",
+        ),
+        ({"execution_notional": d("42.5000000")}, {}, "execution_notional"),
+        (
+            {"reason_codes_json": ["paper_broker_execution_alternate"]},
+            {},
+            "reason_codes_json",
+        ),
+        ({"paper_only": False}, {}, "paper_only"),
+        ({"report_only": False}, {}, "report_only"),
+        ({"readonly": False}, {}, "readonly"),
+    ),
+)
+def test_broker_execution_from_db_row_rejects_unchecked_materialized_field_mismatches(
+    overrides: dict[str, object],
+    payload_updates: dict[str, object],
+    expected_field: str,
+) -> None:
+    codec = _codec()
+    row = codec.to_db_row(_record())
+    payload = {**row.payload_json, **payload_updates}
+    unchecked_overrides = {
+        "record_sha256": _canonical_payload_sha256(payload),
+        "payload_json": payload,
+        **overrides,
+    }
+    unchecked = _unchecked_row(
+        row,
+        **unchecked_overrides,
     )
-    with pytest.raises(ValueError, match="config_version must match payload_json"):
-        codec.from_db_row(tampered)
+
+    with pytest.raises(ValueError, match=expected_field):
+        codec.from_db_row(unchecked)
 
 
 def test_broker_execution_db_row_rejects_invalid_decimal_json_on_readback() -> None:

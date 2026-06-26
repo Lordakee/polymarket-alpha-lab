@@ -27,6 +27,33 @@ __all__ = (
 
 _SHA256_PATTERN = re.compile(r"^[a-f0-9]{64}$")
 _RECONCILIATION_STATUSES = ("reconciled", "has_pending", "has_discrepancies")
+_MISSING = object()
+_HARD_FLAG_NAMES = ("paper_only", "report_only", "readonly")
+_DECIMAL_QUANTUM = Decimal("0.000001")
+_JSON_INTEGER_FIELDS = frozenset(
+    {
+        "total_positions",
+        "filled_pending_count",
+        "settled_win_count",
+        "settled_loss_count",
+        "expired_count",
+        "cancelled_count",
+    },
+)
+_JSON_DECIMAL_FIELDS = frozenset(
+    {
+        "total_fill_notional",
+        "total_cost_basis",
+        "total_outcome_value",
+        "total_pnl",
+        "realized_pnl",
+        "unrealized_pnl",
+        "fill_notional",
+        "cost_basis",
+        "outcome_value",
+        "pnl",
+    },
+)
 
 
 @dataclass(frozen=True)
@@ -96,6 +123,11 @@ class PaperExecutionReconciliationDbRow:
             _normalize_json_object("payload_json", self.payload_json),
         )
         _require_hard_flags("DB row", self)
+        _validate_payload_integer_fields(self.payload_json, "payload_json")
+        _validate_payload_decimal_strings(self.payload_json, "payload_json")
+        _validate_materialized_fields_match_payload(self)
+        _validate_json_hard_flags(self.payload_json, "payload_json")
+        _validate_payload_recovers_to_canonical_report(self.payload_json)
 
 
 def to_db_row(
@@ -137,9 +169,26 @@ def from_db_row(
     if type(row) is not PaperExecutionReconciliationDbRow:
         raise ValueError("row must be a PaperExecutionReconciliationDbRow")
     _reject_json_floats(row.payload_json)
-    _validate_json_hard_flags(row.payload_json, "payload_json")
+    _validate_payload_integer_fields(row.payload_json, "payload_json")
     try:
-        report = from_jsonable(PaperExecutionReconciliationReport, row.payload_json)
+        _validate_payload_decimal_strings(row.payload_json, "payload_json")
+    except ValueError as exc:
+        raise ValueError("payload_json must be canonical") from exc
+    if row.report_sha256 != _report_sha256(row.payload_json):
+        raise ValueError("report_sha256 must match payload_json")
+    _validate_json_hard_flags(row.payload_json, "payload_json")
+    _validate_materialized_fields_match_payload(row)
+    report = _validate_payload_recovers_to_canonical_report(row.payload_json)
+    expected_row = to_db_row(report)
+    _validate_row_matches_payload(row, expected_row)
+    return report
+
+
+def _validate_payload_recovers_to_canonical_report(
+    payload_json: dict[str, Any],
+) -> PaperExecutionReconciliationReport:
+    try:
+        report = from_jsonable(PaperExecutionReconciliationReport, payload_json)
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError(
             f"payload_json is not a valid execution reconciliation report: {exc}",
@@ -148,8 +197,8 @@ def from_db_row(
         raise ValueError(
             "payload_json must recover a PaperExecutionReconciliationReport",
         )
-    expected_row = to_db_row(report)
-    _validate_row_matches_payload(row, expected_row)
+    if not _json_values_match(payload_json, _canonical_report_payload(report)):
+        raise ValueError("payload_json must be canonical")
     return report
 
 
@@ -192,8 +241,141 @@ def _validate_row_matches_payload(
         "report_only",
         "readonly",
     ):
-        if getattr(row, field_name) != getattr(expected, field_name):
+        if not _json_values_match(
+            getattr(row, field_name),
+            getattr(expected, field_name),
+        ):
             raise ValueError(f"{field_name} must match payload_json")
+
+
+def _validate_materialized_fields_match_payload(
+    row: PaperExecutionReconciliationDbRow,
+) -> None:
+    payload_json = row.payload_json
+    expected_values = {
+        "report_sha256": _report_sha256(payload_json),
+        "generated_at": payload_json.get("generated_at", _MISSING),
+        "config_version": payload_json.get("config_version", _MISSING),
+        "reconciliation_status": payload_json.get(
+            "reconciliation_status",
+            _MISSING,
+        ),
+        "total_positions": payload_json.get("total_positions", _MISSING),
+        "filled_pending_count": payload_json.get(
+            "filled_pending_count",
+            _MISSING,
+        ),
+        "settled_win_count": payload_json.get("settled_win_count", _MISSING),
+        "settled_loss_count": payload_json.get("settled_loss_count", _MISSING),
+        "expired_count": payload_json.get("expired_count", _MISSING),
+        "cancelled_count": payload_json.get("cancelled_count", _MISSING),
+        "total_fill_notional": payload_json.get("total_fill_notional", _MISSING),
+        "total_cost_basis": payload_json.get("total_cost_basis", _MISSING),
+        "total_outcome_value": payload_json.get("total_outcome_value", _MISSING),
+        "total_pnl": payload_json.get("total_pnl", _MISSING),
+        "realized_pnl": payload_json.get("realized_pnl", _MISSING),
+        "unrealized_pnl": payload_json.get("unrealized_pnl", _MISSING),
+        "position_rows_json": payload_json.get("position_rows", _MISSING),
+        "reason_codes_json": payload_json.get("reason_codes", _MISSING),
+        "paper_only": payload_json.get("paper_only", _MISSING),
+        "report_only": payload_json.get("report_only", _MISSING),
+        "readonly": payload_json.get("readonly", _MISSING),
+    }
+    actual_values = {
+        "report_sha256": row.report_sha256,
+        "generated_at": row.generated_at.isoformat(),
+        "config_version": row.config_version,
+        "reconciliation_status": row.reconciliation_status,
+        "total_positions": row.total_positions,
+        "filled_pending_count": row.filled_pending_count,
+        "settled_win_count": row.settled_win_count,
+        "settled_loss_count": row.settled_loss_count,
+        "expired_count": row.expired_count,
+        "cancelled_count": row.cancelled_count,
+        "total_fill_notional": _json_ready(row.total_fill_notional),
+        "total_cost_basis": _json_ready(row.total_cost_basis),
+        "total_outcome_value": _json_ready(row.total_outcome_value),
+        "total_pnl": _json_ready(row.total_pnl),
+        "realized_pnl": _json_ready(row.realized_pnl),
+        "unrealized_pnl": _json_ready(row.unrealized_pnl),
+        "position_rows_json": row.position_rows_json,
+        "reason_codes_json": row.reason_codes_json,
+        "paper_only": row.paper_only,
+        "report_only": row.report_only,
+        "readonly": row.readonly,
+    }
+    for field_name, actual_value in actual_values.items():
+        if not _json_values_match(actual_value, expected_values[field_name]):
+            raise ValueError(f"{field_name} must match payload_json")
+
+
+def _canonical_report_payload(
+    report: PaperExecutionReconciliationReport,
+) -> dict[str, Any]:
+    payload = _json_ready(asdict(report))
+    if not isinstance(payload, dict):
+        raise ValueError("payload_json must recover a JSON object")
+    _validate_canonical_decimal_strings(payload, "payload_json")
+    return payload
+
+
+def _json_values_match(left: object, right: object) -> bool:
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, dict):
+        if set(left) != set(right):
+            return False
+        return all(_json_values_match(left[key], right[key]) for key in left)
+    if isinstance(left, list):
+        if len(left) != len(right):
+            return False
+        return all(
+            _json_values_match(left_item, right_item)
+            for left_item, right_item in zip(left, right, strict=True)
+        )
+    return left == right
+
+
+def _validate_canonical_decimal_strings(value: Any, field_name: str) -> None:
+    if isinstance(value, dict):
+        for key, item in value.items():
+            child_name = f"{field_name} {key}"
+            if key in _JSON_DECIMAL_FIELDS and item is not None:
+                _require_canonical_decimal_json_string(child_name, item)
+            _validate_canonical_decimal_strings(item, child_name)
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            _validate_canonical_decimal_strings(item, f"{field_name} {index}")
+
+
+def _validate_payload_integer_fields(value: Any, field_name: str) -> None:
+    if isinstance(value, dict):
+        for key, item in value.items():
+            child_name = f"{field_name} {key}"
+            if key in _JSON_INTEGER_FIELDS:
+                _require_nonnegative_int(child_name, item)
+            _validate_payload_integer_fields(item, child_name)
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            _validate_payload_integer_fields(item, f"{field_name} {index}")
+
+
+def _validate_payload_decimal_strings(value: Any, field_name: str) -> None:
+    _validate_canonical_decimal_strings(value, field_name)
+
+
+def _require_canonical_decimal_json_string(field_name: str, value: object) -> None:
+    if type(value) is not str:
+        raise ValueError(f"{field_name} must be a canonical decimal string")
+    try:
+        decimal = Decimal(value)
+    except Exception as exc:
+        raise ValueError(f"{field_name} must be a canonical decimal string") from exc
+    if not decimal.is_finite():
+        raise ValueError(f"{field_name} must be a finite decimal string")
+    canonical = decimal.quantize(_DECIMAL_QUANTUM)
+    if decimal != canonical or value != str(canonical):
+        raise ValueError(f"{field_name} must be canonical")
 
 
 def _report_sha256(payload_json: dict[str, Any]) -> str:
@@ -265,7 +447,7 @@ def _normalize_reason_codes_json(field_name: str, value: object) -> list[str]:
 def _validate_json_hard_flags(value: Any, field_name: str) -> None:
     if not isinstance(value, dict):
         return
-    if any(flag_name in value for flag_name in ("paper_only", "report_only", "readonly")):
+    if _looks_like_report_payload(value):
         for flag_name in ("paper_only", "report_only", "readonly"):
             if value.get(flag_name) is not True:
                 raise ValueError(f"{field_name} {flag_name} must be present and true")
@@ -276,6 +458,17 @@ def _validate_json_hard_flags(value: Any, field_name: str) -> None:
         elif isinstance(item, list):
             for index, element in enumerate(item):
                 _validate_json_hard_flags(element, f"{child_name} {index}")
+
+
+def _looks_like_report_payload(value: dict[str, Any]) -> bool:
+    return (
+        any(flag_name in value for flag_name in ("paper_only", "report_only", "readonly"))
+        or (
+            "generated_at" in value
+            and "config_version" in value
+            and "reason_codes" in value
+        )
+    )
 
 
 def _reject_json_floats(value: Any) -> None:

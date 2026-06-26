@@ -127,6 +127,7 @@ class PaperActionGatedStrategyRecommendationQueueDecisionSupportDbRow:
             _normalize_json_object("risk_payload_json", self.risk_payload_json),
         )
         _require_hard_flags("DB row", self)
+        _validate_row_payload_consistency(self)
 
 
 def paper_action_gated_strategy_recommendation_queue_decision_support_to_db_row(
@@ -194,12 +195,49 @@ def paper_action_gated_strategy_recommendation_queue_decision_support_from_db_ro
             "row must be a "
             "PaperActionGatedStrategyRecommendationQueueDecisionSupportDbRow",
         )
-    _validate_json_hard_flags(row.priority_payload_json, "priority_payload_json")
-    _validate_json_hard_flags(row.risk_payload_json, "risk_payload_json")
+    return _validate_row_payload_consistency(row)
+
+
+def _validate_row_payload_consistency(
+    row: PaperActionGatedStrategyRecommendationQueueDecisionSupportDbRow,
+) -> tuple[
+    PaperActionGatedStrategyRecommendationQueuePriorityReport,
+    PaperActionGatedStrategyRecommendationQueueRiskReport,
+]:
+    _validate_row_shape(row)
+    priority_payload_json = _normalize_json_object(
+        "priority_payload_json",
+        row.priority_payload_json,
+    )
+    risk_payload_json = _normalize_json_object(
+        "risk_payload_json",
+        row.risk_payload_json,
+    )
+    _validate_json_hard_flags(
+        priority_payload_json,
+        "priority_payload_json",
+        require_hard_flags=True,
+    )
+    _validate_json_hard_flags(
+        risk_payload_json,
+        "risk_payload_json",
+        require_hard_flags=True,
+    )
+    _require_payload_flags_match_row(
+        priority_payload_json,
+        "priority_payload_json",
+        row,
+    )
+    _require_payload_flags_match_row(risk_payload_json, "risk_payload_json", row)
+    if row.snapshot_sha256 != _snapshot_sha256(
+        priority_payload_json,
+        risk_payload_json,
+    ):
+        raise ValueError("snapshot_sha256 must match payload_json")
     try:
         priority_report = from_jsonable(
             PaperActionGatedStrategyRecommendationQueuePriorityReport,
-            row.priority_payload_json,
+            priority_payload_json,
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError(
@@ -208,7 +246,7 @@ def paper_action_gated_strategy_recommendation_queue_decision_support_from_db_ro
     try:
         risk_report = from_jsonable(
             PaperActionGatedStrategyRecommendationQueueRiskReport,
-            row.risk_payload_json,
+            risk_payload_json,
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError(f"risk_payload_json is not a valid risk report: {exc}") from exc
@@ -220,21 +258,68 @@ def paper_action_gated_strategy_recommendation_queue_decision_support_from_db_ro
     _validate_hard_flags_tree(priority_report, "priority_report")
     _validate_hard_flags_tree(risk_report, "risk_report")
     _validate_unique_risk_reason_codes(risk_report.reason_codes)
-
-    expected_row = (
-        paper_action_gated_strategy_recommendation_queue_decision_support_to_db_row(
-            priority_report,
-            risk_report,
-        )
-    )
-    _validate_row_matches_payload(row, expected_row)
+    _validate_priority_and_risk_snapshot_consistency(priority_report, risk_report)
+    _validate_row_matches_payload(row, priority_report, risk_report)
     return priority_report, risk_report
+
+
+def _validate_row_shape(
+    row: PaperActionGatedStrategyRecommendationQueueDecisionSupportDbRow,
+) -> None:
+    _require_sha256("snapshot_sha256", row.snapshot_sha256)
+    _as_utc("generated_at", row.generated_at)
+    for field_name in (
+        "priority_source_report_count",
+        "priority_research_ready_count",
+        "priority_watch_count",
+        "priority_blocked_count",
+        "risk_source_queue_count",
+        "risk_candidate_count",
+        "risk_ready_count",
+    ):
+        _require_nonnegative_int(field_name, getattr(row, field_name))
+    for field_name in (
+        "priority_total_ready_notional",
+        "top_research_priority_score",
+        "average_research_priority_score",
+        "risk_total_ready_notional",
+        "risk_largest_queue_ready_notional",
+    ):
+        _require_nonnegative_decimal(field_name, getattr(row, field_name))
+    _require_canonical_string("risk_config_version", row.risk_config_version)
+    _require_risk_status("risk_status", row.risk_status)
+    _require_risk_next_step("risk_recommended_next_step", row.risk_recommended_next_step)
+    if row.risk_recommended_next_step != RISK_NEXT_STEP_BY_STATUS[row.risk_status]:
+        raise ValueError("risk_recommended_next_step must match risk_status")
+    _normalize_risk_reason_codes_json(
+        "risk_reason_codes_json",
+        row.risk_reason_codes_json,
+    )
+    _require_hard_flags("DB row", row)
+
+
+def _require_payload_flags_match_row(
+    payload_json: dict[str, Any],
+    field_name: str,
+    row: PaperActionGatedStrategyRecommendationQueueDecisionSupportDbRow,
+) -> None:
+    for flag_name in ("paper_only", "report_only", "readonly"):
+        if flag_name not in payload_json:
+            raise ValueError(f"{field_name} {flag_name} must match DB row")
+        if payload_json[flag_name] is not getattr(row, flag_name):
+            raise ValueError(f"{field_name} {flag_name} must match DB row")
 
 
 def _validate_priority_and_risk_snapshot_consistency(
     priority_report: PaperActionGatedStrategyRecommendationQueuePriorityReport,
     risk_report: PaperActionGatedStrategyRecommendationQueueRiskReport,
 ) -> None:
+    _require_matching_value(
+        "priority_report.generated_at",
+        _as_utc("priority_report.generated_at", priority_report.generated_at),
+        "risk_report.generated_at",
+        _as_utc("risk_report.generated_at", risk_report.generated_at),
+    )
     _require_matching_value(
         "priority_report.source_report_count",
         priority_report.source_report_count,
@@ -328,32 +413,40 @@ def _require_matching_value(
 
 def _validate_row_matches_payload(
     row: PaperActionGatedStrategyRecommendationQueueDecisionSupportDbRow,
-    expected: PaperActionGatedStrategyRecommendationQueueDecisionSupportDbRow,
+    priority_report: PaperActionGatedStrategyRecommendationQueuePriorityReport,
+    risk_report: PaperActionGatedStrategyRecommendationQueueRiskReport,
 ) -> None:
-    for field_name in (
-        "snapshot_sha256",
-        "generated_at",
-        "priority_source_report_count",
-        "priority_research_ready_count",
-        "priority_watch_count",
-        "priority_blocked_count",
-        "priority_total_ready_notional",
-        "top_research_priority_score",
-        "average_research_priority_score",
-        "risk_config_version",
-        "risk_status",
-        "risk_recommended_next_step",
-        "risk_source_queue_count",
-        "risk_candidate_count",
-        "risk_ready_count",
-        "risk_total_ready_notional",
-        "risk_largest_queue_ready_notional",
-        "risk_reason_codes_json",
-        "paper_only",
-        "report_only",
-        "readonly",
-    ):
-        if getattr(row, field_name) != getattr(expected, field_name):
+    expected_values = {
+        "snapshot_sha256": _snapshot_sha256(
+            _json_ready(asdict(priority_report)),
+            _json_ready(asdict(risk_report)),
+        ),
+        "generated_at": priority_report.generated_at,
+        "priority_source_report_count": priority_report.source_report_count,
+        "priority_research_ready_count": priority_report.research_ready_count,
+        "priority_watch_count": priority_report.watch_count,
+        "priority_blocked_count": priority_report.blocked_count,
+        "priority_total_ready_notional": priority_report.total_ready_notional,
+        "top_research_priority_score": priority_report.top_research_priority_score,
+        "average_research_priority_score": priority_report.average_research_priority_score,
+        "risk_config_version": risk_report.config_version,
+        "risk_status": risk_report.status,
+        "risk_recommended_next_step": risk_report.recommended_next_step,
+        "risk_source_queue_count": risk_report.source_queue_count,
+        "risk_candidate_count": risk_report.candidate_count,
+        "risk_ready_count": risk_report.ready_count,
+        "risk_total_ready_notional": risk_report.total_ready_notional,
+        "risk_largest_queue_ready_notional": risk_report.largest_queue_ready_notional,
+        "risk_reason_codes_json": risk_report.reason_codes,
+        "paper_only": priority_report.paper_only,
+        "report_only": priority_report.report_only,
+        "readonly": priority_report.readonly,
+    }
+    for field_name, expected_value in expected_values.items():
+        if not _json_equal_strict(
+            _json_ready(getattr(row, field_name)),
+            _json_ready(expected_value),
+        ):
             raise ValueError(f"{field_name} must match payload_json")
 
 
@@ -381,7 +474,7 @@ def _json_ready(value: Any) -> Any:
     if isinstance(value, Decimal):
         if not value.is_finite():
             raise ValueError("JSON Decimal value must be finite")
-        return str(value)
+        return format(value.quantize(Decimal("0.000001")), "f")
     if isinstance(value, datetime):
         return _as_utc("datetime", value).isoformat()
     if isinstance(value, float):
@@ -403,6 +496,7 @@ def _normalize_json_object(field_name: str, value: object) -> dict[str, Any]:
         raise ValueError(f"{field_name} must be a JSON object")
     try:
         _reject_json_floats(value)
+        _reject_json_decimals(value)
         normalized = _json_ready(value)
     except ValueError as exc:
         raise ValueError(f"{field_name} {exc}") from exc
@@ -486,20 +580,35 @@ def _has_hard_flag(value: Any) -> bool:
     )
 
 
-def _validate_json_hard_flags(value: Any, field_name: str) -> None:
+def _validate_json_hard_flags(
+    value: Any,
+    field_name: str,
+    *,
+    require_hard_flags: bool = False,
+) -> None:
     if not isinstance(value, dict):
         return
-    if any(flag_name in value for flag_name in ("paper_only", "report_only", "readonly")):
+    if require_hard_flags or any(
+        flag_name in value for flag_name in ("paper_only", "report_only", "readonly")
+    ):
         for flag_name in ("paper_only", "report_only", "readonly"):
             if value.get(flag_name) is not True:
                 raise ValueError(f"{field_name} {flag_name} must be present and true")
     for key, item in value.items():
         child_name = f"{field_name} {key}"
         if isinstance(item, dict):
-            _validate_json_hard_flags(item, child_name)
+            _validate_json_hard_flags(
+                item,
+                child_name,
+                require_hard_flags=require_hard_flags,
+            )
         elif isinstance(item, list):
             for index, element in enumerate(item):
-                _validate_json_hard_flags(element, f"{child_name} {index}")
+                _validate_json_hard_flags(
+                    element,
+                    f"{child_name} {index}",
+                    require_hard_flags=require_hard_flags or key == "priority_rows",
+                )
 
 
 def _reject_json_floats(value: Any) -> None:
@@ -511,6 +620,36 @@ def _reject_json_floats(value: Any) -> None:
     elif isinstance(value, list):
         for item in value:
             _reject_json_floats(item)
+
+
+def _reject_json_decimals(value: Any) -> None:
+    if isinstance(value, Decimal):
+        raise ValueError("JSON value must not be a Decimal")
+    if isinstance(value, datetime):
+        raise ValueError("JSON value must not be a datetime")
+    if isinstance(value, dict):
+        for item in value.values():
+            _reject_json_decimals(item)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            _reject_json_decimals(item)
+
+
+def _json_equal_strict(left: Any, right: Any) -> bool:
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, dict):
+        if left.keys() != right.keys():
+            return False
+        return all(_json_equal_strict(left[key], right[key]) for key in left)
+    if isinstance(left, list):
+        if len(left) != len(right):
+            return False
+        return all(
+            _json_equal_strict(left_item, right_item)
+            for left_item, right_item in zip(left, right, strict=True)
+        )
+    return left == right
 
 
 def _as_utc(field_name: str, value: object) -> datetime:

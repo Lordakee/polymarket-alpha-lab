@@ -28,6 +28,8 @@ __all__ = (
 
 
 _SHA256_PATTERN = re.compile(r"^[a-f0-9]{64}$")
+_DECIMAL_QUANTUM = Decimal("0.000001")
+_MISSING = object()
 
 
 @dataclass(frozen=True)
@@ -121,6 +123,8 @@ class PaperAutonomousAllocationProposalDbHistoryHealthDbRow:
             _normalize_json_object("payload_json", self.payload_json),
         )
         _require_hard_flags("DB-history health DB row", self)
+        _validate_row_payload_consistency(self)
+        _validate_payload_recovers_to_canonical_report(self.payload_json)
 
 
 def paper_autonomous_allocation_proposal_db_history_health_report_to_db_row(
@@ -176,16 +180,7 @@ def paper_autonomous_allocation_proposal_db_history_health_report_from_db_row(
         raise ValueError(
             "row must be a PaperAutonomousAllocationProposalDbHistoryHealthDbRow",
         )
-    _reject_json_floats(row.reason_code_counts_json)
-    _reject_json_floats(row.reason_codes_json)
-    _reject_json_floats(row.payload_json)
-    if row.report_sha256 != _report_sha256(row.payload_json):
-        raise ValueError("report_sha256 must match payload_json")
-    _validate_json_hard_flags(row.payload_json, "payload_json")
-    if row.reason_codes_json != row.payload_json.get("reason_codes"):
-        raise ValueError("reason_codes_json must match payload_json")
-    if row.reason_code_counts_json != row.payload_json.get("reason_code_counts"):
-        raise ValueError("reason_code_counts_json must match payload_json")
+    _validate_row_payload_consistency(row)
     try:
         report = from_jsonable(
             PaperAutonomousAllocationProposalDbHistoryHealthReport,
@@ -201,6 +196,7 @@ def paper_autonomous_allocation_proposal_db_history_health_report_from_db_row(
             "PaperAutonomousAllocationProposalDbHistoryHealthReport",
         )
     _validate_report_tree(report)
+    _validate_payload_recovers_to_canonical_report(row.payload_json)
     expected_row = (
         paper_autonomous_allocation_proposal_db_history_health_report_to_db_row(
             report,
@@ -250,6 +246,72 @@ def _validate_row_matches_payload(
             raise ValueError(f"{field_name} must match payload_json")
 
 
+def _validate_row_payload_consistency(
+    row: PaperAutonomousAllocationProposalDbHistoryHealthDbRow,
+) -> None:
+    _reject_json_floats(row.reason_code_counts_json)
+    _reject_json_floats(row.reason_codes_json)
+    _reject_json_floats(row.payload_json)
+    if row.report_sha256 != _report_sha256(row.payload_json):
+        raise ValueError("report_sha256 must match payload_json")
+    _validate_json_hard_flags(row.payload_json, "payload_json")
+    _validate_required_json_hard_flags_array(
+        "reason_code_counts_json",
+        row.reason_code_counts_json,
+    )
+    for field_name in _ROOT_PAYLOAD_FIELDS:
+        _validate_row_field_matches_payload(
+            field_name,
+            getattr(row, field_name),
+            row.payload_json[field_name]
+            if field_name in row.payload_json
+            else _MISSING,
+        )
+    _validate_row_field_matches_payload(
+        "reason_codes_json",
+        row.reason_codes_json,
+        row.payload_json.get("reason_codes"),
+    )
+    _validate_row_field_matches_payload(
+        "reason_code_counts_json",
+        row.reason_code_counts_json,
+        row.payload_json.get("reason_code_counts"),
+    )
+    for field_name in ("paper_only", "report_only", "readonly"):
+        _validate_row_field_matches_payload(
+            field_name,
+            getattr(row, field_name),
+            row.payload_json.get(field_name),
+        )
+
+
+def _validate_row_field_matches_payload(
+    field_name: str,
+    row_value: Any,
+    payload_value: Any,
+) -> None:
+    if _json_ready(row_value) != payload_value:
+        raise ValueError(f"{field_name} must match payload_json")
+
+
+def _validate_required_json_hard_flags_array(
+    field_name: str,
+    value: object,
+) -> None:
+    if not isinstance(value, list):
+        raise ValueError(f"{field_name} must be a JSON array")
+    for index, item in enumerate(value):
+        _require_json_hard_flags(f"{field_name} {index}", item)
+
+
+def _require_json_hard_flags(field_name: str, value: object) -> None:
+    if not isinstance(value, dict):
+        raise ValueError(f"{field_name} must be a JSON object")
+    for flag_name in ("paper_only", "report_only", "readonly"):
+        if value.get(flag_name) is not True:
+            raise ValueError(f"{field_name} {flag_name} must be present and true")
+
+
 def _report_sha256(payload_json: dict[str, Any]) -> str:
     encoded = json.dumps(
         payload_json,
@@ -268,7 +330,7 @@ def _json_ready(value: Any) -> Any:
     if isinstance(value, Decimal):
         if not value.is_finite():
             raise ValueError("JSON Decimal value must be finite")
-        return str(value)
+        return format(value.quantize(_DECIMAL_QUANTUM), "f")
     if isinstance(value, datetime):
         return _as_utc("datetime", value).isoformat()
     if isinstance(value, float):
@@ -439,6 +501,28 @@ def _require_optional_nonnegative_decimal(
     return value
 
 
+def _validate_payload_recovers_to_canonical_report(
+    payload_json: dict[str, Any],
+) -> None:
+    try:
+        report = from_jsonable(
+            PaperAutonomousAllocationProposalDbHistoryHealthReport,
+            payload_json,
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(
+            "payload_json is not a valid DB-history health report: " f"{exc}",
+        ) from exc
+    if type(report) is not PaperAutonomousAllocationProposalDbHistoryHealthReport:
+        raise ValueError(
+            "payload_json must recover a "
+            "PaperAutonomousAllocationProposalDbHistoryHealthReport",
+        )
+    _validate_report_tree(report)
+    if payload_json != _json_ready(asdict(report)):
+        raise ValueError("payload_json must match canonical recovered report payload")
+
+
 _MATERIALIZED_FIELDS = (
     "report_sha256",
     "generated_at",
@@ -461,4 +545,23 @@ _MATERIALIZED_FIELDS = (
     "paper_only",
     "report_only",
     "readonly",
+)
+
+
+_ROOT_PAYLOAD_FIELDS = (
+    "generated_at",
+    "config_version",
+    "health_status",
+    "recommended_next_step",
+    "history_report_count",
+    "pass_report_count",
+    "watch_report_count",
+    "blocked_report_count",
+    "latest_history_status",
+    "latest_proposal_status",
+    "latest_allocated_count",
+    "latest_total_allocated_paper_notional",
+    "max_source_age_seconds",
+    "latest_source_age_seconds",
+    "duplicate_latest_report_generated_at_count",
 )

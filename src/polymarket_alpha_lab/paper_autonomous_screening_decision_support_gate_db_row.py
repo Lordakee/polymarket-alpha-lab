@@ -32,6 +32,7 @@ _REPORT_TYPE_NAME = "PaperAutonomousScreeningDecisionSupportGateReport"
 _GATE_STATUSES = ("pass", "watch", "blocked")
 _RANK_STABILITY_STATUSES = ("stable", "watch", "blocked")
 _SHA256_PATTERN = re.compile(r"^[a-f0-9]{64}$")
+_MISSING = object()
 
 
 @dataclass(frozen=True)
@@ -167,6 +168,8 @@ class PaperAutonomousScreeningDecisionSupportGateDbRow:
             _normalize_json_object("payload_json", self.payload_json),
         )
         _require_hard_flags("DB row", self)
+        _validate_json_hard_flags(self.payload_json, "payload_json")
+        _validate_materialized_fields_match_payload(self)
 
 
 def paper_autonomous_screening_decision_support_gate_to_db_row(
@@ -246,6 +249,7 @@ def paper_autonomous_screening_decision_support_gate_from_db_row(
     _reject_json_floats(row.reason_code_counts_json)
     _reject_json_floats(row.payload_json)
     _validate_json_hard_flags(row.payload_json, "payload_json")
+    _validate_materialized_fields_match_payload(row)
     if row.reason_codes_json != row.payload_json.get("reason_codes"):
         raise ValueError("reason_codes_json must match payload_json")
     if row.reason_code_counts_json != row.payload_json.get("reason_code_counts"):
@@ -327,6 +331,40 @@ def _validate_row_scalars_match_payload(
 ) -> None:
     for field_name in _SCALAR_PAYLOAD_FIELDS:
         if row.payload_json.get(field_name) != _json_ready(getattr(row, field_name)):
+            raise ValueError(f"{field_name} must match payload_json")
+
+
+def _validate_materialized_fields_match_payload(
+    row: PaperAutonomousScreeningDecisionSupportGateDbRow,
+) -> None:
+    payload_json = row.payload_json
+    expected_values = {
+        "report_sha256": _report_sha256(payload_json),
+        "reason_codes_json": payload_json.get("reason_codes", _MISSING),
+        "reason_code_counts_json": payload_json.get("reason_code_counts", _MISSING),
+        "paper_only": payload_json.get("paper_only", _MISSING),
+        "report_only": payload_json.get("report_only", _MISSING),
+        "readonly": payload_json.get("readonly", _MISSING),
+    }
+    for field_name in _SCALAR_PAYLOAD_FIELDS:
+        expected_values[field_name] = payload_json.get(field_name, _MISSING)
+    actual_values = {
+        "report_sha256": row.report_sha256,
+        "reason_codes_json": row.reason_codes_json,
+        "reason_code_counts_json": row.reason_code_counts_json,
+        "paper_only": row.paper_only,
+        "report_only": row.report_only,
+        "readonly": row.readonly,
+    }
+    for field_name in _SCALAR_PAYLOAD_FIELDS:
+        actual_values[field_name] = _json_ready(getattr(row, field_name))
+    for field_name in ("paper_only", "report_only", "readonly"):
+        if actual_values[field_name] != expected_values[field_name]:
+            raise ValueError(f"{field_name} must match payload_json")
+    for field_name in _MATERIALIZED_FIELDS:
+        if field_name in {"paper_only", "report_only", "readonly"}:
+            continue
+        if actual_values[field_name] != expected_values[field_name]:
             raise ValueError(f"{field_name} must match payload_json")
 
 

@@ -268,17 +268,68 @@ def test_transition_db_row_rejects_corrupted_stored_payload_flags() -> None:
             *row.status_transition_rows_json[1:],
         ],
     }
-    malformed = codec.PaperAutonomousScreeningDecisionSupportGateTransitionDbRow(
-        **{
-            **_row_values(row),
-            "report_sha256": _canonical_payload_sha256(payload),
-            "payload_json": payload,
-            "status_transition_rows_json": payload["status_transition_rows"],
-        },
+    values = {
+        **_row_values(row),
+        "report_sha256": _canonical_payload_sha256(payload),
+        "payload_json": payload,
+        "status_transition_rows_json": payload["status_transition_rows"],
+    }
+
+    with pytest.raises(ValueError, match="paper_only"):
+        codec.PaperAutonomousScreeningDecisionSupportGateTransitionDbRow(**values)
+    with pytest.raises(ValueError, match="paper_only"):
+        replace(row, **values)
+
+    malformed = object.__new__(
+        codec.PaperAutonomousScreeningDecisionSupportGateTransitionDbRow,
     )
+    for field_name, value in values.items():
+        object.__setattr__(malformed, field_name, value)
 
     with pytest.raises(ValueError, match="paper_only"):
         codec.from_db_row(malformed)
+
+
+@pytest.mark.parametrize(
+    ("payload_field", "row_field"),
+    (
+        ("status_transition_rows", "status_transition_rows_json"),
+        ("reason_change_rows", "reason_change_rows_json"),
+    ),
+)
+def test_transition_db_row_rejects_nested_payload_rows_missing_hard_flags(
+    payload_field: str,
+    row_field: str,
+) -> None:
+    import polymarket_alpha_lab.paper_autonomous_screening_decision_support_gate_transition_db_row as codec
+
+    row = codec.to_db_row(_report())
+    nested_rows = row.payload_json[payload_field]
+    assert isinstance(nested_rows, list)
+    assert nested_rows
+    stripped_row = {
+        key: value
+        for key, value in nested_rows[0].items()
+        if key not in ("paper_only", "report_only", "readonly")
+    }
+    payload = {
+        **row.payload_json,
+        payload_field: [
+            stripped_row,
+            *nested_rows[1:],
+        ],
+    }
+    values = {
+        **_row_values(row),
+        "report_sha256": _canonical_payload_sha256(payload),
+        "payload_json": payload,
+        row_field: payload[payload_field],
+    }
+
+    with pytest.raises(ValueError, match=f"payload_json {payload_field} 0 paper_only"):
+        codec.PaperAutonomousScreeningDecisionSupportGateTransitionDbRow(**values)
+    with pytest.raises(ValueError, match=f"payload_json {payload_field} 0 paper_only"):
+        replace(row, **values)
 
 
 def test_transition_db_row_rejects_recursive_floats_in_json_payloads() -> None:
@@ -321,11 +372,66 @@ def test_transition_db_row_rejects_materialized_payload_mismatches(
     import polymarket_alpha_lab.paper_autonomous_screening_decision_support_gate_transition_db_row as codec
 
     row = codec.to_db_row(_report())
-    malformed = codec.PaperAutonomousScreeningDecisionSupportGateTransitionDbRow(
-        **{**_row_values(row), **overrides},
-    )
 
     with pytest.raises(ValueError, match=message):
+        codec.PaperAutonomousScreeningDecisionSupportGateTransitionDbRow(
+            **{**_row_values(row), **overrides},
+        )
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    (
+        ({"report_sha256": "b" * 64}, "report_sha256"),
+        ({"transition_count": 2}, "transition_count"),
+        ({"latest_cleared_reason_codes_json": ["extra_reason"]}, "latest_cleared_reason_codes_json"),
+        ({"reason_change_rows_json": None}, "reason_change_rows_json"),
+    ),
+)
+def test_transition_db_row_replace_rejects_materialized_payload_mismatches(
+    overrides: dict[str, object],
+    message: str,
+) -> None:
+    import polymarket_alpha_lab.paper_autonomous_screening_decision_support_gate_transition_db_row as codec
+
+    row = codec.to_db_row(_report())
+
+    with pytest.raises(ValueError, match=message):
+        replace(row, **overrides)
+
+
+def test_transition_db_row_from_db_row_rejects_bypassed_payload_mismatch() -> None:
+    import polymarket_alpha_lab.paper_autonomous_screening_decision_support_gate_transition_db_row as codec
+
+    row = codec.to_db_row(_report())
+    malformed = object.__new__(
+        codec.PaperAutonomousScreeningDecisionSupportGateTransitionDbRow,
+    )
+    for field_name, value in _row_values(row).items():
+        object.__setattr__(malformed, field_name, value)
+    object.__setattr__(malformed, "transition_count", 2)
+
+    with pytest.raises(ValueError, match="transition_count"):
+        codec.from_db_row(malformed)
+
+
+def test_transition_from_db_row_rejects_bypassed_missing_payload_flags() -> None:
+    import polymarket_alpha_lab.paper_autonomous_screening_decision_support_gate_transition_db_row as codec
+
+    row = codec.to_db_row(_report())
+    payload = {
+        key: value
+        for key, value in row.payload_json.items()
+        if key not in {"paper_only", "report_only", "readonly"}
+    }
+    malformed = object.__new__(
+        codec.PaperAutonomousScreeningDecisionSupportGateTransitionDbRow,
+    )
+    for field_name, value in _row_values(row).items():
+        object.__setattr__(malformed, field_name, value)
+    object.__setattr__(malformed, "payload_json", payload)
+
+    with pytest.raises(ValueError, match="paper_only"):
         codec.from_db_row(malformed)
 
 
