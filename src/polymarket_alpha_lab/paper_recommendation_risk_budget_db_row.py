@@ -45,6 +45,7 @@ REASON_CODES = {
     "near_max_selected_count",
 }
 _SHA256_PATTERN = re.compile(r"^[a-f0-9]{64}$")
+_MISSING = object()
 
 
 @dataclass(frozen=True)
@@ -117,6 +118,8 @@ class PaperRecommendationRiskBudgetDbRow:
             _normalize_json_object("payload_json", self.payload_json),
         )
         _require_hard_flags("DB row", self)
+        _validate_materialized_fields_match_payload(self)
+        _validate_json_hard_flags(self.payload_json, "payload_json")
 
 
 def paper_recommendation_risk_budget_to_db_row(
@@ -223,6 +226,79 @@ def _validate_row_matches_payload(
         "readonly",
     ):
         if getattr(row, field_name) != getattr(expected, field_name):
+            raise ValueError(f"{field_name} must match payload_json")
+
+
+def _validate_materialized_fields_match_payload(
+    row: PaperRecommendationRiskBudgetDbRow,
+) -> None:
+    payload_json = row.payload_json
+    expected_values = {
+        "report_sha256": _report_sha256(payload_json),
+        "generated_at": payload_json.get("generated_at", _MISSING),
+        "config_version": payload_json.get("config_version", _MISSING),
+        "status": payload_json.get("status", _MISSING),
+        "reason_codes_json": payload_json.get("reason_codes", _MISSING),
+        "total_suggested_notional": payload_json.get(
+            "total_suggested_notional",
+            _MISSING,
+        ),
+        "remaining_total_notional": payload_json.get(
+            "remaining_total_notional",
+            _MISSING,
+        ),
+        "total_notional_utilization": payload_json.get(
+            "total_notional_utilization",
+            _MISSING,
+        ),
+        "largest_single_recommendation_share": payload_json.get(
+            "largest_single_recommendation_share",
+            _MISSING,
+        ),
+        "selected_count": payload_json.get("selected_count", _MISSING),
+        "blocked_count": payload_json.get("blocked_count", _MISSING),
+        "nav_notional": payload_json.get("nav_notional", _MISSING),
+        "max_total_utilization": payload_json.get(
+            "max_total_utilization",
+            _MISSING,
+        ),
+        "max_single_recommendation_share": payload_json.get(
+            "max_single_recommendation_share",
+            _MISSING,
+        ),
+        "min_remaining_notional": payload_json.get("min_remaining_notional", _MISSING),
+        "max_selected_count": payload_json.get("max_selected_count", _MISSING),
+        "paper_only": payload_json.get("paper_only", _MISSING),
+        "report_only": payload_json.get("report_only", _MISSING),
+        "readonly": payload_json.get("readonly", _MISSING),
+    }
+    actual_values = {
+        "report_sha256": row.report_sha256,
+        "generated_at": row.generated_at.isoformat(),
+        "config_version": row.config_version,
+        "status": row.status,
+        "reason_codes_json": row.reason_codes_json,
+        "total_suggested_notional": _json_ready(row.total_suggested_notional),
+        "remaining_total_notional": _json_ready(row.remaining_total_notional),
+        "total_notional_utilization": _json_ready(row.total_notional_utilization),
+        "largest_single_recommendation_share": _json_ready(
+            row.largest_single_recommendation_share,
+        ),
+        "selected_count": row.selected_count,
+        "blocked_count": row.blocked_count,
+        "nav_notional": _json_ready(row.nav_notional),
+        "max_total_utilization": _json_ready(row.max_total_utilization),
+        "max_single_recommendation_share": _json_ready(
+            row.max_single_recommendation_share,
+        ),
+        "min_remaining_notional": _json_ready(row.min_remaining_notional),
+        "max_selected_count": row.max_selected_count,
+        "paper_only": row.paper_only,
+        "report_only": row.report_only,
+        "readonly": row.readonly,
+    }
+    for field_name, actual_value in actual_values.items():
+        if actual_value != expected_values[field_name]:
             raise ValueError(f"{field_name} must match payload_json")
 
 

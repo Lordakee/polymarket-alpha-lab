@@ -101,6 +101,8 @@ class PaperRecommendationReasonTrendDbRow:
             _normalize_json_object("payload_json", self.payload_json),
         )
         _require_hard_flags("DB row", self)
+        _validate_json_hard_flags(self.payload_json, "payload_json")
+        _validate_constructed_row_matches_payload(self)
 
 
 def paper_recommendation_reason_trend_to_db_row(
@@ -191,6 +193,35 @@ def _validate_row_matches_payload(
         "readonly",
     ):
         if getattr(row, field_name) != getattr(expected, field_name):
+            raise ValueError(f"{field_name} must match payload_json")
+
+
+def _validate_constructed_row_matches_payload(
+    row: PaperRecommendationReasonTrendDbRow,
+) -> None:
+    try:
+        report = from_jsonable(PaperRecommendationReasonTrendReport, row.payload_json)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(
+            f"payload_json is not a valid reason trend report: {exc}",
+        ) from exc
+    if type(report) is not PaperRecommendationReasonTrendReport:
+        raise ValueError("payload_json must recover a PaperRecommendationReasonTrendReport")
+    _validate_report_tree(report)
+    expected_fields: dict[str, Any] = {
+        "report_sha256": _report_sha256(row.payload_json),
+        "generated_at": report.generated_at,
+        "config_version": report.config_version,
+        "source_report_count": report.source_report_count,
+        "reason_trend_rows_json": _json_ready(report.reason_trend_rows),
+        "transition_trend_rows_json": _json_ready(report.transition_trend_rows),
+        "payload_json": _json_ready(asdict(report)),
+        "paper_only": report.paper_only,
+        "report_only": report.report_only,
+        "readonly": report.readonly,
+    }
+    for field_name, expected_value in expected_fields.items():
+        if getattr(row, field_name) != expected_value:
             raise ValueError(f"{field_name} must match payload_json")
 
 

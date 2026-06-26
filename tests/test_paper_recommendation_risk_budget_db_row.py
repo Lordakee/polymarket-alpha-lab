@@ -56,6 +56,23 @@ def _row_values(row: object) -> dict[str, object]:
     return dict(row.__dict__)
 
 
+def _bypassed_row(codec: object, row: object, **overrides: object) -> object:
+    row_type = codec.PaperRecommendationRiskBudgetDbRow
+    bypassed = object.__new__(row_type)
+    bypassed.__dict__.update({**_row_values(row), **overrides})
+    return bypassed
+
+
+def _payload_sha256(payload_json: dict[str, object]) -> str:
+    encoded = json.dumps(
+        payload_json,
+        allow_nan=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
 def _assert_no_floats(value: object) -> None:
     if isinstance(value, float):
         pytest.fail("DB payload must not contain floats")
@@ -106,13 +123,7 @@ def test_risk_budget_db_row_serializes_canonical_payload_and_round_trips():
     assert row.payload_json["readonly"] is True
     _assert_no_floats(row.payload_json)
 
-    encoded = json.dumps(
-        row.payload_json,
-        allow_nan=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
-    assert row.report_sha256 == hashlib.sha256(encoded).hexdigest()
+    assert row.report_sha256 == _payload_sha256(row.payload_json)
     assert codec.from_db_row(row) == report
     assert codec.paper_recommendation_risk_budget_to_db_row(report) == row
     assert codec.paper_recommendation_risk_budget_from_db_row(row) == report
@@ -179,21 +190,40 @@ def test_risk_budget_db_row_rejects_false_report_flags_before_write(
         codec.to_db_row(report)
 
 
-def test_risk_budget_db_row_rejects_corrupted_stored_payload_flags():
+@pytest.mark.parametrize("flag_name", ("paper_only", "report_only", "readonly"))
+def test_risk_budget_db_row_constructor_rejects_top_level_payload_hard_flag_mismatch(
+    flag_name: str,
+):
     codec = _codec_module()
     row = codec.to_db_row(_report())
-    malformed = codec.PaperRecommendationRiskBudgetDbRow(
-        **{
-            **_row_values(row),
-            "payload_json": {
-                **row.payload_json,
-                "nested_audit": {"paper_only": True, "report_only": True, "readonly": False},
+    payload_json = {**row.payload_json, flag_name: False}
+
+    with pytest.raises(ValueError, match=flag_name):
+        codec.PaperRecommendationRiskBudgetDbRow(
+            **{
+                **_row_values(row),
+                "report_sha256": _payload_sha256(payload_json),
+                "payload_json": payload_json,
             },
-        },
-    )
+        )
+
+
+def test_risk_budget_db_row_constructor_rejects_corrupted_nested_payload_flags():
+    codec = _codec_module()
+    row = codec.to_db_row(_report())
+    payload_json = {
+        **row.payload_json,
+        "nested_audit": {"paper_only": True, "report_only": True, "readonly": False},
+    }
 
     with pytest.raises(ValueError, match="readonly"):
-        codec.from_db_row(malformed)
+        codec.PaperRecommendationRiskBudgetDbRow(
+            **{
+                **_row_values(row),
+                "report_sha256": _payload_sha256(payload_json),
+                "payload_json": payload_json,
+            },
+        )
 
 
 def test_risk_budget_db_row_rejects_floats_in_json_payloads():
@@ -206,15 +236,14 @@ def test_risk_budget_db_row_rejects_floats_in_json_payloads():
         )
 
 
-def test_risk_budget_db_row_rejects_malformed_stored_payload():
+def test_risk_budget_db_row_from_db_row_rejects_bypassed_malformed_stored_payload():
     codec = _codec_module()
     row = codec.to_db_row(_report())
-    malformed = codec.PaperRecommendationRiskBudgetDbRow(
-        **{
-            **_row_values(row),
-            "payload_json": {
-                key: value for key, value in row.payload_json.items() if key != "reason_codes"
-            },
+    malformed = _bypassed_row(
+        codec,
+        row,
+        payload_json={
+            key: value for key, value in row.payload_json.items() if key != "reason_codes"
         },
     )
 
@@ -249,17 +278,105 @@ def test_risk_budget_db_row_rejects_malformed_stored_payload():
         ({"max_selected_count": 4}, "max_selected_count"),
     ),
 )
-def test_risk_budget_db_row_rejects_materialized_payload_mismatches(
+def test_risk_budget_db_row_constructor_rejects_materialized_payload_mismatches(
     overrides: dict[str, object],
     message: str,
 ):
     codec = _codec_module()
     row = codec.to_db_row(_report())
-    malformed = codec.PaperRecommendationRiskBudgetDbRow(
-        **{**_row_values(row), **overrides},
-    )
 
     with pytest.raises(ValueError, match=message):
+        codec.PaperRecommendationRiskBudgetDbRow(
+            **{**_row_values(row), **overrides},
+        )
+
+
+def test_risk_budget_db_row_constructor_rejects_none_materialized_payload_mismatch():
+    codec = _codec_module()
+    report = PaperRecommendationRiskBudgetReport(
+        **{
+            **_report().__dict__,
+            "total_suggested_notional": Decimal("0.000000"),
+            "remaining_total_notional": None,
+            "total_notional_utilization": None,
+            "largest_single_recommendation_share": None,
+            "selected_position_notional_values": (),
+            "selected_count": 0,
+            "blocked_count": 1,
+            "status": "blocked",
+            "reason_codes": ("empty_selection",),
+            "nav_notional": None,
+        },
+    )
+    row = codec.to_db_row(report)
+
+    with pytest.raises(ValueError, match="remaining_total_notional"):
+        codec.PaperRecommendationRiskBudgetDbRow(
+            **{
+                **_row_values(row),
+                "remaining_total_notional": Decimal("0.000000"),
+            },
+        )
+
+
+def test_risk_budget_db_row_constructor_rejects_missing_none_payload_field():
+    codec = _codec_module()
+    report = PaperRecommendationRiskBudgetReport(
+        **{
+            **_report().__dict__,
+            "total_suggested_notional": Decimal("0.000000"),
+            "remaining_total_notional": None,
+            "total_notional_utilization": None,
+            "largest_single_recommendation_share": None,
+            "selected_position_notional_values": (),
+            "selected_count": 0,
+            "blocked_count": 1,
+            "status": "blocked",
+            "reason_codes": ("empty_selection",),
+            "nav_notional": None,
+        },
+    )
+    row = codec.to_db_row(report)
+    payload_json = {
+        key: value
+        for key, value in row.payload_json.items()
+        if key != "remaining_total_notional"
+    }
+
+    with pytest.raises(ValueError, match="remaining_total_notional"):
+        codec.PaperRecommendationRiskBudgetDbRow(
+            **{
+                **_row_values(row),
+                "report_sha256": _payload_sha256(payload_json),
+                "payload_json": payload_json,
+            },
+        )
+
+
+def test_risk_budget_db_row_from_db_row_rejects_bypassed_materialized_mismatch():
+    codec = _codec_module()
+    row = codec.to_db_row(_report())
+    malformed = _bypassed_row(codec, row, status="watch")
+
+    with pytest.raises(ValueError, match="status"):
+        codec.from_db_row(malformed)
+
+
+def test_risk_budget_db_row_from_db_row_rejects_bypassed_nested_payload_hard_flag():
+    codec = _codec_module()
+    row = codec.to_db_row(_report())
+    payload_json = {
+        **row.payload_json,
+        "nested_audit": {"paper_only": True, "report_only": True, "readonly": False},
+    }
+    malformed = _bypassed_row(
+        codec,
+        row,
+        report_sha256=_payload_sha256(payload_json),
+        payload_json=payload_json,
+    )
+
+    with pytest.raises(ValueError, match="readonly"):
         codec.from_db_row(malformed)
 
 

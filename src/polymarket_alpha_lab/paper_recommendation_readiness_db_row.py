@@ -82,7 +82,12 @@ class PaperRecommendationReadinessDbRow:
             "payload_json",
             _normalize_json_object("payload_json", self.payload_json),
         )
+        _validate_json_hard_flags(self.payload_json, "payload_json")
         _require_hard_flags("DB row", self)
+        _validate_row_scalars_match_payload(self)
+        _validate_readiness_status_counts_match_payload(self)
+        if self.report_sha256 != _report_sha256(self.payload_json):
+            raise ValueError("report_sha256 must match payload_json")
 
 
 def paper_recommendation_readiness_to_db_row(
@@ -194,6 +199,59 @@ def _validate_row_matches_payload(
     ):
         if getattr(row, field_name) != getattr(expected, field_name):
             raise ValueError(f"{field_name} must match payload_json")
+
+
+def _validate_row_scalars_match_payload(
+    row: PaperRecommendationReadinessDbRow,
+) -> None:
+    for field_name in (
+        "generated_at",
+        "config_version",
+        "input_count",
+        "row_count",
+        "ready_count",
+        "watch_count",
+        "blocked_count",
+        "top_adjusted_net_probability_edge",
+        "total_cost_per_share",
+        "paper_only",
+        "report_only",
+        "readonly",
+    ):
+        if not _json_values_match(
+            row.payload_json.get(field_name),
+            _json_ready(getattr(row, field_name)),
+        ):
+            raise ValueError(f"{field_name} must match payload_json")
+
+
+def _validate_readiness_status_counts_match_payload(
+    row: PaperRecommendationReadinessDbRow,
+) -> None:
+    expected_counts = {
+        "ready": row.payload_json.get("ready_count"),
+        "watch": row.payload_json.get("watch_count"),
+        "blocked": row.payload_json.get("blocked_count"),
+    }
+    if not _json_values_match(row.readiness_status_counts_json, expected_counts):
+        raise ValueError("readiness_status_counts_json must match payload_json")
+
+
+def _json_values_match(left: object, right: object) -> bool:
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, dict) and isinstance(right, dict):
+        if left.keys() != right.keys():
+            return False
+        return all(_json_values_match(left[key], right[key]) for key in left)
+    if isinstance(left, list) and isinstance(right, list):
+        if len(left) != len(right):
+            return False
+        return all(
+            _json_values_match(left_item, right_item)
+            for left_item, right_item in zip(left, right, strict=True)
+        )
+    return left == right
 
 
 def _report_sha256(payload_json: dict[str, Any]) -> str:

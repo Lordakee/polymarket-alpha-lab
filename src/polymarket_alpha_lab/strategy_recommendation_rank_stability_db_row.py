@@ -103,6 +103,8 @@ class PaperStrategyRecommendationRankStabilityDbRow:
             _normalize_json_object("payload_json", self.payload_json),
         )
         _require_hard_flags("DB row", self)
+        _validate_json_hard_flags(self.payload_json, "payload_json")
+        _validate_row_matches_payload_json(self)
 
 
 def strategy_recommendation_rank_stability_report_to_db_row(
@@ -231,6 +233,19 @@ def _validate_row_matches_payload(
     ):
         if getattr(row, field_name) != getattr(expected, field_name):
             raise ValueError(f"{field_name} must match payload_json")
+
+
+def _validate_row_matches_payload_json(
+    row: PaperStrategyRecommendationRankStabilityDbRow,
+) -> None:
+    if row.report_sha256 != _report_sha256(row.payload_json):
+        raise ValueError("report_sha256 must match payload_json")
+    if row.rows_json != row.payload_json.get("rows"):
+        raise ValueError("rows_json must match payload_json")
+    _validate_row_scalars_match_payload(row)
+    for flag_name in ("paper_only", "report_only", "readonly"):
+        if getattr(row, flag_name) != row.payload_json.get(flag_name):
+            raise ValueError(f"{flag_name} must match payload_json")
 
 
 def _validate_row_scalars_match_payload(

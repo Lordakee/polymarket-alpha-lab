@@ -171,6 +171,38 @@ def test_rank_stability_db_row_serializes_canonical_payload_and_round_trips() ->
     assert codec.strategy_recommendation_rank_stability_report_from_db_row(row) == report
 
 
+def test_rank_stability_db_row_round_trips_empty_report_with_none_optionals() -> None:
+    from polymarket_alpha_lab import strategy_recommendation_rank_stability_db_row as codec
+
+    report = PaperStrategyRecommendationRankStabilityReport(
+        generated_at=GENERATED_AT,
+        config_version="strategy-recommendation-rank-stability-v0",
+        source_report_count=0,
+        candidate_count=0,
+        stability_status="watch",
+        stable_count=0,
+        watch_count=0,
+        blocked_count=0,
+        stable_ready_count=0,
+        unstable_ready_count=0,
+        selected_side_changed_count=0,
+        queue_status_changed_count=0,
+        latest_generated_at=None,
+        top_stable_market_slug=None,
+        reason_codes=("no_latest_candidates",),
+        rows=(),
+    )
+
+    row = codec.to_db_row(report)
+
+    assert row.latest_generated_at is None
+    assert row.top_stable_market_slug is None
+    assert row.payload_json["latest_generated_at"] is None
+    assert row.payload_json["top_stable_market_slug"] is None
+    assert row.report_sha256 == _canonical_payload_sha256(row.payload_json)
+    assert codec.from_db_row(row) == report
+
+
 def test_rank_stability_db_row_hash_is_deterministic_for_equivalent_reports() -> None:
     from polymarket_alpha_lab import strategy_recommendation_rank_stability_db_row as codec
 
@@ -237,7 +269,7 @@ def test_rank_stability_db_row_rejects_false_report_flags_before_write(
         codec.to_db_row(report)
 
 
-def test_rank_stability_db_row_rejects_corrupted_stored_payload_flags() -> None:
+def test_rank_stability_db_row_rejects_corrupted_stored_payload_flags_on_construction() -> None:
     from polymarket_alpha_lab import strategy_recommendation_rank_stability_db_row as codec
 
     row = codec.to_db_row(_report())
@@ -248,17 +280,16 @@ def test_rank_stability_db_row_rejects_corrupted_stored_payload_flags() -> None:
             row.payload_json["rows"][1],
         ],
     }
-    malformed = codec.PaperStrategyRecommendationRankStabilityDbRow(
-        **{
-            **_row_values(row),
-            "report_sha256": _canonical_payload_sha256(payload),
-            "payload_json": payload,
-            "rows_json": payload["rows"],
-        },
-    )
 
     with pytest.raises(ValueError, match="readonly"):
-        codec.from_db_row(malformed)
+        codec.PaperStrategyRecommendationRankStabilityDbRow(
+            **{
+                **_row_values(row),
+                "report_sha256": _canonical_payload_sha256(payload),
+                "payload_json": payload,
+                "rows_json": payload["rows"],
+            },
+        )
 
 
 def test_rank_stability_db_row_rejects_recursive_floats_in_json_payloads() -> None:
@@ -283,16 +314,15 @@ def test_rank_stability_db_row_rejects_malformed_stored_payload() -> None:
 
     row = codec.to_db_row(_report())
     payload = {key: value for key, value in row.payload_json.items() if key != "rows"}
-    malformed = codec.PaperStrategyRecommendationRankStabilityDbRow(
-        **{
-            **_row_values(row),
-            "report_sha256": _canonical_payload_sha256(payload),
-            "payload_json": payload,
-        },
-    )
 
-    with pytest.raises(ValueError, match="payload_json"):
-        codec.from_db_row(malformed)
+    with pytest.raises(ValueError, match="rows_json"):
+        codec.PaperStrategyRecommendationRankStabilityDbRow(
+            **{
+                **_row_values(row),
+                "report_sha256": _canonical_payload_sha256(payload),
+                "payload_json": payload,
+            },
+        )
 
 
 @pytest.mark.parametrize(
@@ -323,11 +353,61 @@ def test_rank_stability_db_row_rejects_materialized_payload_mismatches(
     from polymarket_alpha_lab import strategy_recommendation_rank_stability_db_row as codec
 
     row = codec.to_db_row(_report())
-    malformed = codec.PaperStrategyRecommendationRankStabilityDbRow(
-        **{**_row_values(row), **overrides},
-    )
 
     with pytest.raises(ValueError, match=message):
+        codec.PaperStrategyRecommendationRankStabilityDbRow(
+            **{**_row_values(row), **overrides},
+        )
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    (
+        ({"rows_json": [{"market_slug": "gamma"}]}, "rows_json"),
+        ({"reason_codes_json": ["unstable_ready_candidates_present"]}, "reason_codes_json"),
+    ),
+)
+def test_rank_stability_db_row_rejects_json_column_payload_mismatches_on_construction(
+    overrides: dict[str, object],
+    message: str,
+) -> None:
+    from polymarket_alpha_lab import strategy_recommendation_rank_stability_db_row as codec
+
+    row = codec.to_db_row(_report())
+
+    with pytest.raises(ValueError, match=message):
+        codec.PaperStrategyRecommendationRankStabilityDbRow(
+            **{**_row_values(row), **overrides},
+        )
+
+
+@pytest.mark.parametrize("flag_name", ("paper_only", "report_only", "readonly"))
+def test_rank_stability_db_row_rejects_top_level_payload_flag_mismatches_on_construction(
+    flag_name: str,
+) -> None:
+    from polymarket_alpha_lab import strategy_recommendation_rank_stability_db_row as codec
+
+    row = codec.to_db_row(_report())
+
+    with pytest.raises(ValueError, match=flag_name):
+        codec.PaperStrategyRecommendationRankStabilityDbRow(
+            **{
+                **_row_values(row),
+                "payload_json": {**row.payload_json, flag_name: False},
+            },
+        )
+
+
+def test_rank_stability_from_db_row_defends_against_bypassed_malformed_row() -> None:
+    from polymarket_alpha_lab import strategy_recommendation_rank_stability_db_row as codec
+
+    row = codec.to_db_row(_report())
+    malformed = object.__new__(codec.PaperStrategyRecommendationRankStabilityDbRow)
+    for field_name, value in _row_values(row).items():
+        object.__setattr__(malformed, field_name, value)
+    object.__setattr__(malformed, "report_sha256", "b" * 64)
+
+    with pytest.raises(ValueError, match="report_sha256"):
         codec.from_db_row(malformed)
 
 
@@ -347,7 +427,7 @@ def test_rank_stability_db_row_runs_scalar_payload_validation_on_decode(
     monkeypatch.setattr(codec, "_validate_row_scalars_match_payload", record_validation)
 
     assert codec.from_db_row(row) == _report()
-    assert calls == [row]
+    assert calls[0] == row
 
 
 @pytest.mark.parametrize(

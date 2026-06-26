@@ -72,6 +72,8 @@ class PaperProbabilityRecommendationQueueDbRow:
             _normalize_json_object("payload_json", self.payload_json),
         )
         _require_hard_flags("DB row", self)
+        _validate_json_hard_flags(self.payload_json, "payload_json")
+        _validate_materialized_fields_match_payload(self)
 
 
 def to_db_row(
@@ -185,12 +187,71 @@ def _validate_row_matches_payload(
             raise ValueError(f"{field_name} must match payload_json")
 
 
+def _validate_materialized_fields_match_payload(
+    row: PaperProbabilityRecommendationQueueDbRow,
+) -> None:
+    payload_json = row.payload_json
+    expected_values = {
+        "report_sha256": _report_sha256(payload_json),
+        "generated_at": payload_json.get("generated_at"),
+        "source_config_version": payload_json.get("source_config_version"),
+        "input_count": payload_json.get("input_count"),
+        "queue_count": payload_json.get("queue_count"),
+        "research_review_count": payload_json.get("research_review_count"),
+        "await_fresh_context_count": payload_json.get("await_fresh_context_count"),
+        "skip_count": payload_json.get("skip_count"),
+        "excluded_count": payload_json.get("excluded_count"),
+        "reason_code_counts_json": _reason_code_counts_json_from_payload(payload_json),
+        "paper_only": payload_json.get("paper_only"),
+        "report_only": payload_json.get("report_only"),
+        "readonly": payload_json.get("readonly"),
+    }
+    actual_values = {
+        "report_sha256": row.report_sha256,
+        "generated_at": row.generated_at.isoformat(),
+        "source_config_version": row.source_config_version,
+        "input_count": row.input_count,
+        "queue_count": row.queue_count,
+        "research_review_count": row.research_review_count,
+        "await_fresh_context_count": row.await_fresh_context_count,
+        "skip_count": row.skip_count,
+        "excluded_count": row.excluded_count,
+        "reason_code_counts_json": row.reason_code_counts_json,
+        "paper_only": row.paper_only,
+        "report_only": row.report_only,
+        "readonly": row.readonly,
+    }
+    for field_name in actual_values:
+        if actual_values[field_name] != expected_values[field_name]:
+            raise ValueError(f"{field_name} must match payload_json")
+
+
 def _reason_code_counts_json(
     report: PaperProbabilityRecommendationQueueReport,
 ) -> dict[str, int]:
     counts: dict[str, int] = {}
     for queue_row in report.queue_rows:
         for reason_code in queue_row.reason_codes:
+            counts[reason_code] = counts.get(reason_code, 0) + 1
+    return {key: counts[key] for key in sorted(counts)}
+
+
+def _reason_code_counts_json_from_payload(
+    payload_json: dict[str, Any],
+) -> dict[str, int] | None:
+    queue_rows = payload_json.get("queue_rows")
+    if not isinstance(queue_rows, list):
+        return None
+    counts: dict[str, int] = {}
+    for queue_row in queue_rows:
+        if not isinstance(queue_row, dict):
+            return None
+        reason_codes = queue_row.get("reason_codes")
+        if not isinstance(reason_codes, list):
+            return None
+        for reason_code in reason_codes:
+            if not isinstance(reason_code, str):
+                return None
             counts[reason_code] = counts.get(reason_code, 0) + 1
     return {key: counts[key] for key in sorted(counts)}
 

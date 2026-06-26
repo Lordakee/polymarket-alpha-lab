@@ -160,6 +160,13 @@ def _row_values(row) -> dict[str, object]:
     }
 
 
+def _bypassed_row(codec, row, **overrides):
+    malformed = object.__new__(codec.PaperProbabilityRecommendationQueueDbRow)
+    for key, value in {**_row_values(row), **overrides}.items():
+        object.__setattr__(malformed, key, value)
+    return malformed
+
+
 def test_probability_queue_db_row_serializes_canonical_payload_and_round_trips():
     codec = _codec()
     report = _report()
@@ -290,22 +297,38 @@ def test_probability_queue_db_row_rejects_deep_false_report_flags_before_write()
         codec.to_db_row(report)
 
 
-def test_probability_queue_db_row_rejects_unsafe_stored_flags():
+@pytest.mark.parametrize("flag_name", ("paper_only", "report_only", "readonly"))
+def test_probability_queue_db_row_constructor_rejects_top_level_payload_hard_flags(
+    flag_name: str,
+) -> None:
+    codec = _codec()
+    row = codec.to_db_row(_report())
+    payload_json = {**row.payload_json, flag_name: False}
+
+    with pytest.raises(ValueError, match=flag_name):
+        codec.PaperProbabilityRecommendationQueueDbRow(
+            **{**_row_values(row), "payload_json": payload_json},
+        )
+
+
+@pytest.mark.parametrize("flag_name", ("paper_only", "report_only", "readonly"))
+def test_probability_queue_db_row_constructor_rejects_nested_payload_hard_flags(
+    flag_name: str,
+) -> None:
     codec = _codec()
     row = codec.to_db_row(_report())
     payload_json = {
         **row.payload_json,
         "queue_rows": (
-            {**row.payload_json["queue_rows"][0], "readonly": False},
+            {**row.payload_json["queue_rows"][0], flag_name: False},
             *row.payload_json["queue_rows"][1:],
         ),
     }
-    malformed = codec.PaperProbabilityRecommendationQueueDbRow(
-        **{**_row_values(row), "payload_json": payload_json},
-    )
 
-    with pytest.raises(ValueError, match="readonly"):
-        codec.from_db_row(malformed)
+    with pytest.raises(ValueError, match=flag_name):
+        codec.PaperProbabilityRecommendationQueueDbRow(
+            **{**_row_values(row), "payload_json": payload_json},
+        )
 
 
 @pytest.mark.parametrize(
@@ -326,31 +349,52 @@ def test_probability_queue_db_row_rejects_unsafe_stored_flags():
         ),
     ),
 )
-def test_probability_queue_db_row_rejects_materialized_payload_mismatches(
+def test_probability_queue_db_row_constructor_rejects_materialized_payload_mismatches(
     overrides: dict[str, object],
     message: str,
 ) -> None:
     codec = _codec()
     row = codec.to_db_row(_report())
-    malformed = codec.PaperProbabilityRecommendationQueueDbRow(
-        **{**_row_values(row), **overrides},
-    )
 
     with pytest.raises(ValueError, match=message):
+        codec.PaperProbabilityRecommendationQueueDbRow(
+            **{**_row_values(row), **overrides},
+        )
+
+
+def test_probability_queue_from_db_row_defends_against_bypassed_malformed_rows():
+    codec = _codec()
+    row = codec.to_db_row(_report())
+    payload_json = {
+        **row.payload_json,
+        "queue_rows": (
+            {**row.payload_json["queue_rows"][0], "readonly": False},
+            *row.payload_json["queue_rows"][1:],
+        ),
+    }
+    malformed = _bypassed_row(codec, row, payload_json=payload_json)
+
+    with pytest.raises(ValueError, match="readonly"):
+        codec.from_db_row(malformed)
+
+
+def test_probability_queue_from_db_row_defends_against_bypassed_hash_mismatch():
+    codec = _codec()
+    row = codec.to_db_row(_report())
+    malformed = _bypassed_row(codec, row, report_sha256="b" * 64)
+
+    with pytest.raises(ValueError, match="report_sha256"):
         codec.from_db_row(malformed)
 
 
 def test_probability_queue_db_row_wraps_payload_recovery_errors_as_value_error():
     codec = _codec()
     row = codec.to_db_row(_report())
-    malformed = codec.PaperProbabilityRecommendationQueueDbRow(
-        **{
-            **_row_values(row),
-            "payload_json": {
-                key: value
-                for key, value in row.payload_json.items()
-                if key != "queue_rows"
-            },
+    malformed = _bypassed_row(
+        codec,
+        row,
+        payload_json={
+            key: value for key, value in row.payload_json.items() if key != "queue_rows"
         },
     )
 

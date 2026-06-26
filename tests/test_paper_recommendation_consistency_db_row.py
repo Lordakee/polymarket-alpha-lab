@@ -78,6 +78,16 @@ def _row_values(row: object) -> dict[str, object]:
     return dict(row.__dict__)
 
 
+def _canonical_payload_sha256(payload_json: dict[str, object]) -> str:
+    encoded = json.dumps(
+        payload_json,
+        allow_nan=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
 def _assert_no_floats(value: object) -> None:
     if isinstance(value, float):
         pytest.fail("DB payload must not contain floats")
@@ -122,13 +132,7 @@ def test_consistency_db_row_serializes_canonical_payload_and_round_trips():
     assert row.payload_json["readonly"] is True
     _assert_no_floats(row.payload_json)
 
-    encoded = json.dumps(
-        row.payload_json,
-        allow_nan=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
-    assert row.report_sha256 == hashlib.sha256(encoded).hexdigest()
+    assert row.report_sha256 == _canonical_payload_sha256(row.payload_json)
     assert codec.from_db_row(row) == report
     assert codec.paper_recommendation_consistency_to_db_row(report) == row
     assert codec.paper_recommendation_consistency_from_db_row(row) == report
@@ -195,22 +199,46 @@ def test_consistency_db_row_rejects_false_report_flags_before_write(
         codec.to_db_row(report)
 
 
-def test_consistency_db_row_rejects_corrupted_stored_payload_flags():
+def test_consistency_db_row_rejects_corrupted_stored_payload_flags_on_construction():
     codec = _codec_module()
     row = codec.to_db_row(_report())
-    malformed = codec.PaperRecommendationConsistencyDbRow(
-        **{
-            **_row_values(row),
-            "payload_json": {
-                **row.payload_json,
-                "nested_audit": {
-                    "paper_only": True,
-                    "report_only": True,
-                    "readonly": False,
-                },
-            },
+    payload = {
+        **row.payload_json,
+        "nested_audit": {
+            "paper_only": True,
+            "report_only": True,
+            "readonly": False,
         },
-    )
+    }
+
+    with pytest.raises(ValueError, match="readonly"):
+        codec.PaperRecommendationConsistencyDbRow(
+            **{
+                **_row_values(row),
+                "report_sha256": _canonical_payload_sha256(payload),
+                "payload_json": payload,
+            },
+        )
+
+
+def test_consistency_from_db_row_rejects_bypassed_corrupted_payload_flags():
+    codec = _codec_module()
+    row = codec.to_db_row(_report())
+    payload = {
+        **row.payload_json,
+        "nested_audit": {
+            "paper_only": True,
+            "report_only": True,
+            "readonly": False,
+        },
+    }
+    malformed = object.__new__(codec.PaperRecommendationConsistencyDbRow)
+    for key, value in {
+        **_row_values(row),
+        "report_sha256": _canonical_payload_sha256(payload),
+        "payload_json": payload,
+    }.items():
+        object.__setattr__(malformed, key, value)
 
     with pytest.raises(ValueError, match="readonly"):
         codec.from_db_row(malformed)
@@ -232,19 +260,20 @@ def test_consistency_db_row_rejects_floats_in_json_payloads():
 def test_consistency_db_row_rejects_malformed_stored_payload():
     codec = _codec_module()
     row = codec.to_db_row(_report())
-    malformed = codec.PaperRecommendationConsistencyDbRow(
-        **{
-            **_row_values(row),
-            "payload_json": {
-                key: value
-                for key, value in row.payload_json.items()
-                if key != "reason_codes"
-            },
-        },
-    )
+    payload = {
+        key: value
+        for key, value in row.payload_json.items()
+        if key != "reason_codes"
+    }
 
     with pytest.raises(ValueError, match="payload_json"):
-        codec.from_db_row(malformed)
+        codec.PaperRecommendationConsistencyDbRow(
+            **{
+                **_row_values(row),
+                "report_sha256": _canonical_payload_sha256(payload),
+                "payload_json": payload,
+            },
+        )
 
 
 @pytest.mark.parametrize(
@@ -264,17 +293,46 @@ def test_consistency_db_row_rejects_malformed_stored_payload():
         ({"min_source_count": 3}, "min_source_count"),
     ),
 )
-def test_consistency_db_row_rejects_materialized_payload_mismatches(
+def test_consistency_db_row_rejects_materialized_payload_mismatches_on_construction(
     overrides: dict[str, object],
     message: str,
 ):
     codec = _codec_module()
     row = codec.to_db_row(_report())
-    malformed = codec.PaperRecommendationConsistencyDbRow(
-        **{**_row_values(row), **overrides},
-    )
 
     with pytest.raises(ValueError, match=message):
+        codec.PaperRecommendationConsistencyDbRow(
+            **{**_row_values(row), **overrides},
+        )
+
+
+@pytest.mark.parametrize("flag_name", ("paper_only", "report_only", "readonly"))
+def test_consistency_db_row_rejects_top_level_payload_flag_mismatches_on_construction(
+    flag_name: str,
+):
+    codec = _codec_module()
+    row = codec.to_db_row(_report())
+    payload = {**row.payload_json, flag_name: False}
+
+    with pytest.raises(ValueError, match=flag_name):
+        codec.PaperRecommendationConsistencyDbRow(
+            **{
+                **_row_values(row),
+                "report_sha256": _canonical_payload_sha256(payload),
+                "payload_json": payload,
+            },
+        )
+
+
+def test_consistency_from_db_row_defends_against_bypassed_malformed_row():
+    codec = _codec_module()
+    row = codec.to_db_row(_report())
+    malformed = object.__new__(codec.PaperRecommendationConsistencyDbRow)
+    for field_name, value in _row_values(row).items():
+        object.__setattr__(malformed, field_name, value)
+    object.__setattr__(malformed, "report_sha256", "b" * 64)
+
+    with pytest.raises(ValueError, match="report_sha256"):
         codec.from_db_row(malformed)
 
 

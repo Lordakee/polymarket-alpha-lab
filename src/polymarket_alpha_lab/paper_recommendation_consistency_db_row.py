@@ -39,6 +39,23 @@ REASON_CODES = {
     "recommendation_status_disagreement",
 }
 _SHA256_PATTERN = re.compile(r"^[a-f0-9]{64}$")
+_MATERIALIZED_FIELDS = (
+    "report_sha256",
+    "generated_at",
+    "config_version",
+    "consistency_status",
+    "reason_codes_json",
+    "group_count",
+    "pass_count",
+    "watch_count",
+    "blocked_count",
+    "max_edge_spread",
+    "max_score_spread",
+    "min_source_count",
+    "paper_only",
+    "report_only",
+    "readonly",
+)
 
 
 @dataclass(frozen=True)
@@ -90,6 +107,8 @@ class PaperRecommendationConsistencyDbRow:
             _normalize_json_object("payload_json", self.payload_json),
         )
         _require_hard_flags("DB row", self)
+        _validate_row_matches_payload_json(self)
+        _validate_json_hard_flags(self.payload_json, "payload_json")
 
 
 def paper_recommendation_consistency_to_db_row(
@@ -173,25 +192,51 @@ def _validate_row_matches_payload(
     row: PaperRecommendationConsistencyDbRow,
     expected: PaperRecommendationConsistencyDbRow,
 ) -> None:
-    for field_name in (
-        "report_sha256",
-        "generated_at",
-        "config_version",
-        "consistency_status",
-        "reason_codes_json",
-        "group_count",
-        "pass_count",
-        "watch_count",
-        "blocked_count",
-        "max_edge_spread",
-        "max_score_spread",
-        "min_source_count",
-        "payload_json",
-        "paper_only",
-        "report_only",
-        "readonly",
-    ):
+    for field_name in (*_MATERIALIZED_FIELDS, "payload_json"):
         if getattr(row, field_name) != getattr(expected, field_name):
+            raise ValueError(f"{field_name} must match payload_json")
+
+
+def _validate_row_matches_payload_json(
+    row: PaperRecommendationConsistencyDbRow,
+) -> None:
+    payload_json = row.payload_json
+    expected_values = {
+        "report_sha256": _report_sha256(payload_json),
+        "generated_at": payload_json.get("generated_at"),
+        "config_version": payload_json.get("config_version"),
+        "consistency_status": payload_json.get("consistency_status"),
+        "reason_codes_json": payload_json.get("reason_codes"),
+        "group_count": payload_json.get("group_count"),
+        "pass_count": payload_json.get("pass_count"),
+        "watch_count": payload_json.get("watch_count"),
+        "blocked_count": payload_json.get("blocked_count"),
+        "max_edge_spread": payload_json.get("max_edge_spread"),
+        "max_score_spread": payload_json.get("max_score_spread"),
+        "min_source_count": payload_json.get("min_source_count"),
+        "paper_only": payload_json.get("paper_only"),
+        "report_only": payload_json.get("report_only"),
+        "readonly": payload_json.get("readonly"),
+    }
+    actual_values = {
+        "report_sha256": row.report_sha256,
+        "generated_at": row.generated_at.isoformat(),
+        "config_version": row.config_version,
+        "consistency_status": row.consistency_status,
+        "reason_codes_json": row.reason_codes_json,
+        "group_count": row.group_count,
+        "pass_count": row.pass_count,
+        "watch_count": row.watch_count,
+        "blocked_count": row.blocked_count,
+        "max_edge_spread": _json_ready(row.max_edge_spread),
+        "max_score_spread": _json_ready(row.max_score_spread),
+        "min_source_count": row.min_source_count,
+        "paper_only": row.paper_only,
+        "report_only": row.report_only,
+        "readonly": row.readonly,
+    }
+    for field_name in _MATERIALIZED_FIELDS:
+        if actual_values[field_name] != expected_values[field_name]:
             raise ValueError(f"{field_name} must match payload_json")
 
 

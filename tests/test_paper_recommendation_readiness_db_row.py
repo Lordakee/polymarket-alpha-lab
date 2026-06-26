@@ -84,6 +84,13 @@ def _row_values(row: object) -> dict[str, object]:
     return dict(row.__dict__)
 
 
+def _bypassed_row(codec: object, values: dict[str, object]) -> object:
+    row = object.__new__(codec.PaperRecommendationReadinessDbRow)
+    for field_name, value in values.items():
+        object.__setattr__(row, field_name, value)
+    return row
+
+
 def _assert_no_floats(value: object) -> None:
     if isinstance(value, float):
         pytest.fail("DB payload must not contain floats")
@@ -199,21 +206,59 @@ def test_readiness_db_row_rejects_false_report_flags_before_write(flag_name: str
         codec.to_db_row(report)
 
 
-def test_readiness_db_row_rejects_corrupted_stored_payload_flags():
+def test_readiness_db_row_rejects_direct_hash_payload_mismatch():
     codec = _codec_module()
     row = codec.to_db_row(_report())
-    malformed = codec.PaperRecommendationReadinessDbRow(
-        **{
-            **_row_values(row),
-            "payload_json": {
-                **row.payload_json,
-                "nested_audit": {"paper_only": True, "report_only": True, "readonly": False},
+
+    with pytest.raises(ValueError, match="report_sha256 must match payload_json"):
+        codec.PaperRecommendationReadinessDbRow(
+            **{
+                **_row_values(row),
+                "payload_json": {
+                    **row.payload_json,
+                    "hash_material": "changed",
+                },
             },
-        },
-    )
+        )
+
+
+@pytest.mark.parametrize("flag_name", ("paper_only", "report_only", "readonly"))
+def test_readiness_db_row_rejects_direct_top_level_payload_hard_flag_corruption(
+    flag_name: str,
+):
+    codec = _codec_module()
+    row = codec.to_db_row(_report())
+
+    with pytest.raises(ValueError, match=flag_name):
+        codec.PaperRecommendationReadinessDbRow(
+            **{
+                **_row_values(row),
+                "payload_json": {
+                    **row.payload_json,
+                    flag_name: False,
+                },
+            },
+        )
+
+
+def test_readiness_db_row_rejects_direct_nested_payload_hard_flag_corruption():
+    codec = _codec_module()
+    row = codec.to_db_row(_report())
 
     with pytest.raises(ValueError, match="readonly"):
-        codec.from_db_row(malformed)
+        codec.PaperRecommendationReadinessDbRow(
+            **{
+                **_row_values(row),
+                "payload_json": {
+                    **row.payload_json,
+                    "nested_audit": {
+                        "paper_only": True,
+                        "report_only": True,
+                        "readonly": False,
+                    },
+                },
+            },
+        )
 
 
 def test_readiness_db_row_rejects_floats_in_json_payloads():
@@ -226,19 +271,35 @@ def test_readiness_db_row_rejects_floats_in_json_payloads():
         )
 
 
-def test_readiness_db_row_rejects_malformed_stored_payload():
+def test_readiness_db_row_rejects_malformed_payload_during_construction():
     codec = _codec_module()
     row = codec.to_db_row(_report())
-    malformed = codec.PaperRecommendationReadinessDbRow(
-        **{
-            **_row_values(row),
-            "payload_json": {
-                key: value for key, value in row.payload_json.items() if key != "row_count"
+
+    with pytest.raises(ValueError, match="row_count"):
+        codec.PaperRecommendationReadinessDbRow(
+            **{
+                **_row_values(row),
+                "payload_json": {
+                    key: value
+                    for key, value in row.payload_json.items()
+                    if key != "row_count"
+                },
             },
+        )
+
+
+def test_readiness_db_row_from_db_row_defends_against_bypassed_malformed_rows():
+    codec = _codec_module()
+    row = codec.to_db_row(_report())
+    malformed = _bypassed_row(
+        codec,
+        {
+            **_row_values(row),
+            "config_version": "paper-recommendation-readiness-v1",
         },
     )
 
-    with pytest.raises(ValueError, match="payload_json"):
+    with pytest.raises(ValueError, match="config_version"):
         codec.from_db_row(malformed)
 
 
@@ -264,10 +325,9 @@ def test_readiness_db_row_rejects_materialized_payload_mismatches(
 ):
     codec = _codec_module()
     row = codec.to_db_row(_report())
-    malformed = codec.PaperRecommendationReadinessDbRow(**{**_row_values(row), **overrides})
 
     with pytest.raises(ValueError, match=message):
-        codec.from_db_row(malformed)
+        codec.PaperRecommendationReadinessDbRow(**{**_row_values(row), **overrides})
 
 
 @pytest.mark.parametrize(
