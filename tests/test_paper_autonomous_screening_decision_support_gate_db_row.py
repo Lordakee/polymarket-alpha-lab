@@ -30,6 +30,12 @@ class PaperAutonomousScreeningDecisionSupportGateReasonCodeCount:
     report_only: bool = True
     readonly: bool = True
 
+    def __post_init__(self) -> None:
+        if type(self.report_count) is not int:
+            raise ValueError("report_count must be an int")
+        if self.paper_only is not True or self.report_only is not True or self.readonly is not True:
+            raise ValueError("reason count must remain paper-only/report-only/readonly")
+
 
 @dataclass(frozen=True)
 class PaperAutonomousScreeningDecisionSupportGateReport:
@@ -75,6 +81,44 @@ class PaperAutonomousScreeningDecisionSupportGateReport:
     paper_only: bool = True
     report_only: bool = True
     readonly: bool = True
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "queue_source_report_count",
+            "queue_research_ready_count",
+            "queue_watch_count",
+            "queue_blocked_count",
+            "queue_candidate_count",
+            "queue_ready_count",
+            "queue_candidate_watch_count",
+            "queue_candidate_blocked_count",
+        ):
+            if type(getattr(self, field_name)) is not int:
+                raise ValueError(f"{field_name} must be an int")
+        for field_name in (
+            "trend_source_snapshot_count",
+            "trend_consecutive_latest_watch_count",
+            "trend_consecutive_latest_blocked_count",
+            "trend_duplicate_generated_at_count",
+            "rank_stable_ready_count",
+            "rank_unstable_ready_count",
+            "rank_blocked_count",
+        ):
+            value = getattr(self, field_name)
+            if value is not None and type(value) is not int:
+                raise ValueError(f"{field_name} must be an int")
+        for field_name in (
+            "queue_total_ready_notional",
+            "queue_largest_ready_notional",
+            "queue_top_research_priority_score",
+            "queue_average_research_priority_score",
+        ):
+            value = getattr(self, field_name)
+            if type(value) is not Decimal:
+                raise ValueError(f"{field_name} must be a Decimal")
+            object.__setattr__(self, field_name, value.quantize(Decimal("0.000001")))
+        if self.paper_only is not True or self.report_only is not True or self.readonly is not True:
+            raise ValueError("report must remain paper-only/report-only/readonly")
 
 
 class GateReportSubclass(PaperAutonomousScreeningDecisionSupportGateReport):
@@ -204,6 +248,14 @@ def _canonical_payload_sha256(payload_json: dict[str, object]) -> str:
         sort_keys=True,
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _without_hard_flags(value: dict[str, object]) -> dict[str, object]:
+    return {
+        key: item
+        for key, item in value.items()
+        if key not in {"paper_only", "report_only", "readonly"}
+    }
 
 
 def _assert_no_floats(value: object) -> None:
@@ -416,6 +468,125 @@ def test_autonomous_screening_gate_db_row_rejects_recursive_floats_in_json_paylo
         )
     with pytest.raises(ValueError, match="payload_json"):
         replace(row, payload_json={**row.payload_json, "bad_float": 0.1})
+
+
+def test_autonomous_screening_gate_db_row_rejects_stale_raw_payload_hash() -> None:
+    import polymarket_alpha_lab.paper_autonomous_screening_decision_support_gate_db_row as codec
+
+    row = codec.to_db_row(_report())
+    payload = {**row.payload_json, "queue_source_report_count": 2}
+
+    with pytest.raises(ValueError, match="report_sha256"):
+        codec.PaperAutonomousScreeningDecisionSupportGateDbRow(
+            **{**_row_values(row), "payload_json": payload},
+        )
+
+
+def test_autonomous_screening_gate_db_row_rejects_self_hashed_noncanonical_decimal_payload() -> None:
+    import polymarket_alpha_lab.paper_autonomous_screening_decision_support_gate_db_row as codec
+
+    row = codec.to_db_row(_report())
+    payload = {
+        **row.payload_json,
+        "queue_total_ready_notional": "10",
+    }
+
+    with pytest.raises(ValueError, match="canonical|payload_json|queue_total_ready_notional"):
+        codec.PaperAutonomousScreeningDecisionSupportGateDbRow(
+            **{
+                **_row_values(row),
+                "report_sha256": _canonical_payload_sha256(payload),
+                "queue_total_ready_notional": Decimal("10"),
+                "payload_json": payload,
+            },
+        )
+
+
+def test_autonomous_screening_gate_db_row_rejects_self_hashed_bool_payload_int_count() -> None:
+    import polymarket_alpha_lab.paper_autonomous_screening_decision_support_gate_db_row as codec
+
+    row = codec.to_db_row(_report())
+    payload = {
+        **row.payload_json,
+        "queue_source_report_count": True,
+    }
+
+    with pytest.raises(ValueError, match="queue_source_report_count|payload_json"):
+        codec.PaperAutonomousScreeningDecisionSupportGateDbRow(
+            **{
+                **_row_values(row),
+                "report_sha256": _canonical_payload_sha256(payload),
+                "payload_json": payload,
+            },
+        )
+
+
+def test_autonomous_screening_gate_db_row_rejects_self_hashed_reason_count_missing_hard_flags() -> None:
+    import polymarket_alpha_lab.paper_autonomous_screening_decision_support_gate_db_row as codec
+
+    row = codec.to_db_row(_report())
+    reason_code_counts = [
+        _without_hard_flags(row.payload_json["reason_code_counts"][0]),
+    ]
+    payload = {**row.payload_json, "reason_code_counts": reason_code_counts}
+
+    with pytest.raises(ValueError, match="reason_code_counts|paper_only|payload_json"):
+        codec.PaperAutonomousScreeningDecisionSupportGateDbRow(
+            **{
+                **_row_values(row),
+                "report_sha256": _canonical_payload_sha256(payload),
+                "reason_code_counts_json": reason_code_counts,
+                "payload_json": payload,
+            },
+        )
+
+
+def test_autonomous_screening_gate_db_row_rejects_missing_nullable_payload_key() -> None:
+    import polymarket_alpha_lab.paper_autonomous_screening_decision_support_gate_db_row as codec
+
+    row = codec.to_db_row(
+        _report(
+            gate_status="blocked",
+            recommended_next_step="block_paper_autonomous_screening_recommendations",
+            reason_codes=("queue_risk_blocked",),
+            trend_source_snapshot_count=None,
+            trend_latest_risk_status=None,
+            rank_stability_status=None,
+        ),
+    )
+    payload = {
+        key: value
+        for key, value in row.payload_json.items()
+        if key != "trend_latest_risk_status"
+    }
+
+    with pytest.raises(ValueError, match="trend_latest_risk_status|payload_json"):
+        codec.PaperAutonomousScreeningDecisionSupportGateDbRow(
+            **{
+                **_row_values(row),
+                "report_sha256": _canonical_payload_sha256(payload),
+                "payload_json": payload,
+            },
+        )
+
+
+def test_autonomous_screening_gate_from_db_row_rejects_bypassed_recursive_float_payload() -> None:
+    import polymarket_alpha_lab.paper_autonomous_screening_decision_support_gate_db_row as codec
+
+    row = codec.to_db_row(_report())
+    malformed = object.__new__(
+        codec.PaperAutonomousScreeningDecisionSupportGateDbRow,
+    )
+    for field_name, value in _row_values(row).items():
+        object.__setattr__(malformed, field_name, value)
+    object.__setattr__(
+        malformed,
+        "payload_json",
+        {**row.payload_json, "bad_float": 0.1},
+    )
+
+    with pytest.raises(ValueError, match="float|payload_json"):
+        codec.from_db_row(malformed)
 
 
 @pytest.mark.parametrize(

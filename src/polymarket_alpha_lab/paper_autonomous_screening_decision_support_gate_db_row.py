@@ -32,6 +32,7 @@ _REPORT_TYPE_NAME = "PaperAutonomousScreeningDecisionSupportGateReport"
 _GATE_STATUSES = ("pass", "watch", "blocked")
 _RANK_STABILITY_STATUSES = ("stable", "watch", "blocked")
 _SHA256_PATTERN = re.compile(r"^[a-f0-9]{64}$")
+_DECIMAL_QUANTUM = Decimal("0.000001")
 _MISSING = object()
 
 
@@ -170,6 +171,7 @@ class PaperAutonomousScreeningDecisionSupportGateDbRow:
         _require_hard_flags("DB row", self)
         _validate_json_hard_flags(self.payload_json, "payload_json")
         _validate_materialized_fields_match_payload(self)
+        _validate_payload_recovers_to_canonical_report(self.payload_json)
 
 
 def paper_autonomous_screening_decision_support_gate_to_db_row(
@@ -250,11 +252,18 @@ def paper_autonomous_screening_decision_support_gate_from_db_row(
     _reject_json_floats(row.payload_json)
     _validate_json_hard_flags(row.payload_json, "payload_json")
     _validate_materialized_fields_match_payload(row)
-    if row.reason_codes_json != row.payload_json.get("reason_codes"):
+    if not _json_values_match(
+        row.reason_codes_json,
+        row.payload_json.get("reason_codes", _MISSING),
+    ):
         raise ValueError("reason_codes_json must match payload_json")
-    if row.reason_code_counts_json != row.payload_json.get("reason_code_counts"):
+    if not _json_values_match(
+        row.reason_code_counts_json,
+        row.payload_json.get("reason_code_counts", _MISSING),
+    ):
         raise ValueError("reason_code_counts_json must match payload_json")
     _validate_row_scalars_match_payload(row)
+    _validate_payload_recovers_to_canonical_report(row.payload_json)
 
     report_type = _report_type()
     try:
@@ -322,7 +331,10 @@ def _validate_row_matches_payload(
     expected: PaperAutonomousScreeningDecisionSupportGateDbRow,
 ) -> None:
     for field_name in _MATERIALIZED_FIELDS:
-        if getattr(row, field_name) != getattr(expected, field_name):
+        if not _json_values_match(
+            _json_ready(getattr(row, field_name)),
+            _json_ready(getattr(expected, field_name)),
+        ):
             raise ValueError(f"{field_name} must match payload_json")
 
 
@@ -330,7 +342,10 @@ def _validate_row_scalars_match_payload(
     row: PaperAutonomousScreeningDecisionSupportGateDbRow,
 ) -> None:
     for field_name in _SCALAR_PAYLOAD_FIELDS:
-        if row.payload_json.get(field_name) != _json_ready(getattr(row, field_name)):
+        if not _json_values_match(
+            row.payload_json.get(field_name, _MISSING),
+            _json_ready(getattr(row, field_name)),
+        ):
             raise ValueError(f"{field_name} must match payload_json")
 
 
@@ -359,13 +374,48 @@ def _validate_materialized_fields_match_payload(
     for field_name in _SCALAR_PAYLOAD_FIELDS:
         actual_values[field_name] = _json_ready(getattr(row, field_name))
     for field_name in ("paper_only", "report_only", "readonly"):
-        if actual_values[field_name] != expected_values[field_name]:
+        if not _json_values_match(actual_values[field_name], expected_values[field_name]):
             raise ValueError(f"{field_name} must match payload_json")
     for field_name in _MATERIALIZED_FIELDS:
         if field_name in {"paper_only", "report_only", "readonly"}:
             continue
-        if actual_values[field_name] != expected_values[field_name]:
+        if not _json_values_match(actual_values[field_name], expected_values[field_name]):
             raise ValueError(f"{field_name} must match payload_json")
+
+
+def _validate_payload_recovers_to_canonical_report(payload_json: dict[str, Any]) -> None:
+    report_type = _report_type()
+    try:
+        report = from_jsonable(report_type, payload_json)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(
+            f"payload_json is not a valid autonomous screening gate report: {exc}",
+        ) from exc
+    if type(report) is not report_type:
+        raise ValueError(
+            "payload_json must recover a "
+            "PaperAutonomousScreeningDecisionSupportGateReport",
+        )
+    _validate_report_tree(report)
+    if not _json_values_match(payload_json, _json_ready(asdict(report))):
+        raise ValueError("payload_json must match canonical recovered report payload")
+
+
+def _json_values_match(left: object, right: object) -> bool:
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, dict):
+        if set(left) != set(right):
+            return False
+        return all(_json_values_match(left[key], right[key]) for key in left)
+    if isinstance(left, list):
+        if len(left) != len(right):
+            return False
+        return all(
+            _json_values_match(left_item, right_item)
+            for left_item, right_item in zip(left, right, strict=True)
+        )
+    return left == right
 
 
 def _report_sha256(payload_json: dict[str, Any]) -> str:
@@ -386,7 +436,7 @@ def _json_ready(value: Any) -> Any:
     if isinstance(value, Decimal):
         if not value.is_finite():
             raise ValueError("JSON Decimal value must be finite")
-        return str(value)
+        return format(value.quantize(_DECIMAL_QUANTUM), "f")
     if isinstance(value, datetime):
         return _as_utc("datetime", value).isoformat()
     if isinstance(value, float):
@@ -455,20 +505,35 @@ def _normalize_string_list(field_name: str, value: object) -> list[str]:
     return normalized
 
 
-def _validate_json_hard_flags(value: Any, field_name: str) -> None:
+def _validate_json_hard_flags(
+    value: Any,
+    field_name: str,
+    *,
+    hard_flags_required: bool = False,
+) -> None:
     if not isinstance(value, dict):
         return
-    if any(flag_name in value for flag_name in ("paper_only", "report_only", "readonly")):
+    if hard_flags_required or any(
+        flag_name in value for flag_name in ("paper_only", "report_only", "readonly")
+    ):
         for flag_name in ("paper_only", "report_only", "readonly"):
             if value.get(flag_name) is not True:
                 raise ValueError(f"{field_name} {flag_name} must be present and true")
     for key, item in value.items():
         child_name = f"{field_name} {key}"
         if isinstance(item, dict):
-            _validate_json_hard_flags(item, child_name)
+            _validate_json_hard_flags(
+                item,
+                child_name,
+                hard_flags_required=key == "reason_code_counts",
+            )
         elif isinstance(item, list):
             for index, element in enumerate(item):
-                _validate_json_hard_flags(element, f"{child_name} {index}")
+                _validate_json_hard_flags(
+                    element,
+                    f"{child_name} {index}",
+                    hard_flags_required=key == "reason_code_counts",
+                )
 
 
 def _reject_json_floats(value: Any) -> None:
