@@ -10,17 +10,41 @@ Future execution work must be introduced through explicit roadmap documentation,
 
 Do not perform compliance, legal, geographic-access, or regulatory analysis in this repository unless the user explicitly reopens that topic.
 
-## Database Persistence Iron Rule
+## Project Iron Rules
 
-All database-related implementation in this project must use the local Supabase
-Postgres instance on this host. Treat local Supabase/Postgres as the only
-approved database persistence target for project data.
+These rules are mandatory for every main agent, subagent, review, plan,
+implementation, test, migration, runbook, and handoff in this repository unless
+the user explicitly changes them in a later instruction.
 
-Do not introduce alternate database backends, hosted remote database
-assumptions, SQLite substitutes, file-backed database substitutes, or generic
-database abstraction layers unless the user explicitly changes this project
-rule. DB configuration, stores, loaders, migrations, runbooks, and tests should
-preserve this local Supabase/Postgres assumption.
+1. **Database Persistence Iron Rule: persistence is local Supabase/Postgres
+   only.** All database-related implementation and all project data persistence
+   must use the local Supabase Postgres instance on this host. Treat local
+   Supabase/Postgres as the only approved database persistence target and the
+   only approved durable persistence target for project data. Do not introduce
+   alternate database backends, hosted remote database assumptions, SQLite
+   substitutes, file-backed database substitutes, JSONL/file journals as durable
+   substitutes, SQLAlchemy, Redis, Mongo, or generic database abstraction
+   layers. Configuration, stores, loaders, migrations, runbooks, fixtures, and
+   tests must preserve the local Supabase/Postgres assumption.
+2. **Legacy file persistence is frozen.** Existing JSONL/file-backed journals,
+   logs, archives, and local input loaders are legacy surfaces that predate the
+   strict persistence rule. Do not expand them or add new file-backed
+   persistence. When touching a legacy persistence surface, prefer migrating the
+   write path to local Supabase/Postgres, or document a read-only compatibility
+   boundary if immediate migration is out of scope.
+3. **Reviews go directly to local opencode.** All plan reviews, code reviews,
+   stage audits, post-node external review gates, and handoff review gates must
+   go directly to local opencode using model `zhipuai-coding-plan/glm-5.2` with
+   variant/thinking level `max`. Do not route reviews to Claude Code or any
+   other reviewer unless the user explicitly changes this rule. Review prompts
+   must be read-only: reviewers may inspect plans, diffs, and files, but must
+   not modify, create, or delete files.
+4. **Fast mode is forbidden.** Do not use fast mode for the main Codex agent,
+   Codex subagents, opencode reviews, implementation workers, planning workers,
+   or audit workers.
+5. **Codex subagents use GPT-5.5 xhigh.** Codex subagents dispatched for this
+   project must use model `gpt-5.5` with reasoning effort `xhigh`. If the user
+   informally writes `xhign`, treat it as the executable setting `xhigh`.
 
 ## CodeGraph
 
@@ -63,9 +87,11 @@ Avoid using website scraping as a primary data path unless a needed field is una
 
 ## Model Defaults
 
-- Codex subagents dispatched for this project should use model `gpt-5.5` with reasoning effort `xhigh`.
-- Local opencode reviews for this project should use model `zhipuai-coding-plan/glm-5.2` with variant/thinking level `max`.
+- Codex subagents dispatched for this project must use model `gpt-5.5` with reasoning effort `xhigh`.
+- Local opencode reviews for this project must use model `zhipuai-coding-plan/glm-5.2` with variant/thinking level `max`.
 - If the user informally writes `xhign` for the Codex subagent reasoning level, treat it as the executable setting `xhigh`.
+- Do not use fast mode for the main Codex agent, Codex subagents, opencode
+  reviews, or local implementation/review gates.
 
 ## Review / Audit Defaults
 
