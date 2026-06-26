@@ -54,6 +54,7 @@ def _config(**overrides):
         "max_consecutive_latest_blocked_count": 0,
         "max_duplicate_generated_at_count": 0,
         "max_latest_source_age_seconds": 86_400,
+        "max_trend_report_age_seconds": 86_400,
         "max_watch_ledger_report_count_delta": 0,
         "max_blocked_ledger_report_count_delta": 0,
         "max_repeated_reason_code_count": 0,
@@ -165,6 +166,7 @@ def test_health_trend_gate_config_defaults_are_safe_phase1_defaults() -> None:
     assert config.max_consecutive_latest_blocked_count == 0
     assert config.max_duplicate_generated_at_count == 0
     assert config.max_latest_source_age_seconds == 86_400
+    assert config.max_trend_report_age_seconds == 86_400
     assert config.max_watch_ledger_report_count_delta == 0
     assert config.max_blocked_ledger_report_count_delta == 0
     assert config.max_repeated_reason_code_count == 0
@@ -202,6 +204,7 @@ def test_health_trend_gate_passes_clean_source_trend() -> None:
         "paper_autonomous_investment_ledger_db_history_health_trend_gate_passed",
     )
     assert report.source_health_report_count == 3
+    assert report.trend_report_age_seconds == 900
     assert report.latest_health_status == "pass"
     assert report.latest_health_generated_at == SOURCE_AT
     assert report.latest_source_age_seconds == 300
@@ -281,6 +284,72 @@ def test_health_trend_gate_blocks_for_blocking_trend_inputs(trend, expected_reas
         "paper_autonomous_investment_ledger_db_history_health_trend_gate_passed"
         not in report.reason_codes
     )
+
+
+def test_health_trend_gate_blocks_missing_source_timestamp_without_stale_reason() -> None:
+    trend = _trend_report(
+        _health_report(generated_at=SOURCE_AT - timedelta(minutes=2)),
+        _health_report(generated_at=SOURCE_AT - timedelta(minutes=1)),
+        _health_report(
+            generated_at=SOURCE_AT,
+            health_status="blocked",
+            reason_codes=(
+                "missing_latest_paper_autonomous_investment_ledger_source_timestamp",
+            ),
+            latest_source_age_seconds=None,
+            max_source_age_seconds=None,
+        ),
+    )
+
+    report = _api().build_paper_autonomous_investment_ledger_db_history_health_trend_gate_report(
+        trend,
+        config=_config(),
+        generated_at=GENERATED_AT,
+    )
+
+    assert report.source_health_report_count == 3
+    assert report.latest_source_age_seconds is None
+    assert report.gate_status == "blocked"
+    assert (
+        "latest_paper_autonomous_investment_ledger_db_history_health_trend_blocked"
+        in report.reason_codes
+    )
+    assert (
+        "stale_paper_autonomous_investment_ledger_db_history_health_trend"
+        not in report.reason_codes
+    )
+    assert (
+        "missing_latest_paper_autonomous_investment_ledger_db_history_health_trend_timestamp"
+        not in report.reason_codes
+    )
+
+
+def test_health_trend_gate_watches_stale_trend_report_age() -> None:
+    report = _api().build_paper_autonomous_investment_ledger_db_history_health_trend_gate_report(
+        _clean_trend_report(),
+        config=_config(max_trend_report_age_seconds=899),
+        generated_at=GENERATED_AT,
+    )
+
+    assert report.gate_status == "watch"
+    assert report.trend_report_age_seconds == 900
+    assert (
+        "stale_paper_autonomous_investment_ledger_db_history_health_trend"
+        in report.reason_codes
+    )
+    assert (
+        "paper_autonomous_investment_ledger_db_history_health_trend_gate_passed"
+        not in report.reason_codes
+    )
+
+
+def test_health_trend_gate_rejects_future_dated_trend_report() -> None:
+    with pytest.raises(ValueError, match="trend_report_age_seconds"):
+        _api().build_paper_autonomous_investment_ledger_db_history_health_trend_gate_report(
+            _clean_trend_report(),
+            config=_config(),
+            generated_at=SOURCE_AT - timedelta(seconds=1),
+        )
 
 
 @pytest.mark.parametrize(
@@ -519,6 +588,8 @@ def test_health_trend_gate_rejects_wrong_types_naive_datetimes_and_corruption() 
         replace(report, recommended_next_step="manual_review")
     with pytest.raises(ValueError, match="reason_code_counts"):
         replace(report, reason_code_counts=(object(),))
+    with pytest.raises(ValueError, match="trend_report_age_seconds"):
+        replace(report, trend_report_age_seconds=901)
     with pytest.raises(ValueError, match="reason_code_counts must match reason_codes"):
         replace(report, reason_codes=("some_other_reason",))
     with pytest.raises(ValueError, match="latest_total_submitted_notional_delta"):
