@@ -35,6 +35,7 @@ NEXT_STEP_BY_ACTION_STATUS = {
     "blocked": "repair_cycle_evidence",
 }
 _SHA256_PATTERN = re.compile(r"^[a-f0-9]{64}$")
+_DECIMAL_QUANTUM = Decimal("0.000001")
 
 
 @dataclass(frozen=True)
@@ -456,7 +457,10 @@ def _json_ready(value: Any) -> Any:
     if isinstance(value, Decimal):
         if not value.is_finite():
             raise ValueError("JSON Decimal value must be finite")
-        return str(value)
+        quantized = value.quantize(_DECIMAL_QUANTUM)
+        if value != quantized:
+            raise ValueError("JSON Decimal value must be quantized to 0.000001")
+        return format(quantized, "f")
     if isinstance(value, datetime):
         return _as_utc("datetime", value).isoformat()
     if isinstance(value, float):

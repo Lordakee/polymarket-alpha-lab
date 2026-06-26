@@ -272,6 +272,57 @@ def test_action_gated_queue_history_db_row_hash_uses_canonical_full_payload():
     assert first.report_sha256 != third.report_sha256
 
 
+def test_action_gated_queue_history_db_row_canonicalizes_equivalent_decimal_writes():
+    integerish_report = _history_report()
+    object.__setattr__(
+        integerish_report,
+        "total_ready_notional",
+        Decimal("42"),
+    )
+    object.__setattr__(
+        integerish_report,
+        "ready_notional_delta",
+        Decimal("12"),
+    )
+    six_place_report = _history_report()
+    object.__setattr__(
+        six_place_report,
+        "total_ready_notional",
+        Decimal("42.000000"),
+    )
+    object.__setattr__(
+        six_place_report,
+        "ready_notional_delta",
+        Decimal("12.000000"),
+    )
+
+    integerish_row = to_db_row(
+        integerish_report,
+    )
+    six_place_row = to_db_row(
+        six_place_report,
+    )
+
+    assert integerish_row.payload_json["total_ready_notional"] == "42.000000"
+    assert integerish_row.payload_json["ready_notional_delta"] == "12.000000"
+    assert integerish_row.payload_json == six_place_row.payload_json
+    assert integerish_row.report_sha256 == six_place_row.report_sha256
+
+
+def test_action_gated_queue_history_db_row_rejects_overprecision_decimal_writes():
+    report = _history_report()
+    object.__setattr__(
+        report,
+        "total_ready_notional",
+        Decimal("42.0000004"),
+    )
+
+    with pytest.raises(ValueError, match="total_ready_notional|Decimal"):
+        to_db_row(
+            report,
+        )
+
+
 def test_action_gated_queue_history_db_row_is_frozen():
     row = to_db_row(
         _history_report(),
@@ -666,11 +717,41 @@ def test_action_gated_queue_history_db_row_from_db_row_rejects_bypassed_bool_mat
         )
 
 
-def test_action_gated_queue_history_db_row_from_db_row_rejects_bypassed_noncanonical_materialized_decimal():
+def test_action_gated_queue_history_db_row_from_db_row_accepts_equivalent_materialized_decimal_scale():
+    report = _history_report()
+    row = to_db_row(
+        report,
+    )
+    equivalent = _bypassed_history_row(
+        row,
+        total_ready_notional=Decimal("42"),
+        ready_notional_delta=Decimal("12"),
+    )
+
+    assert (
+        from_db_row(
+            equivalent,
+        )
+        == report
+    )
+
+
+def test_action_gated_queue_history_db_row_from_db_row_rejects_bypassed_self_hashed_legacy_decimal_payload():
     row = to_db_row(
         _history_report(),
     )
-    malformed = _bypassed_history_row(row, total_ready_notional=Decimal("42"))
+    payload_json = {
+        **row.payload_json,
+        "total_ready_notional": "42",
+        "ready_notional_delta": "12",
+    }
+    malformed = _bypassed_history_row(
+        row,
+        report_sha256=_payload_sha256(payload_json),
+        total_ready_notional=Decimal("42"),
+        ready_notional_delta=Decimal("12"),
+        payload_json=payload_json,
+    )
 
     with pytest.raises(ValueError, match="total_ready_notional"):
         from_db_row(
