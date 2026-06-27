@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import ast
 from dataclasses import FrozenInstanceError, replace
 from datetime import UTC, datetime, timedelta, timezone
 from decimal import Decimal
 import hashlib
 import json
+from pathlib import Path
 import re
 
 import pytest
@@ -188,6 +190,40 @@ def test_health_db_row_hash_is_deterministic_for_equivalent_reports() -> None:
     assert first.report_sha256 != third.report_sha256
 
 
+def test_health_db_row_canonicalizes_equivalent_decimal_writes() -> None:
+    import polymarket_alpha_lab.paper_autonomous_allocation_proposal_db_history_health_db_row as codec
+
+    integerish_report = _report()
+    object.__setattr__(
+        integerish_report,
+        "latest_total_allocated_paper_notional",
+        d("42"),
+    )
+
+    integerish_row = codec.to_db_row(integerish_report)
+    six_place_row = codec.to_db_row(_report())
+
+    assert integerish_row.latest_total_allocated_paper_notional == d("42.000000")
+    assert format(integerish_row.latest_total_allocated_paper_notional, "f") == "42.000000"
+    assert integerish_row.payload_json["latest_total_allocated_paper_notional"] == "42.000000"
+    assert integerish_row.payload_json == six_place_row.payload_json
+    assert integerish_row.report_sha256 == six_place_row.report_sha256
+
+
+def test_health_db_row_rejects_overprecision_decimal_writes() -> None:
+    import polymarket_alpha_lab.paper_autonomous_allocation_proposal_db_history_health_db_row as codec
+
+    report = _report()
+    object.__setattr__(
+        report,
+        "latest_total_allocated_paper_notional",
+        d("42.0000004"),
+    )
+
+    with pytest.raises(ValueError, match="latest_total_allocated_paper_notional|Decimal|six"):
+        codec.to_db_row(report)
+
+
 def test_health_db_row_is_frozen() -> None:
     row = _db_row()
 
@@ -324,7 +360,7 @@ def test_health_db_row_rejects_non_materialized_payload_hash_mismatch() -> None:
         )
 
 
-def test_health_db_row_rejects_self_hashed_noncanonical_decimal_payload() -> None:
+def test_health_db_row_accepts_self_hashed_legacy_decimal_payload() -> None:
     import polymarket_alpha_lab.paper_autonomous_allocation_proposal_db_history_health_db_row as codec
 
     row = _db_row()
@@ -333,15 +369,144 @@ def test_health_db_row_rejects_self_hashed_noncanonical_decimal_payload() -> Non
         "latest_total_allocated_paper_notional": "42",
     }
 
-    with pytest.raises(ValueError, match="canonical|payload_json"):
+    legacy_row = codec.PaperAutonomousAllocationProposalDbHistoryHealthDbRow(
+        **{
+            **_row_values(row),
+            "report_sha256": _canonical_payload_sha256(payload),
+            "latest_total_allocated_paper_notional": d("42"),
+            "payload_json": payload,
+        },
+    )
+
+    assert codec.from_db_row(legacy_row) == _report()
+
+
+def test_health_from_db_row_accepts_bypassed_self_hashed_legacy_decimal_payload() -> None:
+    import polymarket_alpha_lab.paper_autonomous_allocation_proposal_db_history_health_db_row as codec
+
+    row = _db_row()
+    payload = {
+        **row.payload_json,
+        "latest_total_allocated_paper_notional": "42",
+    }
+    legacy_row = _bypassed_row(
+        row,
+        report_sha256=_canonical_payload_sha256(payload),
+        latest_total_allocated_paper_notional=d("42"),
+        payload_json=payload,
+    )
+
+    assert codec.from_db_row(legacy_row) == _report()
+
+
+def test_health_db_row_rejects_stale_legacy_decimal_payload_hash() -> None:
+    import polymarket_alpha_lab.paper_autonomous_allocation_proposal_db_history_health_db_row as codec
+
+    row = _db_row()
+    payload = {
+        **row.payload_json,
+        "latest_total_allocated_paper_notional": "42",
+    }
+
+    with pytest.raises(ValueError, match="report_sha256"):
         codec.PaperAutonomousAllocationProposalDbHistoryHealthDbRow(
             **{
                 **_row_values(row),
-                "report_sha256": _canonical_payload_sha256(payload),
                 "latest_total_allocated_paper_notional": d("42"),
                 "payload_json": payload,
             },
         )
+
+    stale_row = _bypassed_row(
+        row,
+        latest_total_allocated_paper_notional=d("42"),
+        payload_json=payload,
+    )
+    with pytest.raises(ValueError, match="report_sha256"):
+        codec.from_db_row(stale_row)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    ("field_name", "legacy_value", "message"),
+    (
+        (
+            "latest_total_allocated_paper_notional",
+            "42.000001",
+            "latest_total_allocated_paper_notional|payload_json",
+        ),
+        (
+            "latest_history_status",
+            "42.0",
+            "latest_history_status|payload_json",
+        ),
+    ),
+)
+def test_health_from_db_row_rejects_unsafe_legacy_decimal_payloads(
+    field_name: str,
+    legacy_value: str,
+    message: str,
+) -> None:
+    import polymarket_alpha_lab.paper_autonomous_allocation_proposal_db_history_health_db_row as codec
+
+    row = _db_row()
+    payload = {**row.payload_json, field_name: legacy_value}
+    malformed = _bypassed_row(
+        row,
+        report_sha256=_canonical_payload_sha256(payload),
+        payload_json=payload,
+    )
+
+    with pytest.raises(ValueError, match=message):
+        codec.from_db_row(malformed)  # type: ignore[arg-type]
+
+
+def test_health_from_db_row_rejects_overprecision_legacy_decimal_payload() -> None:
+    import polymarket_alpha_lab.paper_autonomous_allocation_proposal_db_history_health_db_row as codec
+
+    row = _db_row()
+    payload = {
+        **row.payload_json,
+        "latest_total_allocated_paper_notional": "42.0000004",
+    }
+    malformed = _bypassed_row(
+        row,
+        report_sha256=_canonical_payload_sha256(payload),
+        payload_json=payload,
+    )
+
+    with pytest.raises(ValueError, match="latest_total_allocated_paper_notional|payload_json|six"):
+        codec.from_db_row(malformed)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    ("field_name", "raw_value", "message"),
+    (
+        ("latest_total_allocated_paper_notional", Decimal("42.000000"), "Decimal"),
+        ("latest_total_allocated_paper_notional", 42.0, "float"),
+        ("generated_at", GENERATED_AT, "datetime"),
+    ),
+)
+def test_health_db_row_rejects_raw_non_json_payload_values_before_normalization(
+    field_name: str,
+    raw_value: object,
+    message: str,
+) -> None:
+    import polymarket_alpha_lab.paper_autonomous_allocation_proposal_db_history_health_db_row as codec
+
+    row = _db_row()
+    payload = {**row.payload_json, field_name: raw_value}
+
+    with pytest.raises(ValueError, match=f"payload_json.*{message}"):
+        codec.PaperAutonomousAllocationProposalDbHistoryHealthDbRow(
+            **{
+                **_row_values(row),
+                "payload_json": payload,
+            },
+        )
+
+    malformed = _bypassed_row(row, payload_json=payload)
+    with pytest.raises(ValueError, match=message):
+        codec.from_db_row(malformed)  # type: ignore[arg-type]
 
 
 def test_health_from_db_row_defends_against_bypassed_payload_hash_mismatch() -> None:
@@ -581,3 +746,32 @@ def test_health_db_row_validates_row_shape(
         codec.PaperAutonomousAllocationProposalDbHistoryHealthDbRow(
             **{**_row_values(_db_row()), **overrides},
         )
+
+
+def test_health_db_row_module_remains_pure_codec() -> None:
+    import polymarket_alpha_lab.paper_autonomous_allocation_proposal_db_history_health_db_row as codec
+
+    source_path = Path(codec.__file__)
+    tree = ast.parse(source_path.read_text())
+
+    imported_modules = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported_modules.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module is not None:
+            imported_modules.add(node.module)
+
+    forbidden_import_parts = {
+        "auth",
+        "client",
+        "exchange",
+        "live_trading",
+        "network",
+        "order",
+        "psycopg",
+        "sql",
+        "wallet",
+    }
+    for module_name in imported_modules:
+        module_parts = set(module_name.split("."))
+        assert module_parts.isdisjoint(forbidden_import_parts)

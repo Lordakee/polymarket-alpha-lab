@@ -462,21 +462,27 @@ def test_action_gated_queue_history_db_row_constructor_rejects_bool_payload_int_
         )
 
 
-def test_action_gated_queue_history_db_row_constructor_rejects_self_hashed_noncanonical_decimal():
+def test_action_gated_queue_history_db_row_constructor_accepts_self_hashed_legacy_decimal_payload():
     row = to_db_row(
         _history_report(),
     )
-    payload_json = {**row.payload_json, "total_ready_notional": "42"}
+    payload_json = {
+        **row.payload_json,
+        "total_ready_notional": "42",
+        "ready_notional_delta": "12.0",
+    }
 
-    with pytest.raises(ValueError, match="payload_json|total_ready_notional"):
-        HistoryDbRow(
-            **{
-                **_row_values(row),
-                "report_sha256": _payload_sha256(payload_json),
-                "total_ready_notional": Decimal("42"),
-                "payload_json": payload_json,
-            },
-        )
+    legacy_row = HistoryDbRow(
+        **{
+            **_row_values(row),
+            "report_sha256": _payload_sha256(payload_json),
+            "total_ready_notional": Decimal("42"),
+            "ready_notional_delta": Decimal("12.0"),
+            "payload_json": payload_json,
+        },
+    )
+
+    assert from_db_row(legacy_row) == _history_report()
 
 
 def test_action_gated_queue_history_db_row_replace_revalidates_payload_consistency():
@@ -736,7 +742,7 @@ def test_action_gated_queue_history_db_row_from_db_row_accepts_equivalent_materi
     )
 
 
-def test_action_gated_queue_history_db_row_from_db_row_rejects_bypassed_self_hashed_legacy_decimal_payload():
+def test_action_gated_queue_history_db_row_from_db_row_accepts_self_hashed_legacy_decimal_payload():
     row = to_db_row(
         _history_report(),
     )
@@ -753,7 +759,105 @@ def test_action_gated_queue_history_db_row_from_db_row_rejects_bypassed_self_has
         payload_json=payload_json,
     )
 
-    with pytest.raises(ValueError, match="total_ready_notional"):
+    assert from_db_row(malformed) == _history_report()
+
+
+def test_action_gated_queue_history_db_row_from_db_row_rejects_stale_legacy_decimal_payload_hash():
+    row = to_db_row(
+        _history_report(),
+    )
+    payload_json = {
+        **row.payload_json,
+        "total_ready_notional": "42",
+        "ready_notional_delta": "12",
+    }
+    malformed = _bypassed_history_row(
+        row,
+        total_ready_notional=Decimal("42"),
+        ready_notional_delta=Decimal("12"),
+        payload_json=payload_json,
+    )
+
+    with pytest.raises(ValueError, match="report_sha256"):
+        from_db_row(
+            malformed,
+        )
+
+
+@pytest.mark.parametrize(
+    ("field_name", "legacy_value", "message"),
+    (
+        ("total_ready_notional", "42.000001", "total_ready_notional|payload_json"),
+        ("ready_notional_delta", "12.000001", "ready_notional_delta|payload_json"),
+        ("latest_action_status", "42.0", "latest_action_status|payload_json"),
+    ),
+)
+def test_action_gated_queue_history_db_row_from_db_row_rejects_unsafe_legacy_decimal_payloads(
+    field_name: str,
+    legacy_value: str,
+    message: str,
+) -> None:
+    row = to_db_row(
+        _history_report(),
+    )
+    payload_json = {**row.payload_json, field_name: legacy_value}
+    malformed = _bypassed_history_row(
+        row,
+        report_sha256=_payload_sha256(payload_json),
+        payload_json=payload_json,
+    )
+
+    with pytest.raises(ValueError, match=message):
+        from_db_row(
+            malformed,
+        )
+
+
+def test_action_gated_queue_history_db_row_from_db_row_rejects_overprecision_legacy_decimal_payload():
+    row = to_db_row(
+        _history_report(),
+    )
+    payload_json = {**row.payload_json, "total_ready_notional": "42.0000004"}
+    malformed = _bypassed_history_row(
+        row,
+        report_sha256=_payload_sha256(payload_json),
+        payload_json=payload_json,
+    )
+
+    with pytest.raises(ValueError, match="total_ready_notional|payload_json|six"):
+        from_db_row(
+            malformed,
+        )
+
+
+@pytest.mark.parametrize(
+    ("field_name", "raw_value", "message"),
+    (
+        ("total_ready_notional", Decimal("42.000000"), "Decimal"),
+        ("total_ready_notional", 42.0, "float"),
+        ("generated_at", GENERATED_AT, "datetime"),
+    ),
+)
+def test_action_gated_queue_history_db_row_rejects_raw_non_json_payload_values_before_normalization(
+    field_name: str,
+    raw_value: object,
+    message: str,
+) -> None:
+    row = to_db_row(
+        _history_report(),
+    )
+    payload_json = {**row.payload_json, field_name: raw_value}
+
+    with pytest.raises(ValueError, match=f"payload_json.*{message}"):
+        HistoryDbRow(
+            **{
+                **_row_values(row),
+                "payload_json": payload_json,
+            },
+        )
+
+    malformed = _bypassed_history_row(row, payload_json=payload_json)
+    with pytest.raises(ValueError, match=message):
         from_db_row(
             malformed,
         )

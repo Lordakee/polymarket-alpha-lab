@@ -31,6 +31,9 @@ ZERO = Decimal("0")
 QUANTUM = Decimal("0.000001")
 GATE_STATUSES = ("pass", "watch", "blocked")
 _SHA256_PATTERN = re.compile(r"^[a-f0-9]{64}$")
+_DECIMAL_LIKE_STRING_PATTERN = re.compile(
+    r"^[+-]?(?:(?:\d+\.\d*)|(?:\.\d+)|(?:\d+[eE][+-]?\d+))$",
+)
 _HARD_FLAG_NAMES = ("paper_only", "report_only", "readonly")
 _REPORT_DECIMAL_FIELDS = (
     "top_total_score",
@@ -176,13 +179,23 @@ def _validate_row_payload_consistency(
         "reason_codes_json",
         row.reason_codes_json,
     )
-    score_rows_json = _normalize_json_object_array(
+    raw_score_rows_json = _normalize_json_object_array(
         "score_rows_json",
         row.score_rows_json,
     )
-    payload_json = _normalize_json_object("payload_json", row.payload_json)
-    if row.report_sha256 != _report_sha256(payload_json):
+    raw_payload_json = _normalize_json_object("payload_json", row.payload_json)
+    if row.report_sha256 != _report_sha256(raw_payload_json):
         raise ValueError("report_sha256 must match payload_json")
+    _validate_json_hard_flags(raw_payload_json, "payload_json")
+    payload_json = _normalize_legacy_decimal_payload(raw_payload_json)
+    if not isinstance(payload_json, dict):
+        raise ValueError("payload_json must be a JSON object")
+    score_rows_json = _normalize_legacy_decimal_payload(
+        raw_score_rows_json,
+        ("score_rows",),
+    )
+    if not isinstance(score_rows_json, list):
+        raise ValueError("score_rows_json must be a JSON array")
     _validate_json_hard_flags(payload_json, "payload_json")
     _validate_payload_decimal_strings(payload_json)
     _require_payload_flags_match_row(payload_json, "payload_json", row)
@@ -199,7 +212,12 @@ def _validate_row_payload_consistency(
     if type(report) is not AutonomousMarketScorerReport:
         raise ValueError("payload_json must recover an AutonomousMarketScorerReport")
     _validate_report_tree(report)
-    _validate_row_matches_payload(row, report)
+    _validate_row_matches_payload(
+        row,
+        report,
+        payload_json=payload_json,
+        score_rows_json=score_rows_json,
+    )
     return report
 
 
@@ -263,10 +281,13 @@ def _validate_report_tree(value: Any, field_name: str = "report") -> None:
 def _validate_row_matches_payload(
     row: AutonomousMarketScorerDbRow,
     report: AutonomousMarketScorerReport,
+    *,
+    payload_json: dict[str, Any],
+    score_rows_json: list[dict[str, Any]],
 ) -> None:
-    payload_json = _json_ready(asdict(report))
+    canonical_payload_json = _json_ready(asdict(report))
     expected_values = {
-        "report_sha256": _report_sha256(payload_json),
+        "report_sha256": row.report_sha256,
         "generated_at": report.generated_at,
         "config_version": report.config_version,
         "gate_status": report.gate_status,
@@ -277,16 +298,34 @@ def _validate_row_matches_payload(
         "average_total_score": report.average_total_score,
         "total_recommended_notional": report.total_recommended_notional,
         "reason_codes_json": report.reason_codes,
-        "score_rows_json": payload_json.get("score_rows"),
-        "payload_json": payload_json,
+        "score_rows_json": canonical_payload_json.get("score_rows"),
+        "payload_json": canonical_payload_json,
         "paper_only": report.paper_only,
         "report_only": report.report_only,
         "readonly": report.readonly,
     }
+    actual_values = {
+        "report_sha256": row.report_sha256,
+        "generated_at": row.generated_at,
+        "config_version": row.config_version,
+        "gate_status": row.gate_status,
+        "markets_scored": row.markets_scored,
+        "markets_skipped": row.markets_skipped,
+        "markets_blocked": row.markets_blocked,
+        "top_total_score": row.top_total_score,
+        "average_total_score": row.average_total_score,
+        "total_recommended_notional": row.total_recommended_notional,
+        "reason_codes_json": row.reason_codes_json,
+        "score_rows_json": score_rows_json,
+        "payload_json": payload_json,
+        "paper_only": row.paper_only,
+        "report_only": row.report_only,
+        "readonly": row.readonly,
+    }
     for field_name in _MATERIALIZED_FIELDS:
         if not _json_equal_strict(
-            _json_ready(getattr(row, field_name)),
-            _json_ready(expected_values[field_name]),
+            _json_ready_materialized_field(field_name, actual_values[field_name]),
+            _json_ready_materialized_field(field_name, expected_values[field_name]),
         ):
             raise ValueError(f"{field_name} must match payload_json")
 
@@ -301,15 +340,17 @@ def _report_sha256(payload_json: dict[str, Any]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def _json_ready(value: Any) -> Any:
+def _json_ready(value: Any, field_path: tuple[str | int, ...] = ()) -> Any:
     if value is None:
         return None
     if is_dataclass(value) and not isinstance(value, type):
-        return _json_ready(asdict(value))
+        return _json_ready(asdict(value), field_path)
     if isinstance(value, Decimal):
-        if not value.is_finite():
-            raise ValueError("JSON Decimal value must be finite")
-        return format(value.quantize(QUANTUM), "f")
+        if not _is_decimal_payload_path(field_path):
+            raise ValueError(
+                f"{_format_payload_path(field_path)} is not an allowed Decimal path",
+            )
+        return _fixed_six_decimal_string(_format_payload_path(field_path), value)
     if isinstance(value, datetime):
         return _as_utc("datetime", value).isoformat()
     if isinstance(value, float):
@@ -320,10 +361,24 @@ def _json_ready(value: Any) -> Any:
         for key in value:
             if type(key) is not str:
                 raise ValueError("JSON object keys must be strings")
-        return {key: _json_ready(item) for key, item in value.items()}
+        return {
+            key: _json_ready(item, (*field_path, key))
+            for key, item in value.items()
+        }
     if isinstance(value, (list, tuple)):
-        return [_json_ready(item) for item in value]
+        return [
+            _json_ready(item, (*field_path, index))
+            for index, item in enumerate(value)
+        ]
     raise ValueError("scorer DB row values must be JSON serializable")
+
+
+def _json_ready_materialized_field(field_name: str, value: Any) -> Any:
+    if field_name in _REPORT_DECIMAL_FIELDS:
+        return _json_ready(value, (field_name,))
+    if field_name == "score_rows_json":
+        return _json_ready(value, ("score_rows",))
+    return _json_ready(value)
 
 
 def _normalize_json_object(field_name: str, value: object) -> dict[str, Any]:
@@ -413,6 +468,87 @@ def _validate_payload_decimal_strings(payload_json: dict[str, Any]) -> None:
                 f"payload_json score_rows {index} {field_name}",
                 score_row.get(field_name),
             )
+
+
+def _normalize_legacy_decimal_payload(
+    value: Any,
+    field_path: tuple[str | int, ...] = (),
+) -> Any:
+    if _is_decimal_payload_path(field_path):
+        field_name = _format_payload_path(field_path)
+        if type(value) is not str:
+            raise ValueError(f"{field_name} must be a Decimal string")
+        return _fixed_six_decimal_string(
+            field_name,
+            _decimal_from_string(field_name, value),
+        )
+    if type(value) is str and _DECIMAL_LIKE_STRING_PATTERN.fullmatch(value) is not None:
+        raise ValueError(
+            f"{_format_payload_path(field_path)} is not an allowed Decimal path",
+        )
+    if isinstance(value, dict):
+        return {
+            key: _normalize_legacy_decimal_payload(item, (*field_path, key))
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [
+            _normalize_legacy_decimal_payload(item, (*field_path, index))
+            for index, item in enumerate(value)
+        ]
+    return value
+
+
+def _is_decimal_payload_path(field_path: tuple[str | int, ...]) -> bool:
+    return (
+        len(field_path) == 1
+        and field_path[0] in _REPORT_DECIMAL_FIELDS
+    ) or (
+        len(field_path) == 3
+        and field_path[0] == "score_rows"
+        and isinstance(field_path[1], int)
+        and field_path[2] in _SCORE_ROW_DECIMAL_FIELDS
+    )
+
+
+def _fixed_six_decimal_string(field_name: str, value: Decimal) -> str:
+    if type(value) is not Decimal:
+        raise ValueError(f"{field_name} must be a Decimal")
+    if not value.is_finite():
+        raise ValueError(f"{field_name} must be finite")
+    if value < ZERO:
+        raise ValueError(f"{field_name} must be nonnegative")
+    value_tuple = value.as_tuple()
+    excess_decimal_places = -value_tuple.exponent - 6
+    if excess_decimal_places > 0 and any(
+        digit != 0 for digit in value_tuple.digits[-excess_decimal_places:]
+    ):
+        raise ValueError(f"{field_name} must not exceed six decimal places")
+    if value == ZERO:
+        return "0.000000"
+    return f"{value:.6f}"
+
+
+def _decimal_from_string(field_name: str, value: str) -> Decimal:
+    try:
+        decimal = Decimal(value)
+    except InvalidOperation as exc:
+        raise ValueError(f"{field_name} must be a Decimal string") from exc
+    if not decimal.is_finite():
+        raise ValueError(f"{field_name} must be finite")
+    return decimal
+
+
+def _format_payload_path(field_path: tuple[str | int, ...]) -> str:
+    if not field_path:
+        return "payload_json"
+    formatted = "payload_json"
+    for item in field_path:
+        if isinstance(item, int):
+            formatted = f"{formatted}[{item}]"
+        else:
+            formatted = f"{formatted}.{item}"
+    return formatted
 
 
 def _require_json_decimal_string(field_name: str, value: object) -> None:

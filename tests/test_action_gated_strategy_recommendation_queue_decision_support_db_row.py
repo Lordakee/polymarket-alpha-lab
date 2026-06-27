@@ -319,6 +319,223 @@ def test_decision_support_db_row_serializes_canonical_payloads_and_round_trips()
     )
 
 
+def test_decision_support_db_row_writes_fixed_six_place_decimal_payloads():
+    row = (
+        paper_action_gated_strategy_recommendation_queue_decision_support_to_db_row(
+            _priority_report(),
+            _risk_report(),
+        )
+    )
+
+    assert row.priority_payload_json["total_ready_notional"] == "42.000000"
+    assert row.priority_payload_json["top_research_priority_score"] == "6.250000"
+    assert row.priority_payload_json["average_research_priority_score"] == "3.625000"
+    assert row.priority_payload_json["priority_rows"][0][
+        "total_ready_notional"
+    ] == "42.000000"
+    assert row.priority_payload_json["priority_rows"][0]["top_queue_score"] == "0.750000"
+    assert row.priority_payload_json["priority_rows"][0][
+        "average_ready_score"
+    ] == "0.500000"
+    assert row.priority_payload_json["priority_rows"][0][
+        "research_priority_score"
+    ] == "6.250000"
+    assert row.risk_payload_json["total_ready_notional"] == "42.000000"
+    assert row.risk_payload_json["largest_queue_ready_notional"] == "42.000000"
+    assert row.risk_payload_json["total_ready_notional_utilization"] == "0.420000"
+    assert row.risk_payload_json[
+        "largest_queue_ready_notional_utilization"
+    ] == "0.700000"
+    assert row.risk_payload_json["max_total_ready_notional"] == "100.000000"
+    assert row.risk_payload_json["max_single_queue_ready_notional"] == "60.000000"
+    assert row.risk_payload_json["throttle_utilization_threshold"] == "0.900000"
+
+
+def test_decision_support_from_db_row_accepts_self_hashed_legacy_decimal_payloads():
+    row = (
+        paper_action_gated_strategy_recommendation_queue_decision_support_to_db_row(
+            _priority_report(),
+            _risk_report(),
+        )
+    )
+    priority_payload_json = {
+        **row.priority_payload_json,
+        "total_ready_notional": "42",
+        "top_research_priority_score": "6.25",
+        "average_research_priority_score": "3.625",
+        "priority_rows": [
+            {
+                **row.priority_payload_json["priority_rows"][0],
+                "total_ready_notional": "42",
+                "top_queue_score": "0.75",
+                "average_ready_score": "0.5",
+                "research_priority_score": "6.25",
+            },
+            {
+                **row.priority_payload_json["priority_rows"][1],
+                "total_ready_notional": "0",
+                "top_queue_score": "0",
+                "average_ready_score": "0",
+                "research_priority_score": "1",
+            },
+        ],
+    }
+    risk_payload_json = {
+        **row.risk_payload_json,
+        "total_ready_notional": "42",
+        "largest_queue_ready_notional": "42.0",
+        "total_ready_notional_utilization": "0.42",
+        "largest_queue_ready_notional_utilization": "0.7",
+        "max_total_ready_notional": "100",
+        "max_single_queue_ready_notional": "60",
+        "throttle_utilization_threshold": "0.9",
+    }
+    legacy = _bypassed_row(
+        row,
+        snapshot_sha256=_canonical_snapshot_sha256(
+            priority_payload_json,
+            risk_payload_json,
+        ),
+        priority_payload_json=priority_payload_json,
+        risk_payload_json=risk_payload_json,
+    )
+
+    assert (
+        paper_action_gated_strategy_recommendation_queue_decision_support_from_db_row(
+            legacy,
+        )
+        == (_priority_report(), _risk_report())
+    )
+
+
+def test_decision_support_from_db_row_rejects_stale_legacy_decimal_payload_hash():
+    row = (
+        paper_action_gated_strategy_recommendation_queue_decision_support_to_db_row(
+            _priority_report(),
+            _risk_report(),
+        )
+    )
+    priority_payload_json = {
+        **row.priority_payload_json,
+        "total_ready_notional": "42",
+    }
+    malformed = _bypassed_row(row, priority_payload_json=priority_payload_json)
+
+    with pytest.raises(ValueError, match="snapshot_sha256"):
+        paper_action_gated_strategy_recommendation_queue_decision_support_from_db_row(
+            malformed,
+        )
+
+
+def test_decision_support_from_db_row_rejects_value_changing_legacy_decimal_payload():
+    row = (
+        paper_action_gated_strategy_recommendation_queue_decision_support_to_db_row(
+            _priority_report(),
+            _risk_report(),
+        )
+    )
+    risk_payload_json = {
+        **row.risk_payload_json,
+        "largest_queue_ready_notional": "43",
+    }
+    malformed = _bypassed_row(
+        row,
+        snapshot_sha256=_canonical_snapshot_sha256(
+            row.priority_payload_json,
+            risk_payload_json,
+        ),
+        risk_payload_json=risk_payload_json,
+    )
+
+    with pytest.raises(ValueError, match="risk_payload_json"):
+        paper_action_gated_strategy_recommendation_queue_decision_support_from_db_row(
+            malformed,
+        )
+
+
+def test_decision_support_from_db_row_rejects_overprecision_legacy_decimal_payload():
+    row = (
+        paper_action_gated_strategy_recommendation_queue_decision_support_to_db_row(
+            _priority_report(),
+            _risk_report(),
+        )
+    )
+    priority_payload_json = {
+        **row.priority_payload_json,
+        "top_research_priority_score": "6.2500001",
+    }
+    malformed = _bypassed_row(
+        row,
+        snapshot_sha256=_canonical_snapshot_sha256(
+            priority_payload_json,
+            row.risk_payload_json,
+        ),
+        priority_payload_json=priority_payload_json,
+    )
+
+    with pytest.raises(ValueError, match="top_research_priority_score|six"):
+        paper_action_gated_strategy_recommendation_queue_decision_support_from_db_row(
+            malformed,
+        )
+
+
+def test_decision_support_from_db_row_rejects_non_allowlisted_decimal_like_payload():
+    row = (
+        paper_action_gated_strategy_recommendation_queue_decision_support_to_db_row(
+            _priority_report(),
+            _risk_report(),
+        )
+    )
+    priority_payload_json = {
+        **row.priority_payload_json,
+        "source_report_count": "2.0",
+    }
+    malformed = _bypassed_row(
+        row,
+        snapshot_sha256=_canonical_snapshot_sha256(
+            priority_payload_json,
+            row.risk_payload_json,
+        ),
+        priority_payload_json=priority_payload_json,
+    )
+
+    with pytest.raises(ValueError, match="Decimal-like|allowlisted"):
+        paper_action_gated_strategy_recommendation_queue_decision_support_from_db_row(
+            malformed,
+        )
+
+
+@pytest.mark.parametrize(
+    ("payload_name", "payload_value", "message"),
+    (
+        ("priority_payload_json", Decimal("42.000000"), "Decimal"),
+        ("risk_payload_json", 42.0, "float"),
+        ("risk_payload_json", GENERATED_AT, "datetime"),
+    ),
+)
+def test_decision_support_from_db_row_rejects_raw_non_json_payload_values(
+    payload_name: str,
+    payload_value: object,
+    message: str,
+):
+    row = (
+        paper_action_gated_strategy_recommendation_queue_decision_support_to_db_row(
+            _priority_report(),
+            _risk_report(),
+        )
+    )
+    payload_json = {
+        **getattr(row, payload_name),
+        "total_ready_notional": payload_value,
+    }
+    malformed = _bypassed_row(row, **{payload_name: payload_json})
+
+    with pytest.raises(ValueError, match=message):
+        paper_action_gated_strategy_recommendation_queue_decision_support_from_db_row(
+            malformed,
+        )
+
+
 def test_decision_support_db_row_hash_is_deterministic_for_equivalent_reports():
     priority_report = _priority_report()
     risk_report = _risk_report()
@@ -690,7 +907,20 @@ def test_decision_support_from_db_row_rejects_bypassed_bool_int_json_mismatch():
         )
 
 
-def test_decision_support_db_row_rejects_floats_in_json_columns():
+@pytest.mark.parametrize(
+    ("payload_name", "key", "raw_value", "message"),
+    (
+        ("priority_payload_json", "bad_float", 0.1, "float"),
+        ("risk_payload_json", "bad_float", 0.1, "float"),
+        ("risk_payload_json", "bad_datetime", GENERATED_AT, "datetime"),
+    ),
+)
+def test_decision_support_db_row_rejects_raw_non_json_values_in_json_columns(
+    payload_name: str,
+    key: str,
+    raw_value: object,
+    message: str,
+):
     row = (
         paper_action_gated_strategy_recommendation_queue_decision_support_to_db_row(
             _priority_report(),
@@ -698,25 +928,11 @@ def test_decision_support_db_row_rejects_floats_in_json_columns():
         )
     )
 
-    with pytest.raises(ValueError, match="priority_payload_json"):
+    with pytest.raises(ValueError, match=f"{payload_name}.*{message}"):
         PaperActionGatedStrategyRecommendationQueueDecisionSupportDbRow(
             **{
                 **_row_values(row),
-                "priority_payload_json": {
-                    **row.priority_payload_json,
-                    "bad_float": 0.1,
-                },
-            },
-        )
-
-    with pytest.raises(ValueError, match="risk_payload_json"):
-        PaperActionGatedStrategyRecommendationQueueDecisionSupportDbRow(
-            **{
-                **_row_values(row),
-                "risk_payload_json": {
-                    **row.risk_payload_json,
-                    "bad_float": 0.1,
-                },
+                payload_name: {**getattr(row, payload_name), key: raw_value},
             },
         )
 

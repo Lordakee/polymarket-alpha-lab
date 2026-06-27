@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import replace
 from dataclasses import FrozenInstanceError
 from datetime import UTC, datetime
@@ -82,6 +83,39 @@ def _report() -> PaperExecutionReconciliationReport:
         paper_only=True,
         report_only=True,
         readonly=True,
+    )
+
+
+def _equivalent_exponent_report() -> PaperExecutionReconciliationReport:
+    report = _report()
+    return PaperExecutionReconciliationReport(
+        **{
+            **report.__dict__,
+            "total_fill_notional": d("15"),
+            "total_cost_basis": d("17.0"),
+            "total_outcome_value": d("0"),
+            "total_pnl": d("-2"),
+            "realized_pnl": d("-2.0"),
+            "unrealized_pnl": d("0"),
+            "position_rows": (
+                PaperExecutionReconciliationPositionRow(
+                    **{
+                        **report.position_rows[0].__dict__,
+                        "fill_notional": d("10"),
+                        "cost_basis": d("12.0"),
+                        "outcome_value": d("0"),
+                        "pnl": d("-2.0"),
+                    },
+                ),
+                PaperExecutionReconciliationPositionRow(
+                    **{
+                        **report.position_rows[1].__dict__,
+                        "fill_notional": d("5"),
+                        "cost_basis": d("5.0"),
+                    },
+                ),
+            ),
+        },
     )
 
 
@@ -204,6 +238,28 @@ def test_reconciliation_db_row_serializes_canonical_payload_and_round_trips():
     assert codec.paper_execution_reconciliation_report_from_db_row(row) == report
     assert codec.to_db_row(report) == row
     assert codec.from_db_row(row) == report
+
+
+def test_reconciliation_db_row_writes_fixed_six_decimal_payload_paths():
+    codec = _codec()
+
+    canonical_row = codec.to_db_row(_report())
+    equivalent_row = codec.to_db_row(_equivalent_exponent_report())
+
+    assert equivalent_row.payload_json == canonical_row.payload_json
+    assert equivalent_row.report_sha256 == canonical_row.report_sha256
+    assert equivalent_row.payload_json["total_fill_notional"] == "15.000000"
+    assert equivalent_row.payload_json["total_cost_basis"] == "17.000000"
+    assert equivalent_row.payload_json["total_outcome_value"] == "0.000000"
+    assert equivalent_row.payload_json["total_pnl"] == "-2.000000"
+    assert equivalent_row.payload_json["realized_pnl"] == "-2.000000"
+    assert equivalent_row.payload_json["unrealized_pnl"] == "0.000000"
+    assert equivalent_row.payload_json["position_rows"][0]["fill_notional"] == "10.000000"
+    assert equivalent_row.payload_json["position_rows"][0]["cost_basis"] == "12.000000"
+    assert equivalent_row.payload_json["position_rows"][0]["outcome_value"] == "0.000000"
+    assert equivalent_row.payload_json["position_rows"][0]["pnl"] == "-2.000000"
+    assert equivalent_row.payload_json["position_rows"][1]["fill_notional"] == "5.000000"
+    assert equivalent_row.payload_json["position_rows"][1]["cost_basis"] == "5.000000"
 
 
 def test_reconciliation_db_row_hash_uses_full_payload_including_position_rows():
@@ -388,8 +444,143 @@ def test_reconciliation_from_db_row_rejects_unchecked_raw_hash_bypass() -> None:
         payload_json=payload,
     )
 
-    with pytest.raises(ValueError, match="payload_json must be canonical|report_sha256"):
+    with pytest.raises(
+        ValueError,
+        match="payload_json must be canonical|report_sha256|six decimal",
+    ):
         codec.from_db_row(malformed)
+
+
+def test_reconciliation_from_db_row_accepts_self_hashed_legacy_decimal_payload() -> None:
+    codec = _codec()
+    row = codec.to_db_row(_report())
+    payload = deepcopy(row.payload_json)
+    payload["total_fill_notional"] = "15"
+    payload["total_cost_basis"] = "17.0"
+    payload["total_outcome_value"] = "0"
+    payload["total_pnl"] = "-2"
+    payload["realized_pnl"] = "-2.0"
+    payload["unrealized_pnl"] = "0"
+    payload["position_rows"][0]["fill_notional"] = "10"
+    payload["position_rows"][0]["cost_basis"] = "12.0"
+    payload["position_rows"][0]["outcome_value"] = "0"
+    payload["position_rows"][0]["pnl"] = "-2.0"
+    payload["position_rows"][1]["fill_notional"] = "5"
+    payload["position_rows"][1]["cost_basis"] = "5.0"
+
+    legacy_row = codec.PaperExecutionReconciliationDbRow(
+        **{
+            **_row_values(row),
+            "report_sha256": _canonical_payload_sha256(payload),
+            "position_rows_json": payload["position_rows"],
+            "payload_json": payload,
+        },
+    )
+
+    assert codec.from_db_row(legacy_row) == _report()
+
+
+def test_reconciliation_from_db_row_rejects_stale_legacy_decimal_payload_hash() -> None:
+    codec = _codec()
+    row = codec.to_db_row(_report())
+    payload = deepcopy(row.payload_json)
+    payload["total_fill_notional"] = "15"
+
+    with pytest.raises(ValueError, match="report_sha256"):
+        codec.PaperExecutionReconciliationDbRow(
+            **{
+                **_row_values(row),
+                "payload_json": payload,
+            },
+        )
+
+    with pytest.raises(ValueError, match="report_sha256"):
+        codec.from_db_row(
+            _unchecked_row(
+                row,
+                payload_json=payload,
+            ),
+        )
+
+
+def test_reconciliation_from_db_row_rejects_value_changing_legacy_payload() -> None:
+    codec = _codec()
+    row = codec.to_db_row(_report())
+    payload = deepcopy(row.payload_json)
+    payload["total_fill_notional"] = "15.000001"
+
+    with pytest.raises(ValueError, match="total_fill_notional"):
+        codec.PaperExecutionReconciliationDbRow(
+            **{
+                **_row_values(row),
+                "report_sha256": _canonical_payload_sha256(payload),
+                "payload_json": payload,
+            },
+        )
+
+
+def test_reconciliation_from_db_row_rejects_overprecision_legacy_decimal_payload() -> None:
+    codec = _codec()
+    row = codec.to_db_row(_report())
+    payload = deepcopy(row.payload_json)
+    payload["total_fill_notional"] = "15.0000001"
+
+    with pytest.raises(ValueError, match="six decimal|overprecision|payload_json"):
+        codec.from_db_row(
+            _unchecked_row(
+                row,
+                report_sha256=_canonical_payload_sha256(payload),
+                total_fill_notional=d("15.0000001"),
+                payload_json=payload,
+            ),
+        )
+
+
+def test_reconciliation_db_row_rejects_non_allowlisted_decimal_like_strings() -> None:
+    codec = _codec()
+    row = codec.to_db_row(_report())
+    payload = deepcopy(row.payload_json)
+    payload["position_rows"][0]["market_slug"] = "1.0"
+
+    with pytest.raises(ValueError, match="market_slug|Decimal-like|allowlisted|payload_json"):
+        codec.PaperExecutionReconciliationDbRow(
+            **{
+                **_row_values(row),
+                "report_sha256": _canonical_payload_sha256(payload),
+                "position_rows_json": payload["position_rows"],
+                "payload_json": payload,
+            },
+        )
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value", "message"),
+    (
+        ("total_fill_notional", 15.0, "float|payload_json"),
+        ("total_fill_notional", d("15.000000"), "Decimal|JSON"),
+        ("generated_at", GENERATED_AT, "datetime|JSON"),
+    ),
+)
+def test_reconciliation_db_row_rejects_raw_non_json_payload_values(
+    field_name: str,
+    value: object,
+    message: str,
+) -> None:
+    codec = _codec()
+    row = codec.to_db_row(_report())
+    payload = deepcopy(row.payload_json)
+    payload[field_name] = value
+
+    with pytest.raises(ValueError, match=message):
+        codec.PaperExecutionReconciliationDbRow(
+            **{
+                **_row_values(row),
+                "payload_json": payload,
+            },
+        )
+
+    with pytest.raises(ValueError, match=message):
+        codec.from_db_row(_unchecked_row(row, payload_json=payload))
 
 
 def test_reconciliation_db_row_rejects_nested_all_missing_hard_flags() -> None:

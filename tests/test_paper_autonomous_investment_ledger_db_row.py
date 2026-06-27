@@ -246,6 +246,54 @@ def test_ledger_db_row_serializes_payload_and_round_trips() -> None:
     assert codec.paper_autonomous_investment_ledger_report_from_db_row(row) == report
 
 
+def test_ledger_db_row_writes_decimal_payload_paths_as_fixed_six_places() -> None:
+    codec = _codec_module()
+    report = PaperAutonomousInvestmentLedgerReport(
+        **{
+            **_report().__dict__,
+            "total_submitted_notional": d("12.5"),
+            "entries": (
+                PaperAutonomousInvestmentLedgerEntry(
+                    **{
+                        **_report().entries[0].__dict__,
+                        "source_proposal_total_notional": d("25"),
+                        "execution_notional": d("0"),
+                    },
+                ),
+                PaperAutonomousInvestmentLedgerEntry(
+                    **{
+                        **_report().entries[1].__dict__,
+                        "source_proposal_total_notional": d("12.5"),
+                        "execution_notional": d("12.5"),
+                    },
+                ),
+            ),
+        },
+    )
+
+    row = codec.to_db_row(report)
+
+    assert row.payload_json["total_submitted_notional"] == "12.500000"
+    assert row.entries_json[0]["source_proposal_total_notional"] == "25.000000"
+    assert row.entries_json[0]["execution_notional"] == "0.000000"
+    assert row.entries_json[1]["source_proposal_total_notional"] == "12.500000"
+    assert row.entries_json[1]["execution_notional"] == "12.500000"
+    assert row.payload_json["entries"] == row.entries_json
+    assert row.report_sha256 == _canonical_payload_sha256(row.payload_json)
+    assert codec.from_db_row(row) == report
+
+
+def test_ledger_db_row_normalizes_explicit_total_submitted_notional_to_six_places() -> None:
+    codec = _codec_module()
+    row = codec.to_db_row(_report())
+
+    explicit_row = replace(row, total_submitted_notional=d("12.5"))
+
+    assert explicit_row.total_submitted_notional == d("12.500000")
+    assert str(explicit_row.total_submitted_notional) == "12.500000"
+    assert explicit_row.payload_json["total_submitted_notional"] == "12.500000"
+
+
 def test_ledger_db_row_hash_is_deterministic_and_uses_full_payload() -> None:
     codec = _codec_module()
     report = _report()
@@ -324,7 +372,13 @@ def test_ledger_db_row_rejects_corrupted_nested_payload_flags() -> None:
         )
     with pytest.raises(ValueError, match="readonly"):
         replace(row, payload_json=payload_json)
-    malformed = _bypassed_row(row, {"payload_json": payload_json})
+    malformed = _bypassed_row(
+        row,
+        {
+            "report_sha256": _canonical_payload_sha256(payload_json),
+            "payload_json": payload_json,
+        },
+    )
     with pytest.raises(ValueError, match="readonly"):
         codec.from_db_row(malformed)
 
@@ -402,6 +456,165 @@ def test_ledger_db_row_rejects_raw_payload_hash_mismatch() -> None:
     malformed = _bypassed_row(row, {"payload_json": payload_json})
     with pytest.raises(ValueError, match="report_sha256"):
         codec.from_db_row(malformed)
+
+
+def test_ledger_db_row_from_db_row_recovers_equivalent_legacy_decimal_payload() -> None:
+    codec = _codec_module()
+    row = codec.to_db_row(_report())
+    payload_json = {
+        **row.payload_json,
+        "total_submitted_notional": "12.5",
+        "entries": [
+            {
+                **row.payload_json["entries"][0],
+                "source_proposal_total_notional": "25",
+                "execution_notional": "0",
+            },
+            {
+                **row.payload_json["entries"][1],
+                "source_proposal_total_notional": "12.5",
+                "execution_notional": "12.5",
+            },
+        ],
+    }
+    report_sha256 = _canonical_payload_sha256(payload_json)
+    legacy_row = _bypassed_row(
+        row,
+        {
+            "report_sha256": report_sha256,
+            "entries_json": payload_json["entries"],
+            "payload_json": payload_json,
+        },
+    )
+
+    report = codec.from_db_row(legacy_row)
+
+    assert report == _report()
+    assert row.payload_json["total_submitted_notional"] == "12.500000"
+
+
+def test_ledger_db_row_from_db_row_rejects_stale_legacy_decimal_hash() -> None:
+    codec = _codec_module()
+    row = codec.to_db_row(_report())
+    payload_json = {
+        **row.payload_json,
+        "total_submitted_notional": "12.5",
+    }
+    stale_hash_row = _bypassed_row(row, {"payload_json": payload_json})
+
+    with pytest.raises(ValueError, match="report_sha256"):
+        codec.from_db_row(stale_hash_row)
+
+
+def test_ledger_db_row_from_db_row_rejects_value_changing_legacy_decimal_payload() -> None:
+    codec = _codec_module()
+    row = codec.to_db_row(_report())
+    payload_json = {
+        **row.payload_json,
+        "total_submitted_notional": "12.500001",
+    }
+    changed_row = _bypassed_row(
+        row,
+        {
+            "report_sha256": _canonical_payload_sha256(payload_json),
+            "payload_json": payload_json,
+        },
+    )
+
+    with pytest.raises(ValueError, match="total_submitted_notional"):
+        codec.from_db_row(changed_row)
+
+
+def test_ledger_db_row_from_db_row_rejects_overprecision_legacy_decimal_payload() -> None:
+    codec = _codec_module()
+    row = codec.to_db_row(_report())
+    payload_json = {
+        **row.payload_json,
+        "entries": [
+            row.payload_json["entries"][0],
+            {
+                **row.payload_json["entries"][1],
+                "execution_notional": "12.5000000",
+            },
+        ],
+    }
+    overprecision_row = _bypassed_row(
+        row,
+        {
+            "report_sha256": _canonical_payload_sha256(payload_json),
+            "entries_json": payload_json["entries"],
+            "payload_json": payload_json,
+        },
+    )
+
+    with pytest.raises(ValueError, match="execution_notional"):
+        codec.from_db_row(overprecision_row)
+
+
+def test_ledger_db_row_from_db_row_rejects_non_allowlisted_decimal_like_payload() -> None:
+    codec = _codec_module()
+    row = codec.to_db_row(_report())
+    payload_json = {
+        **row.payload_json,
+        "source_record_count": "2.000000",
+    }
+    non_allowlisted_row = _bypassed_row(
+        row,
+        {
+            "report_sha256": _canonical_payload_sha256(payload_json),
+            "payload_json": payload_json,
+        },
+    )
+
+    with pytest.raises(ValueError, match="source_record_count"):
+        codec.from_db_row(non_allowlisted_row)
+
+
+def test_ledger_db_row_from_db_row_rejects_self_consistent_non_allowlisted_decimal_like_string() -> None:
+    codec = _codec_module()
+    row = codec.to_db_row(_report())
+    payload_json = {
+        **row.payload_json,
+        "config_version": "2.000000",
+    }
+    non_allowlisted_row = _bypassed_row(
+        row,
+        {
+            "report_sha256": _canonical_payload_sha256(payload_json),
+            "config_version": "2.000000",
+            "payload_json": payload_json,
+        },
+    )
+
+    with pytest.raises(ValueError, match="config_version"):
+        codec.from_db_row(non_allowlisted_row)
+
+
+@pytest.mark.parametrize(
+    ("field_name", "raw_value"),
+    (
+        ("bad_float", 0.1),
+        ("bad_decimal", d("1.000000")),
+        ("bad_datetime", GENERATED_AT),
+    ),
+)
+def test_ledger_db_row_from_db_row_rejects_raw_non_json_payload_values(
+    field_name: str,
+    raw_value: object,
+) -> None:
+    codec = _codec_module()
+    row = codec.to_db_row(_report())
+    payload_json = {**row.payload_json, field_name: raw_value}
+    raw_row = _bypassed_row(
+        row,
+        {
+            "report_sha256": _canonical_payload_sha256(row.payload_json),
+            "payload_json": payload_json,
+        },
+    )
+
+    with pytest.raises(ValueError, match="payload_json"):
+        codec.from_db_row(raw_row)
 
 
 def test_ledger_db_row_rejects_missing_nullable_payload_keys() -> None:

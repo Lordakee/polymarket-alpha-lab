@@ -25,6 +25,27 @@ GENERATED_AT = datetime(2026, 6, 23, 20, 0, tzinfo=UTC)
 SCREENING_GATE_AT = datetime(2026, 6, 23, 19, 30, tzinfo=UTC)
 QUEUE_RISK_AT = datetime(2026, 6, 23, 19, 40, tzinfo=UTC)
 SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
+FIXED_SIX_DECIMAL_RE = re.compile(r"^-?\d+\.\d{6}$")
+ALLOCATION_REPORT_DECIMAL_FIELDS = (
+    "total_requested_paper_notional",
+    "total_allocated_paper_notional",
+    "remaining_paper_budget",
+    "total_paper_budget",
+    "max_paper_notional_per_market",
+    "max_paper_notional_per_event",
+    "max_paper_notional_per_theme",
+    "max_paper_notional_per_correlation_group",
+)
+ALLOCATION_ROW_DECIMAL_FIELDS = (
+    "recommendation_score",
+    "net_probability_edge",
+    "executable_paper_shares",
+    "side_price",
+    "market_implied_probability",
+    "requested_paper_notional",
+    "allocated_paper_notional",
+    "allocated_paper_shares",
+)
 
 
 @dataclass(frozen=True)
@@ -245,6 +266,66 @@ def _canonical_payload_sha256(payload_json: dict[str, object]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _json_clone(value: object) -> object:
+    return json.loads(json.dumps(value, allow_nan=False))
+
+
+def _legacy_decimal_string(value: object) -> str:
+    text = format(Decimal(str(value)), "f")
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return text or "0"
+
+
+def _compact_allocation_report_decimals(report: PaperRecommendationAllocationReport) -> None:
+    for field_name in ALLOCATION_REPORT_DECIMAL_FIELDS:
+        object.__setattr__(
+            report,
+            field_name,
+            Decimal(_legacy_decimal_string(getattr(report, field_name))),
+        )
+    for row in report.rows:
+        for field_name in ALLOCATION_ROW_DECIMAL_FIELDS:
+            value = getattr(row, field_name)
+            if value is not None:
+                object.__setattr__(row, field_name, Decimal(_legacy_decimal_string(value)))
+
+
+def _legacy_allocation_decimal_payload(
+    payload_json: dict[str, object],
+) -> dict[str, object]:
+    payload = _json_clone(payload_json)
+    assert isinstance(payload, dict)
+    allocation_report = payload["allocation_report"]
+    assert isinstance(allocation_report, dict)
+    for field_name in ALLOCATION_REPORT_DECIMAL_FIELDS:
+        allocation_report[field_name] = _legacy_decimal_string(allocation_report[field_name])
+    allocation_rows = allocation_report["rows"]
+    assert isinstance(allocation_rows, list)
+    for allocation_row in allocation_rows:
+        assert isinstance(allocation_row, dict)
+        for field_name in ALLOCATION_ROW_DECIMAL_FIELDS:
+            value = allocation_row.get(field_name)
+            if value is not None:
+                allocation_row[field_name] = _legacy_decimal_string(value)
+    return payload
+
+
+def _row_from_self_hashed_payload(row: object, payload_json: dict[str, object]) -> object:
+    allocation_report = payload_json["allocation_report"]
+    assert isinstance(allocation_report, dict)
+    allocation_rows = allocation_report["rows"]
+    assert isinstance(allocation_rows, list)
+    return type(row)(
+        **{
+            **_row_values(row),
+            "report_sha256": _canonical_payload_sha256(payload_json),
+            "payload_json": payload_json,
+            "allocation_rows_json": allocation_rows,
+        },
+    )
+
+
 def _assert_no_floats(value: object) -> None:
     if isinstance(value, float):
         pytest.fail("proposal DB JSON contains floats")
@@ -315,6 +396,173 @@ def test_proposal_db_row_serializes_payload_and_round_trips() -> None:
     assert codec.from_db_row(row) == report
     assert codec.paper_autonomous_allocation_proposal_report_to_db_row(report) == row
     assert codec.paper_autonomous_allocation_proposal_report_from_db_row(row) == report
+
+
+def test_proposal_db_row_writes_allocation_decimals_as_fixed_six_places() -> None:
+    import polymarket_alpha_lab.paper_autonomous_allocation_proposal_db_row as codec
+
+    report = _report()
+    _compact_allocation_report_decimals(report.allocation_report)
+
+    row = codec.to_db_row(report)
+    allocation_report_json = row.payload_json["allocation_report"]
+    assert isinstance(allocation_report_json, dict)
+    allocation_rows_json = allocation_report_json["rows"]
+    assert isinstance(allocation_rows_json, list)
+    allocation_row_json = allocation_rows_json[0]
+    assert isinstance(allocation_row_json, dict)
+
+    for field_name in ALLOCATION_REPORT_DECIMAL_FIELDS:
+        value = allocation_report_json[field_name]
+        assert isinstance(value, str)
+        assert FIXED_SIX_DECIMAL_RE.fullmatch(value)
+        assert str(getattr(row, f"allocation_{field_name}")) == value
+    for field_name in ALLOCATION_ROW_DECIMAL_FIELDS:
+        value = allocation_row_json[field_name]
+        if value is not None:
+            assert isinstance(value, str)
+            assert FIXED_SIX_DECIMAL_RE.fullmatch(value)
+    assert row.allocation_rows_json == allocation_rows_json
+    assert codec.from_db_row(row) == report
+
+
+def test_proposal_from_db_row_recovers_equivalent_legacy_self_hashed_decimal_payload() -> None:
+    import polymarket_alpha_lab.paper_autonomous_allocation_proposal_db_row as codec
+
+    report = _report()
+    row = codec.to_db_row(report)
+    payload = _legacy_allocation_decimal_payload(row.payload_json)
+
+    legacy_row = _row_from_self_hashed_payload(row, payload)
+
+    assert legacy_row.report_sha256 == _canonical_payload_sha256(payload)
+    assert codec.from_db_row(legacy_row) == report
+
+
+def test_proposal_from_db_row_rejects_stale_hash_after_legacy_decimal_normalization() -> None:
+    import polymarket_alpha_lab.paper_autonomous_allocation_proposal_db_row as codec
+
+    row = codec.to_db_row(_report())
+    payload = _legacy_allocation_decimal_payload(row.payload_json)
+    allocation_report = payload["allocation_report"]
+    assert isinstance(allocation_report, dict)
+    allocation_rows = allocation_report["rows"]
+    assert isinstance(allocation_rows, list)
+    malformed = _bypassed_row(
+        row,
+        payload_json=payload,
+        allocation_rows_json=allocation_rows,
+    )
+
+    with pytest.raises(ValueError, match="report_sha256"):
+        codec.from_db_row(malformed)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    ("payload_path", "bad_value", "message"),
+    (
+        (
+            ("allocation_report", "total_paper_budget"),
+            "100.0000001",
+            "six decimal places",
+        ),
+        (
+            ("allocation_report", "rows", 0, "allocated_paper_notional"),
+            "10.0000001",
+            "six decimal places",
+        ),
+    ),
+)
+def test_proposal_from_db_row_rejects_value_changing_overprecision_decimal_payloads(
+    payload_path: tuple[object, ...],
+    bad_value: str,
+    message: str,
+) -> None:
+    import polymarket_alpha_lab.paper_autonomous_allocation_proposal_db_row as codec
+
+    row = codec.to_db_row(_report())
+    payload = _json_clone(row.payload_json)
+    assert isinstance(payload, dict)
+    target: object = payload
+    for key in payload_path[:-1]:
+        if isinstance(target, dict):
+            target = target[key]
+        elif isinstance(target, list) and isinstance(key, int):
+            target = target[key]
+        else:
+            raise AssertionError("bad test path")
+    assert isinstance(target, dict)
+    target[payload_path[-1]] = bad_value
+    allocation_report = payload["allocation_report"]
+    assert isinstance(allocation_report, dict)
+    allocation_rows = allocation_report["rows"]
+    assert isinstance(allocation_rows, list)
+    malformed = _bypassed_row(
+        row,
+        report_sha256=_canonical_payload_sha256(payload),
+        payload_json=payload,
+        allocation_rows_json=allocation_rows,
+    )
+
+    with pytest.raises(ValueError, match=message):
+        codec.from_db_row(malformed)  # type: ignore[arg-type]
+
+
+def test_proposal_from_db_row_rejects_non_allowlisted_decimal_like_payload_strings() -> None:
+    import polymarket_alpha_lab.paper_autonomous_allocation_proposal_db_row as codec
+
+    row = codec.to_db_row(_report())
+    payload = _json_clone(row.payload_json)
+    assert isinstance(payload, dict)
+    source_queue_summaries = payload["source_queue_summaries"]
+    assert isinstance(source_queue_summaries, list)
+    source_summary = source_queue_summaries[0]
+    assert isinstance(source_summary, dict)
+    source_summary["config_version"] = "1.000000"
+    malformed = _bypassed_row(
+        row,
+        report_sha256=_canonical_payload_sha256(payload),
+        payload_json=payload,
+    )
+
+    with pytest.raises(ValueError, match="not an allowed Decimal path"):
+        codec.from_db_row(malformed)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    ("raw_value", "hash_value", "message"),
+    (
+        (Decimal("100.000000"), "100.000000", "raw Decimal"),
+        (GENERATED_AT, GENERATED_AT.isoformat(), "raw datetime"),
+        (0.5, "0.500000", "float"),
+    ),
+)
+def test_proposal_from_db_row_rejects_raw_json_values_before_hashing(
+    raw_value: object,
+    hash_value: object,
+    message: str,
+) -> None:
+    import polymarket_alpha_lab.paper_autonomous_allocation_proposal_db_row as codec
+
+    row = codec.to_db_row(_report())
+    payload = _json_clone(row.payload_json)
+    hash_payload = _json_clone(row.payload_json)
+    assert isinstance(payload, dict)
+    assert isinstance(hash_payload, dict)
+    allocation_report = payload["allocation_report"]
+    hash_allocation_report = hash_payload["allocation_report"]
+    assert isinstance(allocation_report, dict)
+    assert isinstance(hash_allocation_report, dict)
+    allocation_report["total_paper_budget"] = raw_value
+    hash_allocation_report["total_paper_budget"] = hash_value
+    malformed = _bypassed_row(
+        row,
+        report_sha256=_canonical_payload_sha256(hash_payload),
+        payload_json=payload,
+    )
+
+    with pytest.raises(ValueError, match=message):
+        codec.from_db_row(malformed)  # type: ignore[arg-type]
 
 
 def test_proposal_db_row_hash_is_deterministic_for_equivalent_reports() -> None:

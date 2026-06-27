@@ -160,6 +160,184 @@ def test_health_db_row_serializes_payload_and_round_trips() -> None:
     )
 
 
+def test_health_db_row_writes_decimal_payloads_as_fixed_six_place_strings() -> None:
+    import polymarket_alpha_lab.paper_autonomous_investment_ledger_db_history_health_db_row as codec
+
+    report = replace(_report(), latest_total_submitted_notional=Decimal("42.25"))
+
+    row = codec.to_db_row(report)
+
+    assert row.latest_total_submitted_notional == Decimal("42.250000")
+    assert str(row.latest_total_submitted_notional) == "42.250000"
+    assert row.payload_json["latest_total_submitted_notional"] == "42.250000"
+    assert row.report_sha256 == _canonical_payload_sha256(row.payload_json)
+
+    explicit_row = replace(row, latest_total_submitted_notional=Decimal("42.25"))
+    assert explicit_row.latest_total_submitted_notional == Decimal("42.250000")
+    assert str(explicit_row.latest_total_submitted_notional) == "42.250000"
+
+
+def test_health_db_row_recovers_legacy_self_hashed_decimal_payloads() -> None:
+    import polymarket_alpha_lab.paper_autonomous_investment_ledger_db_history_health_db_row as codec
+
+    row = _db_row()
+    payload = {
+        **row.payload_json,
+        "latest_total_submitted_notional": "42.25",
+    }
+
+    legacy_row = codec.PaperAutonomousInvestmentLedgerDbHistoryHealthDbRow(
+        **{
+            **_row_values(row),
+            "report_sha256": _canonical_payload_sha256(payload),
+            "latest_total_submitted_notional": Decimal("42.25"),
+            "payload_json": payload,
+        },
+    )
+
+    assert legacy_row.payload_json["latest_total_submitted_notional"] == "42.25"
+    report = codec.from_db_row(legacy_row)
+    assert report == _report()
+    assert str(report.latest_total_submitted_notional) == "42.250000"
+
+
+def test_health_db_row_rejects_stale_legacy_decimal_payload_hashes() -> None:
+    import polymarket_alpha_lab.paper_autonomous_investment_ledger_db_history_health_db_row as codec
+
+    row = _db_row()
+    payload = {
+        **row.payload_json,
+        "latest_total_submitted_notional": "42.25",
+    }
+
+    malformed = _bypassed_row(
+        row,
+        {
+            "latest_total_submitted_notional": Decimal("42.25"),
+            "payload_json": payload,
+        },
+    )
+
+    with pytest.raises(ValueError, match="report_sha256"):
+        codec.from_db_row(malformed)
+
+
+@pytest.mark.parametrize(
+    "payload_value",
+    (
+        "42.250001",
+        "42.2500001",
+    ),
+)
+def test_health_db_row_rejects_value_changing_or_overprecision_decimal_payloads(
+    payload_value: str,
+) -> None:
+    import polymarket_alpha_lab.paper_autonomous_investment_ledger_db_history_health_db_row as codec
+
+    row = _db_row()
+    payload = {
+        **row.payload_json,
+        "latest_total_submitted_notional": payload_value,
+    }
+    malformed = _bypassed_row(
+        row,
+        {
+            "report_sha256": _canonical_payload_sha256(payload),
+            "payload_json": payload,
+        },
+    )
+
+    with pytest.raises(ValueError, match="latest_total_submitted_notional|payload_json"):
+        codec.from_db_row(malformed)
+
+
+@pytest.mark.parametrize(
+    ("field_name", "payload_value"),
+    (
+        ("config_version", "42.25"),
+        ("generated_at", "2026.000000"),
+        ("reason_codes", ["paper_autonomous_investment_ledger_db_history_health_passed", "1.000000"]),
+        (
+            "reason_code_counts",
+            [
+                {
+                    "reason_code": "paper_autonomous_investment_ledger_passed",
+                    "report_count": "3.000000",
+                    "paper_only": True,
+                    "report_only": True,
+                    "readonly": True,
+                },
+            ],
+        ),
+    ),
+)
+def test_health_db_row_rejects_non_allowlisted_decimal_like_payloads(
+    field_name: str,
+    payload_value: object,
+) -> None:
+    import polymarket_alpha_lab.paper_autonomous_investment_ledger_db_history_health_db_row as codec
+
+    row = _db_row()
+    payload = {**row.payload_json, field_name: payload_value}
+    malformed = _bypassed_row(
+        row,
+        {
+            "report_sha256": _canonical_payload_sha256(payload),
+            "payload_json": payload,
+        },
+    )
+
+    with pytest.raises(ValueError, match=field_name):
+        codec.from_db_row(malformed)
+
+
+def test_health_db_row_rejects_matching_non_allowlisted_decimal_like_payloads() -> None:
+    import polymarket_alpha_lab.paper_autonomous_investment_ledger_db_history_health_db_row as codec
+
+    row = _db_row()
+    payload = {**row.payload_json, "config_version": "42.25"}
+    malformed = _bypassed_row(
+        row,
+        {
+            "report_sha256": _canonical_payload_sha256(payload),
+            "config_version": "42.25",
+            "payload_json": payload,
+        },
+    )
+
+    with pytest.raises(ValueError, match="config_version"):
+        codec.from_db_row(malformed)
+
+
+@pytest.mark.parametrize(
+    ("field_name", "payload_value", "message"),
+    (
+        ("latest_total_submitted_notional", 42.25, "float"),
+        ("latest_total_submitted_notional", Decimal("42.250000"), "raw Decimal"),
+        ("generated_at", GENERATED_AT, "raw datetime"),
+    ),
+)
+def test_health_db_row_rejects_raw_json_payload_values(
+    field_name: str,
+    payload_value: object,
+    message: str,
+) -> None:
+    import polymarket_alpha_lab.paper_autonomous_investment_ledger_db_history_health_db_row as codec
+
+    row = _db_row()
+    payload = {**row.payload_json, field_name: payload_value}
+    malformed = _bypassed_row(
+        row,
+        {
+            "report_sha256": row.report_sha256,
+            "payload_json": payload,
+        },
+    )
+
+    with pytest.raises(ValueError, match=message):
+        codec.from_db_row(malformed)
+
+
 def test_health_db_row_hash_is_deterministic_for_equivalent_reports() -> None:
     import polymarket_alpha_lab.paper_autonomous_investment_ledger_db_history_health_db_row as codec
     from polymarket_alpha_lab.paper_autonomous_investment_ledger_db_history_health import (

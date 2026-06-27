@@ -69,6 +69,25 @@ def _valid_row() -> PaperOrderLifecycleDbRow:
     return paper_order_lifecycle_record_to_db_row(_record())
 
 
+def _bypassed_row(
+    row: PaperOrderLifecycleDbRow,
+    *,
+    payload_json: dict[str, Any] | None = None,
+    report_sha256: str | None = None,
+    **overrides: Any,
+) -> PaperOrderLifecycleDbRow:
+    bypassed = object.__new__(PaperOrderLifecycleDbRow)
+    kwargs = _row_kwargs(row)
+    if payload_json is not None:
+        kwargs["payload_json"] = payload_json
+    if report_sha256 is not None:
+        kwargs["report_sha256"] = report_sha256
+    kwargs.update(overrides)
+    for field_name, value in kwargs.items():
+        object.__setattr__(bypassed, field_name, value)
+    return bypassed
+
+
 def test_order_lifecycle_db_row_module_is_pure_paper_only_codec() -> None:
     source = Path(
         "src/polymarket_alpha_lab/paper_order_lifecycle_db_row.py",
@@ -124,6 +143,133 @@ def test_record_to_db_row_uses_canonical_payload_hash_and_round_trips() -> None:
     }
     assert row.report_sha256 == _payload_sha256(row.payload_json)
     assert paper_order_lifecycle_record_from_db_row(row) == record
+
+
+def test_record_to_db_row_writes_decimal_payload_fields_at_fixed_six_places() -> None:
+    record = PaperOrderLifecycleRecord(
+        generated_at=GENERATED_AT,
+        config_version="paper-order-lifecycle-v0",
+        lifecycle_status="paper_filled",
+        recommended_next_step="record_paper_outcome",
+        source_execution_status="paper_submitted",
+        source_execution_notional=Decimal("1.2"),
+        fill_notional=Decimal("3"),
+        is_terminal=True,
+        reason_codes=("paper_order_lifecycle_filled",),
+    )
+
+    row = paper_order_lifecycle_record_to_db_row(record)
+
+    assert row.payload_json["source_execution_notional"] == "1.200000"
+    assert row.payload_json["fill_notional"] == "3.000000"
+    assert row.report_sha256 == _payload_sha256(row.payload_json)
+    assert paper_order_lifecycle_record_from_db_row(row) == record
+
+
+def test_from_db_row_recovers_equivalent_legacy_decimal_payload_after_raw_hash() -> None:
+    row = _valid_row()
+    payload_json = dict(row.payload_json)
+    payload_json["source_execution_notional"] = "1.23"
+    payload_json["fill_notional"] = "1.230"
+    legacy_row = _bypassed_row(
+        row,
+        payload_json=payload_json,
+        report_sha256=_payload_sha256(payload_json),
+    )
+
+    recovered = paper_order_lifecycle_record_from_db_row(legacy_row)
+
+    assert recovered == _record()
+
+
+def test_from_db_row_rejects_legacy_payload_when_raw_hash_is_stale() -> None:
+    row = _valid_row()
+    payload_json = dict(row.payload_json)
+    payload_json["source_execution_notional"] = "1.23"
+    payload_json["fill_notional"] = "1.230"
+    stale_hash_row = _bypassed_row(row, payload_json=payload_json)
+
+    with pytest.raises(ValueError, match="report_sha256 must match payload_json"):
+        paper_order_lifecycle_record_from_db_row(stale_hash_row)
+
+
+def test_from_db_row_rejects_legacy_decimal_payload_that_changes_value() -> None:
+    row = _valid_row()
+    payload_json = dict(row.payload_json)
+    payload_json["source_execution_notional"] = "1.24"
+    payload_json["fill_notional"] = "1.230"
+    changed_value_row = _bypassed_row(
+        row,
+        payload_json=payload_json,
+        report_sha256=_payload_sha256(payload_json),
+    )
+
+    with pytest.raises(ValueError, match="source_execution_notional must match payload_json"):
+        paper_order_lifecycle_record_from_db_row(changed_value_row)
+
+
+@pytest.mark.parametrize(
+    ("payload_key", "payload_value"),
+    (
+        ("source_execution_notional", "1.2300001"),
+        ("fill_notional", "1.2300001"),
+    ),
+)
+def test_from_db_row_rejects_overprecision_legacy_decimal_payload(
+    payload_key: str,
+    payload_value: str,
+) -> None:
+    row = _valid_row()
+    payload_json = dict(row.payload_json)
+    payload_json[payload_key] = payload_value
+    overprecision_row = _bypassed_row(
+        row,
+        payload_json=payload_json,
+        report_sha256=_payload_sha256(payload_json),
+    )
+
+    with pytest.raises(ValueError, match="at most six decimal places"):
+        paper_order_lifecycle_record_from_db_row(overprecision_row)
+
+
+def test_from_db_row_rejects_non_allowlisted_decimal_like_payload() -> None:
+    row = _valid_row()
+    payload_json = dict(row.payload_json)
+    payload_json["recommended_next_step"] = "1.230000"
+    decimal_like_row = _bypassed_row(
+        row,
+        payload_json=payload_json,
+        report_sha256=_payload_sha256(payload_json),
+    )
+
+    with pytest.raises(ValueError, match="Decimal-like|allowlisted"):
+        paper_order_lifecycle_record_from_db_row(decimal_like_row)
+
+
+@pytest.mark.parametrize(
+    ("payload_key", "payload_value", "match"),
+    (
+        ("source_execution_notional", 1.23, "float"),
+        ("source_execution_notional", Decimal("1.23"), "raw Decimal"),
+        ("generated_at", GENERATED_AT, "raw datetime"),
+    ),
+)
+def test_from_db_row_rejects_raw_unsafe_json_payload_values(
+    payload_key: str,
+    payload_value: Any,
+    match: str,
+) -> None:
+    row = _valid_row()
+    payload_json = dict(row.payload_json)
+    payload_json[payload_key] = payload_value
+    unsafe_row = _bypassed_row(
+        row,
+        payload_json=payload_json,
+        report_sha256=row.report_sha256,
+    )
+
+    with pytest.raises(ValueError, match=match):
+        paper_order_lifecycle_record_from_db_row(unsafe_row)
 
 
 def test_constructor_rejects_report_sha256_mismatch() -> None:
@@ -226,13 +372,13 @@ def test_constructor_rejects_payload_noncanonical_json_values() -> None:
 
 def test_from_db_row_revalidates_object_new_bypassed_rows() -> None:
     row = _valid_row()
-    bypassed = object.__new__(PaperOrderLifecycleDbRow)
-    for field_name, value in _row_kwargs(row).items():
-        object.__setattr__(bypassed, field_name, value)
     payload_json = dict(row.payload_json)
     payload_json["fill_notional"] = "2.000000"
-    object.__setattr__(bypassed, "payload_json", payload_json)
-    object.__setattr__(bypassed, "report_sha256", _payload_sha256(payload_json))
+    bypassed = _bypassed_row(
+        row,
+        payload_json=payload_json,
+        report_sha256=_payload_sha256(payload_json),
+    )
 
     with pytest.raises(ValueError, match="fill_notional must match payload_json"):
         paper_order_lifecycle_record_from_db_row(bypassed)

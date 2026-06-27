@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, fields, is_dataclass
 from datetime import UTC, datetime
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation, localcontext
 import hashlib
 import json
 import re
@@ -47,6 +47,34 @@ RISK_REASON_CODES = {
     "queue_risk_passed",
 }
 _SHA256_PATTERN = re.compile(r"^[a-f0-9]{64}$")
+_DECIMAL_LIKE_PATTERN = re.compile(
+    r"^[+-]?(?:(?:\d+(?:\.\d*)?)|(?:\.\d+))(?:[eE][+-]?\d+)?$",
+)
+_DECIMAL_QUANTUM = Decimal("0.000001")
+_PAYLOAD_KIND_PRIORITY = "priority"
+_PAYLOAD_KIND_RISK = "risk"
+_PRIORITY_DECIMAL_PAYLOAD_PATTERNS = frozenset(
+    {
+        ("total_ready_notional",),
+        ("top_research_priority_score",),
+        ("average_research_priority_score",),
+        ("priority_rows", "*", "total_ready_notional"),
+        ("priority_rows", "*", "top_queue_score"),
+        ("priority_rows", "*", "average_ready_score"),
+        ("priority_rows", "*", "research_priority_score"),
+    },
+)
+_RISK_DECIMAL_PAYLOAD_PATTERNS = frozenset(
+    {
+        ("total_ready_notional",),
+        ("largest_queue_ready_notional",),
+        ("total_ready_notional_utilization",),
+        ("largest_queue_ready_notional_utilization",),
+        ("max_total_ready_notional",),
+        ("max_single_queue_ready_notional",),
+        ("throttle_utilization_threshold",),
+    },
+)
 
 
 @dataclass(frozen=True)
@@ -155,8 +183,11 @@ def paper_action_gated_strategy_recommendation_queue_decision_support_to_db_row(
     _validate_unique_risk_reason_codes(risk_report.reason_codes)
     _validate_priority_and_risk_snapshot_consistency(priority_report, risk_report)
 
-    priority_payload_json = _json_ready(asdict(priority_report))
-    risk_payload_json = _json_ready(asdict(risk_report))
+    priority_payload_json = _json_ready(
+        asdict(priority_report),
+        payload_kind=_PAYLOAD_KIND_PRIORITY,
+    )
+    risk_payload_json = _json_ready(asdict(risk_report), payload_kind=_PAYLOAD_KIND_RISK)
     return PaperActionGatedStrategyRecommendationQueueDecisionSupportDbRow(
         snapshot_sha256=_snapshot_sha256(priority_payload_json, risk_payload_json),
         generated_at=priority_report.generated_at,
@@ -234,6 +265,16 @@ def _validate_row_payload_consistency(
         risk_payload_json,
     ):
         raise ValueError("snapshot_sha256 must match payload_json")
+    priority_payload_json = _normalize_legacy_decimal_payload_json(
+        "priority_payload_json",
+        priority_payload_json,
+        payload_kind=_PAYLOAD_KIND_PRIORITY,
+    )
+    risk_payload_json = _normalize_legacy_decimal_payload_json(
+        "risk_payload_json",
+        risk_payload_json,
+        payload_kind=_PAYLOAD_KIND_RISK,
+    )
     try:
         priority_report = from_jsonable(
             PaperActionGatedStrategyRecommendationQueuePriorityReport,
@@ -417,10 +458,6 @@ def _validate_row_matches_payload(
     risk_report: PaperActionGatedStrategyRecommendationQueueRiskReport,
 ) -> None:
     expected_values = {
-        "snapshot_sha256": _snapshot_sha256(
-            _json_ready(asdict(priority_report)),
-            _json_ready(asdict(risk_report)),
-        ),
         "generated_at": priority_report.generated_at,
         "priority_source_report_count": priority_report.source_report_count,
         "priority_research_ready_count": priority_report.research_ready_count,
@@ -444,8 +481,8 @@ def _validate_row_matches_payload(
     }
     for field_name, expected_value in expected_values.items():
         if not _json_equal_strict(
-            _json_ready(getattr(row, field_name)),
-            _json_ready(expected_value),
+            _json_ready(getattr(row, field_name), payload_kind=None),
+            _json_ready(expected_value, payload_kind=None),
         ):
             raise ValueError(f"{field_name} must match payload_json")
 
@@ -466,15 +503,30 @@ def _snapshot_sha256(
     return hashlib.sha256(encoded).hexdigest()
 
 
-def _json_ready(value: Any) -> Any:
+def _json_ready(
+    value: Any,
+    *,
+    payload_kind: str | None = None,
+    field_path: tuple[object, ...] = (),
+) -> Any:
     if value is None:
         return None
     if is_dataclass(value) and not isinstance(value, type):
-        return _json_ready(asdict(value))
+        return _json_ready(
+            asdict(value),
+            payload_kind=payload_kind,
+            field_path=field_path,
+        )
     if isinstance(value, Decimal):
-        if not value.is_finite():
-            raise ValueError("JSON Decimal value must be finite")
-        return format(value.quantize(Decimal("0.000001")), "f")
+        if payload_kind is not None and not _is_decimal_payload_path(
+            payload_kind,
+            field_path,
+        ):
+            raise ValueError(
+                f"{_format_payload_path(field_path)} is not an allowlisted "
+                "Decimal path",
+            )
+        return _fixed_six_decimal_string(_format_payload_path(field_path), value)
     if isinstance(value, datetime):
         return _as_utc("datetime", value).isoformat()
     if isinstance(value, float):
@@ -485,9 +537,23 @@ def _json_ready(value: Any) -> Any:
         for key in value:
             if type(key) is not str:
                 raise ValueError("JSON object keys must be strings")
-        return {key: _json_ready(item) for key, item in value.items()}
+        return {
+            key: _json_ready(
+                item,
+                payload_kind=payload_kind,
+                field_path=(*field_path, key),
+            )
+            for key, item in value.items()
+        }
     if isinstance(value, (list, tuple)):
-        return [_json_ready(item) for item in value]
+        return [
+            _json_ready(
+                item,
+                payload_kind=payload_kind,
+                field_path=(*field_path, index),
+            )
+            for index, item in enumerate(value)
+        ]
     raise ValueError("decision-support row values must be JSON serializable")
 
 
@@ -495,14 +561,160 @@ def _normalize_json_object(field_name: str, value: object) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError(f"{field_name} must be a JSON object")
     try:
-        _reject_json_floats(value)
-        _reject_json_decimals(value)
-        normalized = _json_ready(value)
+        normalized = _copy_json_value(value)
     except ValueError as exc:
         raise ValueError(f"{field_name} {exc}") from exc
     if not isinstance(normalized, dict):
         raise ValueError(f"{field_name} must be a JSON object")
     return normalized
+
+
+def _copy_json_value(value: Any) -> Any:
+    if value is None:
+        return None
+    if type(value) in (str, int, bool):
+        return value
+    if isinstance(value, float):
+        raise ValueError("JSON value must not contain float values")
+    if isinstance(value, Decimal):
+        raise ValueError("JSON value must not contain Decimal values")
+    if isinstance(value, datetime):
+        raise ValueError("JSON value must not contain datetime values")
+    if isinstance(value, dict):
+        copied: dict[str, Any] = {}
+        for key, item in value.items():
+            if type(key) is not str:
+                raise ValueError("JSON object keys must be strings")
+            copied[key] = _copy_json_value(item)
+        return copied
+    if isinstance(value, list):
+        return [_copy_json_value(item) for item in value]
+    raise ValueError("JSON value must be a dict, list, string, int, bool, or null")
+
+
+def _normalize_legacy_decimal_payload_json(
+    field_name: str,
+    payload_json: dict[str, Any],
+    *,
+    payload_kind: str,
+) -> dict[str, Any]:
+    return _normalize_legacy_decimal_payload_value(
+        payload_json,
+        payload_kind=payload_kind,
+        field_name=field_name,
+    )
+
+
+def _normalize_legacy_decimal_payload_value(
+    value: Any,
+    *,
+    payload_kind: str,
+    field_name: str,
+    field_path: tuple[object, ...] = (),
+) -> Any:
+    if _is_decimal_payload_path(payload_kind, field_path):
+        if value is None:
+            return None
+        if type(value) is not str:
+            raise ValueError(
+                f"{_format_payload_path(field_path, field_name)} must be a "
+                "Decimal string",
+            )
+        return _fixed_six_decimal_json_string(
+            _format_payload_path(field_path, field_name),
+            value,
+        )
+    if isinstance(value, str) and _looks_like_decimal_string(value):
+        raise ValueError(
+            f"{_format_payload_path(field_path, field_name)} contains "
+            "non-allowlisted Decimal-like string",
+        )
+    if isinstance(value, dict):
+        return {
+            key: _normalize_legacy_decimal_payload_value(
+                item,
+                payload_kind=payload_kind,
+                field_name=field_name,
+                field_path=(*field_path, key),
+            )
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [
+            _normalize_legacy_decimal_payload_value(
+                item,
+                payload_kind=payload_kind,
+                field_name=field_name,
+                field_path=(*field_path, index),
+            )
+            for index, item in enumerate(value)
+        ]
+    return value
+
+
+def _fixed_six_decimal_json_string(field_name: str, value: str) -> str:
+    try:
+        decimal_value = Decimal(value)
+    except InvalidOperation as exc:
+        raise ValueError(f"{field_name} must be a Decimal string") from exc
+    return _fixed_six_decimal_string(field_name, decimal_value)
+
+
+def _fixed_six_decimal_string(field_name: str, value: object) -> str:
+    return format(_require_fixed_six_decimal(field_name, value), "f")
+
+
+def _require_fixed_six_decimal(field_name: str, value: object) -> Decimal:
+    decimal_value = _require_nonnegative_decimal(field_name, value)
+    try:
+        with localcontext() as context:
+            integer_digits = max(decimal_value.adjusted() + 1, 1)
+            context.prec = max(28, integer_digits + 6)
+            fixed_value = decimal_value.quantize(_DECIMAL_QUANTUM)
+    except (ArithmeticError, InvalidOperation) as exc:
+        raise ValueError(f"{field_name} must not exceed six decimal places") from exc
+    if decimal_value != fixed_value:
+        raise ValueError(f"{field_name} must not exceed six decimal places")
+    return fixed_value
+
+
+def _is_decimal_payload_path(payload_kind: str, path: tuple[object, ...]) -> bool:
+    patterns: frozenset[tuple[str, ...]]
+    if payload_kind == _PAYLOAD_KIND_PRIORITY:
+        patterns = _PRIORITY_DECIMAL_PAYLOAD_PATTERNS
+    elif payload_kind == _PAYLOAD_KIND_RISK:
+        patterns = _RISK_DECIMAL_PAYLOAD_PATTERNS
+    else:
+        raise ValueError("unknown payload kind")
+    return _matches_payload_path(path, patterns)
+
+
+def _matches_payload_path(
+    path: tuple[object, ...],
+    patterns: frozenset[tuple[str, ...]],
+) -> bool:
+    for pattern in patterns:
+        if len(path) != len(pattern):
+            continue
+        if all(
+            pattern_part == "*" or pattern_part == path_part
+            for pattern_part, path_part in zip(pattern, path, strict=True)
+        ):
+            return True
+    return False
+
+
+def _looks_like_decimal_string(value: str) -> bool:
+    return _DECIMAL_LIKE_PATTERN.fullmatch(value) is not None
+
+
+def _format_payload_path(
+    field_path: tuple[object, ...],
+    field_name: str = "JSON Decimal value",
+) -> str:
+    if not field_path:
+        return field_name
+    return field_name + " " + " ".join(str(item) for item in field_path)
 
 
 def _normalize_risk_reason_codes_json(field_name: str, value: object) -> list[str]:
@@ -620,19 +832,6 @@ def _reject_json_floats(value: Any) -> None:
     elif isinstance(value, list):
         for item in value:
             _reject_json_floats(item)
-
-
-def _reject_json_decimals(value: Any) -> None:
-    if isinstance(value, Decimal):
-        raise ValueError("JSON value must not be a Decimal")
-    if isinstance(value, datetime):
-        raise ValueError("JSON value must not be a datetime")
-    if isinstance(value, dict):
-        for item in value.values():
-            _reject_json_decimals(item)
-    elif isinstance(value, (list, tuple)):
-        for item in value:
-            _reject_json_decimals(item)
 
 
 def _json_equal_strict(left: Any, right: Any) -> bool:

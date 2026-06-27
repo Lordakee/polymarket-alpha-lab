@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from copy import deepcopy
 from dataclasses import FrozenInstanceError, replace
 from datetime import UTC, datetime, timezone, timedelta
 from decimal import Decimal
@@ -89,6 +90,10 @@ def _canonical_payload_sha256(payload_json: dict[str, object]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _payload_copy(row: object) -> dict[str, object]:
+    return deepcopy(row.payload_json)  # type: ignore[attr-defined]
+
+
 def _assert_no_floats(value: object) -> None:
     if isinstance(value, float):
         pytest.fail("scorer DB JSON contains floats")
@@ -167,6 +172,202 @@ def test_scorer_db_row_hash_is_deterministic_for_equivalent_reports() -> None:
     assert first.report_sha256 == second.report_sha256
     assert first.payload_json == second.payload_json
     assert first.report_sha256 != third.report_sha256
+
+
+@pytest.mark.parametrize(
+    ("report_field", "terse_value", "fixed_value"),
+    (
+        ("top_total_score", "0.65", "0.650000"),
+        ("average_total_score", "0.65", "0.650000"),
+        ("total_recommended_notional", "10", "10.000000"),
+    ),
+)
+def test_scorer_db_row_writes_fixed_six_place_report_decimal_strings(
+    report_field: str,
+    terse_value: str,
+    fixed_value: str,
+) -> None:
+    import polymarket_alpha_lab.autonomous_market_scorer_db_row as codec
+
+    terse_report = _report()
+    fixed_report = _report()
+    object.__setattr__(terse_report, report_field, d(terse_value))
+    object.__setattr__(fixed_report, report_field, d(fixed_value))
+
+    terse_row = codec.to_db_row(terse_report)
+    fixed_row = codec.to_db_row(fixed_report)
+
+    assert terse_row.payload_json[report_field] == fixed_value
+    assert terse_row.payload_json == fixed_row.payload_json
+    assert terse_row.report_sha256 == fixed_row.report_sha256
+
+
+@pytest.mark.parametrize(
+    ("score_field", "terse_value", "fixed_value"),
+    (
+        ("confidence_score", "0.8", "0.800000"),
+        ("liquidity_score", "0.7", "0.700000"),
+        ("spread_score", "0.6", "0.600000"),
+        ("edge_score", "0.5", "0.500000"),
+        ("cost_score", "0.9", "0.900000"),
+        ("risk_score", "0.3", "0.300000"),
+        ("total_score", "0.65", "0.650000"),
+        ("recommended_notional", "10", "10.000000"),
+        ("estimated_edge", "0.05", "0.050000"),
+    ),
+)
+def test_scorer_db_row_writes_fixed_six_place_score_row_decimal_strings(
+    score_field: str,
+    terse_value: str,
+    fixed_value: str,
+) -> None:
+    import polymarket_alpha_lab.autonomous_market_scorer_db_row as codec
+
+    terse_score_row = _score_row()
+    fixed_score_row = _score_row()
+    object.__setattr__(terse_score_row, score_field, d(terse_value))
+    object.__setattr__(fixed_score_row, score_field, d(fixed_value))
+    terse_report = _report()
+    fixed_report = _report()
+    object.__setattr__(terse_report, "score_rows", (terse_score_row,))
+    object.__setattr__(fixed_report, "score_rows", (fixed_score_row,))
+
+    terse_row = codec.to_db_row(terse_report)
+    fixed_row = codec.to_db_row(fixed_report)
+
+    assert terse_row.payload_json["score_rows"][0][score_field] == fixed_value
+    assert terse_row.payload_json == fixed_row.payload_json
+    assert terse_row.report_sha256 == fixed_row.report_sha256
+
+
+def test_scorer_db_row_rejects_overprecision_decimal_writes_without_rounding() -> None:
+    import polymarket_alpha_lab.autonomous_market_scorer_db_row as codec
+
+    report = _report()
+    object.__setattr__(report, "top_total_score", d("0.6500001"))
+
+    with pytest.raises(ValueError, match="top_total_score|six decimal|quantized"):
+        codec.to_db_row(report)
+
+
+def test_scorer_db_row_rejects_score_row_overprecision_decimal_writes_without_rounding() -> None:
+    import polymarket_alpha_lab.autonomous_market_scorer_db_row as codec
+
+    score_row = _score_row()
+    object.__setattr__(score_row, "recommended_notional", d("10.0000001"))
+    report = _report()
+    object.__setattr__(report, "score_rows", (score_row,))
+
+    with pytest.raises(ValueError, match="recommended_notional|six decimal|quantized"):
+        codec.to_db_row(report)
+
+
+def test_scorer_from_db_row_accepts_self_hashed_legacy_decimal_payload_strings() -> None:
+    import polymarket_alpha_lab.autonomous_market_scorer_db_row as codec
+
+    row = codec.to_db_row(_report())
+    payload = _payload_copy(row)
+    payload["top_total_score"] = "0.65"
+    payload["average_total_score"] = "0.6500"
+    payload["total_recommended_notional"] = "10"
+    payload["score_rows"][0]["confidence_score"] = "0.8"
+    payload["score_rows"][0]["liquidity_score"] = "0.70"
+    payload["score_rows"][0]["spread_score"] = "0.6000"
+    payload["score_rows"][0]["edge_score"] = "0.5"
+    payload["score_rows"][0]["cost_score"] = "0.9"
+    payload["score_rows"][0]["risk_score"] = "0.3"
+    payload["score_rows"][0]["total_score"] = "0.65"
+    payload["score_rows"][0]["recommended_notional"] = "10"
+    payload["score_rows"][0]["estimated_edge"] = "0.05"
+    legacy = _bypassed_row(
+        row,
+        report_sha256=_canonical_payload_sha256(payload),
+        top_total_score=d("0.65"),
+        average_total_score=d("0.6500"),
+        total_recommended_notional=d("10"),
+        score_rows_json=payload["score_rows"],
+        payload_json=payload,
+    )
+
+    assert codec.from_db_row(legacy) == _report()  # type: ignore[arg-type]
+
+
+def test_scorer_from_db_row_rejects_stale_legacy_decimal_payload_hash() -> None:
+    import polymarket_alpha_lab.autonomous_market_scorer_db_row as codec
+
+    row = codec.to_db_row(_report())
+    payload = _payload_copy(row)
+    payload["top_total_score"] = "0.65"
+    malformed = _bypassed_row(row, payload_json=payload)
+
+    with pytest.raises(ValueError, match="report_sha256"):
+        codec.from_db_row(malformed)  # type: ignore[arg-type]
+
+
+def test_scorer_from_db_row_rejects_value_changing_legacy_decimal_payload() -> None:
+    import polymarket_alpha_lab.autonomous_market_scorer_db_row as codec
+
+    row = codec.to_db_row(_report())
+    payload = _payload_copy(row)
+    payload["top_total_score"] = "0.650001"
+    malformed = _bypassed_row(
+        row,
+        report_sha256=_canonical_payload_sha256(payload),
+        payload_json=payload,
+    )
+
+    with pytest.raises(ValueError, match="top_total_score|payload_json"):
+        codec.from_db_row(malformed)  # type: ignore[arg-type]
+
+
+def test_scorer_from_db_row_rejects_overprecision_legacy_decimal_payload() -> None:
+    import polymarket_alpha_lab.autonomous_market_scorer_db_row as codec
+
+    row = codec.to_db_row(_report())
+    payload = _payload_copy(row)
+    payload["score_rows"][0]["estimated_edge"] = "0.0500001"
+    malformed = _bypassed_row(
+        row,
+        report_sha256=_canonical_payload_sha256(payload),
+        score_rows_json=payload["score_rows"],
+        payload_json=payload,
+    )
+
+    with pytest.raises(ValueError, match="estimated_edge|six decimal|payload_json"):
+        codec.from_db_row(malformed)  # type: ignore[arg-type]
+
+
+def test_scorer_from_db_row_rejects_non_allowlisted_decimal_like_payload_string() -> None:
+    import polymarket_alpha_lab.autonomous_market_scorer_db_row as codec
+
+    row = codec.to_db_row(_report())
+    payload = _payload_copy(row)
+    payload["markets_scored"] = "1.0"
+    malformed = _bypassed_row(
+        row,
+        report_sha256=_canonical_payload_sha256(payload),
+        payload_json=payload,
+    )
+
+    with pytest.raises(ValueError, match="markets_scored|payload_json"):
+        codec.from_db_row(malformed)  # type: ignore[arg-type]
+
+
+def test_scorer_from_db_row_rejects_self_hashed_non_allowlisted_decimal_like_string() -> None:
+    import polymarket_alpha_lab.autonomous_market_scorer_db_row as codec
+
+    row = codec.to_db_row(_report())
+    payload = _payload_copy(row)
+    payload["score_rows"][0]["market_slug"] = "1.0"
+    malformed = _bypassed_row(
+        row,
+        report_sha256=_canonical_payload_sha256(payload),
+        score_rows_json=payload["score_rows"],
+        payload_json=payload,
+    )
+
+    with pytest.raises(ValueError, match="market_slug|payload_json"):
+        codec.from_db_row(malformed)  # type: ignore[arg-type]
 
 
 def test_scorer_db_row_is_frozen() -> None:
@@ -277,7 +478,34 @@ def test_scorer_from_db_row_rejects_bypassed_decimal_score_rows_json() -> None:
         codec.from_db_row(malformed)  # type: ignore[arg-type]
 
 
-def test_scorer_from_db_row_rejects_noncanonical_decimal_payload_strings() -> None:
+@pytest.mark.parametrize(
+    ("raw_value", "message"),
+    (
+        (0.1, "float"),
+        (Decimal("0.650000"), "Decimal"),
+        (GENERATED_AT, "datetime"),
+    ),
+)
+def test_scorer_db_row_rejects_raw_payload_json_values_before_hash_or_normalization(
+    raw_value: object,
+    message: str,
+) -> None:
+    import polymarket_alpha_lab.autonomous_market_scorer_db_row as codec
+
+    row = codec.to_db_row(_report())
+    payload = {**row.payload_json, "raw_value": raw_value}
+
+    with pytest.raises(ValueError, match=message):
+        codec.AutonomousMarketScorerDbRow(
+            **{**_row_values(row), "payload_json": payload},
+        )
+
+    malformed = _bypassed_row(row, payload_json=payload)
+    with pytest.raises(ValueError, match=message):
+        codec.from_db_row(malformed)  # type: ignore[arg-type]
+
+
+def test_scorer_from_db_row_accepts_self_hashed_trailing_zero_legacy_decimal_string() -> None:
     import polymarket_alpha_lab.autonomous_market_scorer_db_row as codec
 
     row = codec.to_db_row(_report())
@@ -289,8 +517,7 @@ def test_scorer_from_db_row_rejects_noncanonical_decimal_payload_strings() -> No
         payload_json=payload,
     )
 
-    with pytest.raises(ValueError, match="top_total_score|payload_json"):
-        codec.from_db_row(malformed)  # type: ignore[arg-type]
+    assert codec.from_db_row(malformed) == _report()  # type: ignore[arg-type]
 
 
 def test_scorer_db_row_rejects_hash_mismatch_at_construction() -> None:

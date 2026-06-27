@@ -73,6 +73,10 @@ def _payload_sha256(payload_json: dict[str, object]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _payload_copy(row: object) -> dict[str, object]:
+    return json.loads(json.dumps(row.payload_json, allow_nan=False))
+
+
 def _assert_no_floats(value: object) -> None:
     if isinstance(value, float):
         pytest.fail("DB payload must not contain floats")
@@ -129,6 +133,83 @@ def test_risk_budget_db_row_serializes_canonical_payload_and_round_trips():
     assert codec.paper_recommendation_risk_budget_from_db_row(row) == report
 
 
+@pytest.mark.parametrize(
+    ("field_name", "terse_value", "fixed_value"),
+    (
+        ("total_suggested_notional", "90", "90.000000"),
+        ("remaining_total_notional", "160", "160.000000"),
+        ("total_notional_utilization", "0.09", "0.090000"),
+        ("largest_single_recommendation_share", "0.05", "0.050000"),
+        ("nav_notional", "1000", "1000.000000"),
+        ("max_total_utilization", "0.25", "0.250000"),
+        ("max_single_recommendation_share", "0.1", "0.100000"),
+        ("min_remaining_notional", "50", "50.000000"),
+    ),
+)
+def test_risk_budget_db_row_writes_fixed_six_place_decimal_payload_strings(
+    field_name: str,
+    terse_value: str,
+    fixed_value: str,
+):
+    codec = _codec_module()
+    terse_report = _report()
+    fixed_report = _report()
+    object.__setattr__(terse_report, field_name, Decimal(terse_value))
+    object.__setattr__(fixed_report, field_name, Decimal(fixed_value))
+
+    terse_row = codec.to_db_row(terse_report)
+    fixed_row = codec.to_db_row(fixed_report)
+
+    assert terse_row.payload_json[field_name] == fixed_value
+    assert terse_row.payload_json == fixed_row.payload_json
+    assert terse_row.report_sha256 == fixed_row.report_sha256
+
+
+def test_risk_budget_db_row_writes_fixed_six_place_selected_notional_values():
+    codec = _codec_module()
+    terse_report = _report()
+    fixed_report = _report()
+    object.__setattr__(
+        terse_report,
+        "selected_position_notional_values",
+        (Decimal("50"), Decimal("40")),
+    )
+    object.__setattr__(
+        fixed_report,
+        "selected_position_notional_values",
+        (Decimal("50.000000"), Decimal("40.000000")),
+    )
+
+    terse_row = codec.to_db_row(terse_report)
+    fixed_row = codec.to_db_row(fixed_report)
+
+    assert terse_row.payload_json["selected_position_notional_values"] == [
+        "50.000000",
+        "40.000000",
+    ]
+    assert terse_row.payload_json == fixed_row.payload_json
+    assert terse_row.report_sha256 == fixed_row.report_sha256
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value"),
+    (
+        ("total_suggested_notional", "90.0000001"),
+        ("total_notional_utilization", "0.0900001"),
+    ),
+)
+def test_risk_budget_db_row_rejects_overprecision_decimal_writes_without_rounding(
+    field_name: str,
+    value: str,
+):
+    codec = _codec_module()
+    report = _report()
+    object.__setattr__(report, field_name, Decimal(value))
+
+    with pytest.raises(ValueError, match=f"{field_name}|six decimal|quantized"):
+        codec.to_db_row(report)
+
+
 def test_risk_budget_db_row_hash_is_deterministic_for_equivalent_reports():
     codec = _codec_module()
     report = _report()
@@ -144,6 +225,116 @@ def test_risk_budget_db_row_hash_is_deterministic_for_equivalent_reports():
     assert first.report_sha256 == second.report_sha256
     assert first.payload_json == second.payload_json
     assert first.report_sha256 != third.report_sha256
+
+
+def test_risk_budget_from_db_row_accepts_self_hashed_legacy_decimal_payload_strings():
+    codec = _codec_module()
+    row = codec.to_db_row(_report())
+    payload_json = _payload_copy(row)
+    payload_json["total_suggested_notional"] = "90"
+    payload_json["remaining_total_notional"] = "160"
+    payload_json["total_notional_utilization"] = "0.09"
+    payload_json["largest_single_recommendation_share"] = "0.05"
+    payload_json["selected_position_notional_values"] = ["50", "40.0"]
+    payload_json["nav_notional"] = "1000"
+    payload_json["max_total_utilization"] = "0.25"
+    payload_json["max_single_recommendation_share"] = "0.1"
+    payload_json["min_remaining_notional"] = "50"
+    legacy_row = _bypassed_row(
+        codec,
+        row,
+        report_sha256=_payload_sha256(payload_json),
+        total_suggested_notional=Decimal("90"),
+        remaining_total_notional=Decimal("160"),
+        total_notional_utilization=Decimal("0.09"),
+        largest_single_recommendation_share=Decimal("0.05"),
+        nav_notional=Decimal("1000"),
+        max_total_utilization=Decimal("0.25"),
+        max_single_recommendation_share=Decimal("0.1"),
+        min_remaining_notional=Decimal("50"),
+        payload_json=payload_json,
+    )
+
+    assert codec.from_db_row(legacy_row) == _report()
+
+
+def test_risk_budget_from_db_row_validates_raw_hash_before_legacy_normalization():
+    codec = _codec_module()
+    row = codec.to_db_row(_report())
+    payload_json = _payload_copy(row)
+    payload_json["total_suggested_notional"] = "90"
+    stale_row = _bypassed_row(codec, row, payload_json=payload_json)
+
+    with pytest.raises(ValueError, match="report_sha256"):
+        codec.from_db_row(stale_row)
+
+
+@pytest.mark.parametrize(
+    ("field_name", "legacy_value"),
+    (
+        ("total_suggested_notional", "90.000001"),
+        ("total_notional_utilization", "0.090001"),
+    ),
+)
+def test_risk_budget_from_db_row_rejects_value_changing_legacy_decimal_payloads(
+    field_name: str,
+    legacy_value: str,
+):
+    codec = _codec_module()
+    row = codec.to_db_row(_report())
+    payload_json = _payload_copy(row)
+    payload_json[field_name] = legacy_value
+    malformed = _bypassed_row(
+        codec,
+        row,
+        report_sha256=_payload_sha256(payload_json),
+        payload_json=payload_json,
+    )
+
+    with pytest.raises(ValueError, match=field_name):
+        codec.from_db_row(malformed)
+
+
+@pytest.mark.parametrize(
+    ("field_name", "legacy_value"),
+    (
+        ("total_suggested_notional", "90.0000001"),
+        ("total_notional_utilization", "0.0900001"),
+    ),
+)
+def test_risk_budget_from_db_row_rejects_overprecision_legacy_decimal_payloads(
+    field_name: str,
+    legacy_value: str,
+):
+    codec = _codec_module()
+    row = codec.to_db_row(_report())
+    payload_json = _payload_copy(row)
+    payload_json[field_name] = legacy_value
+    malformed = _bypassed_row(
+        codec,
+        row,
+        report_sha256=_payload_sha256(payload_json),
+        payload_json=payload_json,
+    )
+
+    with pytest.raises(ValueError, match=f"{field_name}|six decimal"):
+        codec.from_db_row(malformed)
+
+
+def test_risk_budget_from_db_row_rejects_non_allowlisted_decimal_like_payloads():
+    codec = _codec_module()
+    row = codec.to_db_row(_report())
+    payload_json = _payload_copy(row)
+    payload_json["selected_count"] = "2.0"
+    malformed = _bypassed_row(
+        codec,
+        row,
+        report_sha256=_payload_sha256(payload_json),
+        payload_json=payload_json,
+    )
+
+    with pytest.raises(ValueError, match="selected_count|payload_json"):
+        codec.from_db_row(malformed)
 
 
 def test_risk_budget_db_row_is_frozen():
@@ -234,6 +425,48 @@ def test_risk_budget_db_row_rejects_floats_in_json_payloads():
         codec.PaperRecommendationRiskBudgetDbRow(
             **{**_row_values(row), "payload_json": {**row.payload_json, "bad_float": 0.1}},
         )
+
+
+@pytest.mark.parametrize(
+    ("field_name", "raw_value"),
+    (
+        ("total_suggested_notional", Decimal("90.000000")),
+        ("generated_at", GENERATED_AT),
+    ),
+)
+def test_risk_budget_db_row_constructor_rejects_raw_runtime_payload_values(
+    field_name: str,
+    raw_value: object,
+):
+    codec = _codec_module()
+    row = codec.to_db_row(_report())
+    payload_json = {**row.payload_json, field_name: raw_value}
+
+    with pytest.raises(ValueError, match="payload_json"):
+        codec.PaperRecommendationRiskBudgetDbRow(
+            **{**_row_values(row), "payload_json": payload_json},
+        )
+
+
+@pytest.mark.parametrize(
+    ("field_name", "raw_value"),
+    (
+        ("total_suggested_notional", Decimal("90.000000")),
+        ("generated_at", GENERATED_AT),
+        ("bad_float", 0.1),
+    ),
+)
+def test_risk_budget_from_db_row_rejects_bypassed_raw_runtime_payload_values(
+    field_name: str,
+    raw_value: object,
+):
+    codec = _codec_module()
+    row = codec.to_db_row(_report())
+    payload_json = {**row.payload_json, field_name: raw_value}
+    malformed = _bypassed_row(codec, row, payload_json=payload_json)
+
+    with pytest.raises(ValueError, match="payload_json"):
+        codec.from_db_row(malformed)
 
 
 def test_risk_budget_db_row_from_db_row_rejects_bypassed_malformed_stored_payload():

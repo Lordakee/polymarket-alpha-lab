@@ -129,6 +129,37 @@ def test_broker_execution_db_row_serializes_canonical_payload_and_round_trips() 
     assert codec.from_db_row(row) == record
 
 
+def test_broker_execution_db_row_new_writes_use_fixed_six_place_decimals() -> None:
+    codec = _codec()
+    record = _record()
+    unchecked_record = _unchecked_record(
+        source_proposal_total_notional=d("42.5"),
+        execution_notional=d("42.5"),
+    )
+
+    row = codec.to_db_row(unchecked_record)
+
+    assert row.source_proposal_total_notional == d("42.500000")
+    assert row.execution_notional == d("42.500000")
+    assert row.payload_json["source_proposal_total_notional"] == "42.500000"
+    assert row.payload_json["execution_notional"] == "42.500000"
+    assert row.record_sha256 == codec.to_db_row(record).record_sha256
+
+
+def test_broker_execution_db_row_rejects_raw_decimal_like_non_allowlisted_paths() -> None:
+    codec = _codec()
+    row = codec.to_db_row(_record())
+    payload = {**row.payload_json, "debug_decimal": d("1.000000")}
+
+    with pytest.raises(ValueError, match="Decimal"):
+        codec.PaperBrokerExecutionDbRow(
+            **{
+                **_row_values(row),
+                "payload_json": payload,
+            },
+        )
+
+
 def test_broker_execution_db_row_hash_is_deterministic_over_full_payload() -> None:
     codec = _codec()
     record = _record()
@@ -313,6 +344,73 @@ def test_broker_execution_from_db_row_rejects_unchecked_raw_hash_bypass() -> Non
         codec.from_db_row(unchecked)
 
 
+def test_broker_execution_db_row_recovers_equivalent_legacy_self_hashed_decimals() -> None:
+    codec = _codec()
+    row = codec.to_db_row(_record())
+    legacy_payload = {
+        **row.payload_json,
+        "source_proposal_total_notional": "42.5",
+        "execution_notional": "42.5000",
+    }
+    legacy_row = codec.PaperBrokerExecutionDbRow(
+        **{
+            **_row_values(row),
+            "record_sha256": _canonical_payload_sha256(legacy_payload),
+            "payload_json": legacy_payload,
+        },
+    )
+
+    assert legacy_row.record_sha256 == _canonical_payload_sha256(legacy_payload)
+    assert legacy_row.payload_json == legacy_payload
+    assert codec.from_db_row(legacy_row) == _record()
+
+
+def test_broker_execution_from_db_row_validates_raw_hash_before_legacy_decimal_normalization() -> None:
+    codec = _codec()
+    row = codec.to_db_row(_record())
+    legacy_payload = {
+        **row.payload_json,
+        "source_proposal_total_notional": "42.5",
+        "execution_notional": "42.5000",
+    }
+    unchecked = _unchecked_row(
+        row,
+        record_sha256=row.record_sha256,
+        payload_json=legacy_payload,
+    )
+
+    with pytest.raises(ValueError, match="record_sha256"):
+        codec.from_db_row(unchecked)
+
+
+@pytest.mark.parametrize(
+    ("payload_updates", "expected_message"),
+    (
+        ({"source_proposal_total_notional": "42.500001"}, "source_proposal_total_notional"),
+        ({"execution_notional": "42.5000001"}, "execution_notional"),
+        ({"execution_notional": "42.5000000"}, "execution_notional"),
+        ({"debug": {"execution_notional": "42.5"}}, "execution_notional"),
+        ({"debug_decimal": "1.000000"}, "payload_json"),
+    ),
+)
+def test_broker_execution_db_row_rejects_unsafe_legacy_decimal_payloads(
+    payload_updates: dict[str, object],
+    expected_message: str,
+) -> None:
+    codec = _codec()
+    row = codec.to_db_row(_record())
+    payload = {**row.payload_json, **payload_updates}
+
+    with pytest.raises(ValueError, match=expected_message):
+        codec.PaperBrokerExecutionDbRow(
+            **{
+                **_row_values(row),
+                "record_sha256": _canonical_payload_sha256(payload),
+                "payload_json": payload,
+            },
+        )
+
+
 @pytest.mark.parametrize(
     ("overrides", "payload_updates", "expected_field"),
     (
@@ -449,6 +547,31 @@ def test_broker_execution_db_row_rejects_invalid_decimal_json_on_readback() -> N
             **{
                 **_row_values(row),
                 "record_sha256": _canonical_payload_sha256(payload),
+                "payload_json": payload,
+            },
+        )
+
+
+@pytest.mark.parametrize(
+    ("payload_updates", "expected_message"),
+    (
+        ({"execution_notional": d("42.500000")}, "Decimal"),
+        ({"generated_at": GENERATED_AT}, "datetime|canonical"),
+        ({"generated_at": 1.0}, "float"),
+    ),
+)
+def test_broker_execution_db_row_rejects_raw_non_json_payload_types(
+    payload_updates: dict[str, object],
+    expected_message: str,
+) -> None:
+    codec = _codec()
+    row = codec.to_db_row(_record())
+    payload = {**row.payload_json, **payload_updates}
+
+    with pytest.raises(ValueError, match=expected_message):
+        codec.PaperBrokerExecutionDbRow(
+            **{
+                **_row_values(row),
                 "payload_json": payload,
             },
         )

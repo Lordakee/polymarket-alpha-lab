@@ -45,7 +45,22 @@ REASON_CODES = {
     "near_max_selected_count",
 }
 _SHA256_PATTERN = re.compile(r"^[a-f0-9]{64}$")
+_DECIMAL_LIKE_PATTERN = re.compile(
+    r"^[+-]?(?:(?:\d+(?:\.\d*)?)|(?:\.\d+))(?:[eE][+-]?\d+)?$",
+)
 _MISSING = object()
+_TOP_LEVEL_DECIMAL_PAYLOAD_FIELDS = frozenset(
+    (
+        "total_suggested_notional",
+        "remaining_total_notional",
+        "total_notional_utilization",
+        "largest_single_recommendation_share",
+        "nav_notional",
+        "max_total_utilization",
+        "max_single_recommendation_share",
+        "min_remaining_notional",
+    ),
+)
 
 
 @dataclass(frozen=True)
@@ -118,8 +133,12 @@ class PaperRecommendationRiskBudgetDbRow:
             _normalize_json_object("payload_json", self.payload_json),
         )
         _require_hard_flags("DB row", self)
-        _validate_materialized_fields_match_payload(self)
         _validate_json_hard_flags(self.payload_json, "payload_json")
+        _validate_raw_payload_hash(self)
+        _validate_materialized_fields_match_payload(
+            self,
+            _normalize_legacy_decimal_payload(self.payload_json),
+        )
 
 
 def paper_recommendation_risk_budget_to_db_row(
@@ -158,10 +177,12 @@ def paper_recommendation_risk_budget_from_db_row(
 ) -> PaperRecommendationRiskBudgetReport:
     if type(row) is not PaperRecommendationRiskBudgetDbRow:
         raise ValueError("row must be a PaperRecommendationRiskBudgetDbRow")
-    _reject_json_floats(row.payload_json)
+    _reject_raw_payload_values(row.payload_json, "payload_json")
     _validate_json_hard_flags(row.payload_json, "payload_json")
+    _validate_raw_payload_hash(row)
+    payload_json = _normalize_legacy_decimal_payload(row.payload_json)
     try:
-        report = from_jsonable(PaperRecommendationRiskBudgetReport, row.payload_json)
+        report = from_jsonable(PaperRecommendationRiskBudgetReport, payload_json)
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError(
             f"payload_json is not a valid risk budget report: {exc}",
@@ -170,7 +191,7 @@ def paper_recommendation_risk_budget_from_db_row(
         raise ValueError("payload_json must recover a PaperRecommendationRiskBudgetReport")
     _validate_report_tree(report)
     expected_row = paper_recommendation_risk_budget_to_db_row(report)
-    _validate_row_matches_payload(row, expected_row)
+    _validate_row_matches_payload(row, expected_row, compare_raw_payload=False)
     return report
 
 
@@ -202,9 +223,10 @@ def _validate_report_tree(value: Any, field_name: str = "report") -> None:
 def _validate_row_matches_payload(
     row: PaperRecommendationRiskBudgetDbRow,
     expected: PaperRecommendationRiskBudgetDbRow,
+    *,
+    compare_raw_payload: bool = True,
 ) -> None:
     for field_name in (
-        "report_sha256",
         "generated_at",
         "config_version",
         "status",
@@ -220,21 +242,25 @@ def _validate_row_matches_payload(
         "max_single_recommendation_share",
         "min_remaining_notional",
         "max_selected_count",
-        "payload_json",
         "paper_only",
         "report_only",
         "readonly",
     ):
         if getattr(row, field_name) != getattr(expected, field_name):
             raise ValueError(f"{field_name} must match payload_json")
+    if compare_raw_payload:
+        for field_name in ("report_sha256", "payload_json"):
+            if getattr(row, field_name) != getattr(expected, field_name):
+                raise ValueError(f"{field_name} must match payload_json")
 
 
 def _validate_materialized_fields_match_payload(
     row: PaperRecommendationRiskBudgetDbRow,
+    payload_json: dict[str, Any] | None = None,
 ) -> None:
-    payload_json = row.payload_json
+    if payload_json is None:
+        payload_json = row.payload_json
     expected_values = {
-        "report_sha256": _report_sha256(payload_json),
         "generated_at": payload_json.get("generated_at", _MISSING),
         "config_version": payload_json.get("config_version", _MISSING),
         "status": payload_json.get("status", _MISSING),
@@ -273,25 +299,41 @@ def _validate_materialized_fields_match_payload(
         "readonly": payload_json.get("readonly", _MISSING),
     }
     actual_values = {
-        "report_sha256": row.report_sha256,
         "generated_at": row.generated_at.isoformat(),
         "config_version": row.config_version,
         "status": row.status,
         "reason_codes_json": row.reason_codes_json,
-        "total_suggested_notional": _json_ready(row.total_suggested_notional),
-        "remaining_total_notional": _json_ready(row.remaining_total_notional),
-        "total_notional_utilization": _json_ready(row.total_notional_utilization),
-        "largest_single_recommendation_share": _json_ready(
+        "total_suggested_notional": _materialized_decimal_json(
+            "total_suggested_notional",
+            row.total_suggested_notional,
+        ),
+        "remaining_total_notional": _materialized_decimal_json(
+            "remaining_total_notional",
+            row.remaining_total_notional,
+        ),
+        "total_notional_utilization": _materialized_decimal_json(
+            "total_notional_utilization",
+            row.total_notional_utilization,
+        ),
+        "largest_single_recommendation_share": _materialized_decimal_json(
+            "largest_single_recommendation_share",
             row.largest_single_recommendation_share,
         ),
         "selected_count": row.selected_count,
         "blocked_count": row.blocked_count,
-        "nav_notional": _json_ready(row.nav_notional),
-        "max_total_utilization": _json_ready(row.max_total_utilization),
-        "max_single_recommendation_share": _json_ready(
+        "nav_notional": _materialized_decimal_json("nav_notional", row.nav_notional),
+        "max_total_utilization": _materialized_decimal_json(
+            "max_total_utilization",
+            row.max_total_utilization,
+        ),
+        "max_single_recommendation_share": _materialized_decimal_json(
+            "max_single_recommendation_share",
             row.max_single_recommendation_share,
         ),
-        "min_remaining_notional": _json_ready(row.min_remaining_notional),
+        "min_remaining_notional": _materialized_decimal_json(
+            "min_remaining_notional",
+            row.min_remaining_notional,
+        ),
         "max_selected_count": row.max_selected_count,
         "paper_only": row.paper_only,
         "report_only": row.report_only,
@@ -312,15 +354,28 @@ def _report_sha256(payload_json: dict[str, Any]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def _json_ready(value: Any) -> Any:
+def _materialized_decimal_json(field_name: str, value: Decimal | None) -> str | None:
+    if value is None:
+        return None
+    return _fixed_six_decimal_string(f"payload_json.{field_name}", value)
+
+
+def _validate_raw_payload_hash(row: PaperRecommendationRiskBudgetDbRow) -> None:
+    if row.report_sha256 != _report_sha256(row.payload_json):
+        raise ValueError("report_sha256 must match payload_json")
+
+
+def _json_ready(value: Any, field_path: tuple[str | int, ...] = ()) -> Any:
     if value is None:
         return None
     if is_dataclass(value) and not isinstance(value, type):
-        return _json_ready(asdict(value))
+        return _json_ready(asdict(value), field_path)
     if isinstance(value, Decimal):
-        if not value.is_finite():
-            raise ValueError("JSON Decimal value must be finite")
-        return str(value)
+        if not _is_decimal_payload_path(field_path):
+            raise ValueError(
+                f"{_format_payload_path(field_path)} is not an allowed Decimal path",
+            )
+        return _fixed_six_decimal_string(_format_payload_path(field_path), value)
     if isinstance(value, datetime):
         return _as_utc("datetime", value).isoformat()
     if isinstance(value, float):
@@ -331,9 +386,15 @@ def _json_ready(value: Any) -> Any:
         for key in value:
             if type(key) is not str:
                 raise ValueError("JSON object keys must be strings")
-        return {key: _json_ready(item) for key, item in value.items()}
+        return {
+            key: _json_ready(item, (*field_path, key))
+            for key, item in value.items()
+        }
     if isinstance(value, (list, tuple)):
-        return [_json_ready(item) for item in value]
+        return [
+            _json_ready(item, (*field_path, index))
+            for index, item in enumerate(value)
+        ]
     raise ValueError("risk budget DB row values must be JSON serializable")
 
 
@@ -341,13 +402,133 @@ def _normalize_json_object(field_name: str, value: object) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError(f"{field_name} must be a JSON object")
     try:
-        _reject_json_floats(value)
-        normalized = _json_ready(value)
+        normalized = _copy_json_payload(value)
     except ValueError as exc:
         raise ValueError(f"{field_name} {exc}") from exc
     if not isinstance(normalized, dict):
         raise ValueError(f"{field_name} must be a JSON object")
     return normalized
+
+
+def _copy_json_payload(value: Any) -> Any:
+    if value is None:
+        return None
+    if isinstance(value, Decimal):
+        raise ValueError("JSON value must not contain Decimal")
+    if isinstance(value, datetime):
+        raise ValueError("JSON value must not contain datetime")
+    if isinstance(value, float):
+        raise ValueError("JSON value must not be a float")
+    if type(value) in (str, int, bool):
+        return value
+    if isinstance(value, dict):
+        copied: dict[str, Any] = {}
+        for key, item in value.items():
+            if type(key) is not str:
+                raise ValueError("JSON object keys must be strings")
+            copied[key] = _copy_json_payload(item)
+        return copied
+    if isinstance(value, (list, tuple)):
+        return [_copy_json_payload(item) for item in value]
+    raise ValueError("JSON value must be a dict, list, string, int, bool, or null")
+
+
+def _reject_raw_payload_values(value: Any, field_name: str) -> None:
+    if isinstance(value, Decimal):
+        raise ValueError(f"{field_name} must not contain raw Decimal")
+    if isinstance(value, datetime):
+        raise ValueError(f"{field_name} must not contain raw datetime")
+    if isinstance(value, float):
+        raise ValueError(f"{field_name} must not contain float")
+    if isinstance(value, dict):
+        for key, item in value.items():
+            _reject_raw_payload_values(item, f"{field_name}.{key}")
+    elif isinstance(value, (list, tuple)):
+        for index, item in enumerate(value):
+            _reject_raw_payload_values(item, f"{field_name}[{index}]")
+
+
+def _normalize_legacy_decimal_payload(
+    value: Any,
+    field_path: tuple[str | int, ...] = (),
+) -> Any:
+    if _is_decimal_payload_path(field_path):
+        if value is None:
+            return None
+        field_name = _format_payload_path(field_path)
+        if type(value) is not str:
+            raise ValueError(f"{field_name} must be a Decimal string")
+        return _fixed_six_decimal_string(
+            field_name,
+            _decimal_from_string(field_name, value),
+        )
+    if isinstance(value, str) and _looks_like_decimal_string(value):
+        raise ValueError(
+            f"{_format_payload_path(field_path)} contains "
+            "non-allowlisted Decimal-like string",
+        )
+    if isinstance(value, dict):
+        return {
+            key: _normalize_legacy_decimal_payload(item, (*field_path, key))
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [
+            _normalize_legacy_decimal_payload(item, (*field_path, index))
+            for index, item in enumerate(value)
+        ]
+    return value
+
+
+def _is_decimal_payload_path(field_path: tuple[str | int, ...]) -> bool:
+    return (
+        len(field_path) == 1
+        and field_path[0] in _TOP_LEVEL_DECIMAL_PAYLOAD_FIELDS
+    ) or (
+        len(field_path) == 2
+        and field_path[0] == "selected_position_notional_values"
+        and isinstance(field_path[1], int)
+    )
+
+
+def _fixed_six_decimal_string(field_name: str, value: Decimal) -> str:
+    if type(value) is not Decimal:
+        raise ValueError(f"{field_name} must be a Decimal")
+    if not value.is_finite():
+        raise ValueError(f"{field_name} must be finite")
+    value_tuple = value.as_tuple()
+    excess_decimal_places = -value_tuple.exponent - 6
+    if excess_decimal_places > 0 and any(
+        digit != 0 for digit in value_tuple.digits[-excess_decimal_places:]
+    ):
+        raise ValueError(f"{field_name} must not exceed six decimal places")
+    return f"{value:.6f}"
+
+
+def _decimal_from_string(field_name: str, value: str) -> Decimal:
+    try:
+        decimal = Decimal(value)
+    except ArithmeticError as exc:
+        raise ValueError(f"{field_name} must be a Decimal string") from exc
+    if not decimal.is_finite():
+        raise ValueError(f"{field_name} must be finite")
+    return decimal
+
+
+def _looks_like_decimal_string(value: str) -> bool:
+    return _DECIMAL_LIKE_PATTERN.fullmatch(value) is not None
+
+
+def _format_payload_path(field_path: tuple[str | int, ...]) -> str:
+    if not field_path:
+        return "payload_json"
+    formatted = "payload_json"
+    for item in field_path:
+        if isinstance(item, int):
+            formatted = f"{formatted}[{item}]"
+        else:
+            formatted = f"{formatted}.{item}"
+    return formatted
 
 
 def _normalize_reason_codes_json(field_name: str, value: object) -> list[str]:

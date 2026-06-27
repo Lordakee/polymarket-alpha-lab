@@ -240,6 +240,15 @@ def _row_values(row: object) -> dict[str, object]:
     return dict(row.__dict__)
 
 
+def _bypassed_row(row: object, **overrides: object) -> object:
+    values = _row_values(row)
+    values.update(overrides)
+    bypassed = object.__new__(type(row))
+    for field_name, value in values.items():
+        object.__setattr__(bypassed, field_name, value)
+    return bypassed
+
+
 def _canonical_payload_sha256(payload_json: dict[str, object]) -> str:
     encoded = json.dumps(
         payload_json,
@@ -339,6 +348,37 @@ def test_autonomous_screening_gate_db_row_hash_is_deterministic() -> None:
     assert first.report_sha256 == second.report_sha256
     assert first.payload_json == second.payload_json
     assert first.report_sha256 != third.report_sha256
+
+
+def test_autonomous_screening_gate_db_row_writes_fixed_six_place_decimal_payloads() -> None:
+    import polymarket_alpha_lab.paper_autonomous_screening_decision_support_gate_db_row as codec
+
+    report = _report()
+    object.__setattr__(report, "queue_total_ready_notional", Decimal("10"))
+    object.__setattr__(report, "queue_largest_ready_notional", Decimal("10.0"))
+    object.__setattr__(report, "queue_top_research_priority_score", Decimal("4.7"))
+    object.__setattr__(
+        report,
+        "queue_average_research_priority_score",
+        Decimal("4.7000"),
+    )
+
+    row = codec.to_db_row(report)
+
+    assert row.payload_json["queue_total_ready_notional"] == "10.000000"
+    assert row.payload_json["queue_largest_ready_notional"] == "10.000000"
+    assert row.payload_json["queue_top_research_priority_score"] == "4.700000"
+    assert row.payload_json["queue_average_research_priority_score"] == "4.700000"
+
+
+def test_autonomous_screening_gate_db_row_rejects_overprecision_decimal_writes_without_rounding() -> None:
+    import polymarket_alpha_lab.paper_autonomous_screening_decision_support_gate_db_row as codec
+
+    report = _report()
+    object.__setattr__(report, "queue_total_ready_notional", Decimal("10.0000001"))
+
+    with pytest.raises(ValueError, match="queue_total_ready_notional|six decimal"):
+        codec.to_db_row(report)
 
 
 def test_autonomous_screening_gate_db_row_preserves_absent_optional_inputs() -> None:
@@ -470,6 +510,34 @@ def test_autonomous_screening_gate_db_row_rejects_recursive_floats_in_json_paylo
         replace(row, payload_json={**row.payload_json, "bad_float": 0.1})
 
 
+@pytest.mark.parametrize(
+    ("payload_key", "raw_value", "message"),
+    (
+        ("queue_total_ready_notional", Decimal("10.000000"), "Decimal"),
+        ("queue_total_ready_notional", 10.0, "float"),
+        ("generated_at", GENERATED_AT, "datetime"),
+    ),
+)
+def test_autonomous_screening_gate_db_row_rejects_raw_non_json_payload_values(
+    payload_key: str,
+    raw_value: object,
+    message: str,
+) -> None:
+    import polymarket_alpha_lab.paper_autonomous_screening_decision_support_gate_db_row as codec
+
+    row = codec.to_db_row(_report())
+    payload = {**row.payload_json, payload_key: raw_value}
+
+    with pytest.raises(ValueError, match=f"payload_json.*{message}"):
+        codec.PaperAutonomousScreeningDecisionSupportGateDbRow(
+            **{**_row_values(row), "payload_json": payload},
+        )
+
+    malformed = _bypassed_row(row, payload_json=payload)
+    with pytest.raises(ValueError, match=message):
+        codec.from_db_row(malformed)  # type: ignore[arg-type]
+
+
 def test_autonomous_screening_gate_db_row_rejects_stale_raw_payload_hash() -> None:
     import polymarket_alpha_lab.paper_autonomous_screening_decision_support_gate_db_row as codec
 
@@ -482,24 +550,116 @@ def test_autonomous_screening_gate_db_row_rejects_stale_raw_payload_hash() -> No
         )
 
 
-def test_autonomous_screening_gate_db_row_rejects_self_hashed_noncanonical_decimal_payload() -> None:
+def test_autonomous_screening_gate_db_row_accepts_self_hashed_legacy_decimal_payload() -> None:
     import polymarket_alpha_lab.paper_autonomous_screening_decision_support_gate_db_row as codec
 
     row = codec.to_db_row(_report())
     payload = {
         **row.payload_json,
         "queue_total_ready_notional": "10",
+        "queue_largest_ready_notional": "10.0",
+        "queue_top_research_priority_score": "4.7",
+        "queue_average_research_priority_score": "4.7000",
     }
 
-    with pytest.raises(ValueError, match="canonical|payload_json|queue_total_ready_notional"):
-        codec.PaperAutonomousScreeningDecisionSupportGateDbRow(
-            **{
-                **_row_values(row),
-                "report_sha256": _canonical_payload_sha256(payload),
-                "queue_total_ready_notional": Decimal("10"),
-                "payload_json": payload,
-            },
-        )
+    legacy_row = codec.PaperAutonomousScreeningDecisionSupportGateDbRow(
+        **{
+            **_row_values(row),
+            "report_sha256": _canonical_payload_sha256(payload),
+            "queue_total_ready_notional": Decimal("10"),
+            "queue_largest_ready_notional": Decimal("10.0"),
+            "queue_top_research_priority_score": Decimal("4.7"),
+            "queue_average_research_priority_score": Decimal("4.7000"),
+            "payload_json": payload,
+        },
+    )
+
+    assert codec.from_db_row(legacy_row) == _report()
+
+
+def test_autonomous_screening_gate_from_db_row_accepts_bypassed_self_hashed_legacy_decimal_payload() -> None:
+    import polymarket_alpha_lab.paper_autonomous_screening_decision_support_gate_db_row as codec
+
+    row = codec.to_db_row(_report())
+    payload = {
+        **row.payload_json,
+        "queue_total_ready_notional": "10",
+        "queue_largest_ready_notional": "10.0",
+        "queue_top_research_priority_score": "4.7",
+        "queue_average_research_priority_score": "4.7000",
+    }
+    legacy_row = _bypassed_row(
+        row,
+        report_sha256=_canonical_payload_sha256(payload),
+        queue_total_ready_notional=Decimal("10"),
+        queue_largest_ready_notional=Decimal("10.0"),
+        queue_top_research_priority_score=Decimal("4.7"),
+        queue_average_research_priority_score=Decimal("4.7000"),
+        payload_json=payload,
+    )
+
+    assert codec.from_db_row(legacy_row) == _report()  # type: ignore[arg-type]
+
+
+def test_autonomous_screening_gate_from_db_row_rejects_stale_legacy_decimal_payload_hash() -> None:
+    import polymarket_alpha_lab.paper_autonomous_screening_decision_support_gate_db_row as codec
+
+    row = codec.to_db_row(_report())
+    payload = {**row.payload_json, "queue_total_ready_notional": "10"}
+    malformed = _bypassed_row(
+        row,
+        queue_total_ready_notional=Decimal("10"),
+        payload_json=payload,
+    )
+
+    with pytest.raises(ValueError, match="report_sha256"):
+        codec.from_db_row(malformed)  # type: ignore[arg-type]
+
+
+def test_autonomous_screening_gate_from_db_row_rejects_value_changing_legacy_decimal_payload() -> None:
+    import polymarket_alpha_lab.paper_autonomous_screening_decision_support_gate_db_row as codec
+
+    row = codec.to_db_row(_report())
+    payload = {**row.payload_json, "queue_total_ready_notional": "10.000001"}
+    malformed = _bypassed_row(
+        row,
+        report_sha256=_canonical_payload_sha256(payload),
+        payload_json=payload,
+    )
+
+    with pytest.raises(ValueError, match="queue_total_ready_notional|payload_json"):
+        codec.from_db_row(malformed)  # type: ignore[arg-type]
+
+
+def test_autonomous_screening_gate_from_db_row_rejects_overprecision_legacy_decimal_payload() -> None:
+    import polymarket_alpha_lab.paper_autonomous_screening_decision_support_gate_db_row as codec
+
+    row = codec.to_db_row(_report())
+    payload = {**row.payload_json, "queue_total_ready_notional": "10.0000000"}
+    malformed = _bypassed_row(
+        row,
+        report_sha256=_canonical_payload_sha256(payload),
+        payload_json=payload,
+    )
+
+    with pytest.raises(ValueError, match="queue_total_ready_notional|six decimal|payload_json"):
+        codec.from_db_row(malformed)  # type: ignore[arg-type]
+
+
+def test_autonomous_screening_gate_from_db_row_rejects_non_allowlisted_decimal_like_payload() -> None:
+    import polymarket_alpha_lab.paper_autonomous_screening_decision_support_gate_db_row as codec
+
+    row = codec.to_db_row(_report())
+    payload = {**row.payload_json, "config_version": "1.0"}
+    malformed = _bypassed_row(
+        row,
+        report_sha256=_canonical_payload_sha256(payload),
+        config_version="1.0",
+        payload_json=payload,
+    )
+
+    with pytest.raises(ValueError, match="config_version|Decimal|payload_json"):
+        codec.from_db_row(malformed)  # type: ignore[arg-type]
 
 
 def test_autonomous_screening_gate_db_row_rejects_self_hashed_bool_payload_int_count() -> None:
@@ -671,6 +831,11 @@ def test_autonomous_screening_gate_from_db_row_rejects_bypassed_missing_payload_
     )
     for field_name, value in _row_values(row).items():
         object.__setattr__(malformed, field_name, value)
+    object.__setattr__(
+        malformed,
+        "report_sha256",
+        _canonical_payload_sha256(payload),
+    )
     object.__setattr__(malformed, "payload_json", payload)
 
     with pytest.raises(ValueError, match="paper_only"):

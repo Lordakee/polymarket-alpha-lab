@@ -7,7 +7,7 @@ import json
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation, localcontext
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -25,6 +25,13 @@ __all__ = (
 
 _MISSING = object()
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+_DECIMAL_QUANTUM = Decimal("0.000001")
+_DECIMAL_PAYLOAD_FIELDS = frozenset(
+    (
+        "source_execution_notional",
+        "fill_notional",
+    ),
+)
 
 
 @dataclass(frozen=True)
@@ -66,9 +73,10 @@ class PaperOrderLifecycleDbRow:
         if type(self.is_terminal) is not bool:
             raise ValueError("is_terminal must be a bool")
         _validate_reason_codes_json("reason_codes_json", self.reason_codes_json)
-        _validate_canonical_json_value("payload_json", self.payload_json)
         if type(self.payload_json) is not dict:
             raise ValueError("payload_json must be a JSON object")
+        _reject_raw_payload_values(self.payload_json, "payload_json")
+        _validate_canonical_json_value("payload_json", self.payload_json)
         if type(self.paper_only) is not bool:
             raise ValueError("paper_only must be a bool")
         if type(self.report_only) is not bool:
@@ -94,8 +102,8 @@ def paper_order_lifecycle_record_to_db_row(
         "lifecycle_status": record.lifecycle_status,
         "recommended_next_step": record.recommended_next_step,
         "source_execution_status": record.source_execution_status,
-        "source_execution_notional": str(record.source_execution_notional),
-        "fill_notional": str(record.fill_notional),
+        "source_execution_notional": _json_ready(record.source_execution_notional),
+        "fill_notional": _json_ready(record.fill_notional),
         "is_terminal": record.is_terminal,
         "reason_codes": list(record.reason_codes),
         "paper_only": record.paper_only,
@@ -159,32 +167,32 @@ def _validate_materialized_fields_match_payload(
     row: PaperOrderLifecycleDbRow,
 ) -> None:
     payload_json = row.payload_json
+    _validate_raw_payload_hash(row, payload_json)
+    normalized_payload_json = _normalize_legacy_decimal_payload(payload_json)
     expected_values = {
-        "report_sha256": _report_sha256(payload_json),
-        "generated_at": payload_json.get("generated_at", _MISSING),
-        "config_version": payload_json.get("config_version", _MISSING),
-        "lifecycle_status": payload_json.get("lifecycle_status", _MISSING),
-        "recommended_next_step": payload_json.get(
+        "generated_at": normalized_payload_json.get("generated_at", _MISSING),
+        "config_version": normalized_payload_json.get("config_version", _MISSING),
+        "lifecycle_status": normalized_payload_json.get("lifecycle_status", _MISSING),
+        "recommended_next_step": normalized_payload_json.get(
             "recommended_next_step",
             _MISSING,
         ),
-        "source_execution_status": payload_json.get(
+        "source_execution_status": normalized_payload_json.get(
             "source_execution_status",
             _MISSING,
         ),
-        "source_execution_notional": payload_json.get(
+        "source_execution_notional": normalized_payload_json.get(
             "source_execution_notional",
             _MISSING,
         ),
-        "fill_notional": payload_json.get("fill_notional", _MISSING),
-        "is_terminal": payload_json.get("is_terminal", _MISSING),
-        "reason_codes_json": payload_json.get("reason_codes", _MISSING),
-        "paper_only": payload_json.get("paper_only", _MISSING),
-        "report_only": payload_json.get("report_only", _MISSING),
-        "readonly": payload_json.get("readonly", _MISSING),
+        "fill_notional": normalized_payload_json.get("fill_notional", _MISSING),
+        "is_terminal": normalized_payload_json.get("is_terminal", _MISSING),
+        "reason_codes_json": normalized_payload_json.get("reason_codes", _MISSING),
+        "paper_only": normalized_payload_json.get("paper_only", _MISSING),
+        "report_only": normalized_payload_json.get("report_only", _MISSING),
+        "readonly": normalized_payload_json.get("readonly", _MISSING),
     }
     actual_values = {
-        "report_sha256": row.report_sha256,
         "generated_at": row.generated_at.isoformat(),
         "config_version": row.config_version,
         "lifecycle_status": row.lifecycle_status,
@@ -203,6 +211,14 @@ def _validate_materialized_fields_match_payload(
             raise ValueError(f"{field_name} must match payload_json")
 
 
+def _validate_raw_payload_hash(
+    row: PaperOrderLifecycleDbRow,
+    payload_json: dict[str, Any],
+) -> None:
+    if row.report_sha256 != _report_sha256(payload_json):
+        raise ValueError("report_sha256 must match payload_json")
+
+
 def _report_sha256(payload_json: dict[str, Any]) -> str:
     encoded = json.dumps(
         payload_json,
@@ -215,10 +231,102 @@ def _report_sha256(payload_json: dict[str, Any]) -> str:
 
 def _json_ready(value: Any) -> Any:
     if isinstance(value, Decimal):
-        if not value.is_finite():
-            raise ValueError("JSON Decimal value must be finite")
-        return str(value)
+        return _decimal_to_six_place_string("JSON Decimal value", value)
     return value
+
+
+def _normalize_legacy_decimal_payload(
+    value: Any,
+    field_path: tuple[str | int, ...] = (),
+) -> Any:
+    if _is_decimal_payload_path(field_path):
+        field_name = _format_payload_path(field_path)
+        if type(value) is not str:
+            raise ValueError(f"{field_name} must be a Decimal string")
+        return _decimal_string_to_six_place(field_name, value)
+    if type(value) is str and _is_decimal_like_string(value):
+        raise ValueError(
+            f"{_format_payload_path(field_path)} contains a Decimal-like string "
+            "outside allowlisted Decimal payload fields",
+        )
+    if isinstance(value, dict):
+        return {
+            key: _normalize_legacy_decimal_payload(item, (*field_path, key))
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [
+            _normalize_legacy_decimal_payload(item, (*field_path, index))
+            for index, item in enumerate(value)
+        ]
+    return value
+
+
+def _is_decimal_payload_path(field_path: tuple[str | int, ...]) -> bool:
+    return len(field_path) == 1 and field_path[0] in _DECIMAL_PAYLOAD_FIELDS
+
+
+def _decimal_string_to_six_place(field_name: str, value: str) -> str:
+    _require_canonical_string(field_name, value)
+    try:
+        decimal = Decimal(value)
+    except (InvalidOperation, ValueError) as exc:
+        raise ValueError(f"{field_name} must be a Decimal string") from exc
+    return _decimal_to_six_place_string(field_name, decimal)
+
+
+def _decimal_to_six_place_string(field_name: str, value: Decimal) -> str:
+    if type(value) is not Decimal:
+        raise ValueError(f"{field_name} must be a Decimal")
+    if not value.is_finite():
+        raise ValueError(f"{field_name} must be finite")
+    try:
+        with localcontext() as context:
+            integer_digits = max(value.adjusted() + 1, 1)
+            context.prec = max(28, integer_digits + 6)
+            quantized = value.quantize(_DECIMAL_QUANTUM)
+    except InvalidOperation as exc:
+        raise ValueError(f"{field_name} must have at most six decimal places") from exc
+    if quantized != value:
+        raise ValueError(f"{field_name} must have at most six decimal places")
+    return format(quantized, "f")
+
+
+def _is_decimal_like_string(value: str) -> bool:
+    if "." not in value and "e" not in value.lower():
+        return False
+    try:
+        Decimal(value)
+    except (InvalidOperation, ValueError):
+        return False
+    return True
+
+
+def _format_payload_path(field_path: tuple[str | int, ...]) -> str:
+    if not field_path:
+        return "payload_json"
+    formatted = "payload_json"
+    for item in field_path:
+        if isinstance(item, int):
+            formatted = f"{formatted}[{item}]"
+        else:
+            formatted = f"{formatted}.{item}"
+    return formatted
+
+
+def _reject_raw_payload_values(value: Any, field_name: str) -> None:
+    if isinstance(value, float):
+        raise ValueError(f"{field_name} must not be a float")
+    if isinstance(value, Decimal):
+        raise ValueError(f"{field_name} must not be a raw Decimal")
+    if isinstance(value, datetime):
+        raise ValueError(f"{field_name} must not be a raw datetime")
+    if isinstance(value, dict):
+        for key, item in value.items():
+            _reject_raw_payload_values(item, f"{field_name}.{key}")
+    elif isinstance(value, (list, tuple)):
+        for index, item in enumerate(value):
+            _reject_raw_payload_values(item, f"{field_name}[{index}]")
 
 
 def _validate_canonical_json_value(field_name: str, value: object) -> None:
