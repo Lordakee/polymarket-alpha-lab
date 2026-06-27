@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from copy import deepcopy
 from dataclasses import FrozenInstanceError, replace
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -383,6 +384,46 @@ def test_research_queue_db_row_hash_uses_canonical_full_payload():
     assert first.report_sha256 != third.report_sha256
 
 
+def test_research_queue_db_row_writes_fixed_six_place_decimal_payload_strings():
+    report = _ready_report()
+    object.__setattr__(report, "total_ready_notional", Decimal("12.0000000"))
+    object.__setattr__(report, "total_selected_notional", Decimal("12.0000000"))
+    object.__setattr__(report, "total_suggested_notional", Decimal("12.0000000"))
+    object.__setattr__(report, "top_research_priority_score", Decimal("0.8000000"))
+    object.__setattr__(report, "average_research_ready_score", Decimal("0.8000000"))
+    object.__setattr__(report.rows[0], "recommendation_score", Decimal("0.7000000"))
+    object.__setattr__(report.rows[0], "net_edge_per_share", Decimal("0.0800000"))
+    object.__setattr__(report.rows[0], "confidence", Decimal("0.9000000"))
+    object.__setattr__(report.rows[0], "suggested_notional", Decimal("12.0000000"))
+    object.__setattr__(report.rows[0], "research_priority_score", Decimal("0.8000000"))
+
+    row = paper_strategy_candidate_research_queue_report_to_db_row(report)
+    canonical_row = paper_strategy_candidate_research_queue_report_to_db_row(
+        _ready_report(),
+    )
+
+    assert row.payload_json["total_ready_notional"] == "12.000000"
+    assert row.payload_json["total_selected_notional"] == "12.000000"
+    assert row.payload_json["total_suggested_notional"] == "12.000000"
+    assert row.payload_json["top_research_priority_score"] == "0.800000"
+    assert row.payload_json["average_research_ready_score"] == "0.800000"
+    assert row.payload_json["rows"][0]["recommendation_score"] == "0.700000"
+    assert row.payload_json["rows"][0]["net_edge_per_share"] == "0.080000"
+    assert row.payload_json["rows"][0]["confidence"] == "0.900000"
+    assert row.payload_json["rows"][0]["suggested_notional"] == "12.000000"
+    assert row.payload_json["rows"][0]["research_priority_score"] == "0.800000"
+    assert row.payload_json == canonical_row.payload_json
+    assert row.report_sha256 == canonical_row.report_sha256
+
+
+def test_research_queue_db_row_rejects_overprecision_decimal_writes_without_rounding():
+    report = _ready_report()
+    object.__setattr__(report.rows[0], "recommendation_score", Decimal("0.7000004"))
+
+    with pytest.raises(ValueError, match="six decimal|quantized"):
+        paper_strategy_candidate_research_queue_report_to_db_row(report)
+
+
 def test_research_queue_db_row_is_frozen():
     row = paper_strategy_candidate_research_queue_report_to_db_row(_watch_report())
 
@@ -473,10 +514,11 @@ def test_research_queue_db_row_constructor_rejects_unsafe_stored_flags():
 
 def test_research_queue_db_row_from_db_row_rejects_bypassed_unsafe_stored_flags():
     row = paper_strategy_candidate_research_queue_report_to_db_row(_watch_report())
+    payload = {**row.payload_json, "readonly": False}
     malformed = _unchecked_row(
         row,
-        report_sha256="a" * 64,
-        payload_json={**row.payload_json, "readonly": False},
+        report_sha256=_payload_sha256(payload),
+        payload_json=payload,
     )
 
     with pytest.raises(ValueError, match="readonly"):
@@ -512,7 +554,11 @@ def test_research_queue_db_row_from_db_row_rejects_bypassed_deep_unsafe_stored_f
             *row.payload_json["rows"][1:],
         ],
     }
-    malformed = _unchecked_row(row, report_sha256="a" * 64, payload_json=payload)
+    malformed = _unchecked_row(
+        row,
+        report_sha256=_payload_sha256(payload),
+        payload_json=payload,
+    )
 
     with pytest.raises(ValueError, match="readonly"):
         paper_strategy_candidate_research_queue_report_from_db_row(malformed)
@@ -622,7 +668,11 @@ def test_research_queue_db_row_rejects_all_missing_hard_flags_nested_inside_list
             **{**_row_values(row), "payload_json": payload},
         )
 
-    malformed = _unchecked_row(row, payload_json=payload)
+    malformed = _unchecked_row(
+        row,
+        report_sha256=_payload_sha256(payload),
+        payload_json=payload,
+    )
     with pytest.raises(ValueError, match="paper_only"):
         paper_strategy_candidate_research_queue_report_from_db_row(malformed)
 
@@ -667,7 +717,7 @@ def test_research_queue_db_row_from_db_row_rejects_bypassed_raw_payload_hash_mis
 
 def test_research_queue_db_row_from_db_row_rejects_bypassed_noncanonical_recovered_payload():
     row = paper_strategy_candidate_research_queue_report_to_db_row(_ready_report())
-    payload = {**row.payload_json, "total_ready_notional": "12.0"}
+    payload = {**row.payload_json, "candidate_count": "3.0"}
     malformed = _unchecked_row(
         row,
         report_sha256=_payload_sha256(payload),
@@ -676,6 +726,97 @@ def test_research_queue_db_row_from_db_row_rejects_bypassed_noncanonical_recover
 
     with pytest.raises(ValueError, match="payload_json"):
         paper_strategy_candidate_research_queue_report_from_db_row(malformed)
+
+
+def test_research_queue_db_row_from_db_row_accepts_self_hashed_legacy_decimal_payload():
+    row = paper_strategy_candidate_research_queue_report_to_db_row(_ready_report())
+    payload = deepcopy(row.payload_json)
+    payload["total_ready_notional"] = "12.0"
+    payload["total_selected_notional"] = "12"
+    payload["total_suggested_notional"] = "12.0000"
+    payload["top_research_priority_score"] = "0.8"
+    payload["average_research_ready_score"] = "0.8000"
+    payload["rows"][0]["recommendation_score"] = "0.70"
+    payload["rows"][0]["net_edge_per_share"] = "0.08"
+    payload["rows"][0]["confidence"] = "0.9"
+    payload["rows"][0]["suggested_notional"] = "12"
+    payload["rows"][0]["research_priority_score"] = "0.8"
+    legacy = _unchecked_row(
+        row,
+        report_sha256=_payload_sha256(payload),
+        total_ready_notional=Decimal("12.0"),
+        total_selected_notional=Decimal("12"),
+        total_suggested_notional=Decimal("12.0000"),
+        top_research_priority_score=Decimal("0.8"),
+        average_research_ready_score=Decimal("0.8000"),
+        rows_json=payload["rows"],
+        payload_json=payload,
+    )
+
+    assert paper_strategy_candidate_research_queue_report_from_db_row(legacy) == _ready_report()
+
+
+def test_research_queue_db_row_from_db_row_rejects_value_changing_legacy_payload():
+    row = paper_strategy_candidate_research_queue_report_to_db_row(_ready_report())
+    payload = deepcopy(row.payload_json)
+    payload["rows"][0]["suggested_notional"] = "12.000001"
+    legacy = _unchecked_row(
+        row,
+        report_sha256=_payload_sha256(payload),
+        rows_json=payload["rows"],
+        payload_json=payload,
+    )
+
+    with pytest.raises(ValueError, match="suggested_notional|payload_json"):
+        paper_strategy_candidate_research_queue_report_from_db_row(legacy)
+
+
+def test_research_queue_db_row_from_db_row_rejects_non_allowlisted_legacy_decimal_payload():
+    row = paper_strategy_candidate_research_queue_report_to_db_row(_ready_report())
+    payload = deepcopy(row.payload_json)
+    payload["rows"][0]["research_rank"] = "1.0"
+    legacy = _unchecked_row(
+        row,
+        report_sha256=_payload_sha256(payload),
+        rows_json=payload["rows"],
+        payload_json=payload,
+    )
+
+    with pytest.raises(ValueError, match="research_rank|payload_json"):
+        paper_strategy_candidate_research_queue_report_from_db_row(legacy)
+
+
+def test_research_queue_db_row_from_db_row_rejects_bypassed_overprecision_payload():
+    row = paper_strategy_candidate_research_queue_report_to_db_row(_ready_report())
+    payload = deepcopy(row.payload_json)
+    payload["rows"][0]["suggested_notional"] = "12.0000004"
+    malformed = _unchecked_row(
+        row,
+        report_sha256=_payload_sha256(payload),
+        rows_json=payload["rows"],
+        payload_json=payload,
+    )
+
+    with pytest.raises(ValueError, match="six decimal|payload_json"):
+        paper_strategy_candidate_research_queue_report_from_db_row(malformed)
+
+
+def test_research_queue_db_row_rejects_raw_datetime_payload_before_normalization():
+    row = paper_strategy_candidate_research_queue_report_to_db_row(_ready_report())
+    payload = {**row.payload_json, "generated_at": GENERATED_AT}
+
+    with pytest.raises(ValueError, match="datetime|payload_json"):
+        PaperStrategyCandidateResearchQueueDbRow(
+            **{
+                **_row_values(row),
+                "payload_json": payload,
+            },
+        )
+
+    with pytest.raises(ValueError, match="datetime|payload_json"):
+        paper_strategy_candidate_research_queue_report_from_db_row(
+            _unchecked_row(row, payload_json=payload),
+        )
 
 
 def test_research_queue_db_row_constructor_rejects_type_loose_bool_int_payload_matches():
@@ -868,7 +1009,11 @@ def test_research_queue_db_row_from_db_row_rejects_bypassed_duplicate_stored_rea
         **row.payload_json,
         "primary_reason_code_counts": [["low_net_edge", 1], ["low_net_edge", 2]],
     }
-    malformed = _unchecked_row(row, report_sha256="a" * 64, payload_json=payload)
+    malformed = _unchecked_row(
+        row,
+        report_sha256=_payload_sha256(payload),
+        payload_json=payload,
+    )
     with pytest.raises(ValueError, match="primary_reason_code_counts"):
         paper_strategy_candidate_research_queue_report_from_db_row(malformed)
 

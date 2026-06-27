@@ -26,6 +26,15 @@ __all__ = (
 
 
 _SHA256_PATTERN = re.compile(r"^[a-f0-9]{64}$")
+_DECIMAL_QUANTUM = Decimal("0.000001")
+_QUEUE_DECIMAL_PAYLOAD_FIELDS = frozenset(
+    (
+        "recommendation_score",
+        "net_probability_edge",
+        "total_cost_per_share",
+        "executable_paper_shares",
+    ),
+)
 
 
 @dataclass(frozen=True)
@@ -106,10 +115,12 @@ def from_db_row(
 ) -> PaperProbabilityRecommendationQueueReport:
     if type(row) is not PaperProbabilityRecommendationQueueDbRow:
         raise ValueError("row must be a PaperProbabilityRecommendationQueueDbRow")
-    _reject_json_floats(row.payload_json)
+    _reject_raw_payload_values(row.payload_json, "payload_json")
     _validate_json_hard_flags(row.payload_json, "payload_json")
+    _validate_raw_payload_hash(row)
+    payload_json = _normalize_legacy_decimal_payload(row.payload_json)
     try:
-        report = from_jsonable(PaperProbabilityRecommendationQueueReport, row.payload_json)
+        report = from_jsonable(PaperProbabilityRecommendationQueueReport, payload_json)
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError(
             f"payload_json is not a valid probability queue report: {exc}",
@@ -120,7 +131,7 @@ def from_db_row(
         )
     _validate_report_tree(report)
     expected_row = to_db_row(report)
-    _validate_row_matches_payload(row, expected_row)
+    _validate_row_matches_payload(row, expected_row, compare_report_sha256=False)
     return report
 
 
@@ -167,8 +178,10 @@ def _has_hard_flag(value: Any) -> bool:
 def _validate_row_matches_payload(
     row: PaperProbabilityRecommendationQueueDbRow,
     expected: PaperProbabilityRecommendationQueueDbRow,
+    *,
+    compare_report_sha256: bool = True,
 ) -> None:
-    for field_name in (
+    field_names = (
         "report_sha256",
         "generated_at",
         "source_config_version",
@@ -182,7 +195,10 @@ def _validate_row_matches_payload(
         "paper_only",
         "report_only",
         "readonly",
-    ):
+    )
+    for field_name in field_names:
+        if field_name == "report_sha256" and not compare_report_sha256:
+            continue
         if getattr(row, field_name) != getattr(expected, field_name):
             raise ValueError(f"{field_name} must match payload_json")
 
@@ -222,7 +238,12 @@ def _validate_materialized_fields_match_payload(
         "readonly": row.readonly,
     }
     for field_name in actual_values:
-        if actual_values[field_name] != expected_values[field_name]:
+        actual_value = actual_values[field_name]
+        expected_value = expected_values[field_name]
+        if (
+            type(actual_value) is not type(expected_value)
+            or actual_value != expected_value
+        ):
             raise ValueError(f"{field_name} must match payload_json")
 
 
@@ -266,15 +287,22 @@ def _report_sha256(payload_json: dict[str, Any]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def _json_ready(value: Any) -> Any:
+def _validate_raw_payload_hash(row: PaperProbabilityRecommendationQueueDbRow) -> None:
+    if row.report_sha256 != _report_sha256(row.payload_json):
+        raise ValueError("report_sha256 must match payload_json")
+
+
+def _json_ready(value: Any, field_path: tuple[str | int, ...] = ()) -> Any:
     if value is None:
         return None
     if is_dataclass(value) and not isinstance(value, type):
-        return _json_ready(asdict(value))
+        return _json_ready(asdict(value), field_path)
     if isinstance(value, Decimal):
-        if not value.is_finite():
-            raise ValueError("JSON Decimal value must be finite")
-        return str(value)
+        if not _is_queue_decimal_payload_path(field_path):
+            raise ValueError(
+                f"{_format_payload_path(field_path)} is not an allowed Decimal path",
+            )
+        return _fixed_six_decimal_string(_format_payload_path(field_path), value)
     if isinstance(value, datetime):
         return _as_utc("datetime", value).isoformat()
     if isinstance(value, float):
@@ -285,9 +313,15 @@ def _json_ready(value: Any) -> Any:
         for key in value:
             if not isinstance(key, str):
                 raise ValueError("JSON object keys must be strings")
-        return {key: _json_ready(item) for key, item in value.items()}
+        return {
+            key: _json_ready(item, (*field_path, key))
+            for key, item in value.items()
+        }
     if isinstance(value, (list, tuple)):
-        return [_json_ready(item) for item in value]
+        return [
+            _json_ready(item, (*field_path, index))
+            for index, item in enumerate(value)
+        ]
     raise ValueError("probability queue DB row values must be JSON serializable")
 
 
@@ -295,10 +329,80 @@ def _normalize_json_object(field_name: str, value: object) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError(f"{field_name} must be a JSON object")
     try:
-        _reject_json_floats(value)
+        _reject_raw_payload_values(value, field_name)
     except ValueError as exc:
-        raise ValueError(f"{field_name} must not contain floats") from exc
+        raise ValueError(f"{field_name} must contain only JSON-safe values") from exc
     return {key: _json_ready(item) for key, item in value.items()}
+
+
+def _normalize_legacy_decimal_payload(
+    value: Any,
+    field_path: tuple[str | int, ...] = (),
+) -> Any:
+    if _is_queue_decimal_payload_path(field_path):
+        field_name = _format_payload_path(field_path)
+        if type(value) is not str:
+            raise ValueError(f"{field_name} must be a Decimal string")
+        return _fixed_six_decimal_string(
+            field_name,
+            _decimal_from_string(field_name, value),
+        )
+    if isinstance(value, dict):
+        return {
+            key: _normalize_legacy_decimal_payload(item, (*field_path, key))
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [
+            _normalize_legacy_decimal_payload(item, (*field_path, index))
+            for index, item in enumerate(value)
+        ]
+    return value
+
+
+def _is_queue_decimal_payload_path(field_path: tuple[str | int, ...]) -> bool:
+    return (
+        len(field_path) == 3
+        and field_path[0] == "queue_rows"
+        and isinstance(field_path[1], int)
+        and field_path[2] in _QUEUE_DECIMAL_PAYLOAD_FIELDS
+    )
+
+
+def _fixed_six_decimal_string(field_name: str, value: Decimal) -> str:
+    if type(value) is not Decimal:
+        raise ValueError(f"{field_name} must be a Decimal")
+    if not value.is_finite():
+        raise ValueError(f"{field_name} must be finite")
+    value_tuple = value.as_tuple()
+    excess_decimal_places = -value_tuple.exponent - 6
+    if excess_decimal_places > 0 and any(
+        digit != 0 for digit in value_tuple.digits[-excess_decimal_places:]
+    ):
+        raise ValueError(f"{field_name} must not exceed six decimal places")
+    return f"{value:.6f}"
+
+
+def _decimal_from_string(field_name: str, value: str) -> Decimal:
+    try:
+        decimal = Decimal(value)
+    except ArithmeticError as exc:
+        raise ValueError(f"{field_name} must be a Decimal string") from exc
+    if not decimal.is_finite():
+        raise ValueError(f"{field_name} must be finite")
+    return decimal
+
+
+def _format_payload_path(field_path: tuple[str | int, ...]) -> str:
+    if not field_path:
+        return "payload_json"
+    formatted = "payload_json"
+    for item in field_path:
+        if isinstance(item, int):
+            formatted = f"{formatted}[{item}]"
+        else:
+            formatted = f"{formatted}.{item}"
+    return formatted
 
 
 def _normalize_reason_code_counts_json(
@@ -324,20 +428,24 @@ def _validate_json_hard_flags(value: Any, field_name: str) -> None:
         child_name = f"{field_name} {key}"
         if isinstance(item, dict):
             _validate_json_hard_flags(item, child_name)
-        elif isinstance(item, list):
+        elif isinstance(item, (list, tuple)):
             for index, element in enumerate(item):
                 _validate_json_hard_flags(element, f"{child_name} {index}")
 
 
-def _reject_json_floats(value: Any) -> None:
+def _reject_raw_payload_values(value: Any, field_name: str) -> None:
     if isinstance(value, float):
-        raise ValueError("JSON value must not be a float")
+        raise ValueError(f"{field_name} must not be a float")
+    if isinstance(value, Decimal):
+        raise ValueError(f"{field_name} must not be a raw Decimal")
+    if isinstance(value, datetime):
+        raise ValueError(f"{field_name} must not be a raw datetime")
     if isinstance(value, dict):
-        for item in value.values():
-            _reject_json_floats(item)
-    elif isinstance(value, list):
-        for item in value:
-            _reject_json_floats(item)
+        for key, item in value.items():
+            _reject_raw_payload_values(item, f"{field_name}.{key}")
+    elif isinstance(value, (list, tuple)):
+        for index, item in enumerate(value):
+            _reject_raw_payload_values(item, f"{field_name}[{index}]")
 
 
 def _as_utc(field_name: str, value: object) -> datetime:

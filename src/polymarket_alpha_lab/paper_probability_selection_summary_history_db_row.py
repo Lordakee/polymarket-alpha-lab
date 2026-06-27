@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, fields, is_dataclass
 from datetime import UTC, datetime
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation, localcontext
 import hashlib
 import json
 import re
@@ -30,6 +30,13 @@ __all__ = (
 
 
 _SHA256_PATTERN = re.compile(r"^[a-f0-9]{64}$")
+_DECIMAL_QUANTUM = Decimal("0.000001")
+_SHARE_PAYLOAD_PATHS = frozenset(
+    {
+        ("latest_selected_share",),
+        ("average_selected_share",),
+    },
+)
 
 
 @dataclass(frozen=True)
@@ -134,12 +141,16 @@ def paper_probability_selection_summary_history_from_db_row(
 ) -> PaperProbabilitySelectionSummaryHistoryReport:
     if type(row) is not PaperProbabilitySelectionSummaryHistoryDbRow:
         raise ValueError("row must be a PaperProbabilitySelectionSummaryHistoryDbRow")
-    _reject_json_floats(row.payload_json)
-    _validate_json_hard_flags(row.payload_json, "payload_json")
+    _validate_row_core_fields(row)
+    payload_json = _normalize_json_object("payload_json", row.payload_json)
+    if row.report_sha256 != _report_sha256(payload_json):
+        raise ValueError("report_sha256 must match payload_json")
+    _validate_json_hard_flags(payload_json, "payload_json")
+    normalized_payload_json = _normalize_legacy_share_payload(payload_json)
     try:
         report = from_jsonable(
             PaperProbabilitySelectionSummaryHistoryReport,
-            row.payload_json,
+            normalized_payload_json,
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError(
@@ -151,7 +162,7 @@ def paper_probability_selection_summary_history_from_db_row(
         )
     _validate_report_tree(report)
     expected_row = paper_probability_selection_summary_history_to_db_row(report)
-    _validate_row_matches_payload(row, expected_row)
+    _validate_row_matches_payload(row, expected_row, normalized_payload_json)
     return report
 
 
@@ -187,6 +198,7 @@ def _validate_report_tree(value: Any, field_name: str = "report") -> None:
 def _validate_row_matches_payload(
     row: PaperProbabilitySelectionSummaryHistoryDbRow,
     expected: PaperProbabilitySelectionSummaryHistoryDbRow,
+    normalized_payload_json: dict[str, Any] | None = None,
 ) -> None:
     for field_name in (
         "report_sha256",
@@ -207,7 +219,13 @@ def _validate_row_matches_payload(
         "report_only",
         "readonly",
     ):
-        if getattr(row, field_name) != getattr(expected, field_name):
+        actual_value = getattr(row, field_name)
+        expected_value = getattr(expected, field_name)
+        if field_name == "report_sha256" and normalized_payload_json is not None:
+            continue
+        if field_name == "payload_json" and normalized_payload_json is not None:
+            actual_value = normalized_payload_json
+        if type(actual_value) is not type(expected_value) or actual_value != expected_value:
             raise ValueError(f"{field_name} must match payload_json")
 
 
@@ -239,6 +257,66 @@ def _validate_constructor_payload_consistency(
         row.reason_codes_json,
         row_field_name="reason_codes_json",
     )
+    _validate_payload_recovers_to_compatible_report(row.payload_json)
+
+
+def _validate_row_core_fields(
+    row: PaperProbabilitySelectionSummaryHistoryDbRow,
+) -> None:
+    _require_sha256("report_sha256", row.report_sha256)
+    _as_utc("generated_at", row.generated_at)
+    _require_canonical_string("config_version", row.config_version)
+    for field_name in (
+        "source_report_count",
+        "latest_queue_count",
+        "latest_selected_count",
+    ):
+        _require_nonnegative_int(field_name, getattr(row, field_name))
+    _normalize_optional_datetime("latest_generated_at", row.latest_generated_at)
+    _require_optional_nonnegative_int("latest_age_seconds", row.latest_age_seconds)
+    _normalize_probability("latest_selected_share", row.latest_selected_share)
+    _normalize_probability("average_selected_share", row.average_selected_share)
+    _require_history_status("history_status", row.history_status)
+    _require_recommended_next_step(
+        "recommended_next_step",
+        row.recommended_next_step,
+    )
+    _normalize_string_list("reason_codes_json", row.reason_codes_json)
+    _require_hard_flags("DB row", row)
+
+
+def _validate_payload_recovers_to_compatible_report(
+    payload_json: dict[str, Any],
+) -> PaperProbabilitySelectionSummaryHistoryReport:
+    normalized_payload_json = _normalize_legacy_share_payload(payload_json)
+    try:
+        report = from_jsonable(
+            PaperProbabilitySelectionSummaryHistoryReport,
+            normalized_payload_json,
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(
+            f"payload_json is not a valid selection summary history report: {exc}",
+        ) from exc
+    if type(report) is not PaperProbabilitySelectionSummaryHistoryReport:
+        raise ValueError(
+            "payload_json must recover a PaperProbabilitySelectionSummaryHistoryReport",
+        )
+    _validate_report_tree(report)
+    _validate_payload_compatible_with_canonical_payload(
+        payload_json,
+        _canonical_report_payload(report),
+    )
+    return report
+
+
+def _canonical_report_payload(
+    report: PaperProbabilitySelectionSummaryHistoryReport,
+) -> dict[str, Any]:
+    payload_json = _json_ready(asdict(report))
+    if not isinstance(payload_json, dict):
+        raise ValueError("payload_json must recover a JSON object")
+    return payload_json
 
 
 def _require_payload_value(
@@ -251,8 +329,28 @@ def _require_payload_value(
     field_name = row_field_name or payload_field_name
     if payload_field_name not in payload_json:
         raise ValueError(f"{field_name} must match payload_json")
-    if payload_json[payload_field_name] != _json_ready(value):
+    payload_value = payload_json[payload_field_name]
+    if (payload_field_name,) in _SHARE_PAYLOAD_PATHS:
+        _require_payload_share_value(field_name, payload_value, value)
+        return
+    if payload_value != _json_ready(value, (payload_field_name,)):
         raise ValueError(f"{field_name} must match payload_json")
+
+
+def _require_payload_share_value(
+    field_name: str,
+    payload_value: object,
+    row_value: object,
+) -> None:
+    if type(row_value) is not Decimal or type(payload_value) is not str:
+        raise ValueError(f"{field_name} must match payload_json")
+    try:
+        payload_decimal = Decimal(payload_value)
+    except (InvalidOperation, ValueError) as exc:
+        raise ValueError(f"{field_name} must match payload_json") from exc
+    if not payload_decimal.is_finite() or payload_decimal != row_value:
+        raise ValueError(f"{field_name} must match payload_json")
+    _decimal_to_six_place_string(field_name, payload_decimal)
 
 
 def _report_sha256(payload_json: dict[str, Any]) -> str:
@@ -265,15 +363,15 @@ def _report_sha256(payload_json: dict[str, Any]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def _json_ready(value: Any) -> Any:
+def _json_ready(value: Any, path: tuple[object, ...] = ()) -> Any:
     if value is None:
         return None
     if is_dataclass(value) and not isinstance(value, type):
-        return _json_ready(asdict(value))
+        return _json_ready(asdict(value), path)
     if isinstance(value, Decimal):
-        if not value.is_finite():
-            raise ValueError("JSON Decimal value must be finite")
-        return str(value)
+        if path not in _SHARE_PAYLOAD_PATHS:
+            raise ValueError(f"{_payload_path_name(path)} is not a Decimal payload path")
+        return _decimal_to_six_place_string(_payload_path_name(path), value)
     if isinstance(value, datetime):
         return _as_utc("datetime", value).isoformat()
     if isinstance(value, float):
@@ -284,9 +382,9 @@ def _json_ready(value: Any) -> Any:
         for key in value:
             if type(key) is not str:
                 raise ValueError("JSON object keys must be strings")
-        return {key: _json_ready(item) for key, item in value.items()}
+        return {key: _json_ready(item, (*path, key)) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
-        return [_json_ready(item) for item in value]
+        return [_json_ready(item, (*path, index)) for index, item in enumerate(value)]
     raise ValueError("selection summary history DB row values must be JSON serializable")
 
 
@@ -294,13 +392,154 @@ def _normalize_json_object(field_name: str, value: object) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError(f"{field_name} must be a JSON object")
     try:
-        _reject_json_floats(value)
-        normalized = _json_ready(value)
+        _validate_json_payload_value(field_name, value)
+        normalized = _copy_json_payload(value)
     except ValueError as exc:
         raise ValueError(f"{field_name} {exc}") from exc
     if not isinstance(normalized, dict):
         raise ValueError(f"{field_name} must be a JSON object")
     return normalized
+
+
+def _validate_json_payload_value(field_name: str, value: object) -> None:
+    if value is None:
+        return
+    if type(value) in (str, int, bool):
+        return
+    if isinstance(value, float):
+        raise ValueError(f"{field_name} must not contain floats")
+    if isinstance(value, (Decimal, datetime)):
+        raise ValueError(f"{field_name} must contain only raw JSON values")
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if type(key) is not str:
+                raise ValueError(f"{field_name} object keys must be strings")
+            _validate_json_payload_value(f"{field_name} {key}", item)
+        return
+    if isinstance(value, list):
+        for index, item in enumerate(value):
+            _validate_json_payload_value(f"{field_name} {index}", item)
+        return
+    raise ValueError(f"{field_name} must contain only raw JSON values")
+
+
+def _copy_json_payload(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {key: _copy_json_payload(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_copy_json_payload(item) for item in value]
+    return value
+
+
+def _normalize_legacy_share_payload(
+    value: Any,
+    path: tuple[object, ...] = (),
+) -> Any:
+    if path in _SHARE_PAYLOAD_PATHS:
+        if type(value) is not str:
+            raise ValueError(f"{_payload_path_name(path)} must be a Decimal string")
+        return _decimal_string_to_six_place(_payload_path_name(path), value)
+    if isinstance(value, dict):
+        return {
+            key: _normalize_legacy_share_payload(item, (*path, key))
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [
+            _normalize_legacy_share_payload(item, (*path, index))
+            for index, item in enumerate(value)
+        ]
+    return value
+
+
+def _decimal_string_to_six_place(field_name: str, value: str) -> str:
+    _require_canonical_string(field_name, value)
+    try:
+        decimal = Decimal(value)
+    except (InvalidOperation, ValueError) as exc:
+        raise ValueError(f"{field_name} must be a Decimal string") from exc
+    return _decimal_to_six_place_string(field_name, decimal)
+
+
+def _decimal_to_six_place_string(field_name: str, value: Decimal) -> str:
+    if not value.is_finite():
+        raise ValueError(f"{field_name} Decimal value must be finite")
+    try:
+        with localcontext() as context:
+            integer_digits = max(value.adjusted() + 1, 1)
+            context.prec = max(28, integer_digits + 6)
+            quantized = value.quantize(_DECIMAL_QUANTUM)
+    except InvalidOperation as exc:
+        raise ValueError(f"{field_name} must have at most six decimal places") from exc
+    if quantized != value:
+        raise ValueError(f"{field_name} must have at most six decimal places")
+    return format(quantized, "f")
+
+
+def _validate_payload_compatible_with_canonical_payload(
+    payload_json: dict[str, Any],
+    expected_payload_json: dict[str, Any],
+) -> None:
+    try:
+        _validate_json_compatible((), payload_json, expected_payload_json)
+    except ValueError as exc:
+        raise ValueError(
+            "payload_json must match canonical selection summary history report: "
+            f"{exc}",
+        ) from exc
+
+
+def _validate_json_compatible(
+    path: tuple[object, ...],
+    actual: object,
+    expected: object,
+) -> None:
+    if path in _SHARE_PAYLOAD_PATHS:
+        _validate_compatible_share_path(_payload_path_name(path), actual, expected)
+        return
+    if type(actual) is not type(expected):
+        raise ValueError(f"{_payload_path_name(path)} has wrong JSON type")
+    if isinstance(actual, dict):
+        if actual.keys() != expected.keys():  # type: ignore[union-attr]
+            raise ValueError(f"{_payload_path_name(path)} keys differ")
+        for key in actual:
+            _validate_json_compatible(
+                (*path, key),
+                actual[key],
+                expected[key],  # type: ignore[index]
+            )
+        return
+    if isinstance(actual, list):
+        if len(actual) != len(expected):  # type: ignore[arg-type]
+            raise ValueError(f"{_payload_path_name(path)} length differs")
+        for index, item in enumerate(actual):
+            _validate_json_compatible(
+                (*path, index),
+                item,
+                expected[index],  # type: ignore[index]
+            )
+        return
+    if actual != expected:
+        raise ValueError(f"{_payload_path_name(path)} differs")
+
+
+def _validate_compatible_share_path(
+    field_name: str,
+    actual: object,
+    expected: object,
+) -> None:
+    if type(actual) is not str or type(expected) is not str:
+        raise ValueError(f"{field_name} has wrong JSON type")
+    actual_normalized = _decimal_string_to_six_place(field_name, actual)
+    expected_normalized = _decimal_string_to_six_place(field_name, expected)
+    if actual_normalized != expected_normalized:
+        raise ValueError(f"{field_name} differs")
+
+
+def _payload_path_name(path: tuple[object, ...]) -> str:
+    if not path:
+        return "payload_json"
+    return "payload_json " + " ".join(str(item) for item in path)
 
 
 def _normalize_string_list(field_name: str, value: object) -> list[str]:

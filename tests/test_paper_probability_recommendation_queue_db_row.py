@@ -23,6 +23,12 @@ from polymarket_alpha_lab.paper_probability_side_edge import (
 GENERATED_AT = datetime(2026, 6, 20, 15, 30, tzinfo=UTC)
 SOURCE_CONFIG_VERSION = "probability-recommendation-queue-v0"
 ZERO = Decimal("0.000000")
+QUEUE_DECIMAL_PAYLOAD_FIELDS = (
+    "recommendation_score",
+    "net_probability_edge",
+    "total_cost_per_share",
+    "executable_paper_shares",
+)
 
 
 class QueueReportSubclass(PaperProbabilityRecommendationQueueReport):
@@ -141,6 +147,16 @@ def _assert_no_floats(value: object) -> None:
             _assert_no_floats(item)
 
 
+def _payload_hash(payload_json: dict[str, object]) -> str:
+    encoded = json.dumps(
+        payload_json,
+        allow_nan=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
 def _row_values(row) -> dict[str, object]:
     return {
         "report_sha256": row.report_sha256,
@@ -165,6 +181,17 @@ def _bypassed_row(codec, row, **overrides):
     for key, value in {**_row_values(row), **overrides}.items():
         object.__setattr__(malformed, key, value)
     return malformed
+
+
+def _payload_copy(row) -> dict[str, object]:
+    return json.loads(json.dumps(row.payload_json, allow_nan=False))
+
+
+def _payload_with_queue_decimal(row, field_name: str, value: object) -> dict[str, object]:
+    payload_json = _payload_copy(row)
+    queue_rows = payload_json["queue_rows"]
+    queue_rows[0] = {**queue_rows[0], field_name: value}
+    return payload_json
 
 
 def test_probability_queue_db_row_serializes_canonical_payload_and_round_trips():
@@ -240,6 +267,93 @@ def test_probability_queue_db_row_hash_uses_canonical_full_payload():
     assert first.report_sha256 == second.report_sha256
     assert first.payload_json == second.payload_json
     assert first.report_sha256 != third.report_sha256
+
+
+@pytest.mark.parametrize("field_name", QUEUE_DECIMAL_PAYLOAD_FIELDS)
+def test_probability_queue_db_row_canonicalizes_equivalent_decimal_exponents(
+    field_name: str,
+):
+    codec = _codec()
+    terse_report = _report()
+    fixed_report = _report()
+    object.__setattr__(terse_report.queue_rows[0], field_name, d("0.13"))
+    object.__setattr__(fixed_report.queue_rows[0], field_name, d("0.130000"))
+
+    terse_row = codec.to_db_row(terse_report)
+    fixed_row = codec.to_db_row(fixed_report)
+
+    assert terse_row.payload_json["queue_rows"][0][field_name] == "0.130000"
+    assert terse_row.payload_json == fixed_row.payload_json
+    assert terse_row.report_sha256 == fixed_row.report_sha256
+
+
+@pytest.mark.parametrize("field_name", QUEUE_DECIMAL_PAYLOAD_FIELDS)
+def test_probability_queue_db_row_rejects_value_changing_decimal_overprecision(
+    field_name: str,
+):
+    codec = _codec()
+    report = _report()
+    object.__setattr__(report.queue_rows[0], field_name, d("0.1300001"))
+
+    with pytest.raises(ValueError, match=field_name):
+        codec.to_db_row(report)
+
+
+@pytest.mark.parametrize(
+    ("field_name", "legacy_value"),
+    (
+        ("recommendation_score", "0.13"),
+        ("net_probability_edge", "0.13"),
+        ("total_cost_per_share", "0.01"),
+        ("executable_paper_shares", "100"),
+    ),
+)
+def test_probability_queue_from_db_row_accepts_safe_legacy_decimal_strings(
+    field_name: str,
+    legacy_value: str,
+):
+    codec = _codec()
+    report = _report()
+    row = codec.to_db_row(report)
+    payload_json = _payload_with_queue_decimal(row, field_name, legacy_value)
+    legacy_row = codec.PaperProbabilityRecommendationQueueDbRow(
+        **{
+            **_row_values(row),
+            "report_sha256": _payload_hash(payload_json),
+            "payload_json": payload_json,
+        },
+    )
+
+    assert codec.from_db_row(legacy_row) == report
+
+
+def test_probability_queue_from_db_row_rejects_legacy_payload_with_stale_hash():
+    codec = _codec()
+    row = codec.to_db_row(_report())
+    payload_json = _payload_with_queue_decimal(row, "recommendation_score", "0.13")
+    stale_row = _bypassed_row(codec, row, payload_json=payload_json)
+
+    with pytest.raises(ValueError, match="report_sha256"):
+        codec.from_db_row(stale_row)
+
+
+def test_probability_queue_from_db_row_rejects_value_changing_legacy_decimal_string():
+    codec = _codec()
+    row = codec.to_db_row(_report())
+    payload_json = _payload_with_queue_decimal(
+        row,
+        "recommendation_score",
+        "0.1300001",
+    )
+    malformed = _bypassed_row(
+        codec,
+        row,
+        report_sha256=_payload_hash(payload_json),
+        payload_json=payload_json,
+    )
+
+    with pytest.raises(ValueError, match="recommendation_score"):
+        codec.from_db_row(malformed)
 
 
 def test_probability_queue_db_row_is_frozen():
@@ -387,6 +501,61 @@ def test_probability_queue_from_db_row_defends_against_bypassed_hash_mismatch():
         codec.from_db_row(malformed)
 
 
+def test_probability_queue_db_row_constructor_rejects_raw_decimal_payload_values():
+    codec = _codec()
+    row = codec.to_db_row(_report())
+    payload_json = _payload_with_queue_decimal(
+        row,
+        "recommendation_score",
+        d("0.130000"),
+    )
+
+    with pytest.raises(ValueError, match="payload_json"):
+        codec.PaperProbabilityRecommendationQueueDbRow(
+            **{**_row_values(row), "payload_json": payload_json},
+        )
+
+
+def test_probability_queue_db_row_constructor_rejects_raw_datetime_payload_values():
+    codec = _codec()
+    row = codec.to_db_row(_report())
+    payload_json = {**row.payload_json, "generated_at": GENERATED_AT}
+
+    with pytest.raises(ValueError, match="payload_json"):
+        codec.PaperProbabilityRecommendationQueueDbRow(
+            **{**_row_values(row), "payload_json": payload_json},
+        )
+
+
+def test_probability_queue_from_db_row_rejects_bypassed_raw_decimal_payload_values():
+    codec = _codec()
+    row = codec.to_db_row(_report())
+    payload_json = _payload_with_queue_decimal(
+        row,
+        "recommendation_score",
+        d("0.130000"),
+    )
+    malformed = _bypassed_row(codec, row, payload_json=payload_json)
+
+    with pytest.raises(ValueError, match="payload_json"):
+        codec.from_db_row(malformed)
+
+
+def test_probability_queue_db_row_constructor_rejects_bool_int_confusion():
+    codec = _codec()
+    row = codec.to_db_row(_report())
+    payload_json = {**row.payload_json, "input_count": True}
+
+    with pytest.raises(ValueError, match="input_count"):
+        codec.PaperProbabilityRecommendationQueueDbRow(
+            **{
+                **_row_values(row),
+                "report_sha256": _payload_hash(payload_json),
+                "payload_json": payload_json,
+            },
+        )
+
+
 def test_probability_queue_db_row_wraps_payload_recovery_errors_as_value_error():
     codec = _codec()
     row = codec.to_db_row(_report())
@@ -399,6 +568,28 @@ def test_probability_queue_db_row_wraps_payload_recovery_errors_as_value_error()
     )
 
     with pytest.raises(ValueError, match="payload_json"):
+        codec.from_db_row(malformed)
+
+
+@pytest.mark.parametrize("replacement", (None, "missing"))
+def test_probability_queue_from_db_row_rejects_null_or_missing_decimal_paths(
+    replacement: object,
+):
+    codec = _codec()
+    row = codec.to_db_row(_report())
+    payload_json = _payload_copy(row)
+    if replacement == "missing":
+        del payload_json["queue_rows"][0]["recommendation_score"]
+    else:
+        payload_json["queue_rows"][0]["recommendation_score"] = replacement
+    malformed = _bypassed_row(
+        codec,
+        row,
+        report_sha256=_payload_hash(payload_json),
+        payload_json=payload_json,
+    )
+
+    with pytest.raises(ValueError, match="recommendation_score|payload_json"):
         codec.from_db_row(malformed)
 
 

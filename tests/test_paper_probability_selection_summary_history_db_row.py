@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from copy import deepcopy
 from dataclasses import FrozenInstanceError, replace
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -94,6 +95,35 @@ def _empty_report() -> PaperProbabilitySelectionSummaryHistoryReport:
             "no_selection_summary_history",
             "insufficient_selection_summary_history",
         ),
+    )
+
+
+def _all_selected_report() -> PaperProbabilitySelectionSummaryHistoryReport:
+    return PaperProbabilitySelectionSummaryHistoryReport(
+        generated_at=GENERATED_AT,
+        config_version="paper-probability-selection-summary-history-v0",
+        source_report_count=3,
+        first_generated_at=FIRST_GENERATED_AT,
+        latest_generated_at=LATEST_GENERATED_AT,
+        history_span_seconds=6300,
+        latest_age_seconds=900,
+        latest_queue_count=6,
+        latest_selected_count=6,
+        latest_pending_count=0,
+        latest_rejected_count=0,
+        latest_skipped_count=0,
+        aggregate_queue_count=15,
+        aggregate_selected_count=15,
+        aggregate_pending_count=0,
+        aggregate_rejected_count=0,
+        aggregate_skipped_count=0,
+        latest_selected_share=d("1.000000"),
+        average_selected_share=d("1.000000"),
+        distinct_config_versions=("paper-probability-selection-summary-v0",),
+        reason_code_counts=(("selection_summary_history_stable", 15),),
+        history_status="ready",
+        recommended_next_step="proceed_to_paper_allocation",
+        reason_codes=("selection_summary_history_stable",),
     )
 
 
@@ -199,6 +229,164 @@ def test_history_db_row_hash_is_deterministic() -> None:
     assert first.report_sha256 == second.report_sha256
     assert first.payload_json == second.payload_json
     assert first.report_sha256 != third.report_sha256
+
+
+def test_history_db_row_writes_fixed_six_place_share_payloads() -> None:
+    codec = _codec_module()
+    zero_report = _empty_report()
+    object.__setattr__(zero_report, "latest_selected_share", d("0"))
+    object.__setattr__(zero_report, "average_selected_share", d("0.0"))
+    one_report = _all_selected_report()
+    object.__setattr__(one_report, "latest_selected_share", d("1"))
+    object.__setattr__(one_report, "average_selected_share", d("1.0"))
+
+    zero_row = codec.to_db_row(zero_report)
+    one_row = codec.to_db_row(one_report)
+
+    assert zero_row.payload_json["latest_selected_share"] == "0.000000"
+    assert zero_row.payload_json["average_selected_share"] == "0.000000"
+    assert one_row.payload_json["latest_selected_share"] == "1.000000"
+    assert one_row.payload_json["average_selected_share"] == "1.000000"
+
+
+def test_history_db_row_equivalent_share_decimal_exponents_hash_identically() -> None:
+    codec = _codec_module()
+    zero_report = _empty_report()
+    zero_equivalent = _empty_report()
+    object.__setattr__(zero_equivalent, "latest_selected_share", d("0"))
+    object.__setattr__(zero_equivalent, "average_selected_share", d("0.0"))
+    one_report = _all_selected_report()
+    one_equivalent = _all_selected_report()
+    object.__setattr__(one_equivalent, "latest_selected_share", d("1"))
+    object.__setattr__(one_equivalent, "average_selected_share", d("1.0"))
+
+    zero_row = codec.to_db_row(zero_report)
+    zero_equivalent_row = codec.to_db_row(zero_equivalent)
+    one_row = codec.to_db_row(one_report)
+    one_equivalent_row = codec.to_db_row(one_equivalent)
+
+    assert zero_equivalent_row.payload_json == zero_row.payload_json
+    assert zero_equivalent_row.report_sha256 == zero_row.report_sha256
+    assert one_equivalent_row.payload_json == one_row.payload_json
+    assert one_equivalent_row.report_sha256 == one_row.report_sha256
+
+
+@pytest.mark.parametrize("field_name", ("latest_selected_share", "average_selected_share"))
+def test_history_db_row_rejects_overprecision_share_writes_without_rounding(
+    field_name: str,
+) -> None:
+    codec = _codec_module()
+    report = _report()
+    object.__setattr__(report, field_name, d("0.6000001"))
+
+    with pytest.raises(ValueError, match=f"{field_name}|six decimal places"):
+        codec.to_db_row(report)
+
+
+def test_history_db_row_accepts_self_hashed_legacy_share_payload_strings() -> None:
+    codec = _codec_module()
+    row = codec.to_db_row(_report())
+    legacy_payload = deepcopy(row.payload_json)
+    legacy_payload["latest_selected_share"] = "0.6666670"
+    legacy_payload["average_selected_share"] = "0.6"
+
+    legacy_row = codec.PaperProbabilitySelectionSummaryHistoryDbRow(
+        **{
+            **_row_values(row),
+            "report_sha256": _canonical_payload_sha256(legacy_payload),
+            "payload_json": legacy_payload,
+        },
+    )
+
+    assert codec.from_db_row(legacy_row) == _report()
+
+
+def test_history_from_db_row_validates_raw_hash_before_legacy_share_normalization() -> None:
+    codec = _codec_module()
+    row = codec.to_db_row(_report())
+    legacy_payload = deepcopy(row.payload_json)
+    legacy_payload["latest_selected_share"] = "0.6666670"
+    legacy_payload["average_selected_share"] = "0.6"
+    stale_row = _bypassed_row(row, payload_json=legacy_payload)
+
+    with pytest.raises(ValueError, match="report_sha256"):
+        codec.from_db_row(stale_row)
+
+
+def test_history_db_row_rejects_raw_payload_values_before_normalization() -> None:
+    codec = _codec_module()
+    row = codec.to_db_row(_report())
+
+    payloads = (
+        {**row.payload_json, "latest_selected_share": d("0.666667")},
+        {**row.payload_json, "generated_at": GENERATED_AT},
+        {**row.payload_json, "average_selected_share": 0.6},
+    )
+    for payload in payloads:
+        with pytest.raises(ValueError, match="payload_json"):
+            codec.PaperProbabilitySelectionSummaryHistoryDbRow(
+                **{**_row_values(row), "payload_json": payload},
+            )
+        with pytest.raises(ValueError, match="payload_json"):
+            codec.from_db_row(_bypassed_row(row, payload_json=payload))
+
+
+def test_history_db_row_rejects_value_changing_legacy_share_payloads() -> None:
+    codec = _codec_module()
+    row = codec.to_db_row(_report())
+    payload = deepcopy(row.payload_json)
+    payload["latest_selected_share"] = "0.666666"
+
+    with pytest.raises(ValueError, match="latest_selected_share|payload_json"):
+        codec.PaperProbabilitySelectionSummaryHistoryDbRow(
+            **{
+                **_row_values(row),
+                "report_sha256": _canonical_payload_sha256(payload),
+                "payload_json": payload,
+            },
+        )
+
+
+def test_history_from_db_row_rejects_bool_int_confusion_and_missing_vs_null() -> None:
+    codec = _codec_module()
+    row = codec.to_db_row(_report())
+
+    with pytest.raises(ValueError, match="paper_only"):
+        codec.from_db_row(_bypassed_row(row, paper_only=1))
+
+    bool_payload = {**row.payload_json, "source_report_count": True}
+    with pytest.raises(ValueError, match="source_report_count|payload_json"):
+        codec.from_db_row(
+            _bypassed_row(
+                row,
+                source_report_count=True,
+                report_sha256=_canonical_payload_sha256(bool_payload),
+                payload_json=bool_payload,
+            ),
+        )
+
+    null_payload = {**row.payload_json, "latest_age_seconds": None}
+    with pytest.raises(ValueError, match="latest_age_seconds|payload_json"):
+        codec.from_db_row(
+            _bypassed_row(
+                row,
+                latest_age_seconds=None,
+                report_sha256=_canonical_payload_sha256(null_payload),
+                payload_json=null_payload,
+            ),
+        )
+
+    missing_payload = {
+        key: value for key, value in row.payload_json.items() if key != "latest_age_seconds"
+    }
+    with pytest.raises(ValueError, match="latest_age_seconds|payload_json"):
+        codec.from_db_row(
+            _bypassed_row(
+                row,
+                report_sha256=_canonical_payload_sha256(missing_payload),
+                payload_json=missing_payload,
+            ),
+        )
 
 
 def test_history_db_row_is_frozen() -> None:
