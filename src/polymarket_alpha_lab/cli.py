@@ -221,6 +221,12 @@ from polymarket_alpha_lab.supabase_paper_trade_cost_audit_config import (
 from polymarket_alpha_lab.supabase_paper_trade_journal_config import (
     from_paper_trade_journal_db_env,
 )
+from polymarket_alpha_lab.supabase_probability_selection_summary_config import (
+    from_paper_probability_selection_summary_db_env,
+)
+from polymarket_alpha_lab.supabase_paper_probability_selection_summary_history_config import (
+    from_paper_probability_selection_summary_history_db_env,
+)
 from polymarket_alpha_lab.supabase_strategy_candidate_research_queue_config import (
     from_strategy_candidate_research_queue_db_env,
 )
@@ -330,6 +336,8 @@ PaperResearchPacketOperatorFlowDbSink = Callable[..., object]
 PaperProbabilityRecommendationQueueDbSink = Callable[..., object]
 PaperRecommendationRiskBudgetDbSink = Callable[..., object]
 PaperRecommendationReasonTrendDbSink = Callable[..., object]
+PaperProbabilitySelectionSummaryHistoryRunner = Callable[..., object]
+PaperProbabilitySelectionSummaryHistoryDbSink = Callable[..., object]
 _MISSING = object()
 
 
@@ -721,6 +729,39 @@ def _redacted_paper_research_packet_operator_flow_error(
     return RuntimeError(message)
 
 
+def _redacted_paper_probability_selection_summary_history_error(
+    exc: Exception,
+    *,
+    dsn: str,
+    table_name: str,
+) -> RuntimeError:
+    message = _redact_db_dsn(str(exc), dsn=dsn)
+    message = _redact_db_table_name_and_tail(message, table_name=table_name)
+    message = _redact_paper_research_packet_sensitive_fields(message)
+    if not message.strip():
+        message = exc.__class__.__name__
+    return RuntimeError(message)
+
+
+def _redacted_paper_probability_selection_summary_history_persistence_error(
+    exc: Exception,
+    *,
+    source_dsn: str,
+    source_table_name: str,
+    history_dsn: str,
+    history_table_name: str,
+) -> RuntimeError:
+    message = str(exc)
+    for dsn in (source_dsn, history_dsn):
+        message = _redact_db_dsn(message, dsn=dsn)
+    for table_name in (source_table_name, history_table_name):
+        message = _redact_db_table_name_and_tail(message, table_name=table_name)
+    message = _redact_paper_research_packet_sensitive_fields(message)
+    if not message.strip():
+        message = exc.__class__.__name__
+    return RuntimeError(message)
+
+
 def _redacted_paper_autonomous_screening_gate_error(
     exc: Exception,
     *,
@@ -1080,6 +1121,12 @@ def main(
     paper_recommendation_reason_trend_db_sink: (
         PaperRecommendationReasonTrendDbSink | None
     ) = None,
+    paper_probability_selection_summary_history_runner: (
+        PaperProbabilitySelectionSummaryHistoryRunner | None
+    ) = None,
+    paper_probability_selection_summary_history_db_sink: (
+        PaperProbabilitySelectionSummaryHistoryDbSink | None
+    ) = None,
 ) -> int:
     parser = argparse.ArgumentParser(prog="polymarket-alpha-lab")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -1324,6 +1371,22 @@ def main(
         dest="nav_notional",
     )
     paper_recommendation_risk_budget_report.add_argument(
+        "--persist",
+        action="store_true",
+        default=False,
+        dest="persist",
+    )
+    paper_probability_selection_summary_history = subparsers.add_parser(
+        "paper-probability-selection-summary-history",
+        allow_abbrev=False,
+    )
+    paper_probability_selection_summary_history.add_argument(
+        "--limit",
+        type=int,
+        default=25,
+        dest="limit",
+    )
+    paper_probability_selection_summary_history.add_argument(
         "--persist",
         action="store_true",
         default=False,
@@ -2687,6 +2750,96 @@ def main(
         except Exception as exc:
             print(
                 f"paper-recommendation-risk-budget-report failed: {exc}",
+                file=sys.stderr,
+            )
+            return 1
+
+    if args.command == "paper-probability-selection-summary-history":
+        try:
+            if (
+                isinstance(args.limit, bool)
+                or type(args.limit) is not int
+                or args.limit < 1
+            ):
+                raise ValueError(
+                    "paper-probability-selection-summary-history limit must be positive",
+                )
+            source_db_config = from_paper_probability_selection_summary_db_env()
+            if not source_db_config.enabled:
+                raise ValueError(
+                    "paper-probability-selection-summary-history requires "
+                    "paper probability selection summary DB to be enabled",
+                )
+            dsn = source_db_config.dsn
+            if dsn is None:
+                raise ValueError(
+                    "paper-probability-selection-summary-history requires "
+                    "a paper probability selection summary DB DSN",
+                )
+            try:
+                report = _run_paper_probability_selection_summary_history(
+                    dsn=dsn,
+                    table_name=source_db_config.table_name,
+                    limit=args.limit,
+                    runner=paper_probability_selection_summary_history_runner,
+                )
+            except Exception as exc:
+                raise _redacted_paper_probability_selection_summary_history_error(
+                    exc,
+                    dsn=dsn,
+                    table_name=source_db_config.table_name,
+                ) from None
+            _print_paper_probability_selection_summary_history_summary(report)
+            if args.persist:
+                history_db_config = (
+                    from_paper_probability_selection_summary_history_db_env()
+                )
+                if not history_db_config.enabled:
+                    raise ValueError(
+                        "paper-probability-selection-summary-history persistence "
+                        "requires history DB to be enabled",
+                    )
+                history_dsn = history_db_config.dsn
+                if history_dsn is None:
+                    raise ValueError(
+                        "paper-probability-selection-summary-history persistence "
+                        "requires a history DB DSN",
+                    )
+                if paper_probability_selection_summary_history_db_sink is None:
+                    from polymarket_alpha_lab.paper_probability_selection_summary_history_psycopg import (
+                        insert_paper_probability_selection_summary_history_report_with_psycopg,
+                    )
+
+                    resolved_history_db_sink = (
+                        insert_paper_probability_selection_summary_history_report_with_psycopg
+                    )
+                else:
+                    resolved_history_db_sink = (
+                        paper_probability_selection_summary_history_db_sink
+                    )
+                try:
+                    sink_result = resolved_history_db_sink(
+                        dsn=history_dsn,
+                        report=report,
+                        table_name=history_db_config.table_name,
+                    )
+                except Exception as exc:
+                    raise _redacted_paper_probability_selection_summary_history_persistence_error(
+                        exc,
+                        source_dsn=dsn,
+                        source_table_name=source_db_config.table_name,
+                        history_dsn=history_dsn,
+                        history_table_name=history_db_config.table_name,
+                    ) from None
+                persisted = getattr(sink_result, "inserted", True)
+                print(
+                    "paper-probability-selection-summary-history: "
+                    f"persisted={persisted}",
+                )
+            return 0
+        except Exception as exc:
+            print(
+                f"paper-probability-selection-summary-history failed: {exc}",
                 file=sys.stderr,
             )
             return 1
@@ -5551,6 +5704,73 @@ def _run_strategy_candidate_research_queue_history(
     return report, True
 
 
+def _run_paper_probability_selection_summary_history(
+    *,
+    dsn: str,
+    table_name: str,
+    limit: int,
+    runner: PaperProbabilitySelectionSummaryHistoryRunner | None,
+) -> object:
+    command_name = "paper-probability-selection-summary-history"
+    if isinstance(limit, bool) or type(limit) is not int or limit < 1:
+        raise ValueError(f"{command_name} limit must be positive")
+    generated_at = datetime.now(UTC)
+
+    from polymarket_alpha_lab.paper_probability_selection_summary_history import (
+        PaperProbabilitySelectionSummaryHistoryConfig,
+        build_paper_probability_selection_summary_history_report,
+    )
+
+    config = PaperProbabilitySelectionSummaryHistoryConfig(
+        config_version="paper-probability-selection-summary-history-v0",
+    )
+    if runner is not None:
+        return runner(
+            dsn=dsn,
+            table_name=table_name,
+            limit=limit,
+            config=config,
+            generated_at=generated_at,
+        )
+
+    from polymarket_alpha_lab.paper_probability_selection_summary_store import (
+        load_paper_probability_selection_summary_reports,
+    )
+
+    try:
+        import psycopg
+    except ModuleNotFoundError as exc:
+        if exc.name != "psycopg":
+            raise
+        raise RuntimeError(
+            "psycopg is required to use the paper probability selection "
+            "summary history read adapter; install the postgres extra.",
+        ) from exc
+    try:
+        connection = psycopg.connect(dsn, autocommit=True)
+    except Exception:
+        raise RuntimeError(
+            "failed to connect to the paper probability selection summary database",
+        ) from None
+    try:
+        newest_first_reports = load_paper_probability_selection_summary_reports(
+            connection,
+            limit=limit,
+            table_name=table_name,
+        )
+        source_reports = tuple(reversed(newest_first_reports))
+        return build_paper_probability_selection_summary_history_report(
+            source_reports,
+            config=config,
+            generated_at=generated_at,
+        )
+    finally:
+        try:
+            connection.close()
+        except Exception:
+            pass
+
+
 def _run_paper_research_packet(
     *,
     source_config_version: str | None,
@@ -8294,6 +8514,45 @@ def _print_paper_recommendation_risk_budget_report_summary(
         "  reason_codes: "
         f"{_format_paper_recommendation_risk_budget_reason_codes(report.reason_codes)}",
     )
+
+
+def _print_paper_probability_selection_summary_history_summary(report: object) -> None:
+    print(
+        "paper-probability-selection-summary-history: "
+        f"source_report_count={report.source_report_count} "
+        f"first_generated_at={_iso_or_none(report.first_generated_at)} "
+        f"latest_generated_at={_iso_or_none(report.latest_generated_at)} "
+        f"history_span_seconds={_none_or_value(report.history_span_seconds)} "
+        f"latest_age_seconds={_none_or_value(report.latest_age_seconds)} "
+        f"latest_queue_count={report.latest_queue_count} "
+        f"latest_selected_count={report.latest_selected_count} "
+        f"latest_pending_count={report.latest_pending_count} "
+        f"latest_rejected_count={report.latest_rejected_count} "
+        f"latest_skipped_count={report.latest_skipped_count} "
+        f"aggregate_queue_count={report.aggregate_queue_count} "
+        f"aggregate_selected_count={report.aggregate_selected_count} "
+        f"aggregate_pending_count={report.aggregate_pending_count} "
+        f"aggregate_rejected_count={report.aggregate_rejected_count} "
+        f"aggregate_skipped_count={report.aggregate_skipped_count} "
+        f"latest_selected_share={report.latest_selected_share} "
+        f"average_selected_share={report.average_selected_share} "
+        f"distinct_config_versions={_csv_or_none(report.distinct_config_versions)} "
+        f"history_status={report.history_status} "
+        f"recommended_next_step={report.recommended_next_step} "
+        f"reason_codes={_csv_or_none(report.reason_codes)}",
+    )
+    print(
+        "reason_code_counts: "
+        f"{_format_probability_selection_history_reason_code_counts(report.reason_code_counts)}",
+    )
+
+
+def _format_probability_selection_history_reason_code_counts(
+    counts: tuple[tuple[str, int], ...],
+) -> str:
+    if not counts:
+        return "none"
+    return ",".join(f"{reason_code}:{count}" for reason_code, count in counts)
 
 
 def _format_reason_code_counts(

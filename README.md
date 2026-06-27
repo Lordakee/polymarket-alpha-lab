@@ -284,6 +284,36 @@ It remains env-only, accepts only `--limit`, prints aggregate status plus
 `persisted=True/False`, does not create live instructions, and does not mutate
 exchange state.
 
+Paper Probability Selection Summary History:
+
+```bash
+.venv/bin/polymarket-alpha-lab paper-probability-selection-summary-history --limit 25
+```
+
+The command is env-only and reads source selection-summary reports from the DB
+configured by `POLYMARKET_ALPHA_LAB_PAPER_PROBABILITY_SELECTION_SUMMARY_DB_*`.
+It accepts only `--limit` and optional default-off `--persist`; it does not
+accept DSN/table CLI flags.
+
+By default it builds one paper-only/report-only/readonly aggregate history
+report from the latest source selection-summary reports and writes nothing. The
+source reports are read newest-first from the source DB window and then reduced
+chronologically inside the history reducer.
+
+With `--persist`, the command writes only the derived history report through the
+separate history DB configured by
+`POLYMARKET_ALPHA_LAB_PAPER_PROBABILITY_SELECTION_SUMMARY_HISTORY_DB_*`, then
+prints `persisted=True/False`.
+
+It prints aggregate history fields at a high level: source report count,
+first/latest source timestamps and source age, latest and aggregate queue
+selection counts, selected-share summaries, distinct config versions, history
+status, recommended next step, and reason-code summaries.
+
+Boundary: no live trading, no auth, no wallet handling, no account reads, no
+private-key handling, no order construction/signing/submission/cancellation, no
+DSN/table flags, and no exchange mutation.
+
 Paper Autonomous Allocation Proposal combines a passed autonomous screening
 gate, latest action-gated queue decision-support reports, and source queue
 reports into a paper-only/report-only/read-only allocation proposal:
