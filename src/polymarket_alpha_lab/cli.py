@@ -5,12 +5,14 @@ from __future__ import annotations
 import argparse
 from collections import Counter
 import re
+import shlex
 import sys
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
+from urllib.parse import parse_qs, urlsplit
 
 from polymarket_alpha_lab.api import PolymarketPublicClient
 from polymarket_alpha_lab.cost_aware_event_strategy import (
@@ -347,7 +349,13 @@ PaperProbabilitySelectionSummaryHistoryRunner = Callable[..., object]
 PaperProbabilitySelectionSummaryHistoryDbSink = Callable[..., object]
 PaperProbabilitySelectionSummaryHistoryTrendRunner = Callable[..., object]
 AutonomousMarketScorerHistoryRunner = Callable[..., object]
+ProbabilitySelectionScorerAgreementRunner = Callable[..., object]
 MAX_PAPER_AUTONOMOUS_READINESS_DIGEST_READ_LIMIT = 500
+_LOCAL_POSTGRES_HOSTS = frozenset(("localhost", "127.0.0.1", "::1"))
+_LOCAL_POSTGRES_DSN_ERROR = (
+    "DSN must point to local Postgres/Supabase on localhost, 127.0.0.1, "
+    "::1, or an explicit Unix socket path"
+)
 _MISSING = object()
 
 
@@ -889,6 +897,25 @@ def _redacted_autonomous_market_scorer_history_error(
     return RuntimeError(message)
 
 
+def _redacted_probability_selection_scorer_agreement_error(
+    exc: Exception,
+    *,
+    selection_summary_dsn: str,
+    selection_summary_table_name: str,
+    scorer_dsn: str,
+    scorer_table_name: str,
+) -> RuntimeError:
+    message = str(exc)
+    for dsn_value in (selection_summary_dsn, scorer_dsn):
+        message = _redact_db_dsn(message, dsn=dsn_value)
+    for storage_name in (selection_summary_table_name, scorer_table_name):
+        message = _redact_db_table_name_and_tail(message, table_name=storage_name)
+    message = _redact_paper_research_packet_sensitive_fields(message)
+    if not message.strip():
+        message = exc.__class__.__name__
+    return RuntimeError(message)
+
+
 def _redacted_paper_probability_selection_summary_history_persistence_error(
     exc: Exception,
     *,
@@ -1010,6 +1037,97 @@ def _require_paper_autonomous_readiness_digest_limit(limit: object) -> None:
             f"{command_name} limit must be less than or equal to "
             f"{MAX_PAPER_AUTONOMOUS_READINESS_DIGEST_READ_LIMIT}",
         )
+
+
+def _require_probability_selection_scorer_agreement_limit(limit: object) -> None:
+    command_name = "probability-selection-scorer-agreement"
+    if isinstance(limit, bool) or type(limit) is not int or limit < 1:
+        raise ValueError(f"{command_name} limit must be positive")
+
+
+def _require_local_postgres_dsn(value: str) -> None:
+    if value.startswith("postgresql://"):
+        if _is_local_postgresql_uri(value):
+            return
+        raise ValueError(_LOCAL_POSTGRES_DSN_ERROR)
+    if _is_simple_keyword_dsn(value):
+        if _is_local_keyword_dsn(value):
+            return
+        raise ValueError(_LOCAL_POSTGRES_DSN_ERROR)
+    raise ValueError(_LOCAL_POSTGRES_DSN_ERROR)
+
+
+def _is_local_postgresql_uri(value: str) -> bool:
+    try:
+        parsed = urlsplit(value)
+        port = parsed.port
+    except ValueError:
+        return False
+    if parsed.scheme != "postgresql":
+        return False
+    if port is not None and not _is_valid_port(port):
+        return False
+    query = parse_qs(parsed.query, keep_blank_values=True)
+    if "hostaddr" in query or "service" in query:
+        return False
+    query_hosts = query.get("host", ())
+    if len(query_hosts) > 1:
+        return False
+    hostname = parsed.hostname
+    if hostname:
+        if query_hosts:
+            return False
+        return _is_local_postgres_host(hostname)
+    if not query_hosts:
+        return False
+    return _is_local_query_postgres_host(query_hosts[0])
+
+
+def _is_simple_keyword_dsn(value: str) -> bool:
+    return "=" in value and "://" not in value
+
+
+def _is_local_keyword_dsn(value: str) -> bool:
+    try:
+        tokens = shlex.split(value)
+    except ValueError:
+        return False
+    params: dict[str, str] = {}
+    for token in tokens:
+        if "=" not in token:
+            return False
+        key, field_value = token.split("=", 1)
+        if not key:
+            return False
+        params[key.lower()] = field_value
+    if "hostaddr" in params or "service" in params:
+        return False
+    host = params.get("host")
+    if host is None or host == "":
+        return False
+    port = params.get("port")
+    if port is not None:
+        if not port.isdecimal() or not _is_valid_port(int(port)):
+            return False
+    return _is_local_query_postgres_host(host)
+
+
+def _is_local_query_postgres_host(value: str) -> bool:
+    if "," in value or not value:
+        return False
+    if value.startswith("/"):
+        return True
+    return _is_local_postgres_host(value)
+
+
+def _is_local_postgres_host(value: str) -> bool:
+    if "," in value:
+        return False
+    return value.lower() in _LOCAL_POSTGRES_HOSTS
+
+
+def _is_valid_port(value: int) -> bool:
+    return 1 <= value <= 65535
 
 
 def _raise_redacted_db_sink_error(
@@ -1292,6 +1410,9 @@ def main(
     ) = None,
     autonomous_market_scorer_history_runner: (
         AutonomousMarketScorerHistoryRunner | None
+    ) = None,
+    probability_selection_scorer_agreement_runner: (
+        ProbabilitySelectionScorerAgreementRunner | None
     ) = None,
 ) -> int:
     parser = argparse.ArgumentParser(prog="polymarket-alpha-lab")
@@ -1576,6 +1697,21 @@ def main(
         "--limit",
         type=int,
         default=25,
+        dest="limit",
+    )
+    probability_selection_scorer_agreement = subparsers.add_parser(
+        "probability-selection-scorer-agreement",
+        allow_abbrev=False,
+        description=(
+            "Build a read-only, report-only agreement report from local "
+            "Supabase/Postgres probability selection and scorer snapshots."
+        ),
+        help="read-only report-only probability selection/scorer agreement",
+    )
+    probability_selection_scorer_agreement.add_argument(
+        "--limit",
+        type=int,
+        default=1,
         dest="limit",
     )
 
@@ -3121,6 +3257,64 @@ def main(
                     table_name=scorer_db_config.table_name,
                 ) from None
             _print_autonomous_market_scorer_history_summary(report)
+            return 0
+        except Exception as exc:
+            print(f"{command_name} failed: {exc}", file=sys.stderr)
+            return 1
+
+    if args.command == "probability-selection-scorer-agreement":
+        command_name = "probability-selection-scorer-agreement"
+        try:
+            _require_probability_selection_scorer_agreement_limit(args.limit)
+            selection_summary_db_config = (
+                from_paper_probability_selection_summary_db_env()
+            )
+            if not selection_summary_db_config.enabled:
+                raise ValueError(
+                    f"{command_name} requires paper probability selection summary "
+                    "DB to be enabled",
+                )
+            scorer_db_config = from_autonomous_market_scorer_db_env()
+            if not scorer_db_config.enabled:
+                raise ValueError(
+                    f"{command_name} requires autonomous market scorer DB "
+                    "to be enabled",
+                )
+            selection_summary_dsn = selection_summary_db_config.dsn
+            if selection_summary_dsn is None:
+                raise ValueError(
+                    f"{command_name} requires a paper probability selection "
+                    "summary DB DSN",
+                )
+            scorer_dsn = scorer_db_config.dsn
+            if scorer_dsn is None:
+                raise ValueError(
+                    f"{command_name} requires an autonomous market scorer DB DSN",
+                )
+            _require_local_postgres_dsn(selection_summary_dsn)
+            _require_local_postgres_dsn(scorer_dsn)
+            try:
+                report = _run_probability_selection_scorer_agreement(
+                    selection_summary_dsn=selection_summary_dsn,
+                    selection_summary_table_name=(
+                        selection_summary_db_config.table_name
+                    ),
+                    scorer_dsn=scorer_dsn,
+                    scorer_table_name=scorer_db_config.table_name,
+                    limit=args.limit,
+                    runner=probability_selection_scorer_agreement_runner,
+                )
+            except Exception as exc:
+                raise _redacted_probability_selection_scorer_agreement_error(
+                    exc,
+                    selection_summary_dsn=selection_summary_dsn,
+                    selection_summary_table_name=(
+                        selection_summary_db_config.table_name
+                    ),
+                    scorer_dsn=scorer_dsn,
+                    scorer_table_name=scorer_db_config.table_name,
+                ) from None
+            _print_probability_selection_scorer_agreement_summary(report)
             return 0
         except Exception as exc:
             print(f"{command_name} failed: {exc}", file=sys.stderr)
@@ -6225,6 +6419,105 @@ def _run_autonomous_market_scorer_history(
             pass
 
 
+def _run_probability_selection_scorer_agreement(
+    *,
+    selection_summary_dsn: str,
+    selection_summary_table_name: str,
+    scorer_dsn: str,
+    scorer_table_name: str,
+    limit: int,
+    runner: ProbabilitySelectionScorerAgreementRunner | None,
+) -> object:
+    _require_probability_selection_scorer_agreement_limit(limit)
+    generated_at = datetime.now(UTC)
+
+    from polymarket_alpha_lab.probability_selection_scorer_agreement import (
+        ProbabilitySelectionScorerAgreementConfig,
+    )
+
+    config = ProbabilitySelectionScorerAgreementConfig(
+        config_version="probability-selection-scorer-agreement-v0",
+    )
+    if runner is not None:
+        try:
+            return runner(
+                selection_summary_dsn=selection_summary_dsn,
+                selection_summary_table_name=selection_summary_table_name,
+                scorer_dsn=scorer_dsn,
+                scorer_table_name=scorer_table_name,
+                limit=limit,
+                config=config,
+                generated_at=generated_at,
+            )
+        except Exception as exc:
+            raise _redacted_probability_selection_scorer_agreement_error(
+                exc,
+                selection_summary_dsn=selection_summary_dsn,
+                selection_summary_table_name=selection_summary_table_name,
+                scorer_dsn=scorer_dsn,
+                scorer_table_name=scorer_table_name,
+            ) from None
+
+    from polymarket_alpha_lab.probability_selection_scorer_agreement_load import (
+        load_probability_selection_scorer_agreement_report,
+    )
+    try:
+        import psycopg
+    except ModuleNotFoundError as exc:
+        if exc.name != "psycopg":
+            raise
+        raise RuntimeError(
+            "psycopg is required to use the probability selection scorer "
+            "agreement read adapter; install the postgres extra.",
+        ) from exc
+
+    try:
+        selection_connection = psycopg.connect(
+            selection_summary_dsn,
+            autocommit=True,
+        )
+    except Exception:
+        raise RuntimeError(
+            "failed to connect to the paper probability selection summary database",
+        ) from None
+    try:
+        try:
+            scorer_connection = psycopg.connect(scorer_dsn, autocommit=True)
+        except Exception:
+            raise RuntimeError(
+                "failed to connect to the autonomous market scorer database",
+            ) from None
+        try:
+            return load_probability_selection_scorer_agreement_report(
+                selection_connection,
+                scorer_connection,
+                selection_limit=limit,
+                scorer_limit=limit,
+                selection_table_name=selection_summary_table_name,
+                scorer_table_name=scorer_table_name,
+                config=config,
+                generated_at=generated_at,
+            )
+        finally:
+            try:
+                scorer_connection.close()
+            except Exception:
+                pass
+    except Exception as exc:
+        raise _redacted_probability_selection_scorer_agreement_error(
+            exc,
+            selection_summary_dsn=selection_summary_dsn,
+            selection_summary_table_name=selection_summary_table_name,
+            scorer_dsn=scorer_dsn,
+            scorer_table_name=scorer_table_name,
+        ) from None
+    finally:
+        try:
+            selection_connection.close()
+        except Exception:
+            pass
+
+
 def _run_paper_autonomous_readiness_digest(
     *,
     dsn: str,
@@ -9164,6 +9457,38 @@ def _print_autonomous_market_scorer_history_summary(report: object) -> None:
         f"{_format_safe_autonomous_market_scorer_reason_code_counts(report.recurring_reason_code_counts)} "
         "redacted_recurring_reason_code_count="
         f"{_redacted_autonomous_market_scorer_reason_code_count(report.recurring_reason_code_counts)}",
+    )
+
+
+def _print_probability_selection_scorer_agreement_summary(report: object) -> None:
+    print(
+        "probability-selection-scorer-agreement: "
+        f"generated_at={_iso_or_none(report.generated_at)} "
+        f"config_version={report.config_version} "
+        f"selection_generated_at={_iso_or_none(report.selection_generated_at)} "
+        f"scorer_generated_at={_iso_or_none(report.scorer_generated_at)} "
+        f"selected_count={report.selected_count} "
+        f"scorer_candidate_count={report.scorer_candidate_count} "
+        "selected_market_overlap_count="
+        f"{report.selected_market_overlap_count} "
+        "selected_condition_overlap_count="
+        f"{report.selected_condition_overlap_count} "
+        f"rejected_but_scored_count={report.rejected_but_scored_count} "
+        f"scored_but_unselected_count={report.scored_but_unselected_count} "
+        f"scorer_gate_status={report.scorer_gate_status} "
+        f"agreement_status={report.agreement_status} "
+        f"recommended_next_step={report.recommended_next_step} "
+        f"paper_only={report.paper_only} "
+        f"report_only={report.report_only} "
+        f"readonly={report.readonly}",
+    )
+    print(
+        "reason_codes: "
+        f"{_csv_or_none(_safe_reason_codes_for_cli(report.reason_codes))}",
+    )
+    print(
+        "reason_code_divergence_counts: "
+        f"{_format_safe_probability_selection_history_reason_code_counts(report.reason_code_divergence_counts)}",
     )
 
 
