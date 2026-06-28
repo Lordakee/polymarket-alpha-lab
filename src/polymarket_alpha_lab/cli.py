@@ -197,6 +197,9 @@ from polymarket_alpha_lab.supabase_paper_autonomous_investment_ledger_config imp
 from polymarket_alpha_lab.supabase_paper_autonomous_investment_ledger_db_history_health_config import (
     from_paper_autonomous_investment_ledger_db_history_health_db_env,
 )
+from polymarket_alpha_lab.supabase_paper_autonomous_readiness_gate_config import (
+    from_paper_autonomous_readiness_gate_db_env,
+)
 from polymarket_alpha_lab.supabase_paper_autonomous_allocation_proposal_config import (
     from_paper_autonomous_allocation_proposal_db_env,
 )
@@ -335,6 +338,7 @@ PaperAutonomousInvestmentLedgerDbHistoryHealthTrendGateRunner = Callable[
     ...,
     object,
 ]
+PaperAutonomousReadinessDigestRunner = Callable[..., object]
 PaperResearchPacketOperatorFlowDbSink = Callable[..., object]
 PaperProbabilityRecommendationQueueDbSink = Callable[..., object]
 PaperRecommendationRiskBudgetDbSink = Callable[..., object]
@@ -343,6 +347,7 @@ PaperProbabilitySelectionSummaryHistoryRunner = Callable[..., object]
 PaperProbabilitySelectionSummaryHistoryDbSink = Callable[..., object]
 PaperProbabilitySelectionSummaryHistoryTrendRunner = Callable[..., object]
 AutonomousMarketScorerHistoryRunner = Callable[..., object]
+MAX_PAPER_AUTONOMOUS_READINESS_DIGEST_READ_LIMIT = 500
 _MISSING = object()
 
 
@@ -490,6 +495,7 @@ def _redact_paper_research_packet_sensitive_fields(text: str) -> str:
             "token",
             "access_token",
             "refresh_token",
+            "auth",
             "auth_token",
             "bearer_token",
             "jwt_token",
@@ -527,6 +533,11 @@ def _redact_keyed_sensitive_fields(
             replacement=replacement,
         )
         message = _redact_sensitive_json_field(
+            message,
+            field_name=field_name,
+            replacement=replacement,
+        )
+        message = _redact_sensitive_python_repr_field(
             message,
             field_name=field_name,
             replacement=replacement,
@@ -573,6 +584,20 @@ def _redact_sensitive_json_field(
         text,
         pattern=pattern,
         replacement=f'"{field_name}": "{replacement}"',
+    )
+
+
+def _redact_sensitive_python_repr_field(
+    text: str,
+    *,
+    field_name: str,
+    replacement: str,
+) -> str:
+    pattern = re.compile(rf"'{re.escape(field_name)}'\s*:\s*", re.IGNORECASE)
+    return _redact_sensitive_field_matches(
+        text,
+        pattern=pattern,
+        replacement=f"'{field_name}': '{replacement}'",
     )
 
 
@@ -676,23 +701,33 @@ def _next_key_value_field_start(text: str, start: int) -> int | None:
     index = start
     while True:
         match = re.search(
-            r'\s+(?:"[A-Za-z_][A-Za-z0-9_]*"\s*:|'
-            r"[A-Za-z_][A-Za-z0-9_]*(?:=|:))",
+            r'(?:\s+(?:"[A-Za-z_][A-Za-z0-9_]*"\s*:|'
+            r"[A-Za-z_][A-Za-z0-9_]*(?:=|:))|"
+            r",\s*'[A-Za-z_][A-Za-z0-9_]+'\s*:)",
             text[index:],
         )
         if match is None:
             return None
         candidate = index + match.start()
-        key_start = candidate + 1
+        key_start = _key_start_after_field_separator(text, candidate)
         if _is_false_key_value_in_question(text, candidate):
             index = key_start
             continue
         return candidate
 
 
+def _key_start_after_field_separator(text: str, candidate: int) -> int:
+    key_start = candidate
+    while key_start < len(text) and (
+        text[key_start].isspace() or text[key_start] == ","
+    ):
+        key_start += 1
+    return key_start
+
+
 def _is_false_key_value_in_question(text: str, candidate: int) -> bool:
-    key_start = candidate + 1
-    if key_start < len(text) and text[key_start] == '"':
+    key_start = _key_start_after_field_separator(text, candidate)
+    if key_start < len(text) and text[key_start] in {'"', "'"}:
         return False
     key_end = key_start
     while key_end < len(text) and (
@@ -966,6 +1001,17 @@ def _require_paper_autonomous_allocation_proposal_limit(
         )
 
 
+def _require_paper_autonomous_readiness_digest_limit(limit: object) -> None:
+    command_name = "paper-autonomous-readiness-digest"
+    if isinstance(limit, bool) or type(limit) is not int or limit < 1:
+        raise ValueError(f"{command_name} limit must be positive")
+    if limit > MAX_PAPER_AUTONOMOUS_READINESS_DIGEST_READ_LIMIT:
+        raise ValueError(
+            f"{command_name} limit must be less than or equal to "
+            f"{MAX_PAPER_AUTONOMOUS_READINESS_DIGEST_READ_LIMIT}",
+        )
+
+
 def _raise_redacted_db_sink_error(
     exc: Exception,
     *,
@@ -1222,6 +1268,9 @@ def main(
     ) = None,
     paper_autonomous_investment_ledger_db_history_health_trend_gate_runner: (
         PaperAutonomousInvestmentLedgerDbHistoryHealthTrendGateRunner | None
+    ) = None,
+    paper_autonomous_readiness_digest_runner: (
+        PaperAutonomousReadinessDigestRunner | None
     ) = None,
     paper_probability_recommendation_queue_db_sink: (
         PaperProbabilityRecommendationQueueDbSink | None
@@ -2131,6 +2180,16 @@ def main(
         )
     )
     paper_autonomous_investment_ledger_db_history_health_trend_gate.add_argument(
+        "--limit",
+        type=int,
+        default=25,
+        dest="limit",
+    )
+    paper_autonomous_readiness_digest = subparsers.add_parser(
+        "paper-autonomous-readiness-digest",
+        allow_abbrev=False,
+    )
+    paper_autonomous_readiness_digest.add_argument(
         "--limit",
         type=int,
         default=25,
@@ -4711,6 +4770,43 @@ def main(
             )
             return 1
 
+    if args.command == "paper-autonomous-readiness-digest":
+        command_name = "paper-autonomous-readiness-digest"
+        try:
+            _require_paper_autonomous_readiness_digest_limit(args.limit)
+            readiness_gate_db_config = from_paper_autonomous_readiness_gate_db_env()
+            if not readiness_gate_db_config.enabled:
+                raise ValueError(
+                    f"{command_name} requires paper autonomous readiness gate DB "
+                    "to be enabled",
+                )
+            dsn = readiness_gate_db_config.dsn
+            if dsn is None:
+                raise ValueError(
+                    f"{command_name} requires a paper autonomous readiness gate DB DSN",
+                )
+            try:
+                report = _run_paper_autonomous_readiness_digest(
+                    dsn=dsn,
+                    table_name=readiness_gate_db_config.table_name,
+                    limit=args.limit,
+                    runner=paper_autonomous_readiness_digest_runner,
+                )
+            except Exception as exc:
+                raise _redacted_paper_research_packet_db_history_error(
+                    exc,
+                    dsn=dsn,
+                    table_name=readiness_gate_db_config.table_name,
+                ) from None
+            _print_paper_autonomous_readiness_digest_summary(report)
+            return 0
+        except Exception as exc:
+            print(
+                f"{command_name} failed: {exc}",
+                file=sys.stderr,
+            )
+            return 1
+
     if args.command == "paper-research-packet-operator-flow":
         try:
             if isinstance(args.limit, bool) or type(args.limit) is not int or args.limit < 1:
@@ -6122,6 +6218,98 @@ def _run_autonomous_market_scorer_history(
             config=config,
             generated_at=generated_at,
         )
+    finally:
+        try:
+            connection.close()
+        except Exception:
+            pass
+
+
+def _run_paper_autonomous_readiness_digest(
+    *,
+    dsn: str,
+    table_name: str,
+    limit: int,
+    runner: PaperAutonomousReadinessDigestRunner | None,
+) -> object:
+    _require_paper_autonomous_readiness_digest_limit(limit)
+    generated_at = datetime.now(UTC)
+
+    from polymarket_alpha_lab.paper_autonomous_readiness_digest import (
+        PaperAutonomousReadinessDigestConfig,
+    )
+
+    config = PaperAutonomousReadinessDigestConfig()
+    if runner is not None:
+        try:
+            return runner(
+                dsn=dsn,
+                table_name=table_name,
+                limit=limit,
+                config=config,
+                generated_at=generated_at,
+            )
+        except Exception as exc:
+            raise _redacted_paper_research_packet_db_history_error(
+                exc,
+                dsn=dsn,
+                table_name=table_name,
+            ) from None
+
+    from polymarket_alpha_lab.paper_autonomous_readiness_digest_load import (
+        load_paper_autonomous_readiness_digest_report,
+    )
+    from polymarket_alpha_lab.paper_autonomous_readiness_gate_store import (
+        load_paper_autonomous_readiness_gate_reports,
+    )
+
+    def readiness_loader(
+        connection: object,
+        *,
+        table_name: str,
+        limit: int | None,
+        generated_at: datetime,
+    ) -> object:
+        del generated_at
+        reports = load_paper_autonomous_readiness_gate_reports(
+            connection,
+            limit=limit,
+            table_name=table_name,
+        )
+        if not reports:
+            raise ValueError("paper autonomous readiness gate DB returned no reports")
+        return reports[0]
+
+    try:
+        import psycopg
+    except ModuleNotFoundError as exc:
+        if exc.name != "psycopg":
+            raise
+        raise RuntimeError(
+            "psycopg is required to use the paper autonomous readiness digest "
+            "read adapter; install the postgres extra.",
+        ) from exc
+    try:
+        connection = psycopg.connect(dsn, autocommit=True)
+    except Exception:
+        raise RuntimeError(
+            "failed to connect to the paper autonomous readiness gate database",
+        ) from None
+    try:
+        return load_paper_autonomous_readiness_digest_report(
+            connection,
+            readiness_loader=readiness_loader,
+            readiness_table_name=table_name,
+            limit=limit,
+            config=config,
+            generated_at=generated_at,
+        )
+    except Exception as exc:
+        raise _redacted_paper_research_packet_db_history_error(
+            exc,
+            dsn=dsn,
+            table_name=table_name,
+        ) from None
     finally:
         try:
             connection.close()
@@ -10744,6 +10932,27 @@ def _print_paper_autonomous_investment_ledger_db_history_health_trend_gate_summa
         f"reason_code_counts={reason_code_counts or 'none'}",
     ]
     print(" ".join(summary_parts))
+
+
+def _print_paper_autonomous_readiness_digest_summary(report: object) -> None:
+    print(
+        "paper-autonomous-readiness-digest: "
+        f"digest_status={report.digest_status} "
+        "recommended_next_review_action="
+        f"{report.recommended_next_review_action} "
+        f"evidence_count={len(tuple(report.evidence))}",
+    )
+    evidence_statuses = " ".join(
+        f"{row.source_name}={row.status}"
+        for row in report.evidence
+    )
+    print(f"evidence_statuses: {evidence_statuses or 'none'}")
+    reason_code_counts = " ".join(
+        f"{_safe_reason_code_for_cli(row.reason_code)}:"
+        f"{_reason_code_report_count(row)}"
+        for row in report.reason_code_counts
+    )
+    print(f"reason_code_counts: {reason_code_counts or 'none'}")
 
 
 def _print_paper_autonomous_screening_decision_support_gate_summary(
