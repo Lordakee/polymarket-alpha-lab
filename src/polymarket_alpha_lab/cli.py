@@ -227,6 +227,9 @@ from polymarket_alpha_lab.supabase_probability_selection_summary_config import (
 from polymarket_alpha_lab.supabase_paper_probability_selection_summary_history_config import (
     from_paper_probability_selection_summary_history_db_env,
 )
+from polymarket_alpha_lab.supabase_autonomous_market_scorer_config import (
+    from_autonomous_market_scorer_db_env,
+)
 from polymarket_alpha_lab.supabase_strategy_candidate_research_queue_config import (
     from_strategy_candidate_research_queue_db_env,
 )
@@ -339,6 +342,7 @@ PaperRecommendationReasonTrendDbSink = Callable[..., object]
 PaperProbabilitySelectionSummaryHistoryRunner = Callable[..., object]
 PaperProbabilitySelectionSummaryHistoryDbSink = Callable[..., object]
 PaperProbabilitySelectionSummaryHistoryTrendRunner = Callable[..., object]
+AutonomousMarketScorerHistoryRunner = Callable[..., object]
 _MISSING = object()
 
 
@@ -392,6 +396,27 @@ def _redact_paper_research_packet_sensitive_fields(text: str) -> str:
         text,
         field_names=("payload_json", "payload"),
         replacement="<redacted-payload>",
+    )
+    message = _redact_keyed_sensitive_fields(
+        message,
+        field_names=("score_rows_json", "score_rows"),
+        replacement="<redacted-score-rows>",
+    )
+    message = _redact_keyed_sensitive_fields(
+        message,
+        field_names=("condition_id", "conditionId"),
+        replacement="<redacted-market-detail>",
+    )
+    message = _redact_keyed_sensitive_fields(
+        message,
+        field_names=(
+            "reason_codes_json",
+            "reason_codes",
+            "reason_code",
+            "reasonCodes",
+            "reasonCode",
+        ),
+        replacement="<redacted-reason-codes>",
     )
     message = _redact_keyed_sensitive_fields(
         message,
@@ -578,10 +603,36 @@ def _sensitive_field_value_end(text: str, start: int) -> int:
         if field_start is None:
             return len(text)
         return field_start
+    quoted_value_end = _quoted_value_end(text, start)
+    if quoted_value_end is not None:
+        field_start = _next_key_value_field_start(text, quoted_value_end)
+        if field_start is None:
+            return quoted_value_end
+        return field_start
     field_start = _next_key_value_field_start(text, start)
     if field_start is None:
         return len(text)
     return field_start
+
+
+def _quoted_value_end(text: str, start: int) -> int | None:
+    index = start
+    while index < len(text) and text[index].isspace():
+        index += 1
+    if index >= len(text) or text[index] not in {'"', "'"}:
+        return None
+
+    quote = text[index]
+    escaped = False
+    for position in range(index + 1, len(text)):
+        char = text[position]
+        if escaped:
+            escaped = False
+        elif char == "\\":
+            escaped = True
+        elif char == quote:
+            return position + 1
+    return len(text)
 
 
 def _json_like_value_end(text: str, start: int) -> int | None:
@@ -776,6 +827,20 @@ def _redacted_paper_probability_selection_summary_history_error(
 
 
 def _redacted_paper_probability_selection_summary_history_trend_error(
+    exc: Exception,
+    *,
+    dsn: str,
+    table_name: str,
+) -> RuntimeError:
+    message = _redact_db_dsn(str(exc), dsn=dsn)
+    message = _redact_db_table_name_and_tail(message, table_name=table_name)
+    message = _redact_paper_research_packet_sensitive_fields(message)
+    if not message.strip():
+        message = exc.__class__.__name__
+    return RuntimeError(message)
+
+
+def _redacted_autonomous_market_scorer_history_error(
     exc: Exception,
     *,
     dsn: str,
@@ -1176,6 +1241,9 @@ def main(
     paper_probability_selection_summary_history_trend_runner: (
         PaperProbabilitySelectionSummaryHistoryTrendRunner | None
     ) = None,
+    autonomous_market_scorer_history_runner: (
+        AutonomousMarketScorerHistoryRunner | None
+    ) = None,
 ) -> int:
     parser = argparse.ArgumentParser(prog="polymarket-alpha-lab")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -1446,6 +1514,16 @@ def main(
         allow_abbrev=False,
     )
     paper_probability_selection_summary_history_trend.add_argument(
+        "--limit",
+        type=int,
+        default=25,
+        dest="limit",
+    )
+    autonomous_market_scorer_history = subparsers.add_parser(
+        "autonomous-market-scorer-history",
+        allow_abbrev=False,
+    )
+    autonomous_market_scorer_history.add_argument(
         "--limit",
         type=int,
         default=25,
@@ -2948,6 +3026,45 @@ def main(
                 f"paper-probability-selection-summary-history-trend failed: {exc}",
                 file=sys.stderr,
             )
+            return 1
+
+    if args.command == "autonomous-market-scorer-history":
+        command_name = "autonomous-market-scorer-history"
+        try:
+            if (
+                isinstance(args.limit, bool)
+                or type(args.limit) is not int
+                or args.limit < 1
+            ):
+                raise ValueError(f"{command_name} limit must be positive")
+            scorer_db_config = from_autonomous_market_scorer_db_env()
+            if not scorer_db_config.enabled:
+                raise ValueError(
+                    f"{command_name} requires autonomous market scorer DB "
+                    "to be enabled",
+                )
+            dsn = scorer_db_config.dsn
+            if dsn is None:
+                raise ValueError(
+                    f"{command_name} requires an autonomous market scorer DB DSN",
+                )
+            try:
+                report = _run_autonomous_market_scorer_history(
+                    dsn=dsn,
+                    table_name=scorer_db_config.table_name,
+                    limit=args.limit,
+                    runner=autonomous_market_scorer_history_runner,
+                )
+            except Exception as exc:
+                raise _redacted_autonomous_market_scorer_history_error(
+                    exc,
+                    dsn=dsn,
+                    table_name=scorer_db_config.table_name,
+                ) from None
+            _print_autonomous_market_scorer_history_summary(report)
+            return 0
+        except Exception as exc:
+            print(f"{command_name} failed: {exc}", file=sys.stderr)
             return 1
 
     if args.command == "strategy-evidence":
@@ -5945,6 +6062,73 @@ def _run_paper_probability_selection_summary_history_trend(
             pass
 
 
+def _run_autonomous_market_scorer_history(
+    *,
+    dsn: str,
+    table_name: str,
+    limit: int,
+    runner: AutonomousMarketScorerHistoryRunner | None,
+) -> object:
+    command_name = "autonomous-market-scorer-history"
+    if isinstance(limit, bool) or type(limit) is not int or limit < 1:
+        raise ValueError(f"{command_name} limit must be positive")
+    generated_at = datetime.now(UTC)
+
+    from polymarket_alpha_lab.autonomous_market_scorer_history import (
+        AutonomousMarketScorerHistoryConfig,
+        build_autonomous_market_scorer_history_report,
+    )
+
+    config = AutonomousMarketScorerHistoryConfig(
+        config_version="autonomous-market-scorer-history-v0",
+    )
+    if runner is not None:
+        return runner(
+            dsn=dsn,
+            table_name=table_name,
+            limit=limit,
+            config=config,
+            generated_at=generated_at,
+        )
+
+    from polymarket_alpha_lab.autonomous_market_scorer_store import (
+        load_autonomous_market_scorer_reports,
+    )
+
+    try:
+        import psycopg
+    except ModuleNotFoundError as exc:
+        if exc.name != "psycopg":
+            raise
+        raise RuntimeError(
+            "psycopg is required to use the autonomous market scorer "
+            "history read adapter; install the postgres extra.",
+        ) from exc
+    try:
+        connection = psycopg.connect(dsn, autocommit=True)
+    except Exception:
+        raise RuntimeError(
+            "failed to connect to the autonomous market scorer database",
+        ) from None
+    try:
+        newest_first_reports = load_autonomous_market_scorer_reports(
+            connection,
+            limit=limit,
+            table_name=table_name,
+        )
+        scorer_reports = tuple(reversed(newest_first_reports))
+        return build_autonomous_market_scorer_history_report(
+            scorer_reports,
+            config=config,
+            generated_at=generated_at,
+        )
+    finally:
+        try:
+            connection.close()
+        except Exception:
+            pass
+
+
 def _run_paper_research_packet(
     *,
     source_config_version: str | None,
@@ -8748,6 +8932,88 @@ def _print_paper_probability_selection_summary_history_trend_summary(
     )
 
 
+def _print_autonomous_market_scorer_history_summary(report: object) -> None:
+    print(
+        "autonomous-market-scorer-history: "
+        f"source_report_count={report.source_report_count} "
+        f"first_generated_at={_iso_or_none(report.first_generated_at)} "
+        f"latest_generated_at={_iso_or_none(report.latest_generated_at)} "
+        f"history_span_seconds={report.history_span_seconds} "
+        f"latest_gate_status={report.latest_gate_status} "
+        f"latest_gate_status_streak={report.latest_gate_status_streak} "
+        f"latest_candidate_count={report.latest_candidate_count} "
+        f"average_candidate_count={report.average_candidate_count} "
+        f"latest_recommended_notional={report.latest_recommended_notional} "
+        f"total_recommended_notional={report.total_recommended_notional} "
+        f"notional_delta={report.notional_delta} "
+        f"blocked_report_count={report.blocked_report_count} "
+        f"skipped_report_count={report.skipped_report_count} "
+        f"history_status={report.history_status} "
+        f"recommended_next_step={report.recommended_next_step}",
+    )
+    market_count, max_market_count = _recurrence_count_summary(
+        report.recurring_market_slug_counts,
+    )
+    condition_count, max_condition_count = _recurrence_count_summary(
+        report.recurring_condition_id_counts,
+    )
+    print(
+        "identifier_recurrence: "
+        f"recurring_market_slug_count={market_count} "
+        f"max_recurring_market_slug_report_count={max_market_count} "
+        f"recurring_condition_id_count={condition_count} "
+        f"max_recurring_condition_id_report_count={max_condition_count}",
+    )
+    safe_reason_codes = _safe_reason_codes_for_cli(report.reason_codes)
+    redacted_reason_code_count = safe_reason_codes.count("<redacted-reason-code>")
+    print(
+        "reason_codes: "
+        f"{_csv_or_none(safe_reason_codes)} "
+        f"redacted_reason_code_count={redacted_reason_code_count}",
+    )
+    print(
+        "recurring_reason_code_counts: "
+        f"{_format_safe_autonomous_market_scorer_reason_code_counts(report.recurring_reason_code_counts)} "
+        "redacted_recurring_reason_code_count="
+        f"{_redacted_autonomous_market_scorer_reason_code_count(report.recurring_reason_code_counts)}",
+    )
+
+
+def _recurrence_count_summary(rows: object) -> tuple[int, int]:
+    values = tuple(rows)
+    if not values:
+        return (0, 0)
+    return (len(values), max(getattr(row, "report_count") for row in values))
+
+
+def _format_safe_autonomous_market_scorer_reason_code_counts(
+    rows: tuple[object, ...],
+) -> str:
+    visible_rows = tuple(
+        (
+            _safe_reason_code_for_cli(getattr(row, "reason_code")),
+            getattr(row, "report_count"),
+        )
+        for row in rows
+        if _safe_reason_code_for_cli(getattr(row, "reason_code"))
+        != "<redacted-reason-code>"
+    )
+    if not visible_rows:
+        return "none"
+    return ",".join(f"{reason_code}:{count}" for reason_code, count in visible_rows)
+
+
+def _redacted_autonomous_market_scorer_reason_code_count(
+    rows: tuple[object, ...],
+) -> int:
+    return sum(
+        1
+        for row in rows
+        if _safe_reason_code_for_cli(getattr(row, "reason_code"))
+        == "<redacted-reason-code>"
+    )
+
+
 def _format_safe_probability_selection_history_reason_code_counts(
     counts: tuple[tuple[str, int], ...],
 ) -> str:
@@ -8776,22 +9042,35 @@ def _safe_reason_code_for_cli(value: str) -> str:
         return "<redacted-reason-code>"
     if re.fullmatch(r"[a-z][a-z0-9_]*", value) is None:
         return "<redacted-reason-code>"
+    if len(value) > 128 or re.fullmatch(r"[a-f0-9]{32,}", value) is not None:
+        return "<redacted-reason-code>"
     normalized = value.lower().replace("_", "")
     forbidden_fragments = (
         "account",
         "apikey",
         "auth",
         "authorization",
+        "condition",
+        "conditionid",
         "credential",
+        "description",
+        "detail",
         "details",
+        "hash",
         "marketdetails",
         "marketquestion",
         "marketslug",
         "order",
         "password",
+        "payload",
+        "payloadjson",
         "privatekey",
         "question",
+        "reportsha256",
+        "scorerows",
         "secret",
+        "sha256",
+        "title",
         "token",
         "wallet",
     )
