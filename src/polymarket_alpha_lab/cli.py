@@ -338,6 +338,7 @@ PaperRecommendationRiskBudgetDbSink = Callable[..., object]
 PaperRecommendationReasonTrendDbSink = Callable[..., object]
 PaperProbabilitySelectionSummaryHistoryRunner = Callable[..., object]
 PaperProbabilitySelectionSummaryHistoryDbSink = Callable[..., object]
+PaperProbabilitySelectionSummaryHistoryTrendRunner = Callable[..., object]
 _MISSING = object()
 
 
@@ -443,6 +444,37 @@ def _redact_paper_research_packet_sensitive_fields(text: str) -> str:
         ),
         replacement="<redacted-order>",
     )
+    message = _redact_keyed_sensitive_fields(
+        message,
+        field_names=(
+            "market_question",
+            "market_details",
+            "details",
+            "description",
+            "title",
+        ),
+        replacement="<redacted-market-detail>",
+    )
+    message = _redact_keyed_sensitive_fields(
+        message,
+        field_names=(
+            "secret",
+            "secret_key",
+            "client_secret",
+            "password",
+            "token",
+            "access_token",
+            "refresh_token",
+            "auth_token",
+            "bearer_token",
+            "jwt_token",
+            "api_key",
+            "private_key",
+            "authorization",
+            "credential",
+        ),
+        replacement="<redacted-secret>",
+    )
     message = re.sub(
         r"\breport_sha256=[A-Fa-f0-9]{64}\b",
         "report_sha256=<redacted-sha256>",
@@ -483,7 +515,7 @@ def _redact_sensitive_equals_field(
     field_name: str,
     replacement: str,
 ) -> str:
-    pattern = re.compile(rf"\b{re.escape(field_name)}=")
+    pattern = re.compile(rf"\b{re.escape(field_name)}=", re.IGNORECASE)
     return _redact_sensitive_field_matches(
         text,
         pattern=pattern,
@@ -497,7 +529,7 @@ def _redact_sensitive_colon_field(
     field_name: str,
     replacement: str,
 ) -> str:
-    pattern = re.compile(rf"\b{re.escape(field_name)}:\s*")
+    pattern = re.compile(rf"\b{re.escape(field_name)}:\s*", re.IGNORECASE)
     return _redact_sensitive_field_matches(
         text,
         pattern=pattern,
@@ -511,7 +543,7 @@ def _redact_sensitive_json_field(
     field_name: str,
     replacement: str,
 ) -> str:
-    pattern = re.compile(rf'"{re.escape(field_name)}"\s*:\s*')
+    pattern = re.compile(rf'"{re.escape(field_name)}"\s*:\s*', re.IGNORECASE)
     return _redact_sensitive_field_matches(
         text,
         pattern=pattern,
@@ -730,6 +762,20 @@ def _redacted_paper_research_packet_operator_flow_error(
 
 
 def _redacted_paper_probability_selection_summary_history_error(
+    exc: Exception,
+    *,
+    dsn: str,
+    table_name: str,
+) -> RuntimeError:
+    message = _redact_db_dsn(str(exc), dsn=dsn)
+    message = _redact_db_table_name_and_tail(message, table_name=table_name)
+    message = _redact_paper_research_packet_sensitive_fields(message)
+    if not message.strip():
+        message = exc.__class__.__name__
+    return RuntimeError(message)
+
+
+def _redacted_paper_probability_selection_summary_history_trend_error(
     exc: Exception,
     *,
     dsn: str,
@@ -1127,6 +1173,9 @@ def main(
     paper_probability_selection_summary_history_db_sink: (
         PaperProbabilitySelectionSummaryHistoryDbSink | None
     ) = None,
+    paper_probability_selection_summary_history_trend_runner: (
+        PaperProbabilitySelectionSummaryHistoryTrendRunner | None
+    ) = None,
 ) -> int:
     parser = argparse.ArgumentParser(prog="polymarket-alpha-lab")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -1391,6 +1440,16 @@ def main(
         action="store_true",
         default=False,
         dest="persist",
+    )
+    paper_probability_selection_summary_history_trend = subparsers.add_parser(
+        "paper-probability-selection-summary-history-trend",
+        allow_abbrev=False,
+    )
+    paper_probability_selection_summary_history_trend.add_argument(
+        "--limit",
+        type=int,
+        default=25,
+        dest="limit",
     )
 
     strategy_evidence = subparsers.add_parser("strategy-evidence")
@@ -2840,6 +2899,53 @@ def main(
         except Exception as exc:
             print(
                 f"paper-probability-selection-summary-history failed: {exc}",
+                file=sys.stderr,
+            )
+            return 1
+
+    if args.command == "paper-probability-selection-summary-history-trend":
+        try:
+            if (
+                isinstance(args.limit, bool)
+                or type(args.limit) is not int
+                or args.limit < 1
+            ):
+                raise ValueError(
+                    "paper-probability-selection-summary-history-trend "
+                    "limit must be positive",
+                )
+            history_db_config = (
+                from_paper_probability_selection_summary_history_db_env()
+            )
+            if not history_db_config.enabled:
+                raise ValueError(
+                    "paper-probability-selection-summary-history-trend requires "
+                    "paper probability selection summary history DB to be enabled",
+                )
+            dsn = history_db_config.dsn
+            if dsn is None:
+                raise ValueError(
+                    "paper-probability-selection-summary-history-trend requires "
+                    "a paper probability selection summary history DB DSN",
+                )
+            try:
+                report = _run_paper_probability_selection_summary_history_trend(
+                    dsn=dsn,
+                    table_name=history_db_config.table_name,
+                    limit=args.limit,
+                    runner=paper_probability_selection_summary_history_trend_runner,
+                )
+            except Exception as exc:
+                raise _redacted_paper_probability_selection_summary_history_trend_error(
+                    exc,
+                    dsn=dsn,
+                    table_name=history_db_config.table_name,
+                ) from None
+            _print_paper_probability_selection_summary_history_trend_summary(report)
+            return 0
+        except Exception as exc:
+            print(
+                f"paper-probability-selection-summary-history-trend failed: {exc}",
                 file=sys.stderr,
             )
             return 1
@@ -5771,6 +5877,74 @@ def _run_paper_probability_selection_summary_history(
             pass
 
 
+def _run_paper_probability_selection_summary_history_trend(
+    *,
+    dsn: str,
+    table_name: str,
+    limit: int,
+    runner: PaperProbabilitySelectionSummaryHistoryTrendRunner | None,
+) -> object:
+    command_name = "paper-probability-selection-summary-history-trend"
+    if isinstance(limit, bool) or type(limit) is not int or limit < 1:
+        raise ValueError(f"{command_name} limit must be positive")
+    generated_at = datetime.now(UTC)
+
+    from polymarket_alpha_lab.paper_probability_selection_summary_history_trend import (
+        PaperProbabilitySelectionSummaryHistoryTrendConfig,
+        build_paper_probability_selection_summary_history_trend_report,
+    )
+
+    config = PaperProbabilitySelectionSummaryHistoryTrendConfig(
+        config_version="paper-probability-selection-summary-history-trend-v0",
+    )
+    if runner is not None:
+        return runner(
+            dsn=dsn,
+            table_name=table_name,
+            limit=limit,
+            config=config,
+            generated_at=generated_at,
+        )
+
+    from polymarket_alpha_lab.paper_probability_selection_summary_history_store import (
+        load_paper_probability_selection_summary_history_reports,
+    )
+
+    try:
+        import psycopg
+    except ModuleNotFoundError as exc:
+        if exc.name != "psycopg":
+            raise
+        raise RuntimeError(
+            "psycopg is required to use the paper probability selection "
+            "summary history trend read adapter; install the postgres extra.",
+        ) from exc
+    try:
+        connection = psycopg.connect(dsn, autocommit=True)
+    except Exception:
+        raise RuntimeError(
+            "failed to connect to the paper probability selection summary "
+            "history database",
+        ) from None
+    try:
+        newest_first_reports = load_paper_probability_selection_summary_history_reports(
+            connection,
+            limit=limit,
+            table_name=table_name,
+        )
+        history_reports = tuple(reversed(newest_first_reports))
+        return build_paper_probability_selection_summary_history_trend_report(
+            history_reports,
+            config=config,
+            generated_at=generated_at,
+        )
+    finally:
+        try:
+            connection.close()
+        except Exception:
+            pass
+
+
 def _run_paper_research_packet(
     *,
     source_config_version: str | None,
@@ -8547,12 +8721,83 @@ def _print_paper_probability_selection_summary_history_summary(report: object) -
     )
 
 
+def _print_paper_probability_selection_summary_history_trend_summary(
+    report: object,
+) -> None:
+    print(
+        "paper-probability-selection-summary-history-trend: "
+        f"source_history_count={report.source_history_count} "
+        f"first_generated_at={_iso_or_none(report.first_generated_at)} "
+        f"latest_generated_at={_iso_or_none(report.latest_generated_at)} "
+        f"history_span_seconds={report.history_span_seconds} "
+        f"latest_history_status={report.latest_history_status} "
+        f"latest_status_streak={report.latest_status_streak} "
+        f"latest_selected_share={report.latest_selected_share} "
+        f"average_selected_share={report.average_selected_share} "
+        f"selected_share_delta={report.selected_share_delta} "
+        f"stale_history_count={report.stale_history_count} "
+        f"thin_history_count={report.thin_history_count} "
+        f"trend_status={report.trend_status} "
+        f"recommended_next_step={report.recommended_next_step} "
+        "reason_codes="
+        f"{_csv_or_none(_safe_reason_codes_for_cli(report.reason_codes))}",
+    )
+    print(
+        "recurring_reason_code_counts: "
+        f"{_format_safe_probability_selection_history_reason_code_counts(report.recurring_reason_code_counts)}",
+    )
+
+
+def _format_safe_probability_selection_history_reason_code_counts(
+    counts: tuple[tuple[str, int], ...],
+) -> str:
+    if not counts:
+        return "none"
+    return ",".join(
+        f"{_safe_reason_code_for_cli(reason_code)}:{count}"
+        for reason_code, count in counts
+    )
+
+
 def _format_probability_selection_history_reason_code_counts(
     counts: tuple[tuple[str, int], ...],
 ) -> str:
     if not counts:
         return "none"
     return ",".join(f"{reason_code}:{count}" for reason_code, count in counts)
+
+
+def _safe_reason_codes_for_cli(values: tuple[str, ...]) -> tuple[str, ...]:
+    return tuple(_safe_reason_code_for_cli(value) for value in values)
+
+
+def _safe_reason_code_for_cli(value: str) -> str:
+    if type(value) is not str:
+        return "<redacted-reason-code>"
+    if re.fullmatch(r"[a-z][a-z0-9_]*", value) is None:
+        return "<redacted-reason-code>"
+    normalized = value.lower().replace("_", "")
+    forbidden_fragments = (
+        "account",
+        "apikey",
+        "auth",
+        "authorization",
+        "credential",
+        "details",
+        "marketdetails",
+        "marketquestion",
+        "marketslug",
+        "order",
+        "password",
+        "privatekey",
+        "question",
+        "secret",
+        "token",
+        "wallet",
+    )
+    if any(fragment in normalized for fragment in forbidden_fragments):
+        return "<redacted-reason-code>"
+    return value
 
 
 def _format_reason_code_counts(
