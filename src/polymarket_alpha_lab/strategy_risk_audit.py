@@ -6,6 +6,9 @@ from decimal import Decimal
 
 from polymarket_alpha_lab.nav_risk_metrics import PaperNavRiskMetricsReport
 from polymarket_alpha_lab.outcome_tracker import OutcomeTrackingReport
+from polymarket_alpha_lab.paper_nav_settlement_risk_overlay import (
+    PaperNavSettlementRiskOverlayReport,
+)
 from polymarket_alpha_lab.paper_trade_cost_audit import PaperTradeCostAuditReport
 from polymarket_alpha_lab.performance_summary import PerformanceSummary
 
@@ -26,6 +29,8 @@ GATE_NAMES = (
     "nav_drawdown",
     "open_exposure",
 )
+SETTLEMENT_NAV_RISK_GATE_NAME = "settlement_nav_risk"
+SETTLEMENT_NAV_RISK_GATE_NAMES = GATE_NAMES + (SETTLEMENT_NAV_RISK_GATE_NAME,)
 GATE_STATUSES = ("pass", "fail", "incomplete")
 REPORT_STATUSES = (
     "audit_ready",
@@ -81,7 +86,7 @@ class PaperStrategyRiskAuditGateResult:
 
     def __post_init__(self) -> None:
         _require_canonical_string("gate_name", self.gate_name)
-        if self.gate_name not in GATE_NAMES:
+        if self.gate_name not in SETTLEMENT_NAV_RISK_GATE_NAMES:
             raise ValueError("gate_name must be a known gate")
         _require_canonical_string("status", self.status)
         if self.status not in GATE_STATUSES:
@@ -120,7 +125,8 @@ class PaperStrategyRiskAuditReport:
             _require_nonnegative_int(field_name, getattr(self, field_name))
         normalized_results = _normalize_gate_results(self.gate_results)
         object.__setattr__(self, "gate_results", normalized_results)
-        if tuple(gate.gate_name for gate in normalized_results) != GATE_NAMES:
+        gate_names = tuple(gate.gate_name for gate in normalized_results)
+        if gate_names not in (GATE_NAMES, SETTLEMENT_NAV_RISK_GATE_NAMES):
             raise ValueError("gate_results must match the known gates")
         if self.gate_count != len(normalized_results):
             raise ValueError("gate_count must match gate_results")
@@ -149,6 +155,7 @@ def build_paper_strategy_risk_audit_report(
     cost_audit_report: PaperTradeCostAuditReport | None,
     config: PaperStrategyRiskAuditConfig,
     generated_at: datetime,
+    settlement_nav_risk_report: PaperNavSettlementRiskOverlayReport | None = None,
 ) -> PaperStrategyRiskAuditReport:
     if type(performance_summary) is not PerformanceSummary:
         raise ValueError("performance_summary must be a PerformanceSummary")
@@ -163,6 +170,14 @@ def build_paper_strategy_risk_audit_report(
         raise ValueError(
             "cost_audit_report must be a PaperTradeCostAuditReport or None",
         )
+    if (
+        settlement_nav_risk_report is not None
+        and type(settlement_nav_risk_report) is not PaperNavSettlementRiskOverlayReport
+    ):
+        raise ValueError(
+            "settlement_nav_risk_report must be a "
+            "PaperNavSettlementRiskOverlayReport or None",
+        )
     if type(config) is not PaperStrategyRiskAuditConfig:
         raise ValueError("config must be a PaperStrategyRiskAuditConfig")
     if not isinstance(generated_at, datetime):
@@ -174,6 +189,8 @@ def build_paper_strategy_risk_audit_report(
         _require_report_flags("outcome_report", outcome_report)
     if cost_audit_report is not None:
         _require_report_flags("cost_audit_report", cost_audit_report)
+    if settlement_nav_risk_report is not None:
+        _require_report_flags("settlement_nav_risk_report", settlement_nav_risk_report)
 
     gate_results = (
         _build_paper_history_gate(performance_summary, config),
@@ -183,6 +200,8 @@ def build_paper_strategy_risk_audit_report(
         _build_nav_drawdown_gate(nav_risk_report, config),
         _build_open_exposure_gate(nav_risk_report, config),
     )
+    if settlement_nav_risk_report is not None:
+        gate_results += (_build_settlement_nav_risk_gate(settlement_nav_risk_report),)
     pass_count = _count_gate_status(gate_results, "pass")
     fail_count = _count_gate_status(gate_results, "fail")
     incomplete_count = _count_gate_status(gate_results, "incomplete")
@@ -432,6 +451,35 @@ def _build_open_exposure_gate(
     )
 
 
+def _build_settlement_nav_risk_gate(
+    value: PaperNavSettlementRiskOverlayReport,
+) -> PaperStrategyRiskAuditGateResult:
+    observed_value = (
+        value.blocked_or_missing_exit_nav_share
+        if value.blocked_or_missing_exit_nav_share is not None
+        else value.blocked_or_missing_exit_value
+    )
+    threshold = value.max_blocked_settlement_exposure_share
+    if value.status == "settlement_nav_risk_clear":
+        status = "pass"
+        message = "Settlement NAV risk overlay is clear."
+    elif value.status == "empty_nav_settlement_risk_overlay":
+        status = "incomplete"
+        message = "Settlement NAV risk overlay has no exposure rows."
+    elif value.status in ("settlement_nav_risk_watch", "settlement_nav_risk_blocked"):
+        status = "fail"
+        message = "Settlement NAV risk overlay requires paper review."
+    else:
+        raise ValueError("settlement_nav_risk_report status must be known")
+    return PaperStrategyRiskAuditGateResult(
+        gate_name=SETTLEMENT_NAV_RISK_GATE_NAME,
+        status=status,
+        message=message,
+        observed_value=observed_value,
+        threshold=threshold,
+    )
+
+
 def _forecast_probability_quality_status(value: object) -> str:
     for gate in value.gate_results:
         if gate.gate_name == "probability_quality":
@@ -476,6 +524,8 @@ def _require_report_flags(field_name: str, value: object) -> None:
         raise ValueError(f"{field_name} paper_only must be True")
     if getattr(value, "report_only", None) is not True:
         raise ValueError(f"{field_name} report_only must be True")
+    if hasattr(value, "readonly") and getattr(value, "readonly") is not True:
+        raise ValueError(f"{field_name} readonly must be True")
 
 
 def _require_canonical_string(field_name: str, value: object) -> None:

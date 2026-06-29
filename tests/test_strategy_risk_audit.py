@@ -15,6 +15,10 @@ from polymarket_alpha_lab.nav_risk_metrics import (
     PaperNavRiskMetricsReport,
 )
 from polymarket_alpha_lab.outcome_tracker import OutcomeTrackingReport
+from polymarket_alpha_lab.paper_nav_settlement_risk_overlay import (
+    PaperNavSettlementRiskOverlayReport,
+    PaperNavSettlementRiskOverlayRow,
+)
 from polymarket_alpha_lab.paper_trade_cost_audit import PaperTradeCostAuditReport
 from polymarket_alpha_lab.performance_summary import PerformanceSummary
 from polymarket_alpha_lab.strategy_risk_audit import (
@@ -193,6 +197,50 @@ def _cost_audit(**overrides) -> PaperTradeCostAuditReport:
     return PaperTradeCostAuditReport(**values)
 
 
+def _settlement_nav_overlay(**overrides) -> PaperNavSettlementRiskOverlayReport:
+    values = {
+        "generated_at": GENERATED_AT,
+        "config_version": "paper-nav-settlement-risk-overlay-v0",
+        "nav_risk_config_version": "nav-risk-metrics-v0",
+        "settlement_timing_config_version": "settlement-timing-v0",
+        "nav_snapshot_count": 8,
+        "first_marked_at": datetime(2026, 6, 1, tzinfo=UTC),
+        "last_marked_at": GENERATED_AT,
+        "settlement_row_count": 1,
+        "exposure_row_count": 1,
+        "acceptable_count": 1,
+        "watch_count": 0,
+        "blocked_count": 0,
+        "missing_settlement_count": 0,
+        "acceptable_exit_value": Decimal("100.0000"),
+        "watch_exit_value": Decimal("0"),
+        "blocked_exit_value": Decimal("0"),
+        "missing_settlement_exit_value": Decimal("0"),
+        "blocked_or_missing_exit_value": Decimal("0"),
+        "blocked_or_missing_exit_nav_share": Decimal("0.000000"),
+        "max_blocked_settlement_exposure_share": Decimal("0.100000"),
+        "status": "settlement_nav_risk_clear",
+        "rows": (
+            PaperNavSettlementRiskOverlayRow(
+                condition_id="condition-0",
+                market_slug="market-0",
+                token_count=1,
+                open_size=Decimal("100.0000"),
+                cost_basis=Decimal("100.0000"),
+                exit_value=Decimal("100.0000"),
+                share_of_exit_nav=Decimal("0.009950"),
+                overlay_status="acceptable",
+                settlement_timing_status="acceptable",
+                timing_cost_per_share=Decimal("0.010000"),
+                adjusted_net_probability_edge=Decimal("0.050000"),
+                reason_codes=("settlement_timing_clear",),
+            ),
+        ),
+    }
+    values.update(overrides)
+    return PaperNavSettlementRiskOverlayReport(**values)
+
+
 def _evidence(
     *,
     max_mean_probability_loss=Decimal("0.3000"),
@@ -232,15 +280,25 @@ def _observation(index: int) -> PaperForecastEvidenceObservation:
     )
 
 
-def _report(history=None, nav_risk=None, outcomes=None, cost_audit=None, config=None):
-    return build_paper_strategy_risk_audit_report(
-        performance_summary=history if history is not None else _history(),
-        nav_risk_report=nav_risk if nav_risk is not None else _nav_risk(),
-        outcome_report=outcomes,
-        cost_audit_report=cost_audit,
-        config=config if config is not None else _config(),
-        generated_at=GENERATED_AT,
-    )
+def _report(
+    history=None,
+    nav_risk=None,
+    outcomes=None,
+    cost_audit=None,
+    config=None,
+    settlement_nav_risk=None,
+):
+    kwargs = {
+        "performance_summary": history if history is not None else _history(),
+        "nav_risk_report": nav_risk if nav_risk is not None else _nav_risk(),
+        "outcome_report": outcomes,
+        "cost_audit_report": cost_audit,
+        "config": config if config is not None else _config(),
+        "generated_at": GENERATED_AT,
+    }
+    if settlement_nav_risk is not None:
+        kwargs["settlement_nav_risk_report"] = settlement_nav_risk
+    return build_paper_strategy_risk_audit_report(**kwargs)
 
 
 def test_strategy_risk_audit_ready_when_all_gates_pass():
@@ -265,6 +323,156 @@ def test_strategy_risk_audit_ready_when_all_gates_pass():
         "open_exposure",
     )
     assert all(isinstance(gate, PaperStrategyRiskAuditGateResult) for gate in report.gate_results)
+
+
+def test_strategy_risk_audit_keeps_legacy_six_gate_report_without_settlement_nav_overlay():
+    report = _report(outcomes=_outcomes(), cost_audit=_cost_audit())
+
+    assert report.status == "audit_ready"
+    assert report.gate_count == 6
+    assert tuple(gate.gate_name for gate in report.gate_results) == (
+        "paper_history",
+        "settlement_evidence",
+        "forecast_quality",
+        "cost_discipline",
+        "nav_drawdown",
+        "open_exposure",
+    )
+
+
+def test_strategy_risk_audit_adds_settlement_nav_risk_gate_when_overlay_supplied():
+    report = _report(
+        outcomes=_outcomes(),
+        cost_audit=_cost_audit(),
+        settlement_nav_risk=_settlement_nav_overlay(),
+    )
+
+    assert report.status == "audit_ready"
+    assert report.gate_count == 7
+    gate = report.gate_results[-1]
+    assert gate == PaperStrategyRiskAuditGateResult(
+        gate_name="settlement_nav_risk",
+        status="pass",
+        message="Settlement NAV risk overlay is clear.",
+        observed_value=Decimal("0.000000"),
+        threshold=Decimal("0.100000"),
+    )
+
+
+@pytest.mark.parametrize(
+    ("overlay_status", "expected_status", "expected_report_status"),
+    (
+        ("empty_nav_settlement_risk_overlay", "incomplete", "insufficient_evidence"),
+        ("settlement_nav_risk_watch", "fail", "blocked_by_risk"),
+        ("settlement_nav_risk_blocked", "fail", "blocked_by_risk"),
+    ),
+)
+def test_strategy_risk_audit_maps_settlement_nav_overlay_statuses(
+    overlay_status,
+    expected_status,
+    expected_report_status,
+):
+    row = PaperNavSettlementRiskOverlayRow(
+        condition_id="condition-risky",
+        market_slug="market-risky",
+        token_count=1,
+        open_size=Decimal("100.0000"),
+        cost_basis=Decimal("100.0000"),
+        exit_value=Decimal("100.0000"),
+        share_of_exit_nav=Decimal("0.009950"),
+        overlay_status=(
+            "blocked" if overlay_status == "settlement_nav_risk_blocked" else "watch"
+        ),
+        settlement_timing_status=(
+            "blocked" if overlay_status == "settlement_nav_risk_blocked" else "watch"
+        ),
+        timing_cost_per_share=Decimal("0.020000"),
+        adjusted_net_probability_edge=Decimal("-0.010000"),
+        reason_codes=("settlement_timing_risk",),
+    )
+    overlay = _settlement_nav_overlay(
+        acceptable_count=0,
+        watch_count=1 if overlay_status == "settlement_nav_risk_watch" else 0,
+        blocked_count=1 if overlay_status == "settlement_nav_risk_blocked" else 0,
+        acceptable_exit_value=Decimal("0"),
+        watch_exit_value=(
+            Decimal("100.0000")
+            if overlay_status == "settlement_nav_risk_watch"
+            else Decimal("0")
+        ),
+        blocked_exit_value=(
+            Decimal("100.0000")
+            if overlay_status == "settlement_nav_risk_blocked"
+            else Decimal("0")
+        ),
+        blocked_or_missing_exit_value=(
+            Decimal("100.0000")
+            if overlay_status == "settlement_nav_risk_blocked"
+            else Decimal("0")
+        ),
+        blocked_or_missing_exit_nav_share=(
+            Decimal("0.150000")
+            if overlay_status == "settlement_nav_risk_blocked"
+            else Decimal("0.000000")
+        ),
+        status=overlay_status,
+        rows=() if overlay_status == "empty_nav_settlement_risk_overlay" else (row,),
+        exposure_row_count=0 if overlay_status == "empty_nav_settlement_risk_overlay" else 1,
+        settlement_row_count=0 if overlay_status == "empty_nav_settlement_risk_overlay" else 1,
+    )
+
+    report = _report(
+        outcomes=_outcomes(),
+        cost_audit=_cost_audit(),
+        settlement_nav_risk=overlay,
+    )
+
+    assert report.status == expected_report_status
+    assert report.gate_results[-1].gate_name == "settlement_nav_risk"
+    assert report.gate_results[-1].status == expected_status
+
+
+def test_strategy_risk_audit_report_accepts_exact_optional_settlement_nav_gate_order():
+    legacy = _report(outcomes=_outcomes(), cost_audit=_cost_audit())
+    settlement_gate = PaperStrategyRiskAuditGateResult(
+        gate_name="settlement_nav_risk",
+        status="pass",
+        message="Settlement NAV risk overlay is clear.",
+        observed_value=Decimal("0.000000"),
+        threshold=Decimal("0.100000"),
+    )
+
+    report = PaperStrategyRiskAuditReport(
+        generated_at=GENERATED_AT,
+        config_version=legacy.config_version,
+        status="audit_ready",
+        gate_count=7,
+        pass_count=7,
+        fail_count=0,
+        incomplete_count=0,
+        gate_results=legacy.gate_results + (settlement_gate,),
+    )
+
+    assert tuple(gate.gate_name for gate in report.gate_results) == (
+        "paper_history",
+        "settlement_evidence",
+        "forecast_quality",
+        "cost_discipline",
+        "nav_drawdown",
+        "open_exposure",
+        "settlement_nav_risk",
+    )
+    with pytest.raises(ValueError, match="gate_results"):
+        PaperStrategyRiskAuditReport(
+            generated_at=GENERATED_AT,
+            config_version=legacy.config_version,
+            status="audit_ready",
+            gate_count=7,
+            pass_count=7,
+            fail_count=0,
+            incomplete_count=0,
+            gate_results=(settlement_gate,) + legacy.gate_results,
+        )
 
 
 def test_strategy_risk_audit_marks_immature_history_as_insufficient_evidence():
