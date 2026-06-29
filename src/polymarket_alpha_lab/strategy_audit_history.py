@@ -27,7 +27,7 @@ AUDIT_STATUSES = (
     "insufficient_evidence",
     "blocked_by_risk",
 )
-GATE_NAMES = (
+REQUIRED_GATE_NAMES = (
     "paper_history",
     "settlement_evidence",
     "forecast_quality",
@@ -35,6 +35,9 @@ GATE_NAMES = (
     "nav_drawdown",
     "open_exposure",
 )
+OPTIONAL_GATE_NAMES = ("settlement_nav_risk",)
+GATE_NAMES = REQUIRED_GATE_NAMES + OPTIONAL_GATE_NAMES
+LATEST_GATE_COUNTS = (len(REQUIRED_GATE_NAMES), len(GATE_NAMES))
 GATE_STATUSES = ("pass", "fail", "incomplete")
 HISTORY_STATUSES = (
     "empty_audit_history",
@@ -387,13 +390,15 @@ def _validate_report_consistency(report: PaperStrategyRiskAuditHistoryReport) ->
             or report.latest_audit_generated_at is None
         ):
             raise ValueError("audit timestamp bounds are required with reports")
-        if (
+        latest_gate_count = (
             report.latest_pass_count
             + report.latest_fail_count
             + report.latest_incomplete_count
-            != len(GATE_NAMES)
-        ):
-            raise ValueError("latest gate counts must cover all audit gates")
+        )
+        if latest_gate_count not in LATEST_GATE_COUNTS:
+            raise ValueError("latest gate counts must cover a known audit gate set")
+        if _has_optional_latest_gate_name(report) and latest_gate_count != len(GATE_NAMES):
+            raise ValueError("latest gate counts must cover optional audit gates")
         if len(report.latest_failed_gate_names) != report.latest_fail_count:
             raise ValueError("latest_failed_gate_names must match latest_fail_count")
         if len(report.latest_incomplete_gate_names) != report.latest_incomplete_count:
@@ -477,11 +482,29 @@ def _validate_gate_status_summary_counts(
             raise ValueError("gate_status_summaries ratios must match audit counts")
         rows_by_gate[row.gate_name].append(row)
     for gate_name, rows in rows_by_gate.items():
-        if sum(row.audit_count for row in rows) != report.audit_report_count:
+        gate_audit_count = sum(row.audit_count for row in rows)
+        if gate_name in REQUIRED_GATE_NAMES:
+            if gate_audit_count != report.audit_report_count:
+                raise ValueError(
+                    f"gate_status_summaries counts must sum to audit_report_count "
+                    f"for {gate_name}",
+                )
+        elif gate_audit_count > report.audit_report_count:
             raise ValueError(
-                f"gate_status_summaries counts must sum to audit_report_count "
-                f"for {gate_name}",
+                "optional gate_status_summaries counts must not exceed "
+                f"audit_report_count for {gate_name}",
             )
+
+
+def _has_optional_latest_gate_name(
+    report: PaperStrategyRiskAuditHistoryReport,
+) -> bool:
+    return any(
+        gate_name in OPTIONAL_GATE_NAMES
+        for gate_name in (
+            report.latest_failed_gate_names + report.latest_incomplete_gate_names
+        )
+    )
 
 
 def _normalize_status_rows(

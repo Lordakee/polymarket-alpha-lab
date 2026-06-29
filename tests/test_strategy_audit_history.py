@@ -26,6 +26,7 @@ ALL_GATE_NAMES = (
     "nav_drawdown",
     "open_exposure",
 )
+ALL_GATE_NAMES_WITH_SETTLEMENT_NAV_RISK = ALL_GATE_NAMES + ("settlement_nav_risk",)
 
 
 def _audit_report(status: str, generated_at: datetime) -> PaperStrategyRiskAuditReport:
@@ -54,6 +55,24 @@ def _audit_report(status: str, generated_at: datetime) -> PaperStrategyRiskAudit
             PaperStrategyRiskAuditGateResult("cost_discipline", gate_status, "m"),
             PaperStrategyRiskAuditGateResult("nav_drawdown", gate_status, "m"),
             PaperStrategyRiskAuditGateResult("open_exposure", gate_status, "m"),
+        ),
+    )
+
+
+def _seven_gate_blocked_audit_report(
+    generated_at: datetime,
+) -> PaperStrategyRiskAuditReport:
+    return PaperStrategyRiskAuditReport(
+        generated_at=generated_at,
+        config_version="strategy-risk-audit-v0",
+        status="blocked_by_risk",
+        gate_count=7,
+        pass_count=0,
+        fail_count=7,
+        incomplete_count=0,
+        gate_results=tuple(
+            PaperStrategyRiskAuditGateResult(gate_name, "fail", "m")
+            for gate_name in ALL_GATE_NAMES_WITH_SETTLEMENT_NAV_RISK
         ),
     )
 
@@ -150,6 +169,9 @@ def test_strategy_audit_history_summarizes_statuses_and_latest_gates():
     assert gate_rows[("nav_drawdown", "pass")].audit_count == 1
     assert gate_rows[("nav_drawdown", "incomplete")].audit_count == 1
     assert gate_rows[("nav_drawdown", "fail")].audit_count == 1
+    assert gate_rows[("settlement_nav_risk", "pass")].audit_count == 0
+    assert gate_rows[("settlement_nav_risk", "fail")].audit_count == 0
+    assert gate_rows[("settlement_nav_risk", "incomplete")].audit_count == 0
     assert history.paper_only is True
     assert history.report_only is True
 
@@ -225,6 +247,35 @@ def test_strategy_audit_history_latest_insufficient_evidence_tracks_incomplete_g
     assert history.consecutive_insufficient_evidence_count == 2
     assert history.latest_failed_gate_names == ()
     assert history.latest_incomplete_gate_names == ALL_GATE_NAMES
+
+
+def test_strategy_audit_history_accepts_optional_settlement_nav_risk_gate() -> None:
+    history = _history_report(
+        _seven_gate_blocked_audit_report(
+            datetime(2026, 6, 17, 12, 0, tzinfo=UTC),
+        ),
+    )
+
+    gate_rows = {
+        (row.gate_name, row.gate_status): row
+        for row in history.gate_status_summaries
+    }
+    assert history.latest_fail_count == 7
+    assert "settlement_nav_risk" in history.latest_failed_gate_names
+    assert gate_rows[("settlement_nav_risk", "fail")].audit_count == 1
+    assert gate_rows[("settlement_nav_risk", "pass")].audit_count == 0
+    assert gate_rows[("settlement_nav_risk", "incomplete")].audit_count == 0
+
+
+def test_strategy_audit_history_validates_latest_counts_against_latest_report_gate_count() -> None:
+    history = _history_report(
+        _seven_gate_blocked_audit_report(
+            datetime(2026, 6, 17, 12, 0, tzinfo=UTC),
+        ),
+    )
+
+    with pytest.raises(ValueError):
+        replace(history, latest_fail_count=6)
 
 
 def test_strategy_audit_history_rejects_invalid_inputs():
