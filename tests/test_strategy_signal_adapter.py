@@ -28,6 +28,10 @@ from polymarket_alpha_lab.paper_nav_liquidity_risk import (
     PaperNavLiquidityRiskMarketRow,
     PaperNavLiquidityRiskReport,
 )
+from polymarket_alpha_lab.paper_nav_settlement_risk_overlay import (
+    PaperNavSettlementRiskOverlayReport,
+    PaperNavSettlementRiskOverlayRow,
+)
 from polymarket_alpha_lab.settlement_freshness_gate import (
     PaperSettlementFreshnessGateReport,
     PaperSettlementFreshnessGateRow,
@@ -52,6 +56,10 @@ class _LiquidityReportSubclass(PaperLiquidityGateReport):
 
 
 class _NavLiquidityRiskReportSubclass(PaperNavLiquidityRiskReport):
+    pass
+
+
+class _NavSettlementRiskOverlayReportSubclass(PaperNavSettlementRiskOverlayReport):
     pass
 
 
@@ -540,6 +548,139 @@ def _nav_liquidity_risk_report(
     )
 
 
+def _settlement_nav_overlay_row(
+    *,
+    condition_id: str,
+    market_slug: str,
+    overlay_status: str,
+    exit_value: Decimal,
+    reason_codes: tuple[str, ...],
+) -> PaperNavSettlementRiskOverlayRow:
+    settlement_timing_status = overlay_status
+    timing_cost_per_share = Decimal("0.000000")
+    adjusted_edge = Decimal("0.050000")
+    if overlay_status != "acceptable":
+        timing_cost_per_share = Decimal("0.020000")
+        adjusted_edge = Decimal("0.010000")
+    return PaperNavSettlementRiskOverlayRow(
+        condition_id=condition_id,
+        market_slug=market_slug,
+        token_count=1,
+        open_size=Decimal("100.0000"),
+        cost_basis=Decimal("100.0000"),
+        exit_value=exit_value,
+        share_of_exit_nav=Decimal("0.009950"),
+        overlay_status=overlay_status,
+        settlement_timing_status=settlement_timing_status,
+        timing_cost_per_share=timing_cost_per_share,
+        adjusted_net_probability_edge=adjusted_edge,
+        reason_codes=reason_codes,
+    )
+
+
+def _settlement_nav_overlay_report(
+    status: str,
+    report_type=PaperNavSettlementRiskOverlayReport,
+    *,
+    blocked_or_missing_exit_nav_share: Decimal | None | object = object(),
+    rows: tuple[PaperNavSettlementRiskOverlayRow, ...] | None = None,
+) -> PaperNavSettlementRiskOverlayReport:
+    if rows is None:
+        if status == "empty_nav_settlement_risk_overlay":
+            rows = ()
+        elif status == "settlement_nav_risk_clear":
+            rows = (
+                _settlement_nav_overlay_row(
+                    condition_id="condition-clear",
+                    market_slug="market-clear",
+                    overlay_status="acceptable",
+                    exit_value=Decimal("100.0000"),
+                    reason_codes=("settlement_timing_clear",),
+                ),
+            )
+        elif status == "settlement_nav_risk_watch":
+            rows = (
+                _settlement_nav_overlay_row(
+                    condition_id="condition-watch",
+                    market_slug="market-watch",
+                    overlay_status="watch",
+                    exit_value=Decimal("100.0000"),
+                    reason_codes=("settlement_timing_risk",),
+                ),
+            )
+        else:
+            rows = (
+                _settlement_nav_overlay_row(
+                    condition_id="condition-blocked",
+                    market_slug="market-blocked",
+                    overlay_status="blocked",
+                    exit_value=Decimal("100.0000"),
+                    reason_codes=("settlement_timing_risk",),
+                ),
+            )
+    acceptable_exit_value = sum(
+        (row.exit_value for row in rows if row.overlay_status == "acceptable"),
+        Decimal("0"),
+    )
+    watch_exit_value = sum(
+        (row.exit_value for row in rows if row.overlay_status == "watch"),
+        Decimal("0"),
+    )
+    blocked_exit_value = sum(
+        (
+            row.exit_value
+            for row in rows
+            if row.settlement_timing_status == "blocked"
+        ),
+        Decimal("0"),
+    )
+    missing_settlement_exit_value = sum(
+        (
+            row.exit_value
+            for row in rows
+            if row.settlement_timing_status is None
+        ),
+        Decimal("0"),
+    )
+    blocked_or_missing_exit_value = (
+        blocked_exit_value + missing_settlement_exit_value
+    )
+    if not isinstance(blocked_or_missing_exit_nav_share, (Decimal, type(None))):
+        blocked_or_missing_exit_nav_share = (
+            None
+            if status == "empty_nav_settlement_risk_overlay"
+            else Decimal("0.150000")
+            if status == "settlement_nav_risk_blocked"
+            else Decimal("0.000000")
+        )
+    return report_type(
+        generated_at=GENERATED_AT,
+        config_version="paper-nav-settlement-risk-overlay-v0",
+        nav_risk_config_version="paper-nav-risk-metrics-v0",
+        settlement_timing_config_version="paper-settlement-timing-v0",
+        nav_snapshot_count=0 if not rows else 1,
+        first_marked_at=None if not rows else SOURCE_GENERATED_AT,
+        last_marked_at=None if not rows else SOURCE_GENERATED_AT,
+        settlement_row_count=len(rows),
+        exposure_row_count=len(rows),
+        acceptable_count=sum(1 for row in rows if row.overlay_status == "acceptable"),
+        watch_count=sum(1 for row in rows if row.overlay_status == "watch"),
+        blocked_count=sum(1 for row in rows if row.overlay_status == "blocked"),
+        missing_settlement_count=sum(
+            1 for row in rows if row.settlement_timing_status is None
+        ),
+        acceptable_exit_value=acceptable_exit_value,
+        watch_exit_value=watch_exit_value,
+        blocked_exit_value=blocked_exit_value,
+        missing_settlement_exit_value=missing_settlement_exit_value,
+        blocked_or_missing_exit_value=blocked_or_missing_exit_value,
+        blocked_or_missing_exit_nav_share=blocked_or_missing_exit_nav_share,
+        max_blocked_settlement_exposure_share=Decimal("0.100000"),
+        status=status,
+        rows=rows,
+    )
+
+
 def _passing_nav_liquidity_risk_report(
     report_type=PaperNavLiquidityRiskReport,
 ) -> PaperNavLiquidityRiskReport:
@@ -706,6 +847,7 @@ def test_adapter_builds_signals_in_deterministic_readiness_order():
         _freshness_report(),
         _liquidity_report(),
         _nav_liquidity_risk_report(),
+        _settlement_nav_overlay_report("settlement_nav_risk_blocked"),
         _exposure_report(),
         _cost_health_report(),
     )
@@ -713,12 +855,14 @@ def test_adapter_builds_signals_in_deterministic_readiness_order():
     assert tuple(signal.source_name for signal in signals) == (
         "liquidity_gate",
         "nav_liquidity_risk",
+        "nav_settlement_risk_overlay",
         "cost_health_gate",
         "market_context_freshness",
         "calibration_gate",
         "exposure_gate",
     )
     assert tuple(signal.status for signal in signals) == (
+        "blocked",
         "blocked",
         "blocked",
         "watch",
@@ -802,6 +946,119 @@ def test_nav_liquidity_risk_signal_falls_back_to_unfilled_share_when_cost_basis_
             threshold=None,
         ),
     )
+
+
+@pytest.mark.parametrize(
+    (
+        "overlay_status",
+        "readiness_status",
+        "severity",
+        "reason_codes",
+        "observed_value",
+    ),
+    (
+        (
+            "empty_nav_settlement_risk_overlay",
+            "watch",
+            50,
+            ("nav_settlement_risk_overlay_empty",),
+            Decimal("0"),
+        ),
+        (
+            "settlement_nav_risk_clear",
+            "pass",
+            0,
+            ("nav_settlement_risk_overlay_passed",),
+            Decimal("0.000000"),
+        ),
+        (
+            "settlement_nav_risk_watch",
+            "watch",
+            50,
+            ("settlement_timing_risk",),
+            Decimal("0.000000"),
+        ),
+        (
+            "settlement_nav_risk_blocked",
+            "blocked",
+            100,
+            ("settlement_timing_risk",),
+            Decimal("0.150000"),
+        ),
+    ),
+)
+def test_adapter_builds_readiness_signals_from_nav_settlement_risk_overlay_reports(
+    overlay_status,
+    readiness_status,
+    severity,
+    reason_codes,
+    observed_value,
+):
+    adapter = _adapter_module()
+    report = _settlement_nav_overlay_report(overlay_status)
+
+    signals = adapter.signals_from_nav_settlement_risk_overlay_report(report)
+
+    assert signals == (
+        PaperStrategyReadinessSignal(
+            source_name="nav_settlement_risk_overlay",
+            status=readiness_status,
+            reason_codes=reason_codes,
+            severity=severity,
+            observed_value=observed_value,
+            threshold=Decimal("0.100000"),
+        ),
+    )
+
+
+def test_nav_settlement_risk_overlay_signal_uses_exit_value_when_nav_share_missing():
+    adapter = _adapter_module()
+    report = _settlement_nav_overlay_report(
+        "settlement_nav_risk_blocked",
+        blocked_or_missing_exit_nav_share=None,
+    )
+
+    signals = adapter.build_paper_strategy_readiness_signals(report)
+
+    assert report.blocked_or_missing_exit_nav_share is None
+    assert signals == (
+        PaperStrategyReadinessSignal(
+            source_name="nav_settlement_risk_overlay",
+            status="blocked",
+            reason_codes=("settlement_timing_risk",),
+            severity=100,
+            observed_value=Decimal("100.0000"),
+            threshold=Decimal("0.100000"),
+        ),
+    )
+
+
+def test_nav_settlement_risk_overlay_signal_uses_sorted_nonacceptable_reason_codes():
+    adapter = _adapter_module()
+    rows = (
+        _settlement_nav_overlay_row(
+            condition_id="condition-watch",
+            market_slug="market-watch",
+            overlay_status="watch",
+            exit_value=Decimal("40.0000"),
+            reason_codes=("z_settlement_risk", "a_settlement_risk"),
+        ),
+        _settlement_nav_overlay_row(
+            condition_id="condition-clear",
+            market_slug="market-clear",
+            overlay_status="acceptable",
+            exit_value=Decimal("60.0000"),
+            reason_codes=("ignore_clear_row",),
+        ),
+    )
+    report = _settlement_nav_overlay_report(
+        "settlement_nav_risk_watch",
+        rows=rows,
+    )
+
+    signals = adapter.signals_from_nav_settlement_risk_overlay_report(report)
+
+    assert signals[0].reason_codes == ("a_settlement_risk", "z_settlement_risk")
 
 
 @pytest.mark.parametrize(
@@ -911,6 +1168,15 @@ def test_adapter_rejects_unknown_and_subclassed_report_inputs():
         adapter.signals_from_nav_liquidity_risk_report(
             _nav_liquidity_risk_report(_NavLiquidityRiskReportSubclass),
         )
+    with pytest.raises(ValueError, match="PaperNavSettlementRiskOverlayReport"):
+        adapter.signals_from_nav_settlement_risk_overlay_report(object())
+    with pytest.raises(ValueError, match="PaperNavSettlementRiskOverlayReport"):
+        adapter.signals_from_nav_settlement_risk_overlay_report(
+            _settlement_nav_overlay_report(
+                "settlement_nav_risk_clear",
+                _NavSettlementRiskOverlayReportSubclass,
+            ),
+        )
     with pytest.raises(ValueError, match="PaperExposureGateReport"):
         adapter.signals_from_exposure_gate_report(
             _exposure_report(_ExposureReportSubclass),
@@ -942,6 +1208,21 @@ def test_adapter_rejects_unknown_and_subclassed_report_inputs():
         (
             _nav_liquidity_risk_report,
             "signals_from_nav_liquidity_risk_report",
+            "readonly",
+        ),
+        (
+            lambda: _settlement_nav_overlay_report("settlement_nav_risk_clear"),
+            "signals_from_nav_settlement_risk_overlay_report",
+            "paper_only",
+        ),
+        (
+            lambda: _settlement_nav_overlay_report("settlement_nav_risk_clear"),
+            "signals_from_nav_settlement_risk_overlay_report",
+            "report_only",
+        ),
+        (
+            lambda: _settlement_nav_overlay_report("settlement_nav_risk_clear"),
+            "signals_from_nav_settlement_risk_overlay_report",
             "readonly",
         ),
         (_exposure_report, "signals_from_exposure_gate_report", "paper_only"),
@@ -987,6 +1268,15 @@ def test_adapter_builder_rejects_tampered_source_report_hard_flags():
 
     with pytest.raises(ValueError, match="readonly must be True"):
         adapter.build_paper_strategy_readiness_signals(report)
+
+
+def test_adapter_exports_nav_settlement_risk_overlay_adapter():
+    adapter = _adapter_module()
+
+    assert (
+        "signals_from_nav_settlement_risk_overlay_report"
+        in adapter.__all__
+    )
 
 
 def test_adapter_does_not_mutate_source_reports():

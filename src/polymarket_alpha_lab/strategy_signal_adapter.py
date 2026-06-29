@@ -15,6 +15,9 @@ from polymarket_alpha_lab.market_context_freshness import (
     PaperMarketContextFreshnessReport,
 )
 from polymarket_alpha_lab.paper_nav_liquidity_risk import PaperNavLiquidityRiskReport
+from polymarket_alpha_lab.paper_nav_settlement_risk_overlay import (
+    PaperNavSettlementRiskOverlayReport,
+)
 from polymarket_alpha_lab.settlement_freshness_gate import (
     PaperSettlementFreshnessGateReport,
 )
@@ -109,6 +112,28 @@ def signals_from_nav_liquidity_risk_report(
     )
 
 
+def signals_from_nav_settlement_risk_overlay_report(
+    report: PaperNavSettlementRiskOverlayReport,
+) -> tuple[PaperStrategyReadinessSignal, ...]:
+    if type(report) is not PaperNavSettlementRiskOverlayReport:
+        raise ValueError("report must be a PaperNavSettlementRiskOverlayReport")
+    _require_report_flags(report)
+    status = _map_nav_settlement_risk_overlay_status(report.status)
+    return (
+        PaperStrategyReadinessSignal(
+            source_name="nav_settlement_risk_overlay",
+            status=status,
+            reason_codes=_nav_settlement_risk_overlay_reason_codes(
+                report,
+                status=status,
+            ),
+            severity=SEVERITY_BY_STATUS[status],
+            observed_value=_nav_settlement_risk_overlay_observed_value(report),
+            threshold=report.max_blocked_settlement_exposure_share,
+        ),
+    )
+
+
 def signals_from_exposure_gate_report(
     report: PaperExposureGateReport,
 ) -> tuple[PaperStrategyReadinessSignal, ...]:
@@ -175,6 +200,7 @@ def build_paper_strategy_readiness_signals(
         | PaperCostHealthGateReport
         | PaperLiquidityGateReport
         | PaperNavLiquidityRiskReport
+        | PaperNavSettlementRiskOverlayReport
         | PaperExposureGateReport
         | PaperMarketContextFreshnessReport
         | PaperSettlementFreshnessGateReport
@@ -197,6 +223,8 @@ def _signals_from_report(
         return signals_from_liquidity_gate_report(report)
     if type(report) is PaperNavLiquidityRiskReport:
         return signals_from_nav_liquidity_risk_report(report)
+    if type(report) is PaperNavSettlementRiskOverlayReport:
+        return signals_from_nav_settlement_risk_overlay_report(report)
     if type(report) is PaperExposureGateReport:
         return signals_from_exposure_gate_report(report)
     if type(report) is PaperMarketContextFreshnessReport:
@@ -252,6 +280,18 @@ def _map_nav_liquidity_risk_status(status: str) -> str:
     if status == "latest_nav_has_unexecutable_liquidity":
         return "blocked"
     return _map_status(status)
+
+
+def _map_nav_settlement_risk_overlay_status(status: str) -> str:
+    if status == "empty_nav_settlement_risk_overlay":
+        return "watch"
+    if status == "settlement_nav_risk_clear":
+        return "pass"
+    if status == "settlement_nav_risk_watch":
+        return "watch"
+    if status == "settlement_nav_risk_blocked":
+        return "blocked"
+    raise ValueError("status must be a known settlement NAV risk overlay status")
 
 
 def _map_settlement_status(status: str) -> str:
@@ -313,6 +353,36 @@ def _nav_liquidity_risk_observed_value(
     return report.latest_unfilled_open_size_share
 
 
+def _nav_settlement_risk_overlay_reason_codes(
+    report: PaperNavSettlementRiskOverlayReport,
+    *,
+    status: str,
+) -> tuple[str, ...]:
+    if report.status == "empty_nav_settlement_risk_overlay":
+        return ("nav_settlement_risk_overlay_empty",)
+    if status == "pass":
+        return ("nav_settlement_risk_overlay_passed",)
+    row_codes = tuple(
+        sorted(
+            {
+                reason_code
+                for row in report.rows
+                if row.overlay_status != "acceptable"
+                for reason_code in row.reason_codes
+            },
+        ),
+    )
+    return row_codes or (f"nav_settlement_risk_overlay_{status}",)
+
+
+def _nav_settlement_risk_overlay_observed_value(
+    report: PaperNavSettlementRiskOverlayReport,
+) -> Decimal:
+    if report.blocked_or_missing_exit_nav_share is not None:
+        return report.blocked_or_missing_exit_nav_share
+    return report.blocked_or_missing_exit_value
+
+
 def _max_report_age_seconds(
     report: PaperMarketContextFreshnessReport,
 ) -> Decimal | None:
@@ -329,5 +399,6 @@ __all__ = (
     "signals_from_liquidity_gate_report",
     "signals_from_market_context_freshness_report",
     "signals_from_nav_liquidity_risk_report",
+    "signals_from_nav_settlement_risk_overlay_report",
     "signals_from_settlement_freshness_gate_report",
 )
