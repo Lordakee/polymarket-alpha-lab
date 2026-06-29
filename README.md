@@ -12,7 +12,7 @@ The long-term research direction is a system that can screen markets, research c
 
 ## Phase 1 Scope
 
-This repository currently contains the project design, research notes, implementation plans, a read-only market scanner, research packet assembly, paper research packet generation and DB-history readback, pure paper research packet quality reports, bid/ask paper-fill simulation, JSONL paper-trade journaling, paper-only risk gates, rejected-candidate logs, paper position ledgers, executable NAV marks, paper-only portfolio analytics, exposure reports, executable-NAV drawdown reports, paper-only analytics history validation, paper-only forecast evidence reports, paper-only outcome-tracking report logs, local-only strategy risk audit CLI reports with a cost discipline gate over paper logs, optional local Strategy Risk Audit logs and history summaries, local-only strategy evidence snapshot summaries over paper logs and local reports, local-only paper trade cost audit reports over paper logs, paper-only cost-aware event strategy reports, paper-only project screening research queues, paper-only manual-review queues, paper-only strategy recommendation bundle and bundle-log artifacts with a read-only history CLI summary, human-review proposal packet artifacts, append-only proposal-review record artifacts, proposal-review summary report artifacts, proposal-review quality gate artifacts, proposal-review diagnostic artifacts, proposal-review coverage report artifacts, proposal-review dossier artifacts, proposal-review dossier batch health artifacts, proposal evidence comparison artifacts, proposal evidence comparison history artifacts, proposal evidence comparison history batch-health artifacts, proposal evidence comparison history batch-health trend artifacts, proposal evidence comparison history batch-health trend-batch artifacts, proposal evidence comparison history batch-health trend-batch health artifacts, proposal evidence comparison history batch-health trend-batch health trend artifacts, paper autonomous allocation proposal artifacts, paper autonomous allocation proposal DB-history artifacts, paper autonomous allocation proposal DB-history gate artifacts, paper autonomous allocation proposal DB-history metrics artifacts, paper autonomous allocation proposal DB-history health artifacts, paper autonomous allocation proposal DB-history health trend artifacts, paper autonomous allocation proposal DB-history health-trend gate artifacts, paper autonomous investment ledger artifacts, paper autonomous investment ledger DB-history artifacts, and local DB persistence for DB-history health reports.
+This repository currently contains the project design, research notes, implementation plans, a read-only market scanner, research packet assembly, paper research packet generation and DB-history readback, pure paper research packet quality reports, bid/ask paper-fill simulation, JSONL paper-trade journaling, paper-only risk gates, rejected-candidate logs, paper position ledgers, executable NAV marks, paper-only portfolio analytics, exposure reports, executable-NAV drawdown reports, paper-only analytics history validation, paper-only forecast evidence reports, paper-only outcome-tracking report logs, local-only strategy risk audit CLI reports with a cost discipline gate over paper logs, optional local Strategy Risk Audit logs and history summaries, local-only strategy evidence snapshot summaries over paper logs and local reports, local-only paper trade cost audit reports over paper logs, paper-only cost-aware event strategy reports, paper-only project screening research queues, paper-only manual-review queues, paper-only strategy recommendation bundle and bundle-log artifacts with a read-only history CLI summary, human-review proposal packet artifacts, append-only proposal-review record artifacts, proposal-review summary report artifacts, proposal-review quality gate artifacts, proposal-review diagnostic artifacts, proposal-review coverage report artifacts, proposal-review dossier artifacts, proposal-review dossier batch health artifacts, proposal evidence comparison artifacts, proposal evidence comparison history artifacts, proposal evidence comparison history batch-health artifacts, proposal evidence comparison history batch-health trend artifacts, proposal evidence comparison history batch-health trend-batch artifacts, proposal evidence comparison history batch-health trend-batch health artifacts, proposal evidence comparison history batch-health trend-batch health trend artifacts, paper autonomous allocation proposal artifacts, paper autonomous allocation proposal DB-history artifacts, paper autonomous allocation proposal DB-history gate artifacts, paper autonomous allocation proposal DB-history metrics artifacts, paper autonomous allocation proposal DB-history health artifacts, paper autonomous allocation proposal DB-history health trend artifacts, paper autonomous allocation proposal DB-history health-trend gate artifacts, paper autonomous investment ledger artifacts, paper autonomous investment ledger DB-history artifacts, paper autonomous readiness digest CLI/readback with optional agreement trend-gate evidence, and local DB persistence for DB-history health reports.
 
 It also includes an optional local-only Strategy Risk Audit preflight for continuous paper runs, optional Strategy Risk Audit logging, and a local history summary over that optional log; the preflight reads existing paper logs and can pause the next paper run before any public client is constructed, audit logging is explicit opt-in local append-only JSONL evidence, and the history summary reads that evidence without changing run behavior.
 
@@ -429,9 +429,8 @@ This readback command is not permission to trade, not financial advice, not an
 investment ranking, not a trade recommendation, not an order instruction, not
 execution authorization, and not an approval workflow. Its report shape is
 accepted as optional `agreement_trend_gate` evidence by the paper autonomous
-readiness digest pure reducer and dependency-injected loader, but this CLI is
-not automatically wired into the readiness digest command, readiness gate, or
-strategy policy yet.
+readiness digest pure reducer, dependency-injected loader, and CLI readback. It
+is not wired into the readiness gate or strategy policy.
 
 Paper Autonomous Allocation Proposal combines a passed autonomous screening
 gate, latest action-gated queue decision-support reports, and source queue
@@ -725,6 +724,44 @@ Boundary:
 - is not investment ranking
 - is not order instruction
 - is not execution authorization
+
+Paper Autonomous Readiness Digest CLI/readback:
+
+```bash
+polymarket-alpha-lab paper-autonomous-readiness-digest --limit 25
+```
+
+The command is env-only, read-only, paper-only/report-only/readonly, and reads
+local Supabase/Postgres readiness-gate history through the existing readiness
+gate DB environment boundary. It accepts only `--limit`.
+
+Boundary:
+
+- does not accept persist, file, auth, private-key, wallet, account, or order flags
+- does not accept signing, submission, cancellation, replacement, or exchange-mutation flags
+
+The readback builds a compact digest from the latest readiness-gate report plus
+optional `agreement_trend_gate` evidence when that local evidence is available
+through the readback path. It prints digest status, recommended review action,
+evidence statuses, and sanitized reason-code counts.
+
+The command writes nothing, adds no durable table, and does not persist digest
+or trend-gate reports. All durable data for this readback remains in local
+Supabase/Postgres only; there is no JSONL/SQLite/file durable store, Redis,
+Mongo, SQLAlchemy, generic durable-store abstraction, hosted DB assumption, or
+file-backed cache.
+
+The digest is paper observability only.
+
+Boundary:
+
+- does not change readiness-gate policy
+- does not alter strategy behavior
+- does not trigger allocation
+- does not stop execution paths
+- does not rank investments
+- does not provide trade instructions
+- does not provide financial advice
 
 ## Level 1B Node 1 Status
 

@@ -813,6 +813,36 @@ def _redacted_paper_research_packet_db_history_error(
     return RuntimeError(message)
 
 
+def _redacted_paper_readiness_digest_error(
+    exc: Exception,
+    *,
+    readiness_dsn: str,
+    readiness_table_name: str,
+    agreement_dsn: str | None = None,
+    agreement_table_name: str | None = None,
+) -> RuntimeError:
+    message = str(exc)
+    for dsn_value in (readiness_dsn, agreement_dsn):
+        if dsn_value is not None:
+            message = _redact_db_dsn(message, dsn=dsn_value)
+    for dsn_value in (readiness_dsn, agreement_dsn):
+        if dsn_value is not None:
+            message = _redact_db_dsn_host(message, dsn=dsn_value)
+    message = _redact_db_table_name_and_tail(
+        message,
+        table_name=readiness_table_name,
+    )
+    if agreement_table_name is not None:
+        message = _redact_db_table_name_and_tail(
+            message,
+            table_name=agreement_table_name,
+        )
+    message = _redact_paper_research_packet_sensitive_fields(message)
+    if not message.strip():
+        message = exc.__class__.__name__
+    return RuntimeError(message)
+
+
 def _redacted_paper_research_packet_quality_error(
     exc: Exception,
     *,
@@ -5182,18 +5212,41 @@ def main(
                 raise ValueError(
                     f"{command_name} requires a paper autonomous readiness gate DB DSN",
                 )
+            agreement_db_config = from_probability_selection_scorer_agreement_db_env()
+            agreement_dsn = agreement_db_config.dsn
+            if agreement_db_config.enabled:
+                if agreement_dsn is None:
+                    raise ValueError(
+                        f"{PROBABILITY_SELECTION_SCORER_AGREEMENT_DB_DSN_ENV_VAR} "
+                        "must be set when DB is enabled",
+                    )
+                _require_local_postgres_dsn(agreement_dsn)
             try:
                 report = _run_paper_autonomous_readiness_digest(
                     dsn=dsn,
                     table_name=readiness_gate_db_config.table_name,
                     limit=args.limit,
                     runner=paper_autonomous_readiness_digest_runner,
+                    agreement_dsn=agreement_dsn if agreement_db_config.enabled else None,
+                    agreement_table_name=(
+                        agreement_db_config.table_name
+                        if agreement_db_config.enabled
+                        else None
+                    ),
                 )
             except Exception as exc:
-                raise _redacted_paper_research_packet_db_history_error(
+                raise _redacted_paper_readiness_digest_error(
                     exc,
-                    dsn=dsn,
-                    table_name=readiness_gate_db_config.table_name,
+                    readiness_dsn=dsn,
+                    readiness_table_name=readiness_gate_db_config.table_name,
+                    agreement_dsn=(
+                        agreement_dsn if agreement_db_config.enabled else None
+                    ),
+                    agreement_table_name=(
+                        agreement_db_config.table_name
+                        if agreement_db_config.enabled
+                        else None
+                    ),
                 ) from None
             _print_paper_autonomous_readiness_digest_summary(report)
             return 0
@@ -6892,8 +6945,12 @@ def _run_paper_autonomous_readiness_digest(
     table_name: str,
     limit: int,
     runner: PaperAutonomousReadinessDigestRunner | None,
+    agreement_dsn: str | None = None,
+    agreement_table_name: str | None = None,
 ) -> object:
     _require_paper_autonomous_readiness_digest_limit(limit)
+    if agreement_dsn is not None:
+        _require_local_postgres_dsn(agreement_dsn)
     generated_at = datetime.now(UTC)
 
     from polymarket_alpha_lab.paper_autonomous_readiness_digest import (
@@ -6911,10 +6968,12 @@ def _run_paper_autonomous_readiness_digest(
                 generated_at=generated_at,
             )
         except Exception as exc:
-            raise _redacted_paper_research_packet_db_history_error(
+            raise _redacted_paper_readiness_digest_error(
                 exc,
-                dsn=dsn,
-                table_name=table_name,
+                readiness_dsn=dsn,
+                readiness_table_name=table_name,
+                agreement_dsn=agreement_dsn,
+                agreement_table_name=agreement_table_name,
             ) from None
 
     from polymarket_alpha_lab.paper_autonomous_readiness_digest_load import (
@@ -6922,6 +6981,17 @@ def _run_paper_autonomous_readiness_digest(
     )
     from polymarket_alpha_lab.paper_autonomous_readiness_gate_store import (
         load_paper_autonomous_readiness_gate_reports,
+    )
+    from polymarket_alpha_lab.probability_selection_scorer_agreement_store import (
+        load_probability_selection_scorer_agreement_reports,
+    )
+    from polymarket_alpha_lab.probability_selection_scorer_agreement_trend import (
+        ProbabilitySelectionScorerAgreementTrendConfig,
+        build_probability_selection_scorer_agreement_trend_report,
+    )
+    from polymarket_alpha_lab.probability_selection_scorer_agreement_trend_gate import (
+        ProbabilitySelectionScorerAgreementTrendGateConfig,
+        build_probability_selection_scorer_agreement_trend_gate_report,
     )
 
     def readiness_loader(
@@ -6941,6 +7011,13 @@ def _run_paper_autonomous_readiness_digest(
             raise ValueError("paper autonomous readiness gate DB returned no reports")
         return reports[0]
 
+    trend_config = ProbabilitySelectionScorerAgreementTrendConfig(
+        config_version="probability-selection-scorer-agreement-trend-v0",
+    )
+    gate_config = ProbabilitySelectionScorerAgreementTrendGateConfig(
+        config_version="probability-selection-scorer-agreement-trend-gate-v0",
+    )
+
     try:
         import psycopg
     except ModuleNotFoundError as exc:
@@ -6950,6 +7027,7 @@ def _run_paper_autonomous_readiness_digest(
             "psycopg is required to use the paper autonomous readiness digest "
             "read adapter; install the postgres extra.",
         ) from exc
+    agreement_connection = None
     try:
         connection = psycopg.connect(dsn, autocommit=True)
     except Exception:
@@ -6957,6 +7035,48 @@ def _run_paper_autonomous_readiness_digest(
             "failed to connect to the paper autonomous readiness gate database",
         ) from None
     try:
+        agreement_trend_gate_loader = None
+        agreement_trend_gate_table_name = None
+        if agreement_dsn is not None:
+            if agreement_table_name is None:
+                raise ValueError("agreement_trend_gate_table_name is required")
+            try:
+                agreement_connection = psycopg.connect(
+                    agreement_dsn,
+                    autocommit=True,
+                )
+            except Exception:
+                raise RuntimeError(
+                    "failed to connect to the probability selection scorer "
+                    "agreement database",
+                ) from None
+
+            def agreement_trend_gate_loader(
+                connection: object,
+                *,
+                table_name: str,
+                limit: int | None,
+                generated_at: datetime,
+            ) -> object:
+                del connection
+                newest_first_reports = load_probability_selection_scorer_agreement_reports(
+                    agreement_connection,
+                    limit=limit,
+                    table_name=table_name,
+                )
+                agreement_reports = tuple(reversed(newest_first_reports))
+                trend_report = build_probability_selection_scorer_agreement_trend_report(
+                    agreement_reports,
+                    config=trend_config,
+                    generated_at=generated_at,
+                )
+                return build_probability_selection_scorer_agreement_trend_gate_report(
+                    trend_report,
+                    config=gate_config,
+                    generated_at=generated_at,
+                )
+
+            agreement_trend_gate_table_name = agreement_table_name
         return load_paper_autonomous_readiness_digest_report(
             connection,
             readiness_loader=readiness_loader,
@@ -6964,14 +7084,23 @@ def _run_paper_autonomous_readiness_digest(
             limit=limit,
             config=config,
             generated_at=generated_at,
+            agreement_trend_gate_loader=agreement_trend_gate_loader,
+            agreement_trend_gate_table_name=agreement_trend_gate_table_name,
         )
     except Exception as exc:
-        raise _redacted_paper_research_packet_db_history_error(
+        raise _redacted_paper_readiness_digest_error(
             exc,
-            dsn=dsn,
-            table_name=table_name,
+            readiness_dsn=dsn,
+            readiness_table_name=table_name,
+            agreement_dsn=agreement_dsn,
+            agreement_table_name=agreement_table_name,
         ) from None
     finally:
+        if agreement_connection is not None:
+            try:
+                agreement_connection.close()
+            except Exception:
+                pass
         try:
             connection.close()
         except Exception:

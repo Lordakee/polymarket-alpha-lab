@@ -9,6 +9,25 @@ CLI_PATH = REPO_ROOT / "src" / "polymarket_alpha_lab" / "cli.py"
 COMMAND = "paper-autonomous-readiness-digest"
 HELPER = "_run_paper_autonomous_readiness_digest"
 SUMMARY = "_print_paper_autonomous_readiness_digest_summary"
+READINESS_DB_ENV = "from_paper_autonomous_readiness_gate_db_env"
+AGREEMENT_DB_ENV = "from_probability_selection_scorer_agreement_db_env"
+LOCAL_POSTGRES_DSN_VALIDATOR = "_require_local_postgres_dsn"
+FORBIDDEN_MUTATING_OR_PRIVATE_REFS = (
+    "commit",
+    "rollback",
+    "insert",
+    "update",
+    "upsert",
+    "delete",
+    "open",
+    "write",
+    "wallet",
+    "order",
+    "auth",
+    "private_key",
+    "PolymarketPublicClient",
+    "fast",
+)
 
 
 def _parse_cli() -> ast.AST:
@@ -127,23 +146,19 @@ def test_readiness_digest_parser_surface_is_limit_only() -> None:
 def test_readiness_digest_command_branch_is_readonly_env_backed() -> None:
     branch_refs = _references(_command_branch(_parse_cli()))
 
-    assert "from_paper_autonomous_readiness_gate_db_env" in branch_refs
+    assert READINESS_DB_ENV in branch_refs
+    assert AGREEMENT_DB_ENV in branch_refs
     assert HELPER in branch_refs
     assert SUMMARY in branch_refs
-    assert "_redacted_paper_research_packet_db_history_error" in branch_refs
+    assert "_redacted_paper_readiness_digest_error" in branch_refs
     for forbidden in (
         "client_factory",
-        "PolymarketPublicClient",
         "run_market_scan",
         "run_strategy_cycle",
         "run_strategy_loop",
-        "insert",
         "sink",
         "persist",
-        "wallet",
-        "order",
-        "auth",
-        "private_key",
+        *FORBIDDEN_MUTATING_OR_PRIVATE_REFS,
     ):
         assert forbidden not in branch_refs
 
@@ -155,26 +170,20 @@ def test_readiness_digest_helper_is_readonly_local_postgres_only() -> None:
         "PaperAutonomousReadinessDigestConfig",
         "load_paper_autonomous_readiness_digest_report",
         "load_paper_autonomous_readiness_gate_reports",
+        "load_probability_selection_scorer_agreement_reports",
+        "ProbabilitySelectionScorerAgreementTrendConfig",
+        "build_probability_selection_scorer_agreement_trend_report",
+        "ProbabilitySelectionScorerAgreementTrendGateConfig",
+        "build_probability_selection_scorer_agreement_trend_gate_report",
+        "agreement_trend_gate_loader",
+        "agreement_trend_gate_table_name",
+        LOCAL_POSTGRES_DSN_VALIDATOR,
         "psycopg",
         "connect",
         "close",
     ):
         assert expected in helper_refs
-    for forbidden in (
-        "commit",
-        "rollback",
-        "insert",
-        "update",
-        "upsert",
-        "delete",
-        "open",
-        "write",
-        "wallet",
-        "order",
-        "auth",
-        "private_key",
-        "PolymarketPublicClient",
-    ):
+    for forbidden in FORBIDDEN_MUTATING_OR_PRIVATE_REFS:
         assert forbidden not in helper_refs
 
 
@@ -203,10 +212,7 @@ def test_readiness_digest_summary_is_aggregate_only() -> None:
         "dsn",
         "table",
         "table_name",
-        "wallet",
-        "order",
         "account",
-        "auth",
-        "private_key",
+        *FORBIDDEN_MUTATING_OR_PRIVATE_REFS,
     ):
         assert forbidden not in summary_refs
