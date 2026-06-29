@@ -121,7 +121,7 @@ def test_trend_db_history_cli_uses_injected_runner_and_prints_summary(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    dsn = "postgresql://trend-db-history.example.invalid/db"
+    dsn = "postgresql://trend-db-history:secret@localhost:54322/db"
     _set_trend_db_env(monkeypatch, dsn)
     monkeypatch.delenv(
         ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_ENABLED_ENV_VAR,
@@ -201,7 +201,7 @@ def test_trend_db_history_cli_default_load_path_uses_persisted_trend_rows_only(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    dsn = "postgresql://trend-db-history.example.invalid/db"
+    dsn = "postgresql://trend-db-history:secret@localhost:54322/db"
     _set_trend_db_env(monkeypatch, dsn)
     monkeypatch.delenv(
         ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_ENABLED_ENV_VAR,
@@ -265,7 +265,7 @@ def test_trend_db_history_cli_read_failure_redacts_dsn(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    dsn = "postgresql://trend-db-history-secret.example.invalid/db"
+    dsn = "postgresql://trend-db-history-secret:secret@localhost:54322/db"
     _set_trend_db_env(monkeypatch, dsn)
 
     def fake_runner(**kwargs: Any) -> object:
@@ -288,7 +288,7 @@ def test_trend_db_history_cli_rejects_non_positive_limit_before_runner(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    dsn = "postgresql://trend-db-history.example.invalid/db"
+    dsn = "postgresql://trend-db-history:secret@localhost:54322/db"
     _set_trend_db_env(monkeypatch, dsn)
     runner_calls = 0
 

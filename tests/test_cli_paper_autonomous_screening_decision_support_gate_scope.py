@@ -192,8 +192,8 @@ def test_gate_cli_requires_enabled_operator_flow_db_before_runner_or_client(
 ) -> None:
     _set_upstream_db_env(
         monkeypatch,
-        operator_flow_dsn="postgresql://operator-flow.example.invalid/db",
-        action_queue_dsn="postgresql://action-queue.example.invalid/db",
+        operator_flow_dsn="postgresql://operator-flow:secret@localhost:54322/db",
+        action_queue_dsn="postgresql://action-queue:secret@localhost:54322/db",
     )
     monkeypatch.delenv(
         PAPER_RESEARCH_PACKET_OPERATOR_FLOW_DB_ENABLED_ENV_VAR,
@@ -237,7 +237,7 @@ def test_gate_persist_cli_uses_injected_runner_sink_and_prints_persistence_marke
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    dsn = "postgresql://screening-gate.example.invalid/db"
+    dsn = "postgresql://screening-gate:secret@localhost:54322/db"
     table_name = "paper_autonomous_screening_decision_support_gate_reports"
     _set_upstream_db_env(
         monkeypatch,
@@ -289,7 +289,7 @@ def test_gate_persist_cli_requires_enabled_gate_db_before_runner_or_sink(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    dsn = "postgresql://screening-gate.example.invalid/db"
+    dsn = "postgresql://screening-gate:secret@localhost:54322/db"
     _set_upstream_db_env(
         monkeypatch,
         operator_flow_dsn=dsn,
@@ -336,7 +336,7 @@ def test_gate_persist_cli_requires_gate_db_table_before_runner_or_sink(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    dsn = "postgresql://screening-gate.example.invalid/db"
+    dsn = "postgresql://screening-gate:secret@localhost:54322/db"
     _set_upstream_db_env(
         monkeypatch,
         operator_flow_dsn=dsn,
@@ -391,8 +391,8 @@ def test_gate_cli_requires_enabled_action_queue_decision_support_db(
 ) -> None:
     _set_upstream_db_env(
         monkeypatch,
-        operator_flow_dsn="postgresql://operator-flow.example.invalid/db",
-        action_queue_dsn="postgresql://action-queue.example.invalid/db",
+        operator_flow_dsn="postgresql://operator-flow:secret@localhost:54322/db",
+        action_queue_dsn="postgresql://action-queue:secret@localhost:54322/db",
     )
     monkeypatch.delenv(
         ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_ENABLED_ENV_VAR,
@@ -429,8 +429,8 @@ def test_gate_cli_requires_operator_flow_dsn_when_operator_flow_db_is_enabled(
 ) -> None:
     _set_upstream_db_env(
         monkeypatch,
-        operator_flow_dsn="postgresql://operator-flow.example.invalid/db",
-        action_queue_dsn="postgresql://action-queue.example.invalid/db",
+        operator_flow_dsn="postgresql://operator-flow:secret@localhost:54322/db",
+        action_queue_dsn="postgresql://action-queue:secret@localhost:54322/db",
     )
     monkeypatch.delenv(
         PAPER_RESEARCH_PACKET_OPERATOR_FLOW_DB_DSN_ENV_VAR,
@@ -460,8 +460,8 @@ def test_gate_cli_requires_action_queue_dsn_when_decision_support_db_is_enabled(
 ) -> None:
     _set_upstream_db_env(
         monkeypatch,
-        operator_flow_dsn="postgresql://operator-flow.example.invalid/db",
-        action_queue_dsn="postgresql://action-queue.example.invalid/db",
+        operator_flow_dsn="postgresql://operator-flow:secret@localhost:54322/db",
+        action_queue_dsn="postgresql://action-queue:secret@localhost:54322/db",
     )
     monkeypatch.delenv(
         ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_DSN_ENV_VAR,
@@ -560,17 +560,17 @@ def test_gate_helper_rejects_invalid_limit_before_runner_or_connect(
 
     with pytest.raises(ValueError, match=f"{COMMAND} limit must be positive"):
         helper(
-            rank_stability_dsn="postgresql://rank-stability.example.invalid/db",
+            rank_stability_dsn="postgresql://rank-stability:secret@localhost:54322/db",
             rank_stability_table_name="paper_project_screening_rank_stability_reports",
-        operator_flow_dsn="postgresql://operator-flow.example.invalid/db",
-        operator_flow_table_name="paper_research_packet_operator_flow_reports",
-        action_queue_dsn="postgresql://action-queue.example.invalid/db",
-        action_queue_table_name=(
-            "paper_action_gated_queue_decision_support_reports"
-        ),
-        limit=bad_limit,
-        runner=forbidden_runner,
-    )
+            operator_flow_dsn="postgresql://operator-flow:secret@localhost:54322/db",
+            operator_flow_table_name="paper_research_packet_operator_flow_reports",
+            action_queue_dsn="postgresql://action-queue:secret@localhost:54322/db",
+            action_queue_table_name=(
+                "paper_action_gated_queue_decision_support_reports"
+            ),
+            limit=bad_limit,
+            runner=forbidden_runner,
+        )
 
     assert runner_calls == 0
     assert connect_calls == 0
@@ -581,8 +581,8 @@ def test_gate_cli_omits_rank_stability_inputs_when_rank_db_is_disabled(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     _install_or_get_gate_api(monkeypatch)
-    operator_flow_dsn = "postgresql://shared-gate.example.invalid/db"
-    action_queue_dsn = "postgresql://shared-gate.example.invalid/db"
+    operator_flow_dsn = "postgresql://shared-gate:secret@localhost:54322/db"
+    action_queue_dsn = "postgresql://shared-gate:secret@localhost:54322/db"
     _set_upstream_db_env(
         monkeypatch,
         operator_flow_dsn=operator_flow_dsn,
@@ -617,11 +617,11 @@ def test_gate_cli_scope_uses_only_injected_gate_runner_and_readonly_configs(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     gate_api = _install_or_get_gate_api(monkeypatch)
-    rank_stability_dsn = "postgresql://operator-flow-gate.example.invalid/db"
+    rank_stability_dsn = "postgresql://operator-flow-gate:secret@localhost:54322/db"
     rank_stability_table_name = "paper_project_screening_rank_stability_reports"
-    operator_flow_dsn = "postgresql://operator-flow-gate.example.invalid/db"
+    operator_flow_dsn = "postgresql://operator-flow-gate:secret@localhost:54322/db"
     operator_flow_table_name = "paper_research_packet_operator_flow_reports"
-    action_queue_dsn = "postgresql://action-queue-gate.example.invalid/db"
+    action_queue_dsn = "postgresql://action-queue-gate:secret@localhost:54322/db"
     action_queue_table_name = (
         "paper_action_gated_queue_decision_support_reports"
     )
@@ -718,9 +718,9 @@ def test_gate_cli_prints_real_gate_report_shape_without_extra_payload(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    rank_stability_dsn = "postgresql://rank-stability-gate.example.invalid/db"
-    operator_flow_dsn = "postgresql://operator-flow-gate.example.invalid/db"
-    action_queue_dsn = "postgresql://action-queue-gate.example.invalid/db"
+    rank_stability_dsn = "postgresql://rank-stability-gate:secret@localhost:54322/db"
+    operator_flow_dsn = "postgresql://operator-flow-gate:secret@localhost:54322/db"
+    action_queue_dsn = "postgresql://action-queue-gate:secret@localhost:54322/db"
     _set_upstream_db_env(
         monkeypatch,
         rank_stability_dsn=rank_stability_dsn,
@@ -787,7 +787,7 @@ def test_gate_helper_default_load_path_uses_autocommit_and_closes_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     gate_api = _install_or_get_gate_api(monkeypatch)
-    operator_flow_dsn = "postgresql://operator-flow-gate.example.invalid/db"
+    operator_flow_dsn = "postgresql://operator-flow-gate:secret@localhost:54322/db"
     rank_stability_dsn = operator_flow_dsn
     rank_stability_table_name = "paper_project_screening_rank_stability_reports"
     operator_flow_table_name = "paper_research_packet_operator_flow_reports"
@@ -877,7 +877,7 @@ def test_gate_helper_default_load_path_omits_rank_loader_when_rank_db_disabled(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _install_or_get_gate_api(monkeypatch)
-    shared_dsn = "postgresql://shared-gate.example.invalid/db"
+    shared_dsn = "postgresql://shared-gate:secret@localhost:54322/db"
     operator_flow_table_name = "paper_research_packet_operator_flow_reports"
     action_queue_table_name = (
         "paper_action_gated_queue_decision_support_reports"
@@ -945,9 +945,9 @@ def test_gate_helper_default_load_path_requires_required_db_dsns_to_match(
         helper(
             rank_stability_dsn=None,
             rank_stability_table_name=None,
-            operator_flow_dsn="postgresql://operator-flow.example.invalid/db",
+            operator_flow_dsn="postgresql://operator-flow:secret@localhost:54322/db",
             operator_flow_table_name="paper_research_packet_operator_flow_reports",
-            action_queue_dsn="postgresql://action-queue.example.invalid/db",
+            action_queue_dsn="postgresql://action-queue:secret@localhost:54322/db",
             action_queue_table_name=(
                 "paper_action_gated_queue_decision_support_reports"
             ),
@@ -963,11 +963,11 @@ def test_gate_cli_runner_failure_redacts_dsns_tables_and_payloads(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     _install_or_get_gate_api(monkeypatch)
-    rank_stability_dsn = "postgresql://rank-stability-secret.example.invalid/db"
+    rank_stability_dsn = "postgresql://rank-stability-secret:secret@localhost:54322/db"
     rank_stability_table_name = "paper_project_screening_rank_stability_reports"
-    operator_flow_dsn = "postgresql://operator-flow-secret.example.invalid/db"
+    operator_flow_dsn = "postgresql://operator-flow-secret:secret@localhost:54322/db"
     operator_flow_table_name = "paper_research_packet_operator_flow_reports"
-    action_queue_dsn = "postgresql://action-queue-secret.example.invalid/db"
+    action_queue_dsn = "postgresql://action-queue-secret:secret@localhost:54322/db"
     action_queue_table_name = (
         "paper_action_gated_queue_decision_support_reports"
     )

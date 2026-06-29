@@ -131,7 +131,7 @@ def test_queue_history_db_history_cli_uses_injected_runner_and_prints_summary(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    dsn = "postgresql://queue-history-db-history.example.invalid/db"
+    dsn = "postgresql://queue-history-db-history:secret@localhost:54322/db"
     _set_history_db_env(monkeypatch, dsn)
     monkeypatch.delenv(ACTION_GATED_QUEUE_DB_ENABLED_ENV_VAR, raising=False)
     monkeypatch.delenv(ACTION_GATED_QUEUE_DB_DSN_ENV_VAR, raising=False)
@@ -194,7 +194,7 @@ def test_queue_history_db_history_cli_default_load_path_reads_persisted_history_
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    dsn = "postgresql://queue-history-db-history.example.invalid/db"
+    dsn = "postgresql://queue-history-db-history:secret@localhost:54322/db"
     _set_history_db_env(monkeypatch, dsn)
     monkeypatch.delenv(ACTION_GATED_QUEUE_DB_ENABLED_ENV_VAR, raising=False)
     monkeypatch.delenv(ACTION_GATED_QUEUE_DB_DSN_ENV_VAR, raising=False)
@@ -245,7 +245,7 @@ def test_queue_history_db_history_cli_read_failure_redacts_dsn(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    dsn = "postgresql://queue-history-secret.example.invalid/db"
+    dsn = "postgresql://queue-history-secret:secret@localhost:54322/db"
     _set_history_db_env(monkeypatch, dsn)
 
     def fake_runner(**kwargs: Any) -> object:
@@ -268,7 +268,7 @@ def test_queue_history_db_history_cli_rejects_non_positive_limit_before_runner(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    dsn = "postgresql://queue-history-db-history.example.invalid/db"
+    dsn = "postgresql://queue-history-db-history:secret@localhost:54322/db"
     _set_history_db_env(monkeypatch, dsn)
     runner_calls = 0
 

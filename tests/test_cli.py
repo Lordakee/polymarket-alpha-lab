@@ -605,9 +605,9 @@ def test_paper_autonomous_screening_decision_support_gate_cli_prints_concise_sum
     capsys,
 ):
     command = "paper-autonomous-screening-decision-support-gate"
-    rank_stability_dsn = "postgresql://rank-stability-gate.example.invalid/db"
-    operator_flow_dsn = "postgresql://operator-flow-gate.example.invalid/db"
-    action_queue_dsn = "postgresql://action-queue-gate.example.invalid/db"
+    rank_stability_dsn = "postgresql://rank-stability-gate:secret@localhost:54322/db"
+    operator_flow_dsn = "postgresql://operator-flow-gate:secret@localhost:54322/db"
+    action_queue_dsn = "postgresql://action-queue-gate:secret@localhost:54322/db"
     monkeypatch.setenv(
         PAPER_PROJECT_SCREENING_RANK_STABILITY_DB_ENABLED_ENV_VAR,
         "true",
@@ -6930,7 +6930,7 @@ def test_run_cli_wires_action_gated_queue_db_sink_when_env_enabled(
     monkeypatch,
     capsys,
 ):
-    action_gated_dsn = "postgresql://action-gated.example.invalid/db"
+    action_gated_dsn = "postgresql://action-gated:secret@localhost:54322/db"
     monkeypatch.setenv(ACTION_GATED_QUEUE_DB_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(ACTION_GATED_QUEUE_DB_DSN_ENV_VAR, action_gated_dsn)
     monkeypatch.setenv(
@@ -7000,7 +7000,7 @@ def test_run_cli_execution_pipeline_uses_screening_gate_source_and_pipeline_sink
     tmp_path,
     monkeypatch,
 ):
-    screening_gate_dsn = "postgresql://screening-gate.example.invalid/db"
+    screening_gate_dsn = "postgresql://screening-gate:secret@localhost:54322/db"
     execution_pipeline_dsn = "postgresql://execution-pipeline@localhost/db"
     monkeypatch.setenv(
         PAPER_AUTONOMOUS_SCREENING_DECISION_SUPPORT_GATE_DB_ENABLED_ENV_VAR,
@@ -7087,10 +7087,10 @@ def test_run_cli_execution_pipeline_persists_broker_and_ledger_when_enabled(
     tmp_path,
     monkeypatch,
 ):
-    screening_gate_dsn = "postgresql://screening-gate.example.invalid/db"
+    screening_gate_dsn = "postgresql://screening-gate:secret@localhost:54322/db"
     execution_pipeline_dsn = "postgresql://execution-pipeline@localhost/db"
-    broker_dsn = "postgresql://broker.example.invalid/db"
-    ledger_dsn = "postgresql://ledger.example.invalid/db"
+    broker_dsn = "postgresql://broker:secret@localhost:54322/db"
+    ledger_dsn = "postgresql://ledger:secret@localhost:54322/db"
     monkeypatch.setenv(
         PAPER_AUTONOMOUS_SCREENING_DECISION_SUPPORT_GATE_DB_ENABLED_ENV_VAR,
         "true",
@@ -7199,10 +7199,10 @@ def test_paper_execution_pipeline_persist_cli_passes_optional_broker_and_ledger_
     monkeypatch,
     capsys,
 ):
-    screening_gate_dsn = "postgresql://screening-gate.example.invalid/db"
+    screening_gate_dsn = "postgresql://screening-gate:secret@localhost:54322/db"
     execution_pipeline_dsn = "postgresql://execution-pipeline@localhost/db"
-    broker_dsn = "postgresql://broker.example.invalid/db"
-    ledger_dsn = "postgresql://ledger.example.invalid/db"
+    broker_dsn = "postgresql://broker:secret@localhost:54322/db"
+    ledger_dsn = "postgresql://ledger:secret@localhost:54322/db"
     monkeypatch.setenv(
         PAPER_AUTONOMOUS_SCREENING_DECISION_SUPPORT_GATE_DB_ENABLED_ENV_VAR,
         "true",
@@ -7297,10 +7297,10 @@ def test_run_cli_redacts_execution_pipeline_broker_and_ledger_sink_dsns(
     monkeypatch,
     capsys,
 ):
-    screening_gate_dsn = "postgresql://screening-gate.example.invalid/db"
+    screening_gate_dsn = "postgresql://screening-gate:secret@localhost:54322/db"
     execution_pipeline_dsn = "postgresql://execution-pipeline@localhost/db"
-    broker_dsn = "postgresql://broker.example.invalid/db"
-    ledger_dsn = "postgresql://ledger.example.invalid/db"
+    broker_dsn = "postgresql://broker:secret@localhost:54322/db"
+    ledger_dsn = "postgresql://ledger:secret@localhost:54322/db"
     monkeypatch.setenv(
         PAPER_AUTONOMOUS_SCREENING_DECISION_SUPPORT_GATE_DB_ENABLED_ENV_VAR,
         "true",
@@ -7428,7 +7428,7 @@ def test_run_paper_execution_pipeline_uses_newest_loaded_screening_gate(
     class FakePsycopg:
         @staticmethod
         def connect(dsn, autocommit):
-            assert dsn == "postgresql://screening-gate.example.invalid/db"
+            assert dsn == "postgresql://screening-gate:secret@localhost:54322/db"
             assert autocommit is True
             return FakeConnection()
 
@@ -7550,7 +7550,7 @@ def test_run_paper_execution_pipeline_uses_newest_loaded_screening_gate(
     )
 
     pipeline_report = _run_paper_execution_pipeline(
-        screening_gate_dsn="postgresql://screening-gate.example.invalid/db",
+        screening_gate_dsn="postgresql://screening-gate:secret@localhost:54322/db",
         screening_gate_table_name="screening_gate_archive",
         limit=2,
     )
@@ -7610,31 +7610,31 @@ def test_persist_paper_execution_pipeline_uses_psycopg_adapters(
 
     _persist_paper_execution_pipeline(
         pipeline_report=pipeline_report,
-        dsn="postgresql://lifecycle.example.invalid/db",
+        dsn="postgresql://lifecycle:secret@localhost:54322/db",
         table_name="paper_order_lifecycle_archive",
-        broker_dsn="postgresql://broker.example.invalid/db",
+        broker_dsn="postgresql://broker:secret@localhost:54322/db",
         broker_table_name="paper_broker_archive",
-        ledger_dsn="postgresql://ledger.example.invalid/db",
+        ledger_dsn="postgresql://ledger:secret@localhost:54322/db",
         ledger_table_name="paper_investment_ledger_archive",
     )
 
     assert lifecycle_calls == [
         {
-            "dsn": "postgresql://lifecycle.example.invalid/db",
+            "dsn": "postgresql://lifecycle:secret@localhost:54322/db",
             "record": lifecycle_record,
             "table_name": "paper_order_lifecycle_archive",
         },
     ]
     assert broker_calls == [
         {
-            "dsn": "postgresql://broker.example.invalid/db",
+            "dsn": "postgresql://broker:secret@localhost:54322/db",
             "record": broker_record,
             "table_name": "paper_broker_archive",
         },
     ]
     assert ledger_calls == [
         {
-            "dsn": "postgresql://ledger.example.invalid/db",
+            "dsn": "postgresql://ledger:secret@localhost:54322/db",
             "report": ledger_report,
             "table_name": "paper_investment_ledger_archive",
         },
@@ -7650,7 +7650,10 @@ def test_run_cli_uses_default_action_gated_queue_source_when_db_enabled_without_
     monkeypatch,
 ):
     monkeypatch.setenv(ACTION_GATED_QUEUE_DB_ENABLED_ENV_VAR, "true")
-    monkeypatch.setenv(ACTION_GATED_QUEUE_DB_DSN_ENV_VAR, "test-action-gated-dsn")
+    monkeypatch.setenv(
+        ACTION_GATED_QUEUE_DB_DSN_ENV_VAR,
+        "postgresql://action-gated:secret@localhost:54322/db",
+    )
     monkeypatch.setenv(
         ACTION_GATED_QUEUE_DB_TABLE_ENV_VAR,
         "action_gated_queue_archive",
@@ -7690,7 +7693,7 @@ def test_run_cli_redacts_dsn_when_action_gated_queue_db_sink_failure_is_reported
     monkeypatch,
     capsys,
 ):
-    action_gated_dsn = "postgresql://action-gated.example.invalid/db"
+    action_gated_dsn = "postgresql://action-gated:secret@localhost:54322/db"
     monkeypatch.setenv(ACTION_GATED_QUEUE_DB_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(ACTION_GATED_QUEUE_DB_DSN_ENV_VAR, action_gated_dsn)
     queue_report = SimpleNamespace(paper_only=True, report_only=True, readonly=True)
@@ -7805,7 +7808,7 @@ def test_action_gated_queue_decision_support_cli_uses_injected_loader_and_builde
     monkeypatch,
     capsys,
 ):
-    action_gated_dsn = "postgresql://action-gated.example.invalid/db"
+    action_gated_dsn = "postgresql://action-gated:secret@localhost:54322/db"
     monkeypatch.setenv(ACTION_GATED_QUEUE_DB_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(ACTION_GATED_QUEUE_DB_DSN_ENV_VAR, action_gated_dsn)
     monkeypatch.setenv(
@@ -7997,7 +8000,7 @@ def test_action_gated_queue_decision_support_cli_default_builder_wiring(
     monkeypatch,
     capsys,
 ):
-    action_gated_dsn = "postgresql://action-gated.example.invalid/db"
+    action_gated_dsn = "postgresql://action-gated:secret@localhost:54322/db"
     monkeypatch.setenv(ACTION_GATED_QUEUE_DB_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(ACTION_GATED_QUEUE_DB_DSN_ENV_VAR, action_gated_dsn)
     reports = (
@@ -8042,7 +8045,7 @@ def test_action_gated_queue_decision_support_cli_redacts_dsn_on_loader_failure(
     monkeypatch,
     capsys,
 ):
-    action_gated_dsn = "postgresql://action-gated.example.invalid/db"
+    action_gated_dsn = "postgresql://action-gated:secret@localhost:54322/db"
     monkeypatch.setenv(ACTION_GATED_QUEUE_DB_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(ACTION_GATED_QUEUE_DB_DSN_ENV_VAR, action_gated_dsn)
 
@@ -8116,8 +8119,8 @@ def test_action_gated_queue_decision_support_trend_cli_uses_injected_runner(
     monkeypatch,
     capsys,
 ):
-    source_dsn = "postgresql://decision-support.example.invalid/source"
-    trend_dsn = "postgresql://decision-support.example.invalid/trend"
+    source_dsn = "postgresql://decision-support:secret@localhost:54322/source"
+    trend_dsn = "postgresql://decision-support:secret@localhost:54322/trend"
     monkeypatch.setenv(ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_DSN_ENV_VAR, source_dsn)
     monkeypatch.setenv(
@@ -8239,7 +8242,7 @@ def test_action_gated_queue_decision_support_trend_cli_injected_runner_requires_
     monkeypatch,
     capsys,
 ):
-    source_dsn = "postgresql://decision-support.example.invalid/source"
+    source_dsn = "postgresql://decision-support:secret@localhost:54322/source"
     monkeypatch.setenv(ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_DSN_ENV_VAR, source_dsn)
     monkeypatch.setenv(
@@ -8279,8 +8282,8 @@ def test_action_gated_queue_decision_support_trend_cli_injected_runner_redacts_b
     monkeypatch,
     capsys,
 ):
-    source_dsn = "postgresql://decision-support.example.invalid/source"
-    trend_dsn = "postgresql://decision-support.example.invalid/trend"
+    source_dsn = "postgresql://decision-support:secret@localhost:54322/source"
+    trend_dsn = "postgresql://decision-support:secret@localhost:54322/trend"
     monkeypatch.setenv(ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_DSN_ENV_VAR, source_dsn)
     monkeypatch.setenv(
@@ -8375,8 +8378,8 @@ def test_action_gated_queue_decision_support_trend_cli_default_psycopg_paths_no_
     monkeypatch,
     capsys,
 ):
-    source_dsn = "postgresql://decision-support.example.invalid/source"
-    trend_dsn = "postgresql://decision-support.example.invalid/trend"
+    source_dsn = "postgresql://decision-support:secret@localhost:54322/source"
+    trend_dsn = "postgresql://decision-support:secret@localhost:54322/trend"
     monkeypatch.setenv(ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_DSN_ENV_VAR, source_dsn)
     monkeypatch.setenv(
@@ -8538,7 +8541,7 @@ def test_action_gated_queue_decision_support_trend_cli_default_psycopg_no_persis
     monkeypatch,
     capsys,
 ):
-    source_dsn = "postgresql://decision-support.example.invalid/source"
+    source_dsn = "postgresql://decision-support:secret@localhost:54322/source"
     monkeypatch.setenv(ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_DSN_ENV_VAR, source_dsn)
     monkeypatch.setenv(
@@ -8660,7 +8663,7 @@ def test_action_gated_queue_decision_support_trend_cli_injected_runner_defaults_
     monkeypatch,
     capsys,
 ):
-    source_dsn = "postgresql://decision-support.example.invalid/source"
+    source_dsn = "postgresql://decision-support:secret@localhost:54322/source"
     monkeypatch.setenv(ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_DSN_ENV_VAR, source_dsn)
     monkeypatch.setenv(
@@ -8796,7 +8799,7 @@ def test_action_gated_queue_history_cli_uses_injected_loader_and_builder(
     monkeypatch,
     capsys,
 ):
-    action_gated_dsn = "postgresql://action-gated-history.example.invalid/db"
+    action_gated_dsn = "postgresql://action-gated-history:secret@localhost:54322/db"
     monkeypatch.setenv(ACTION_GATED_QUEUE_DB_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(ACTION_GATED_QUEUE_DB_DSN_ENV_VAR, action_gated_dsn)
     monkeypatch.setenv(
@@ -8902,7 +8905,7 @@ def test_action_gated_queue_history_cli_default_builder_wiring(
     monkeypatch,
     capsys,
 ):
-    action_gated_dsn = "postgresql://action-gated-history.example.invalid/db"
+    action_gated_dsn = "postgresql://action-gated-history:secret@localhost:54322/db"
     monkeypatch.setenv(ACTION_GATED_QUEUE_DB_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(ACTION_GATED_QUEUE_DB_DSN_ENV_VAR, action_gated_dsn)
     reports = (
@@ -8950,8 +8953,8 @@ def test_action_gated_queue_history_cli_persists_built_history_report_when_reque
     monkeypatch,
     capsys,
 ):
-    source_dsn = "postgresql://action-gated-history.example.invalid/source"
-    history_dsn = "postgresql://action-gated-history.example.invalid/history"
+    source_dsn = "postgresql://action-gated-history:secret@localhost:54322/source"
+    history_dsn = "postgresql://action-gated-history:secret@localhost:54322/history"
     monkeypatch.setenv(ACTION_GATED_QUEUE_DB_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(ACTION_GATED_QUEUE_DB_DSN_ENV_VAR, source_dsn)
     monkeypatch.setenv(
@@ -9047,7 +9050,7 @@ def test_action_gated_queue_history_cli_requires_history_db_when_persisting(
     monkeypatch,
     capsys,
 ):
-    source_dsn = "postgresql://action-gated-history.example.invalid/source"
+    source_dsn = "postgresql://action-gated-history:secret@localhost:54322/source"
     monkeypatch.setenv(ACTION_GATED_QUEUE_DB_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(ACTION_GATED_QUEUE_DB_DSN_ENV_VAR, source_dsn)
     monkeypatch.delenv(ACTION_GATED_QUEUE_HISTORY_DB_ENABLED_ENV_VAR, raising=False)
@@ -9087,8 +9090,8 @@ def test_action_gated_queue_history_cli_redacts_dsns_on_history_sink_failure(
     monkeypatch,
     capsys,
 ):
-    source_dsn = "postgresql://action-gated-history.example.invalid/source"
-    history_dsn = "postgresql://action-gated-history.example.invalid/history"
+    source_dsn = "postgresql://action-gated-history:secret@localhost:54322/source"
+    history_dsn = "postgresql://action-gated-history:secret@localhost:54322/history"
     monkeypatch.setenv(ACTION_GATED_QUEUE_DB_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(ACTION_GATED_QUEUE_DB_DSN_ENV_VAR, source_dsn)
     monkeypatch.setenv(ACTION_GATED_QUEUE_HISTORY_DB_ENABLED_ENV_VAR, "true")
@@ -9149,8 +9152,8 @@ def test_action_gated_queue_history_cli_default_psycopg_persist_path_no_network(
         paper_action_gated_strategy_recommendation_queue_report_to_db_row,
     )
 
-    source_dsn = "postgresql://action-gated-history.example.invalid/source"
-    history_dsn = "postgresql://action-gated-history.example.invalid/history"
+    source_dsn = "postgresql://action-gated-history:secret@localhost:54322/source"
+    history_dsn = "postgresql://action-gated-history:secret@localhost:54322/history"
     monkeypatch.setenv(ACTION_GATED_QUEUE_DB_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(ACTION_GATED_QUEUE_DB_DSN_ENV_VAR, source_dsn)
     monkeypatch.setenv(
@@ -9315,7 +9318,7 @@ def test_action_gated_queue_history_cli_redacts_dsn_on_loader_failure(
     monkeypatch,
     capsys,
 ):
-    action_gated_dsn = "postgresql://action-gated-history.example.invalid/db"
+    action_gated_dsn = "postgresql://action-gated-history:secret@localhost:54322/db"
     monkeypatch.setenv(ACTION_GATED_QUEUE_DB_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(ACTION_GATED_QUEUE_DB_DSN_ENV_VAR, action_gated_dsn)
 
