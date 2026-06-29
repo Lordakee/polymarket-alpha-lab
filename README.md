@@ -314,6 +314,37 @@ Boundary: no live trading, no auth, no wallet handling, no account reads, no
 private-key handling, no order construction/signing/submission/cancellation, no
 DSN/table flags, and no exchange mutation.
 
+Probability Selection Scorer Agreement:
+
+```bash
+.venv/bin/polymarket-alpha-lab probability-selection-scorer-agreement --limit 25
+```
+
+The command is env-only and reads the latest local Supabase/Postgres paper
+probability selection summary reports plus autonomous market scorer reports. It
+accepts only `--limit`; it does not accept persist, DSN, table, file, wallet,
+auth, order, or live flags.
+
+Required source env:
+`POLYMARKET_ALPHA_LAB_PAPER_PROBABILITY_SELECTION_SUMMARY_DB_ENABLED=true`,
+`POLYMARKET_ALPHA_LAB_PAPER_PROBABILITY_SELECTION_SUMMARY_DB_DSN`,
+`POLYMARKET_ALPHA_LAB_AUTONOMOUS_MARKET_SCORER_DB_ENABLED=true`, and
+`POLYMARKET_ALPHA_LAB_AUTONOMOUS_MARKET_SCORER_DB_DSN`. Optional source table
+overrides use `POLYMARKET_ALPHA_LAB_PAPER_PROBABILITY_SELECTION_SUMMARY_DB_TABLE`
+and `POLYMARKET_ALPHA_LAB_AUTONOMOUS_MARKET_SCORER_DB_TABLE`.
+
+By default it builds and prints one aggregate paper-only/report-only/readonly
+agreement report and writes nothing. Optional local Supabase persistence is
+enabled only by `POLYMARKET_ALPHA_LAB_PROBABILITY_SELECTION_SCORER_AGREEMENT_DB_ENABLED=true`
+plus `POLYMARKET_ALPHA_LAB_PROBABILITY_SELECTION_SCORER_AGREEMENT_DB_DSN`; the
+optional table override is
+`POLYMARKET_ALPHA_LAB_PROBABILITY_SELECTION_SCORER_AGREEMENT_DB_TABLE`.
+
+The persisted agreement report is aggregate-only: generated/source timestamps,
+counts, statuses, recommended next step, reason codes, canonical payload/hash,
+and hard safety flags. It does not store market slugs, questions, condition ids,
+orders, wallets, auth data, private keys, or source row details.
+
 Paper Autonomous Allocation Proposal combines a passed autonomous screening
 gate, latest action-gated queue decision-support reports, and source queue
 reports into a paper-only/report-only/read-only allocation proposal:

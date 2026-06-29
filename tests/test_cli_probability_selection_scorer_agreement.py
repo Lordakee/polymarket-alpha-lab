@@ -26,6 +26,12 @@ from polymarket_alpha_lab.supabase_probability_selection_summary_config import (
     PAPER_PROBABILITY_SELECTION_SUMMARY_DB_ENABLED_ENV_VAR,
     PAPER_PROBABILITY_SELECTION_SUMMARY_DB_TABLE_ENV_VAR,
 )
+from polymarket_alpha_lab.supabase_probability_selection_scorer_agreement_config import (
+    DEFAULT_PROBABILITY_SELECTION_SCORER_AGREEMENT_DB_TABLE,
+    PROBABILITY_SELECTION_SCORER_AGREEMENT_DB_DSN_ENV_VAR,
+    PROBABILITY_SELECTION_SCORER_AGREEMENT_DB_ENABLED_ENV_VAR,
+    PROBABILITY_SELECTION_SCORER_AGREEMENT_DB_TABLE_ENV_VAR,
+)
 
 
 COMMAND = "probability-selection-scorer-agreement"
@@ -108,6 +114,38 @@ def _clear_scorer_db_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv(AUTONOMOUS_MARKET_SCORER_DB_ENABLED_ENV_VAR, raising=False)
     monkeypatch.delenv(AUTONOMOUS_MARKET_SCORER_DB_DSN_ENV_VAR, raising=False)
     monkeypatch.delenv(AUTONOMOUS_MARKET_SCORER_DB_TABLE_ENV_VAR, raising=False)
+
+
+def _set_agreement_db_env(
+    monkeypatch: pytest.MonkeyPatch,
+    dsn: str,
+    *,
+    table_name: str = DEFAULT_PROBABILITY_SELECTION_SCORER_AGREEMENT_DB_TABLE,
+) -> None:
+    monkeypatch.setenv(
+        PROBABILITY_SELECTION_SCORER_AGREEMENT_DB_ENABLED_ENV_VAR,
+        "true",
+    )
+    monkeypatch.setenv(PROBABILITY_SELECTION_SCORER_AGREEMENT_DB_DSN_ENV_VAR, dsn)
+    monkeypatch.setenv(
+        PROBABILITY_SELECTION_SCORER_AGREEMENT_DB_TABLE_ENV_VAR,
+        table_name,
+    )
+
+
+def _clear_agreement_db_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv(
+        PROBABILITY_SELECTION_SCORER_AGREEMENT_DB_ENABLED_ENV_VAR,
+        raising=False,
+    )
+    monkeypatch.delenv(
+        PROBABILITY_SELECTION_SCORER_AGREEMENT_DB_DSN_ENV_VAR,
+        raising=False,
+    )
+    monkeypatch.delenv(
+        PROBABILITY_SELECTION_SCORER_AGREEMENT_DB_TABLE_ENV_VAR,
+        raising=False,
+    )
 
 
 def test_parser_help_includes_probability_selection_scorer_agreement(
@@ -420,7 +458,9 @@ def test_agreement_cli_uses_source_env_configs_and_prints_aggregate_summary(
         table_name=selection_table,
     )
     _set_scorer_db_env(monkeypatch, scorer_dsn, table_name=scorer_table)
+    _clear_agreement_db_env(monkeypatch)
     calls: list[dict[str, object]] = []
+    sink_calls: list[dict[str, object]] = []
     report = _agreement_report()
 
     def fake_runner(**kwargs: Any) -> object:
@@ -448,6 +488,9 @@ def test_agreement_cli_uses_source_env_configs_and_prints_aggregate_summary(
     exit_code = main(
         [COMMAND, "--limit", "25"],
         probability_selection_scorer_agreement_runner=fake_runner,
+        probability_selection_scorer_agreement_db_sink=lambda **kwargs: sink_calls.append(
+            dict(kwargs),
+        ),
         client_factory=lambda: (_ for _ in ()).throw(
             AssertionError("client should not be constructed"),
         ),
@@ -455,6 +498,7 @@ def test_agreement_cli_uses_source_env_configs_and_prints_aggregate_summary(
 
     assert exit_code == 0
     assert len(calls) == 1
+    assert sink_calls == []
     captured = capsys.readouterr()
     assert f"{COMMAND}:" in captured.out
     for stable_field in (
@@ -489,6 +533,100 @@ def test_agreement_cli_uses_source_env_configs_and_prints_aggregate_summary(
     ):
         assert leaked_fragment not in captured.out
         assert leaked_fragment not in captured.err
+
+
+def test_agreement_cli_persists_aggregate_report_when_local_agreement_db_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    selection_dsn = "postgresql://selection:secret@localhost:54322/postgres"
+    scorer_dsn = "postgresql://scorer:secret@localhost:54322/postgres"
+    agreement_dsn = "postgresql://agreement:secret@127.0.0.1:54322/postgres"
+    agreement_table = "probability_selection_scorer_agreement_reports"
+    _set_selection_summary_db_env(monkeypatch, selection_dsn)
+    _set_scorer_db_env(monkeypatch, scorer_dsn)
+    _set_agreement_db_env(
+        monkeypatch,
+        agreement_dsn,
+        table_name=agreement_table,
+    )
+    report = _agreement_report()
+    sink_calls: list[dict[str, object]] = []
+
+    def fake_sink(**kwargs: Any) -> object:
+        sink_calls.append(dict(kwargs))
+        assert kwargs["dsn"] == agreement_dsn
+        assert kwargs["table_name"] == agreement_table
+        assert kwargs["report"] is report
+        return SimpleNamespace(inserted=True)
+
+    exit_code = main(
+        [COMMAND],
+        probability_selection_scorer_agreement_runner=lambda **kwargs: report,
+        probability_selection_scorer_agreement_db_sink=fake_sink,
+    )
+
+    assert exit_code == 0
+    assert len(sink_calls) == 1
+    captured = capsys.readouterr()
+    assert f"{COMMAND}:" in captured.out
+    for leaked_fragment in (agreement_dsn, agreement_table, "agreement:secret"):
+        assert leaked_fragment not in captured.out
+        assert leaked_fragment not in captured.err
+
+
+def test_agreement_cli_redacts_agreement_sink_dsn_table_payload_and_hash(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    selection_dsn = "postgresql://selection:secret@localhost:54322/postgres"
+    scorer_dsn = "postgresql://scorer:secret@localhost:54322/postgres"
+    agreement_dsn = (
+        "postgresql://agreement_user:agreement-secret-password@"
+        "localhost:54322/postgres"
+    )
+    agreement_table = "probability_selection_scorer_agreement_reports_secret"
+    _set_selection_summary_db_env(monkeypatch, selection_dsn)
+    _set_scorer_db_env(monkeypatch, scorer_dsn)
+    _set_agreement_db_env(
+        monkeypatch,
+        agreement_dsn,
+        table_name=agreement_table,
+    )
+
+    def broken_sink(**kwargs: Any) -> object:
+        del kwargs
+        raise RuntimeError(
+            f"agreement_dsn={agreement_dsn} "
+            f"agreement_table={agreement_table} "
+            "payload_json={\"secret\":\"payload-json-secret\"} "
+            "question=secret-question market_slug=secret-market "
+            "report_sha256="
+            "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+        )
+
+    exit_code = main(
+        [COMMAND],
+        probability_selection_scorer_agreement_runner=lambda **kwargs: _agreement_report(),
+        probability_selection_scorer_agreement_db_sink=broken_sink,
+    )
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert "agreement_dsn=<redacted-dsn>" in captured.err
+    assert "agreement_table=<redacted-table>" in captured.err
+    for leaked_fragment in (
+        agreement_dsn,
+        agreement_table,
+        "agreement-secret-password",
+        "reports_secret",
+        "payload-json-secret",
+        "secret-question",
+        "secret-market",
+        "abcdef0123456789",
+    ):
+        assert leaked_fragment not in captured.err
+        assert leaked_fragment not in captured.out
 
 
 def test_agreement_cli_redacts_source_dsns_tables_payload_hash_and_source_details(

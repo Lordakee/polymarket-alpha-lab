@@ -229,6 +229,9 @@ from polymarket_alpha_lab.supabase_paper_trade_journal_config import (
 from polymarket_alpha_lab.supabase_probability_selection_summary_config import (
     from_paper_probability_selection_summary_db_env,
 )
+from polymarket_alpha_lab.supabase_probability_selection_scorer_agreement_config import (
+    from_probability_selection_scorer_agreement_db_env,
+)
 from polymarket_alpha_lab.supabase_paper_probability_selection_summary_history_config import (
     from_paper_probability_selection_summary_history_db_env,
 )
@@ -350,6 +353,7 @@ PaperProbabilitySelectionSummaryHistoryDbSink = Callable[..., object]
 PaperProbabilitySelectionSummaryHistoryTrendRunner = Callable[..., object]
 AutonomousMarketScorerHistoryRunner = Callable[..., object]
 ProbabilitySelectionScorerAgreementRunner = Callable[..., object]
+ProbabilitySelectionScorerAgreementDbSink = Callable[..., object]
 MAX_PAPER_AUTONOMOUS_READINESS_DIGEST_READ_LIMIT = 500
 _LOCAL_POSTGRES_HOSTS = frozenset(("localhost", "127.0.0.1", "::1"))
 _LOCAL_POSTGRES_DSN_ERROR = (
@@ -904,12 +908,20 @@ def _redacted_probability_selection_scorer_agreement_error(
     selection_summary_table_name: str,
     scorer_dsn: str,
     scorer_table_name: str,
+    agreement_dsn: str | None = None,
+    agreement_table_name: str | None = None,
 ) -> RuntimeError:
     message = str(exc)
-    for dsn_value in (selection_summary_dsn, scorer_dsn):
-        message = _redact_db_dsn(message, dsn=dsn_value)
-    for storage_name in (selection_summary_table_name, scorer_table_name):
-        message = _redact_db_table_name_and_tail(message, table_name=storage_name)
+    for dsn_value in (selection_summary_dsn, scorer_dsn, agreement_dsn):
+        if dsn_value is not None:
+            message = _redact_db_dsn(message, dsn=dsn_value)
+    for storage_name in (
+        selection_summary_table_name,
+        scorer_table_name,
+        agreement_table_name,
+    ):
+        if storage_name is not None:
+            message = _redact_db_table_name_and_tail(message, table_name=storage_name)
     message = _redact_paper_research_packet_sensitive_fields(message)
     if not message.strip():
         message = exc.__class__.__name__
@@ -1413,6 +1425,9 @@ def main(
     ) = None,
     probability_selection_scorer_agreement_runner: (
         ProbabilitySelectionScorerAgreementRunner | None
+    ) = None,
+    probability_selection_scorer_agreement_db_sink: (
+        ProbabilitySelectionScorerAgreementDbSink | None
     ) = None,
 ) -> int:
     parser = argparse.ArgumentParser(prog="polymarket-alpha-lab")
@@ -3280,6 +3295,7 @@ def main(
                     f"{command_name} requires autonomous market scorer DB "
                     "to be enabled",
                 )
+            agreement_db_config = from_probability_selection_scorer_agreement_db_env()
             selection_summary_dsn = selection_summary_db_config.dsn
             if selection_summary_dsn is None:
                 raise ValueError(
@@ -3291,8 +3307,16 @@ def main(
                 raise ValueError(
                     f"{command_name} requires an autonomous market scorer DB DSN",
                 )
+            agreement_dsn = agreement_db_config.dsn
             _require_local_postgres_dsn(selection_summary_dsn)
             _require_local_postgres_dsn(scorer_dsn)
+            if agreement_db_config.enabled:
+                if agreement_dsn is None:
+                    raise ValueError(
+                        f"{command_name} requires a probability selection scorer "
+                        "agreement DB DSN",
+                    )
+                _require_local_postgres_dsn(agreement_dsn)
             try:
                 report = _run_probability_selection_scorer_agreement(
                     selection_summary_dsn=selection_summary_dsn,
@@ -3304,6 +3328,21 @@ def main(
                     limit=args.limit,
                     runner=probability_selection_scorer_agreement_runner,
                 )
+                if agreement_db_config.enabled:
+                    sink = probability_selection_scorer_agreement_db_sink
+                    if sink is None:
+                        from polymarket_alpha_lab.probability_selection_scorer_agreement_psycopg import (
+                            insert_probability_selection_scorer_agreement_report_with_psycopg,
+                        )
+
+                        sink = (
+                            insert_probability_selection_scorer_agreement_report_with_psycopg
+                        )
+                    sink(
+                        dsn=agreement_dsn,
+                        report=report,
+                        table_name=agreement_db_config.table_name,
+                    )
             except Exception as exc:
                 raise _redacted_probability_selection_scorer_agreement_error(
                     exc,
@@ -3313,6 +3352,8 @@ def main(
                     ),
                     scorer_dsn=scorer_dsn,
                     scorer_table_name=scorer_db_config.table_name,
+                    agreement_dsn=agreement_dsn,
+                    agreement_table_name=agreement_db_config.table_name,
                 ) from None
             _print_probability_selection_scorer_agreement_summary(report)
             return 0

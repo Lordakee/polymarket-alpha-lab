@@ -100,6 +100,7 @@ FORBIDDEN_PHASE_ESCAPE_FRAGMENTS = {
 EXPECTED_BRANCH_CALLS = {
     "from_autonomous_market_scorer_db_env",
     "from_paper_probability_selection_summary_db_env",
+    "from_probability_selection_scorer_agreement_db_env",
     "_redacted_probability_selection_scorer_agreement_error",
     HELPER,
     SUMMARY,
@@ -512,10 +513,17 @@ def test_agreement_branch_uses_env_configs_redacted_error_helper_and_summary() -
     assert EXPECTED_BRANCH_CALLS <= call_names
     assert not (FORBIDDEN_BRANCH_CALLS & call_names)
     assert "probability_selection_scorer_agreement_runner" in references
-    assert "probability_selection_scorer_agreement_db_sink" not in references
+    assert "probability_selection_scorer_agreement_db_sink" in references
+    assert (
+        "insert_probability_selection_scorer_agreement_report_with_psycopg"
+        in references
+    )
+    references_without_allowed_sink = references - {
+        "insert_probability_selection_scorer_agreement_report_with_psycopg",
+    }
     _assert_no_forbidden_fragments(
-        references,
-        FORBIDDEN_PHASE_ESCAPE_FRAGMENTS - {"file"},
+        references_without_allowed_sink,
+        FORBIDDEN_PHASE_ESCAPE_FRAGMENTS - {"file", "sink"},
     )
 
 
