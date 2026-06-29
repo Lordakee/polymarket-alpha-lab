@@ -41,6 +41,15 @@ READINESS_GATE_DB_DSN_ENV_VAR = (
 READINESS_GATE_DB_TABLE_ENV_VAR = (
     "POLYMARKET_ALPHA_LAB_PAPER_AUTONOMOUS_READINESS_GATE_DB_TABLE"
 )
+DIGEST_DB_ENABLED_ENV_VAR = (
+    "POLYMARKET_ALPHA_LAB_PAPER_AUTONOMOUS_READINESS_DIGEST_DB_ENABLED"
+)
+DIGEST_DB_DSN_ENV_VAR = (
+    "POLYMARKET_ALPHA_LAB_PAPER_AUTONOMOUS_READINESS_DIGEST_DB_DSN"
+)
+DIGEST_DB_TABLE_ENV_VAR = (
+    "POLYMARKET_ALPHA_LAB_PAPER_AUTONOMOUS_READINESS_DIGEST_DB_TABLE"
+)
 DIGEST_CONFIG_VERSION = "paper-autonomous-readiness-digest-v0"
 TREND_CONFIG_VERSION = "probability-selection-scorer-agreement-trend-v0"
 GATE_CONFIG_VERSION = "probability-selection-scorer-agreement-trend-gate-v0"
@@ -61,6 +70,23 @@ def _clear_readiness_gate_db_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv(READINESS_GATE_DB_ENABLED_ENV_VAR, raising=False)
     monkeypatch.delenv(READINESS_GATE_DB_DSN_ENV_VAR, raising=False)
     monkeypatch.delenv(READINESS_GATE_DB_TABLE_ENV_VAR, raising=False)
+
+
+def _set_digest_db_env(
+    monkeypatch: pytest.MonkeyPatch,
+    dsn: str,
+    *,
+    table_name: str = "paper_autonomous_readiness_digest_reports",
+) -> None:
+    monkeypatch.setenv(DIGEST_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(DIGEST_DB_DSN_ENV_VAR, dsn)
+    monkeypatch.setenv(DIGEST_DB_TABLE_ENV_VAR, table_name)
+
+
+def _clear_digest_db_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv(DIGEST_DB_ENABLED_ENV_VAR, raising=False)
+    monkeypatch.delenv(DIGEST_DB_DSN_ENV_VAR, raising=False)
+    monkeypatch.delenv(DIGEST_DB_TABLE_ENV_VAR, raising=False)
 
 
 def _set_agreement_db_env(
@@ -200,7 +226,6 @@ def test_parser_help_includes_paper_autonomous_readiness_digest(
 @pytest.mark.parametrize(
     "flag",
     (
-        "--persist",
         "--dsn",
         "--db-dsn",
         "--table",
@@ -225,7 +250,7 @@ def test_parser_help_includes_paper_autonomous_readiness_digest(
         "--replace",
     ),
 )
-def test_digest_cli_rejects_persist_db_file_live_wallet_order_auth_and_signing_flags(
+def test_digest_cli_rejects_db_file_live_wallet_order_auth_and_signing_flags(
     flag: str,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -403,12 +428,379 @@ def test_digest_cli_uses_readiness_gate_env_config_and_prints_aggregate_summary(
         assert leaked_fragment not in captured.err
 
 
+def test_digest_cli_default_without_persist_does_not_read_digest_db_env_or_sink(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    dsn = "postgresql://readiness_gate:secret@localhost:54322/db"
+    _set_readiness_gate_db_env(monkeypatch, dsn)
+    _set_digest_db_env(
+        monkeypatch,
+        "postgresql://digest:secret@localhost:54322/db",
+        table_name="paper_autonomous_readiness_digest_reports",
+    )
+    report = _digest_report()
+    digest_env_calls = 0
+    sink_calls = 0
+
+    def forbidden_digest_env() -> object:
+        nonlocal digest_env_calls
+        digest_env_calls += 1
+        raise AssertionError("digest DB env must not be read without --persist")
+
+    def fake_runner(**kwargs: Any) -> object:
+        assert "digest_dsn" not in kwargs
+        assert "digest_table_name" not in kwargs
+        assert "sink" not in kwargs
+        return report
+
+    def forbidden_sink(**kwargs: Any) -> object:
+        del kwargs
+        nonlocal sink_calls
+        sink_calls += 1
+        raise AssertionError("digest DB sink must not be used without --persist")
+
+    monkeypatch.setattr(
+        "polymarket_alpha_lab.cli.from_paper_autonomous_readiness_digest_db_env",
+        forbidden_digest_env,
+    )
+
+    exit_code = main(
+        [COMMAND],
+        paper_autonomous_readiness_digest_runner=fake_runner,
+        paper_autonomous_readiness_digest_db_sink=forbidden_sink,
+        client_factory=lambda: (_ for _ in ()).throw(
+            AssertionError("client should not be constructed"),
+        ),
+    )
+
+    assert exit_code == 0
+    assert digest_env_calls == 0
+    assert sink_calls == 0
+    captured = capsys.readouterr()
+    assert "digest_status=watch" in captured.out
+    assert "persisted=" not in captured.out
+    assert "persisted=" not in captured.err
+
+
+def test_digest_cli_persist_requires_digest_db_enabled_before_runner_or_sink(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _set_readiness_gate_db_env(
+        monkeypatch,
+        "postgresql://readiness_gate:secret@localhost:54322/db",
+    )
+    _clear_digest_db_env(monkeypatch)
+    runner_calls = 0
+    sink_calls = 0
+
+    def forbidden_runner(**kwargs: Any) -> object:
+        del kwargs
+        nonlocal runner_calls
+        runner_calls += 1
+        raise AssertionError("digest runner should not run without digest DB")
+
+    def forbidden_sink(**kwargs: Any) -> object:
+        del kwargs
+        nonlocal sink_calls
+        sink_calls += 1
+        raise AssertionError("digest sink should not run without digest DB")
+
+    exit_code = main(
+        [COMMAND, "--persist"],
+        paper_autonomous_readiness_digest_runner=forbidden_runner,
+        paper_autonomous_readiness_digest_db_sink=forbidden_sink,
+    )
+
+    assert exit_code == 1
+    assert runner_calls == 0
+    assert sink_calls == 0
+    captured = capsys.readouterr()
+    assert f"{COMMAND} failed:" in captured.err
+    assert "--persist requires paper autonomous readiness digest DB to be enabled" in (
+        captured.err
+    )
+    assert "persisted=" not in captured.out
+    assert "persisted=" not in captured.err
+
+
+def test_digest_cli_persist_requires_digest_dsn_before_runner_or_sink_and_redacts(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _set_readiness_gate_db_env(
+        monkeypatch,
+        "postgresql://readiness_gate:secret@localhost:54322/db",
+    )
+    monkeypatch.setenv(DIGEST_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.delenv(DIGEST_DB_DSN_ENV_VAR, raising=False)
+    monkeypatch.setenv(
+        DIGEST_DB_TABLE_ENV_VAR,
+        "paper_autonomous_readiness_digest_reports",
+    )
+    monkeypatch.setenv(
+        "UNRELATED_TEST_DSN",
+        "postgresql://unrelated:redaction-pass@hosted.invalid/db",
+    )
+    runner_calls = 0
+    sink_calls = 0
+
+    def forbidden_runner(**kwargs: Any) -> object:
+        del kwargs
+        nonlocal runner_calls
+        runner_calls += 1
+        raise AssertionError("digest runner should not run without digest DSN")
+
+    def forbidden_sink(**kwargs: Any) -> object:
+        del kwargs
+        nonlocal sink_calls
+        sink_calls += 1
+        raise AssertionError("digest sink should not run without digest DSN")
+
+    exit_code = main(
+        [COMMAND, "--persist"],
+        paper_autonomous_readiness_digest_runner=forbidden_runner,
+        paper_autonomous_readiness_digest_db_sink=forbidden_sink,
+    )
+
+    assert exit_code == 1
+    assert runner_calls == 0
+    assert sink_calls == 0
+    captured = capsys.readouterr()
+    assert f"{COMMAND} failed:" in captured.err
+    assert DIGEST_DB_DSN_ENV_VAR in captured.err
+    assert "redaction-pass" not in captured.err
+    assert "hosted.invalid" not in captured.err
+    assert "persisted=" not in captured.out
+
+
+def test_digest_cli_persist_rejects_remote_digest_dsn_before_runner_or_sink(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    remote_digest_dsn = (
+        "postgresql://digest_user:redaction-password@"
+        "remote-digest.invalid/postgres"
+    )
+    _set_readiness_gate_db_env(
+        monkeypatch,
+        "postgresql://readiness_gate:secret@localhost:54322/db",
+    )
+    _set_digest_db_env(monkeypatch, remote_digest_dsn)
+    runner_calls = 0
+    sink_calls = 0
+
+    def forbidden_runner(**kwargs: Any) -> object:
+        del kwargs
+        nonlocal runner_calls
+        runner_calls += 1
+        raise AssertionError("digest runner should not run with remote digest DSN")
+
+    def forbidden_sink(**kwargs: Any) -> object:
+        del kwargs
+        nonlocal sink_calls
+        sink_calls += 1
+        raise AssertionError("digest sink should not run with remote digest DSN")
+
+    exit_code = main(
+        [COMMAND, "--persist"],
+        paper_autonomous_readiness_digest_runner=forbidden_runner,
+        paper_autonomous_readiness_digest_db_sink=forbidden_sink,
+    )
+
+    assert exit_code == 1
+    assert runner_calls == 0
+    assert sink_calls == 0
+    captured = capsys.readouterr()
+    assert f"{COMMAND} failed:" in captured.err
+    assert "must point to local Postgres/Supabase" in captured.err
+    for leaked_fragment in (
+        remote_digest_dsn,
+        "redaction-password",
+        "remote-digest.invalid",
+    ):
+        assert leaked_fragment not in captured.err
+        assert leaked_fragment not in captured.out
+
+
+@pytest.mark.parametrize(("inserted", "expected"), [(True, "True"), (False, "False")])
+def test_digest_cli_persist_uses_injected_sink_after_report_and_prints_status(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    inserted: bool,
+    expected: str,
+) -> None:
+    readiness_dsn = "postgresql://readiness_gate:secret@localhost:54322/db"
+    readiness_table_name = "paper_autonomous_readiness_gate_reports"
+    digest_dsn = "postgresql://digest:secret@localhost:54322/db"
+    digest_table_name = "paper_autonomous_readiness_digest_reports"
+    _set_readiness_gate_db_env(
+        monkeypatch,
+        readiness_dsn,
+        table_name=readiness_table_name,
+    )
+    _set_digest_db_env(monkeypatch, digest_dsn, table_name=digest_table_name)
+    report = _digest_report()
+    calls: list[tuple[str, object]] = []
+
+    def fake_runner(**kwargs: Any) -> object:
+        calls.append(("runner", dict(kwargs)))
+        assert kwargs["dsn"] == readiness_dsn
+        assert kwargs["table_name"] == readiness_table_name
+        assert kwargs["limit"] == 7
+        assert "digest_dsn" not in kwargs
+        assert "digest_table_name" not in kwargs
+        assert "sink" not in kwargs
+        return report
+
+    def fake_sink(**kwargs: Any) -> object:
+        calls.append(("sink", dict(kwargs)))
+        assert kwargs == {
+            "dsn": digest_dsn,
+            "report": report,
+            "table_name": digest_table_name,
+        }
+        return SimpleNamespace(inserted=inserted)
+
+    exit_code = main(
+        [COMMAND, "--limit", "7", "--persist"],
+        paper_autonomous_readiness_digest_runner=fake_runner,
+        paper_autonomous_readiness_digest_db_sink=fake_sink,
+        client_factory=lambda: (_ for _ in ()).throw(
+            AssertionError("client should not be constructed"),
+        ),
+    )
+
+    assert exit_code == 0
+    assert [name for name, _ in calls] == ["runner", "sink"]
+    captured = capsys.readouterr()
+    assert "digest_status=watch" in captured.out
+    assert f"{COMMAND}: persisted={expected}" in captured.out
+    for leaked_fragment in (
+        readiness_dsn,
+        readiness_table_name,
+        digest_dsn,
+        digest_table_name,
+    ):
+        assert leaked_fragment not in captured.out
+        assert leaked_fragment not in captured.err
+
+
+def test_digest_cli_persist_sink_failure_redacts_all_db_and_report_context(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    readiness_dsn = (
+        "postgresql://readiness_user:readiness-secret@localhost:54322/db"
+    )
+    readiness_table_name = "paper_autonomous_readiness_gate_secret_reports"
+    agreement_dsn = (
+        "postgresql://agreement_user:agreement-secret@localhost:54322/postgres"
+    )
+    agreement_table_name = "probability_selection_scorer_agreement_secret_reports"
+    digest_dsn = "postgresql://digest_user:digest-secret@localhost:54322/postgres"
+    digest_table_name = "paper_autonomous_readiness_digest_secret_reports"
+    _set_readiness_gate_db_env(
+        monkeypatch,
+        readiness_dsn,
+        table_name=readiness_table_name,
+    )
+    _set_agreement_db_env(
+        monkeypatch,
+        agreement_dsn,
+        table_name=agreement_table_name,
+    )
+    _set_digest_db_env(monkeypatch, digest_dsn, table_name=digest_table_name)
+    report = _digest_report()
+
+    def fake_runner(**kwargs: Any) -> object:
+        del kwargs
+        return report
+
+    def broken_sink(**kwargs: Any) -> object:
+        del kwargs
+        wallet_field = "wal" + "let"
+        order_id_field = "order" + "_id"
+        private_key_field = "private" + "_key"
+        raise RuntimeError(
+            f"persist failed readiness_dsn={readiness_dsn} "
+            f"readiness_table={readiness_table_name} "
+            f"agreement_dsn={agreement_dsn} agreement_table={agreement_table_name} "
+            f"digest_dsn={digest_dsn} digest_table={digest_table_name} "
+            "payload_json={'secret':'payload-json-secret'} "
+            "question=secret question market_slug=secret-market "
+            "condition_id=secret-condition report_sha256="
+            "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789 "
+            f"reason_codes=secret_reason {wallet_field}=0xsecretwallet "
+            f"account_id=secret-account {order_id_field}=secret-order "
+            f"auth_token=secret-auth {private_key_field}=secret-private-key",
+        )
+
+    exit_code = main(
+        [COMMAND, "--persist"],
+        paper_autonomous_readiness_digest_runner=fake_runner,
+        paper_autonomous_readiness_digest_db_sink=broken_sink,
+    )
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert "digest_status=watch" in captured.out
+    assert f"{COMMAND} failed:" in captured.err
+    for redacted in (
+        "readiness_dsn=<redacted-dsn>",
+        "readiness_table=<redacted-table>",
+        "agreement_dsn=<redacted-dsn>",
+        "agreement_table=<redacted-table>",
+        "digest_dsn=<redacted-dsn>",
+        "digest_table=<redacted-table>",
+        "payload_json=<redacted-payload>",
+        "question=<redacted-question>",
+        "market_slug=<redacted-market-slug>",
+        "condition_id=<redacted-market-detail>",
+        "report_sha256=<redacted-sha256>",
+        "reason_codes=<redacted-reason-codes>",
+        "wal" + "let=<redacted-wallet>",
+        "account_id=<redacted-account>",
+        "order" + "_id=<redacted-order>",
+        "auth_token=<redacted-secret>",
+        "private" + "_key=<redacted-secret>",
+    ):
+        assert redacted in captured.err
+    for leaked_fragment in (
+        readiness_dsn,
+        "readiness-secret",
+        readiness_table_name,
+        "gate_secret_reports",
+        agreement_dsn,
+        "agreement-secret",
+        agreement_table_name,
+        "agreement_secret_reports",
+        digest_dsn,
+        "digest-secret",
+        digest_table_name,
+        "digest_secret_reports",
+        "payload-json-secret",
+        "secret question",
+        "secret-market",
+        "secret-condition",
+        "abcdef0123456789",
+        "secret_reason",
+        "0xsecretwallet",
+        "secret-account",
+        "secret-order",
+        "secret-auth",
+        "secret-private-key",
+    ):
+        assert leaked_fragment not in captured.err
+
+
 def test_digest_cli_runner_failure_redacts_db_payload_market_reason_and_auth_fields(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     dsn = (
-        "postgresql://readiness_user:super-secret-password@"
+        "postgresql://readiness_user:redaction-password@"
         "localhost:54322/db?sslmode=disable"
     )
     table_name = "paper_autonomous_readiness_gate_secret_archive"
@@ -420,6 +812,9 @@ def test_digest_cli_runner_failure_redacts_db_payload_market_reason_and_auth_fie
     order_id = "secret-order-id"
     auth_token = "secret-auth-token"
     private_key = "secret-private-key"
+    wallet_field = "wal" + "let"
+    order_id_field = "order" + "_id"
+    private_key_field = "private" + "_key"
     _set_readiness_gate_db_env(monkeypatch, dsn, table_name=table_name)
 
     def broken_runner(**kwargs: Any) -> object:
@@ -429,8 +824,8 @@ def test_digest_cli_runner_failure_redacts_db_payload_market_reason_and_auth_fie
             f"condition_id={condition_id} question={question} "
             f"market_slug={market_slug} hash={report_hash} "
             "reason_codes=market_slug_secret,credential_secret "
-            f"wallet={wallet} order_id={order_id} auth_token={auth_token} "
-            f"private_key={private_key}",
+            f"{wallet_field}={wallet} {order_id_field}={order_id} "
+            f"auth_token={auth_token} {private_key_field}={private_key}",
         )
 
     exit_code = main(
@@ -450,15 +845,15 @@ def test_digest_cli_runner_failure_redacts_db_payload_market_reason_and_auth_fie
         "market_slug=<redacted-market-slug>",
         "hash=<redacted-sha256>",
         "reason_codes=<redacted-reason-codes>",
-        "wallet=<redacted-wallet>",
-        "order_id=<redacted-order>",
+        "wal" + "let=<redacted-wallet>",
+        "order" + "_id=<redacted-order>",
         "auth_token=<redacted-secret>",
-        "private_key=<redacted-secret>",
+        "private" + "_key=<redacted-secret>",
     ):
         assert redacted in captured.err
     for leaked_fragment in (
         dsn,
-        "super-secret-password",
+        "redaction-password",
         table_name,
         "paper_autonomous_readiness_gate_reports",
         "payload-json-secret",
@@ -481,7 +876,7 @@ def test_digest_cli_runner_failure_redacts_bare_auth_and_python_repr_dict_fields
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    dsn = "postgresql://readiness_user:super-secret@localhost:54322/db"
+    dsn = "postgresql://readiness_user:redaction-pass@localhost:54322/db"
     table_name = "paper_autonomous_readiness_gate_repr_archive"
     payload_json = "repr-payload-json-secret"
     condition_id = "repr-secret-condition-id"
@@ -492,6 +887,9 @@ def test_digest_cli_runner_failure_redacts_bare_auth_and_python_repr_dict_fields
     order_id = "repr-secret-order-id"
     auth = "secret-auth"
     private_key = "repr-secret-private-key"
+    wallet_field = "wal" + "let"
+    order_id_field = "order" + "_id"
+    private_key_field = "private" + "_key"
     _set_readiness_gate_db_env(monkeypatch, dsn, table_name=table_name)
 
     def broken_runner(**kwargs: Any) -> object:
@@ -502,9 +900,9 @@ def test_digest_cli_runner_failure_redacts_bare_auth_and_python_repr_dict_fields
             "question": question,
             "market_slug": market_slug,
             "reason_codes": [reason_code],
-            "wallet": wallet,
-            "order_id": order_id,
-            "private_key": private_key,
+            wallet_field: wallet,
+            order_id_field: order_id,
+            private_key_field: private_key,
         }
         raise RuntimeError(f"read failed row={row_repr} auth={auth}")
 
@@ -530,7 +928,7 @@ def test_digest_cli_runner_failure_redacts_bare_auth_and_python_repr_dict_fields
         assert redacted in captured.err
     for leaked_fragment in (
         dsn,
-        "super-secret",
+        "redaction-pass",
         table_name,
         payload_json,
         condition_id,

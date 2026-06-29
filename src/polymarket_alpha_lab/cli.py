@@ -202,6 +202,9 @@ from polymarket_alpha_lab.supabase_paper_autonomous_investment_ledger_db_history
 from polymarket_alpha_lab.supabase_paper_autonomous_readiness_gate_config import (
     from_paper_autonomous_readiness_gate_db_env,
 )
+from polymarket_alpha_lab.supabase_paper_autonomous_readiness_digest_config import (
+    from_paper_autonomous_readiness_digest_db_env,
+)
 from polymarket_alpha_lab.supabase_paper_autonomous_allocation_proposal_config import (
     from_paper_autonomous_allocation_proposal_db_env,
 )
@@ -345,6 +348,7 @@ PaperAutonomousInvestmentLedgerDbHistoryHealthTrendGateRunner = Callable[
     object,
 ]
 PaperAutonomousReadinessDigestRunner = Callable[..., object]
+PaperAutonomousReadinessDigestDbSink = Callable[..., object]
 PaperResearchPacketOperatorFlowDbSink = Callable[..., object]
 PaperProbabilityRecommendationQueueDbSink = Callable[..., object]
 PaperRecommendationRiskBudgetDbSink = Callable[..., object]
@@ -820,12 +824,14 @@ def _redacted_paper_readiness_digest_error(
     readiness_table_name: str,
     agreement_dsn: str | None = None,
     agreement_table_name: str | None = None,
+    digest_dsn: str | None = None,
+    digest_table_name: str | None = None,
 ) -> RuntimeError:
     message = str(exc)
-    for dsn_value in (readiness_dsn, agreement_dsn):
+    for dsn_value in (readiness_dsn, agreement_dsn, digest_dsn):
         if dsn_value is not None:
             message = _redact_db_dsn(message, dsn=dsn_value)
-    for dsn_value in (readiness_dsn, agreement_dsn):
+    for dsn_value in (readiness_dsn, agreement_dsn, digest_dsn):
         if dsn_value is not None:
             message = _redact_db_dsn_host(message, dsn=dsn_value)
     message = _redact_db_table_name_and_tail(
@@ -836,6 +842,11 @@ def _redacted_paper_readiness_digest_error(
         message = _redact_db_table_name_and_tail(
             message,
             table_name=agreement_table_name,
+        )
+    if digest_table_name is not None:
+        message = _redact_db_table_name_and_tail(
+            message,
+            table_name=digest_table_name,
         )
     message = _redact_paper_research_packet_sensitive_fields(message)
     if not message.strip():
@@ -1475,6 +1486,9 @@ def main(
     ) = None,
     paper_autonomous_readiness_digest_runner: (
         PaperAutonomousReadinessDigestRunner | None
+    ) = None,
+    paper_autonomous_readiness_digest_db_sink: (
+        PaperAutonomousReadinessDigestDbSink | None
     ) = None,
     paper_probability_recommendation_queue_db_sink: (
         PaperProbabilityRecommendationQueueDbSink | None
@@ -2455,6 +2469,12 @@ def main(
         type=int,
         default=25,
         dest="limit",
+    )
+    paper_autonomous_readiness_digest.add_argument(
+        "--persist",
+        action="store_true",
+        default=False,
+        dest="persist",
     )
 
     paper_research_packet_operator_flow = subparsers.add_parser(
@@ -5212,6 +5232,21 @@ def main(
                 raise ValueError(
                     f"{command_name} requires a paper autonomous readiness gate DB DSN",
                 )
+            digest_db_config = None
+            digest_dsn = None
+            if args.persist:
+                digest_db_config = from_paper_autonomous_readiness_digest_db_env()
+                if not digest_db_config.enabled:
+                    raise ValueError(
+                        f"{command_name} --persist requires paper autonomous "
+                        "readiness digest DB to be enabled",
+                    )
+                digest_dsn = digest_db_config.dsn
+                if digest_dsn is None:
+                    raise ValueError(
+                        f"{command_name} --persist requires a paper autonomous "
+                        "readiness digest DB DSN",
+                    )
             agreement_db_config = from_probability_selection_scorer_agreement_db_env()
             agreement_dsn = agreement_db_config.dsn
             if agreement_db_config.enabled:
@@ -5247,8 +5282,56 @@ def main(
                         if agreement_db_config.enabled
                         else None
                     ),
+                    digest_dsn=digest_dsn,
+                    digest_table_name=(
+                        digest_db_config.table_name
+                        if digest_db_config is not None
+                        else None
+                    ),
                 ) from None
             _print_paper_autonomous_readiness_digest_summary(report)
+            if args.persist:
+                if digest_db_config is None or digest_dsn is None:
+                    raise ValueError(
+                        f"{command_name} --persist requires paper autonomous "
+                        "readiness digest DB config",
+                    )
+                if paper_autonomous_readiness_digest_db_sink is None:
+                    from polymarket_alpha_lab.paper_autonomous_readiness_digest_psycopg import (
+                        insert_paper_autonomous_readiness_digest_report_with_psycopg,
+                    )
+
+                    digest_sink = (
+                        insert_paper_autonomous_readiness_digest_report_with_psycopg
+                    )
+                else:
+                    digest_sink = paper_autonomous_readiness_digest_db_sink
+                try:
+                    sink_result = digest_sink(
+                        dsn=digest_dsn,
+                        report=report,
+                        table_name=digest_db_config.table_name,
+                    )
+                except Exception as exc:
+                    raise _redacted_paper_readiness_digest_error(
+                        exc,
+                        readiness_dsn=dsn,
+                        readiness_table_name=readiness_gate_db_config.table_name,
+                        agreement_dsn=(
+                            agreement_dsn if agreement_db_config.enabled else None
+                        ),
+                        agreement_table_name=(
+                            agreement_db_config.table_name
+                            if agreement_db_config.enabled
+                            else None
+                        ),
+                        digest_dsn=digest_dsn,
+                        digest_table_name=digest_db_config.table_name,
+                    ) from None
+                persisted = getattr(sink_result, "inserted", True)
+                if type(persisted) is not bool:
+                    persisted = True
+                print(f"{command_name}: persisted={persisted}")
             return 0
         except Exception as exc:
             print(

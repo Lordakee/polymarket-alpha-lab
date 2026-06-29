@@ -10,8 +10,10 @@ COMMAND = "paper-autonomous-readiness-digest"
 HELPER = "_run_paper_autonomous_readiness_digest"
 SUMMARY = "_print_paper_autonomous_readiness_digest_summary"
 READINESS_DB_ENV = "from_paper_autonomous_readiness_gate_db_env"
+DIGEST_DB_ENV = "from_paper_autonomous_readiness_digest_db_env"
 AGREEMENT_DB_ENV = "from_probability_selection_scorer_agreement_db_env"
 LOCAL_POSTGRES_DSN_VALIDATOR = "_require_local_postgres_dsn"
+DEFAULT_DIGEST_DB_SINK = "insert_paper_autonomous_readiness_digest_report_with_psycopg"
 FORBIDDEN_MUTATING_OR_PRIVATE_REFS = (
     "commit",
     "rollback",
@@ -101,7 +103,56 @@ def _references(nodes: list[ast.stmt]) -> set[str]:
     return values
 
 
-def test_readiness_digest_parser_surface_is_limit_only() -> None:
+def _function_def(tree: ast.AST, name: str) -> ast.FunctionDef:
+    functions = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == name
+    ]
+    assert len(functions) == 1
+    return functions[0]
+
+
+def _is_persist_gate_test(test: ast.AST) -> bool:
+    if isinstance(test, ast.BoolOp):
+        return any(_is_persist_gate_test(value) for value in test.values)
+    if isinstance(test, ast.UnaryOp):
+        return _is_persist_gate_test(test.operand)
+    return (
+        isinstance(test, ast.Attribute)
+        and test.attr == "persist"
+        and isinstance(test.value, ast.Name)
+        and test.value.id == "args"
+    )
+
+
+def _persist_refs_outside_cli_gates(nodes: list[ast.stmt]) -> list[ast.AST]:
+    violations: list[ast.AST] = []
+
+    def visit(node: ast.AST, *, in_gate_test: bool = False) -> None:
+        next_in_gate = in_gate_test
+        if isinstance(node, ast.If):
+            visit(node.test, in_gate_test=_is_persist_gate_test(node.test))
+            for child in node.body + node.orelse:
+                visit(child, in_gate_test=False)
+            return
+        if (
+            isinstance(node, ast.Attribute)
+            and node.attr == "persist"
+            and isinstance(node.value, ast.Name)
+            and node.value.id == "args"
+            and not next_in_gate
+        ):
+            violations.append(node)
+        for child in ast.iter_child_nodes(node):
+            visit(child, in_gate_test=next_in_gate)
+
+    for statement in nodes:
+        visit(statement)
+    return violations
+
+
+def test_readiness_digest_parser_surface_includes_limit_and_persist_only() -> None:
     tree = _parse_cli()
     parser_calls = [
         node
@@ -140,31 +191,37 @@ def test_readiness_digest_parser_surface_is_limit_only() -> None:
             if keyword.arg == "dest" and isinstance(keyword.value, ast.Constant):
                 argument_values.add(keyword.value.value)
 
-    assert argument_values == {"--limit", "limit"}
+    assert argument_values == {"--limit", "limit", "--persist", "persist"}
 
 
-def test_readiness_digest_command_branch_is_readonly_env_backed() -> None:
-    branch_refs = _references(_command_branch(_parse_cli()))
+def test_readiness_digest_command_branch_is_readback_with_optional_persist_gate() -> None:
+    branch = _command_branch(_parse_cli())
+    branch_refs = _references(branch)
 
     assert READINESS_DB_ENV in branch_refs
+    assert DIGEST_DB_ENV in branch_refs
     assert AGREEMENT_DB_ENV in branch_refs
     assert HELPER in branch_refs
     assert SUMMARY in branch_refs
+    assert "paper_autonomous_readiness_digest_db_sink" in branch_refs
+    assert DEFAULT_DIGEST_DB_SINK in branch_refs
     assert "_redacted_paper_readiness_digest_error" in branch_refs
+    assert branch_refs & {"digest_dsn", "digest_table_name"}
+    assert _persist_refs_outside_cli_gates(branch) == []
     for forbidden in (
         "client_factory",
         "run_market_scan",
         "run_strategy_cycle",
         "run_strategy_loop",
-        "sink",
-        "persist",
         *FORBIDDEN_MUTATING_OR_PRIVATE_REFS,
     ):
         assert forbidden not in branch_refs
 
 
 def test_readiness_digest_helper_is_readonly_local_postgres_only() -> None:
-    helper_refs = _references(_function_body(_parse_cli(), HELPER))
+    tree = _parse_cli()
+    helper = _function_def(tree, HELPER)
+    helper_refs = _references(helper.body)
 
     for expected in (
         "PaperAutonomousReadinessDigestConfig",
@@ -183,7 +240,29 @@ def test_readiness_digest_helper_is_readonly_local_postgres_only() -> None:
         "close",
     ):
         assert expected in helper_refs
-    for forbidden in FORBIDDEN_MUTATING_OR_PRIVATE_REFS:
+    helper_arg_names = {
+        arg.arg
+        for arg in (*helper.args.posonlyargs, *helper.args.args, *helper.args.kwonlyargs)
+    }
+    for forbidden_arg in (
+        "sink",
+        "db_sink",
+        "digest_sink",
+        "digest_dsn",
+        "digest_table_name",
+        "digest_db_dsn",
+        "digest_db_table_name",
+    ):
+        assert forbidden_arg not in helper_arg_names
+    for forbidden in (
+        "sink",
+        "persist",
+        "digest_sink",
+        "digest_dsn",
+        "digest_table_name",
+        "insert_paper_autonomous_readiness_digest_report_with_psycopg",
+        *FORBIDDEN_MUTATING_OR_PRIVATE_REFS,
+    ):
         assert forbidden not in helper_refs
 
 

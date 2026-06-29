@@ -725,6 +725,10 @@ Boundary:
 - is not order instruction
 - is not execution authorization
 
+## Level 1B Node 1 Status
+
+Level 1B Node 1 adds configurable paper-only risk gates and append-only rejected-candidate logs. It does not place orders, authenticate, handle private keys, cancel orders, open user WebSockets, run heartbeat logic, or create live-trading proposals.
+
 Paper Autonomous Readiness Digest CLI/readback:
 
 ```bash
@@ -733,25 +737,46 @@ polymarket-alpha-lab paper-autonomous-readiness-digest --limit 25
 
 The command is env-only, read-only, paper-only/report-only/readonly, and reads
 local Supabase/Postgres readiness-gate history through the existing readiness
-gate DB environment boundary. It accepts only `--limit`.
+gate DB environment boundary. By default it accepts only `--limit` and writes
+nothing.
+
+Optional local Supabase/Postgres persistence stores only the final already-built
+digest report:
+
+```bash
+polymarket-alpha-lab paper-autonomous-readiness-digest --limit 25 --persist
+```
+
+`--persist` reads only the readiness digest DB environment config:
+`POLYMARKET_ALPHA_LAB_PAPER_AUTONOMOUS_READINESS_DIGEST_DB_ENABLED`,
+`POLYMARKET_ALPHA_LAB_PAPER_AUTONOMOUS_READINESS_DIGEST_DB_DSN`, and optional
+`POLYMARKET_ALPHA_LAB_PAPER_AUTONOMOUS_READINESS_DIGEST_DB_TABLE`. The default
+table is `paper_autonomous_readiness_digest_reports`. There are no digest
+DSN/table/file CLI flags; DB selection stays env-only and local
+Supabase/Postgres-only. Details: `docs/paper-autonomous-readiness-digest-db-persistence.md`.
 
 Boundary:
 
-- does not accept persist, file, auth, private-key, wallet, account, or order flags
+- does not accept DSN, table, file, auth, private-key, wallet, account, or order flags
 - does not accept signing, submission, cancellation, replacement, or exchange-mutation flags
 
 The readback builds a compact digest from the latest readiness-gate report plus
 optional `agreement_trend_gate` evidence when that local evidence is available
 through the readback path. It prints digest status, recommended review action,
-evidence statuses, and sanitized reason-code counts.
+evidence statuses, and sanitized reason-code counts. With `--persist`, it also
+prints `persisted=True` for a new digest row or `persisted=False` for an
+idempotent duplicate insert after the current digest summary.
 
-The command writes nothing, adds no durable table, and does not persist digest
-or trend-gate reports. All durable data for this readback remains in local
-Supabase/Postgres only; there is no JSONL/SQLite/file durable store, Redis,
-Mongo, SQLAlchemy, generic durable-store abstraction, hosted DB assumption, or
-file-backed cache.
+Without `--persist`, the command does not read the digest DB env config,
+connect to the digest DB, insert a digest row, or print `persisted=`.
+Persistence never writes trend-gate reports. All durable data for this readback
+remains in local Supabase/Postgres only; there is no JSONL/SQLite/file durable
+store, Redis, Mongo, SQLAlchemy, generic durable-store abstraction, hosted DB
+assumption, or file-backed cache.
 
-The digest is paper observability only.
+The persisted digest is paper observability history only. It is not trade
+permission, not financial advice, not investment ranking, not an order
+instruction, and not execution authorization.
 
 Boundary:
 
@@ -762,10 +787,6 @@ Boundary:
 - does not rank investments
 - does not provide trade instructions
 - does not provide financial advice
-
-## Level 1B Node 1 Status
-
-Level 1B Node 1 adds configurable paper-only risk gates and append-only rejected-candidate logs. It does not place orders, authenticate, handle private keys, cancel orders, open user WebSockets, run heartbeat logic, or create live-trading proposals.
 
 ## Level 1B Node 1 Python API
 
