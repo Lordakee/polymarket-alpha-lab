@@ -230,6 +230,7 @@ from polymarket_alpha_lab.supabase_probability_selection_summary_config import (
     from_paper_probability_selection_summary_db_env,
 )
 from polymarket_alpha_lab.supabase_probability_selection_scorer_agreement_config import (
+    PROBABILITY_SELECTION_SCORER_AGREEMENT_DB_DSN_ENV_VAR,
     from_probability_selection_scorer_agreement_db_env,
 )
 from polymarket_alpha_lab.supabase_paper_probability_selection_summary_history_config import (
@@ -354,6 +355,7 @@ PaperProbabilitySelectionSummaryHistoryTrendRunner = Callable[..., object]
 AutonomousMarketScorerHistoryRunner = Callable[..., object]
 ProbabilitySelectionScorerAgreementRunner = Callable[..., object]
 ProbabilitySelectionScorerAgreementDbSink = Callable[..., object]
+ProbabilitySelectionScorerAgreementTrendRunner = Callable[..., object]
 MAX_PAPER_AUTONOMOUS_READINESS_DIGEST_READ_LIMIT = 500
 _LOCAL_POSTGRES_HOSTS = frozenset(("localhost", "127.0.0.1", "::1"))
 _LOCAL_POSTGRES_DSN_ERROR = (
@@ -393,6 +395,32 @@ class _PaperAutonomousScreeningDecisionSupportGateConfig:
 
 def _redact_db_dsn(text: str, *, dsn: str) -> str:
     return text.replace(dsn, "<redacted-dsn>")
+
+
+def _redact_db_dsn_host(text: str, *, dsn: str) -> str:
+    hosts: set[str] = set()
+    if _is_simple_keyword_dsn(dsn):
+        try:
+            tokens = shlex.split(dsn)
+        except ValueError:
+            tokens = ()
+        for token in tokens:
+            if "=" not in token:
+                continue
+            key, value = token.split("=", 1)
+            if key.lower() == "host" and value and not value.startswith("/"):
+                hosts.add(value)
+    else:
+        try:
+            parsed = urlsplit(dsn)
+        except ValueError:
+            parsed = None
+        if parsed is not None and parsed.hostname:
+            hosts.add(parsed.hostname)
+    message = text
+    for host in hosts:
+        message = message.replace(host, "<redacted-host>")
+    return message
 
 
 def _redact_db_table_name(text: str, *, table_name: str) -> str:
@@ -928,6 +956,21 @@ def _redacted_probability_selection_scorer_agreement_error(
     return RuntimeError(message)
 
 
+def _redacted_probability_selection_scorer_agreement_trend_error(
+    exc: Exception,
+    *,
+    dsn: str,
+    table_name: str,
+) -> RuntimeError:
+    message = _redact_db_dsn(str(exc), dsn=dsn)
+    message = _redact_db_dsn_host(message, dsn=dsn)
+    message = _redact_db_table_name_and_tail(message, table_name=table_name)
+    message = _redact_paper_research_packet_sensitive_fields(message)
+    if not message.strip():
+        message = exc.__class__.__name__
+    return RuntimeError(message)
+
+
 def _redacted_paper_probability_selection_summary_history_persistence_error(
     exc: Exception,
     *,
@@ -1429,6 +1472,9 @@ def main(
     probability_selection_scorer_agreement_db_sink: (
         ProbabilitySelectionScorerAgreementDbSink | None
     ) = None,
+    probability_selection_scorer_agreement_trend_runner: (
+        ProbabilitySelectionScorerAgreementTrendRunner | None
+    ) = None,
 ) -> int:
     parser = argparse.ArgumentParser(prog="polymarket-alpha-lab")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -1727,6 +1773,21 @@ def main(
         "--limit",
         type=int,
         default=1,
+        dest="limit",
+    )
+    probability_selection_scorer_agreement_trend = subparsers.add_parser(
+        "probability-selection-scorer-agreement-trend",
+        allow_abbrev=False,
+        description=(
+            "Build a read-only, report-only trend report from local "
+            "Supabase/Postgres probability selection/scorer agreement snapshots."
+        ),
+        help="read-only report-only probability selection/scorer agreement trend",
+    )
+    probability_selection_scorer_agreement_trend.add_argument(
+        "--limit",
+        type=int,
+        default=25,
         dest="limit",
     )
 
@@ -3356,6 +3417,47 @@ def main(
                     agreement_table_name=agreement_db_config.table_name,
                 ) from None
             _print_probability_selection_scorer_agreement_summary(report)
+            return 0
+        except Exception as exc:
+            print(f"{command_name} failed: {exc}", file=sys.stderr)
+            return 1
+
+    if args.command == "probability-selection-scorer-agreement-trend":
+        command_name = "probability-selection-scorer-agreement-trend"
+        try:
+            if (
+                isinstance(args.limit, bool)
+                or type(args.limit) is not int
+                or args.limit < 1
+            ):
+                raise ValueError(f"{command_name} limit must be positive")
+            agreement_db_config = from_probability_selection_scorer_agreement_db_env()
+            if not agreement_db_config.enabled:
+                raise ValueError(
+                    f"{command_name} requires probability selection scorer "
+                    "agreement DB to be enabled",
+                )
+            dsn = agreement_db_config.dsn
+            if dsn is None:
+                raise ValueError(
+                    f"{PROBABILITY_SELECTION_SCORER_AGREEMENT_DB_DSN_ENV_VAR} "
+                    "must be set when DB is enabled",
+                )
+            _require_local_postgres_dsn(dsn)
+            try:
+                report = _run_probability_selection_scorer_agreement_trend(
+                    dsn=dsn,
+                    table_name=agreement_db_config.table_name,
+                    limit=args.limit,
+                    runner=probability_selection_scorer_agreement_trend_runner,
+                )
+            except Exception as exc:
+                raise _redacted_probability_selection_scorer_agreement_trend_error(
+                    exc,
+                    dsn=dsn,
+                    table_name=agreement_db_config.table_name,
+                ) from None
+            _print_probability_selection_scorer_agreement_trend_summary(report)
             return 0
         except Exception as exc:
             print(f"{command_name} failed: {exc}", file=sys.stderr)
@@ -6559,6 +6661,82 @@ def _run_probability_selection_scorer_agreement(
             pass
 
 
+def _run_probability_selection_scorer_agreement_trend(
+    *,
+    dsn: str,
+    table_name: str,
+    limit: int,
+    runner: ProbabilitySelectionScorerAgreementTrendRunner | None,
+) -> object:
+    command_name = "probability-selection-scorer-agreement-trend"
+    if isinstance(limit, bool) or type(limit) is not int or limit < 1:
+        raise ValueError(f"{command_name} limit must be positive")
+    generated_at = datetime.now(UTC)
+
+    from polymarket_alpha_lab.probability_selection_scorer_agreement_trend import (
+        ProbabilitySelectionScorerAgreementTrendConfig,
+        ProbabilitySelectionScorerAgreementTrendReport,
+        build_probability_selection_scorer_agreement_trend_report,
+    )
+
+    config = ProbabilitySelectionScorerAgreementTrendConfig(
+        config_version="probability-selection-scorer-agreement-trend-v0",
+    )
+    if runner is not None:
+        report = runner(
+            dsn=dsn,
+            table_name=table_name,
+            limit=limit,
+            config=config,
+            generated_at=generated_at,
+        )
+        if type(report) is not ProbabilitySelectionScorerAgreementTrendReport:
+            raise ValueError(
+                "runner must return exactly "
+                "ProbabilitySelectionScorerAgreementTrendReport",
+            )
+        return report
+
+    from polymarket_alpha_lab.probability_selection_scorer_agreement_store import (
+        load_probability_selection_scorer_agreement_reports,
+    )
+
+    try:
+        import psycopg
+    except ModuleNotFoundError as exc:
+        if exc.name != "psycopg":
+            raise
+        raise RuntimeError(
+            "psycopg is required to use the probability selection scorer "
+            "agreement trend read adapter; install the postgres extra.",
+        ) from exc
+
+    try:
+        connection = psycopg.connect(dsn, autocommit=True)
+    except Exception:
+        raise RuntimeError(
+            "failed to connect to the probability selection scorer agreement "
+            "database",
+        ) from None
+    try:
+        newest_first_reports = load_probability_selection_scorer_agreement_reports(
+            connection,
+            limit=limit,
+            table_name=table_name,
+        )
+        agreement_reports = tuple(reversed(newest_first_reports))
+        return build_probability_selection_scorer_agreement_trend_report(
+            agreement_reports,
+            config=config,
+            generated_at=generated_at,
+        )
+    finally:
+        try:
+            connection.close()
+        except Exception:
+            pass
+
+
 def _run_paper_autonomous_readiness_digest(
     *,
     dsn: str,
@@ -9530,6 +9708,36 @@ def _print_probability_selection_scorer_agreement_summary(report: object) -> Non
     print(
         "reason_code_divergence_counts: "
         f"{_format_safe_probability_selection_history_reason_code_counts(report.reason_code_divergence_counts)}",
+    )
+
+
+def _print_probability_selection_scorer_agreement_trend_summary(
+    report: object,
+) -> None:
+    print(
+        "probability-selection-scorer-agreement-trend: "
+        f"source_report_count={report.source_report_count} "
+        f"first_generated_at={_iso_or_none(report.first_generated_at)} "
+        f"latest_generated_at={_iso_or_none(report.latest_generated_at)} "
+        f"history_span_seconds={report.history_span_seconds} "
+        f"latest_agreement_status={report.latest_agreement_status} "
+        f"latest_status_streak={report.latest_status_streak} "
+        f"aligned_report_count={report.aligned_report_count} "
+        f"low_overlap_report_count={report.low_overlap_report_count} "
+        f"gate_blocked_report_count={report.gate_blocked_report_count} "
+        f"missing_inputs_report_count={report.missing_inputs_report_count} "
+        "insufficient_identifiers_report_count="
+        f"{report.insufficient_identifiers_report_count} "
+        f"average_selected_count={report.average_selected_count} "
+        f"average_scorer_candidate_count={report.average_scorer_candidate_count} "
+        f"trend_status={report.trend_status} "
+        f"recommended_next_step={report.recommended_next_step} "
+        "reason_codes="
+        f"{_csv_or_none(_safe_reason_codes_for_cli(report.reason_codes))}",
+    )
+    print(
+        "recurring_reason_code_counts: "
+        f"{_format_safe_probability_selection_history_reason_code_counts(report.recurring_reason_code_counts)}",
     )
 
 

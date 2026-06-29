@@ -345,6 +345,25 @@ counts, statuses, recommended next step, reason codes, canonical payload/hash,
 and hard safety flags. It does not store market slugs, questions, condition ids,
 orders, wallets, auth data, private keys, or source row details.
 
+Probability Selection Scorer Agreement Trend:
+
+```bash
+.venv/bin/polymarket-alpha-lab probability-selection-scorer-agreement-trend --limit 25
+```
+
+The command is env-only, read-only, paper-only/report-only/readonly, and reads
+persisted aggregate agreement reports from the local Supabase/Postgres DB
+configured by
+`POLYMARKET_ALPHA_LAB_PROBABILITY_SELECTION_SCORER_AGREEMENT_DB_*`. It accepts
+only `--limit`; it does not accept persist, DSN, table, file, wallet, auth,
+order, or live flags.
+
+It reads the selected agreement reports newest-first from DB, reduces them
+chronologically in memory, prints aggregate trend fields and sanitized
+reason-code summaries, and writes nothing. It does not fetch data, rank markets,
+recommend trades, handle wallets or private keys, place/sign/submit/cancel
+orders, or mutate exchange state.
+
 Paper Autonomous Allocation Proposal combines a passed autonomous screening
 gate, latest action-gated queue decision-support reports, and source queue
 reports into a paper-only/report-only/read-only allocation proposal:
