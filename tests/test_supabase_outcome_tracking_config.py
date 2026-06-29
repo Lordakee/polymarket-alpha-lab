@@ -15,6 +15,9 @@ from polymarket_alpha_lab.supabase_outcome_tracking_config import (
 )
 
 
+LOCAL_POSTGRES_DSN = "postgresql://postgres:postgres@localhost:54322/postgres"
+
+
 def test_disabled_env_config_uses_default_table_and_accepts_absent_dsn() -> None:
     config = from_outcome_tracking_db_env({})
 
@@ -27,7 +30,7 @@ def test_disabled_env_config_uses_default_table_and_accepts_absent_dsn() -> None
 
 @pytest.mark.parametrize("enabled_value", ["1", "true", " TRUE "])
 def test_enabled_env_config_accepts_explicit_true_values(enabled_value: str) -> None:
-    dsn = "postgresql://example.invalid/postgres"
+    dsn = LOCAL_POSTGRES_DSN
 
     config = from_outcome_tracking_db_env(
         {
@@ -47,7 +50,7 @@ def test_enabled_env_config_accepts_explicit_false_values(enabled_value: str) ->
     config = from_outcome_tracking_db_env(
         {
             OUTCOME_TRACKING_DB_ENABLED_ENV_VAR: enabled_value,
-            OUTCOME_TRACKING_DB_DSN_ENV_VAR: "postgresql://ignored.example.invalid/postgres",
+            OUTCOME_TRACKING_DB_DSN_ENV_VAR: LOCAL_POSTGRES_DSN,
         },
     )
 
@@ -59,11 +62,57 @@ def test_enabled_env_config_rejects_invalid_flag_with_env_var_name() -> None:
         from_outcome_tracking_db_env(
             {
                 OUTCOME_TRACKING_DB_ENABLED_ENV_VAR: "yes",
-                OUTCOME_TRACKING_DB_DSN_ENV_VAR: "postgresql://example.invalid/postgres",
+                OUTCOME_TRACKING_DB_DSN_ENV_VAR: LOCAL_POSTGRES_DSN,
             },
         )
 
     assert OUTCOME_TRACKING_DB_ENABLED_ENV_VAR in str(exc_info.value)
+
+
+@pytest.mark.parametrize(
+    "dsn",
+    [
+        "postgresql://postgres:postgres@localhost:54322/postgres",
+        "postgres://postgres:postgres@127.0.0.1:54322/postgres",
+        "host=localhost port=54322 dbname=postgres",
+        "postgresql:///postgres?host=/var/run/postgresql",
+        "host=/var/run/postgresql dbname=postgres",
+    ],
+)
+def test_config_accepts_local_postgres_dsn_shapes(dsn: str) -> None:
+    config = SupabaseOutcomeTrackingConfig(
+        enabled=False,
+        dsn=dsn,
+        table_name=DEFAULT_OUTCOME_TRACKING_DB_TABLE,
+    )
+
+    assert config.dsn == dsn
+
+
+@pytest.mark.parametrize(
+    "dsn",
+    [
+        "postgresql://topsecret@example.invalid/postgres",
+        "postgres://db.example.com/postgres",
+        "postgresql://localhost:54322/postgres?hostaddr=127.0.0.1",
+        "host=example.invalid dbname=postgres",
+    ],
+)
+def test_config_rejects_remote_or_unsafe_dsn_without_echoing_secret(
+    dsn: str,
+) -> None:
+    with pytest.raises(ValueError) as exc_info:
+        SupabaseOutcomeTrackingConfig(
+            enabled=False,
+            dsn=dsn,
+            table_name=DEFAULT_OUTCOME_TRACKING_DB_TABLE,
+        )
+
+    message = str(exc_info.value)
+    assert OUTCOME_TRACKING_DB_DSN_ENV_VAR in message
+    assert "local Postgres/Supabase" in message
+    assert dsn not in message
+    assert "topsecret" not in message
 
 
 @pytest.mark.parametrize(
@@ -72,8 +121,8 @@ def test_enabled_env_config_rejects_invalid_flag_with_env_var_name() -> None:
         None,
         "",
         " ",
-        "postgresql://sensitive-token.example.invalid/postgres ",
-        " postgresql://sensitive-token.example.invalid/postgres",
+        "postgresql://sensitive-token:postgres@localhost:54322/postgres ",
+        " postgresql://sensitive-token:postgres@localhost:54322/postgres",
     ],
 )
 def test_disabled_config_normalizes_absent_blank_and_padded_dsn_to_none(
@@ -92,7 +141,7 @@ def test_disabled_config_normalizes_absent_blank_and_padded_dsn_to_none(
 def test_enabled_env_config_requires_dsn_without_echoing_secret(
     dsn_value: str | None,
 ) -> None:
-    unrelated_secret = "postgresql://topsecret.example.invalid/postgres"
+    unrelated_secret = "postgresql://topsecret:postgres@localhost:54322/postgres"
     env = {
         OUTCOME_TRACKING_DB_ENABLED_ENV_VAR: "true",
         "UNRELATED_SECRET": unrelated_secret,
@@ -110,7 +159,7 @@ def test_enabled_env_config_requires_dsn_without_echoing_secret(
 
 
 def test_enabled_env_config_rejects_padded_dsn_without_echoing_secret() -> None:
-    secret_dsn = "postgresql://topsecret.example.invalid/postgres"
+    secret_dsn = "postgresql://topsecret:postgres@localhost:54322/postgres"
 
     with pytest.raises(ValueError) as exc_info:
         from_outcome_tracking_db_env(
@@ -129,7 +178,7 @@ def test_enabled_env_config_rejects_padded_dsn_without_echoing_secret() -> None:
 def test_config_is_frozen_and_masks_dsn_in_repr() -> None:
     config = SupabaseOutcomeTrackingConfig(
         enabled=True,
-        dsn="postgresql://topsecret.example.invalid/postgres",
+        dsn="postgresql://topsecret:postgres@localhost:54322/postgres",
         table_name=DEFAULT_OUTCOME_TRACKING_DB_TABLE,
     )
 
@@ -212,7 +261,7 @@ def test_direct_config_rejects_non_bool_enabled_flag() -> None:
     with pytest.raises(ValueError, match="enabled must be a bool"):
         SupabaseOutcomeTrackingConfig(
             enabled=1,  # type: ignore[arg-type]
-            dsn="postgresql://example.invalid/postgres",
+            dsn=LOCAL_POSTGRES_DSN,
             table_name=DEFAULT_OUTCOME_TRACKING_DB_TABLE,
         )
 

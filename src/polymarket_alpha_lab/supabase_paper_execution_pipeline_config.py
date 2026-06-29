@@ -10,6 +10,7 @@ from typing import Mapping
 from polymarket_alpha_lab.paper_order_lifecycle_store import (
     DEFAULT_PAPER_ORDER_LIFECYCLE_RECORDS_TABLE,
 )
+from polymarket_alpha_lab.supabase_local_dsn import validate_local_postgres_dsn
 
 
 __all__ = (
@@ -45,13 +46,17 @@ class SupabasePaperExecutionPipelineConfig:
     def __post_init__(self) -> None:
         if type(self.enabled) is not bool:
             raise ValueError("enabled must be a bool")
-        if self.dsn is not None and (type(self.dsn) is not str or not self.dsn):
-            raise ValueError("dsn must be a nonblank string or None")
+        object.__setattr__(self, "dsn", _normalize_optional_dsn(self.dsn))
         if (
             type(self.table_name) is not str
             or _IDENTIFIER_PATTERN.fullmatch(self.table_name) is None
         ):
             raise ValueError("table_name must be a simple lowercase identifier")
+        if self.dsn is not None:
+            validate_local_postgres_dsn(
+                self.dsn,
+                env_var_name=PAPER_EXECUTION_PIPELINE_DB_DSN_ENV_VAR,
+            )
         if self.enabled and self.dsn is None:
             raise ValueError("dsn is required when enabled is True")
 
@@ -108,3 +113,13 @@ def _parse_enabled(value: object) -> bool:
         f"{PAPER_EXECUTION_PIPELINE_DB_ENABLED_ENV_VAR} "
         "must be true or false",
     )
+
+
+def _normalize_optional_dsn(value: object) -> str | None:
+    if value is None:
+        return None
+    if type(value) is not str:
+        raise ValueError("dsn must be a nonblank string or None")
+    if not value or value.strip() != value:
+        return None
+    return value

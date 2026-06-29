@@ -7,6 +7,8 @@ from os import environ
 import re
 from typing import Mapping
 
+from polymarket_alpha_lab.supabase_local_dsn import validate_local_postgres_dsn
+
 
 PAPER_TRADE_JOURNAL_DB_ENABLED_ENV_VAR = (
     "POLYMARKET_ALPHA_LAB_PAPER_TRADE_JOURNAL_DB_ENABLED"
@@ -35,6 +37,11 @@ class SupabasePaperTradeJournalConfig:
             raise ValueError("enabled must be a bool")
         object.__setattr__(self, "dsn", _normalize_optional_dsn(self.dsn))
         object.__setattr__(self, "table_name", _validate_table_name(self.table_name))
+        if self.dsn is not None:
+            validate_local_postgres_dsn(
+                self.dsn,
+                env_var_name=PAPER_TRADE_JOURNAL_DB_DSN_ENV_VAR,
+            )
         if self.enabled and self.dsn is None:
             raise ValueError(
                 f"{PAPER_TRADE_JOURNAL_DB_DSN_ENV_VAR} must be set when DB is enabled",

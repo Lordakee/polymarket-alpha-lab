@@ -83,7 +83,7 @@ def test_enabled_env_config_requires_dsn_without_echoing_secret(
     module: ModuleType,
     surface: dict[str, Any],
 ) -> None:
-    secret_dsn = "postgresql://sensitive-token.example.invalid/postgres"
+    secret_dsn = "postgresql://sensitive-token@localhost/postgres"
 
     with pytest.raises(ValueError) as exc_info:
         _from_env(
@@ -106,7 +106,7 @@ def test_enabled_config_requires_dsn_without_echoing_secret(
     module: ModuleType,
     surface: dict[str, Any],
 ) -> None:
-    secret_dsn = "postgresql://sensitive-token.example.invalid/postgres"
+    secret_dsn = "postgresql://sensitive-token@localhost/postgres"
 
     with pytest.raises(ValueError) as exc_info:
         _config_class(module, surface)(
@@ -124,7 +124,7 @@ def test_enabled_env_config_reads_explicit_dsn_at_process_edge(
     module: ModuleType,
     surface: dict[str, Any],
 ) -> None:
-    dsn = "postgresql://example.invalid/postgres"
+    dsn = "postgresql://localhost/postgres"
 
     config = _from_env(
         module,
@@ -141,11 +141,75 @@ def test_enabled_env_config_reads_explicit_dsn_at_process_edge(
     assert config.table_name == "paper_recommendation_reports"
 
 
+@pytest.mark.parametrize(
+    "dsn",
+    [
+        "postgresql://localhost/postgres",
+        "postgres://localhost:54322/postgres",
+        "postgresql://user:password@127.0.0.1:5432/postgres",
+        "postgresql://user:password@[::1]:5432/postgres",
+        "postgresql:///postgres?host=/var/run/postgresql",
+        "host=localhost port=54322 dbname=postgres",
+        "host=/var/run/postgresql dbname=postgres",
+    ],
+)
+def test_direct_config_accepts_local_postgres_dsn_forms(
+    module: ModuleType,
+    surface: dict[str, Any],
+    dsn: str,
+) -> None:
+    config = _config_class(module, surface)(
+        enabled=True,
+        dsn=dsn,
+        table_name=surface["default_table"],
+    )
+
+    assert config.dsn == dsn
+
+
+@pytest.mark.parametrize(
+    "dsn",
+    [
+        "postgresql://example.invalid/postgres",
+        "postgresql://user:sensitive-token@example.invalid/postgres",
+        "postgres://db.example.com/postgres",
+        "postgresql://192.168.1.10/postgres",
+        "postgresql://localhost:70000/postgres",
+        "postgresql:///postgres",
+        "postgresql://localhost/postgres?host=localhost",
+        "postgresql://localhost/postgres?hostaddr=127.0.0.1",
+        "postgresql://localhost/postgres?service=local",
+        "host=example.invalid dbname=postgres",
+        "host=localhost,example.invalid dbname=postgres",
+        "hostaddr=127.0.0.1 dbname=postgres",
+        "service=local",
+        "sqlite:///tmp/project.db",
+    ],
+)
+def test_disabled_config_rejects_remote_or_unsafe_dsn_without_echoing_value(
+    module: ModuleType,
+    surface: dict[str, Any],
+    dsn: str,
+) -> None:
+    with pytest.raises(ValueError) as exc_info:
+        _config_class(module, surface)(
+            enabled=False,
+            dsn=dsn,
+            table_name=surface["default_table"],
+        )
+
+    message = str(exc_info.value)
+    assert surface["dsn_env_var"] in message
+    assert "local Postgres/Supabase" in message
+    assert dsn not in message
+    assert "sensitive-token" not in message
+
+
 def test_padded_enabled_dsn_is_rejected_without_echoing_secret(
     module: ModuleType,
     surface: dict[str, Any],
 ) -> None:
-    secret_dsn = "postgresql://sensitive-token.example.invalid/postgres"
+    secret_dsn = "postgresql://sensitive-token@localhost/postgres"
 
     with pytest.raises(ValueError) as exc_info:
         _from_env(
@@ -169,7 +233,7 @@ def test_config_is_frozen_and_masks_dsn_in_repr(
 ) -> None:
     config = _config_class(module, surface)(
         enabled=True,
-        dsn="postgresql://sensitive-token.example.invalid/postgres",
+        dsn="postgresql://sensitive-token@localhost/postgres",
         table_name=surface["default_table"],
     )
 
@@ -288,7 +352,7 @@ def test_enabled_flag_is_explicit_and_strict(
             surface,
             {
                 surface["enabled_env_var"]: "yes",
-                surface["dsn_env_var"]: "postgresql://example.test/postgres",
+                surface["dsn_env_var"]: "postgresql://localhost/postgres",
             },
         )
 
@@ -300,7 +364,7 @@ def test_direct_config_rejects_non_bool_enabled_flag(
     with pytest.raises(ValueError, match="enabled must be a bool"):
         _config_class(module, surface)(
             enabled=1,
-            dsn="postgresql://example.test/postgres",
+            dsn="postgresql://localhost/postgres",
             table_name=surface["default_table"],
         )
 
