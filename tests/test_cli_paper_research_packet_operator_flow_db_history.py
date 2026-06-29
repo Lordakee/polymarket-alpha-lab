@@ -242,7 +242,7 @@ def test_operator_flow_db_history_helper_rejects_invalid_limit_before_runner_or_
 
     with pytest.raises(ValueError, match=f"{COMMAND} limit must be positive"):
         helper(
-            dsn="postgresql://operator-flow-history.example.invalid/db",
+            dsn="postgresql://localhost:54322/operator-flow-history_db",
             table_name="paper_research_packet_operator_flow_reports",
             limit=bad_limit,
             runner=forbidden_runner,
@@ -257,7 +257,7 @@ def test_operator_flow_db_history_cli_uses_injected_runner_and_prints_summary(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     api = _install_or_get_history_api(monkeypatch)
-    dsn = "postgresql://operator-flow-history.example.invalid/db"
+    dsn = "postgresql://localhost:54322/operator-flow-history_db"
     table_name = "analytics.paper_research_packet_operator_flow_reports"
     _set_operator_flow_db_env(monkeypatch, dsn, table_name=table_name)
     calls: list[dict[str, object]] = []
@@ -318,7 +318,7 @@ def test_operator_flow_db_history_helper_default_load_path_uses_autocommit_and_c
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     api = _install_or_get_history_api(monkeypatch)
-    dsn = "postgresql://operator-flow-history.example.invalid/db"
+    dsn = "postgresql://localhost:54322/operator-flow-history_db"
     table_name = "paper_research_packet_operator_flow_reports"
     report = _history_report()
     connect_calls: list[tuple[str, bool]] = []
@@ -399,7 +399,7 @@ def test_operator_flow_db_history_cli_runner_failure_redacts_dsn_schema_table_ta
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     _install_or_get_history_api(monkeypatch)
-    dsn = "postgresql://operator-flow-history-secret.example.invalid/db"
+    dsn = "postgresql://localhost:54322/operator-flow-history-secret_db"
     table_name = "analytics.paper_research_packet_operator_flow_reports"
     payload_json = '{"secret":"operator-flow-payload-json-secret"}'
     question = "Will hidden operator-flow market resolve yes?"
@@ -447,7 +447,7 @@ def test_operator_flow_db_history_cli_runner_failure_redacts_dsn_schema_table_ta
 @pytest.mark.parametrize(
     "argv",
     (
-        [COMMAND, "--dsn", "postgresql://operator-flow-history.example.invalid/db"],
+        [COMMAND, "--dsn", "postgresql://localhost:54322/operator-flow-history_db"],
         [COMMAND, "--table", "paper_research_packet_operator_flow_reports"],
         [COMMAND, "--persist"],
     ),

@@ -179,7 +179,7 @@ def test_packet_quality_db_history_helper_rejects_invalid_limit_before_runner_or
 
     with pytest.raises(ValueError, match=f"{COMMAND} limit must be positive"):
         helper(
-            dsn="postgresql://packet-quality-history.example.invalid/db",
+            dsn="postgresql://localhost:54322/packet-quality-history_db",
             table_name="paper_research_packet_quality_archive",
             limit=bad_limit,
             runner=forbidden_runner,
@@ -192,7 +192,7 @@ def test_packet_quality_db_history_cli_uses_injected_runner_and_prints_summary(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    dsn = "postgresql://packet-quality-history.example.invalid/db"
+    dsn = "postgresql://localhost:54322/packet-quality-history_db"
     table_name = "paper_research_packet_quality_archive"
     _set_quality_db_env(monkeypatch, dsn, table_name=table_name)
     calls: list[dict[str, object]] = []
@@ -255,7 +255,7 @@ def test_packet_quality_db_history_cli_uses_injected_runner_and_prints_summary(
 def test_packet_quality_db_history_helper_default_load_path_uses_autocommit_and_closes_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    dsn = "postgresql://packet-quality-history.example.invalid/db"
+    dsn = "postgresql://localhost:54322/packet-quality-history_db"
     table_name = "paper_research_packet_quality_archive"
     report = _history_report()
     connect_calls: list[tuple[str, bool]] = []
@@ -339,7 +339,7 @@ def test_packet_quality_db_history_cli_runner_failure_redacts_dsn_schema_table_t
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    dsn = "postgresql://packet-quality-history-secret.example.invalid/db"
+    dsn = "postgresql://localhost:54322/packet-quality-history-secret_db"
     table_name = "analytics.paper_research_packet_quality_archive"
     payload_json = '{"secret":"payload-json-secret"}'
     question = "Will secret market resolve yes?"

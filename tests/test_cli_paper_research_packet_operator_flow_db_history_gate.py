@@ -268,7 +268,7 @@ def test_operator_flow_db_history_gate_helper_rejects_invalid_limit_before_runne
 
     with pytest.raises(ValueError, match=f"{COMMAND} limit must be positive"):
         helper(
-            dsn="postgresql://operator-flow-history-gate.example.invalid/db",
+            dsn="postgresql://localhost:54322/operator-flow-history-gate_db",
             table_name="paper_research_packet_operator_flow_reports",
             limit=bad_limit,
             runner=forbidden_runner,
@@ -284,7 +284,7 @@ def test_operator_flow_db_history_gate_cli_uses_injected_runner_and_prints_summa
 ) -> None:
     history_api = _install_or_get_history_api(monkeypatch)
     gate_api = _install_or_get_gate_api(monkeypatch)
-    dsn = "postgresql://operator-flow-history-gate.example.invalid/db"
+    dsn = "postgresql://localhost:54322/operator-flow-history-gate_db"
     table_name = "analytics.paper_research_packet_operator_flow_reports"
     _set_operator_flow_db_env(monkeypatch, dsn, table_name=table_name)
     calls: list[dict[str, object]] = []
@@ -358,7 +358,7 @@ def test_operator_flow_db_history_gate_helper_default_load_path_uses_autocommit_
 ) -> None:
     history_api = _install_or_get_history_api(monkeypatch)
     gate_api = _install_or_get_gate_api(monkeypatch)
-    dsn = "postgresql://operator-flow-history-gate.example.invalid/db"
+    dsn = "postgresql://localhost:54322/operator-flow-history-gate_db"
     table_name = "paper_research_packet_operator_flow_reports"
     report = _gate_report()
     connect_calls: list[tuple[str, bool]] = []
@@ -451,7 +451,7 @@ def test_operator_flow_db_history_gate_cli_runner_failure_redacts_dsn_schema_tab
 ) -> None:
     _install_or_get_history_api(monkeypatch)
     _install_or_get_gate_api(monkeypatch)
-    dsn = "postgresql://operator-flow-history-gate-secret.example.invalid/db"
+    dsn = "postgresql://localhost:54322/operator-flow-history-gate-secret_db"
     table_name = "analytics.paper_research_packet_operator_flow_reports"
     payload_json = '{"secret":"operator-flow-gate-payload-json-secret"}'
     question = "Will hidden operator-flow gate market resolve yes?"
@@ -499,7 +499,7 @@ def test_operator_flow_db_history_gate_cli_runner_failure_redacts_dsn_schema_tab
 @pytest.mark.parametrize(
     "argv",
     (
-        [COMMAND, "--dsn", "postgresql://operator-flow-history-gate.example.invalid/db"],
+        [COMMAND, "--dsn", "postgresql://localhost:54322/operator-flow-history-gate_db"],
         [COMMAND, "--table", "paper_research_packet_operator_flow_reports"],
         [COMMAND, "--persist"],
     ),

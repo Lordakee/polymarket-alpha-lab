@@ -136,7 +136,7 @@ def _install_loader(
 
 def _run_case(case: dict[str, Any]) -> Any:
     kwargs = {
-        "dsn": "postgresql://user:secret@example.invalid/db",
+        "dsn": "postgresql://user:secret@localhost:54322/example_db",
         "table_name": "paper_report_archive",
         "limit": 7,
         "runner": None,
@@ -247,7 +247,7 @@ def test_cli_inline_db_cleanup_does_not_mask_loader_exception(
         _run_case(case)
 
     assert str(exc_info.value) == "read failed without dsn"
-    assert connect_calls == ["postgresql://user:secret@example.invalid/db"]
+    assert connect_calls == ["postgresql://user:secret@localhost:54322/example_db"]
     assert len(loader_calls) == 1
     assert loader_calls[0]["connection"] is connection
     assert connection.commit_count == 0
@@ -297,9 +297,9 @@ def test_cli_inline_db_close_failure_does_not_replace_success(
 def test_packet_quality_cli_persist_commits_quality_connection_and_closes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    source_dsn = "postgresql://packet-source.example.invalid/db"
+    source_dsn = "postgresql://localhost:54322/packet-source_db"
     source_table = "paper_research_packet_archive"
-    quality_dsn = "postgresql://packet-quality.example.invalid/db"
+    quality_dsn = "postgresql://localhost:54322/packet-quality_db"
     quality_table = "paper_research_packet_quality_reports"
     _set_packet_quality_operator_env(
         monkeypatch,
@@ -385,9 +385,9 @@ def test_packet_quality_cli_persist_commits_quality_connection_and_closes(
 def test_packet_quality_cli_persist_rolls_back_and_closes_on_insert_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    source_dsn = "postgresql://packet-source.example.invalid/db"
+    source_dsn = "postgresql://localhost:54322/packet-source_db"
     source_table = "paper_research_packet_archive"
-    quality_dsn = "postgresql://packet-quality.example.invalid/db"
+    quality_dsn = "postgresql://localhost:54322/packet-quality_db"
     quality_table = "paper_research_packet_quality_reports"
     _set_packet_quality_operator_env(
         monkeypatch,
@@ -465,7 +465,7 @@ def test_packet_quality_db_history_read_path_uses_autocommit_and_closes_only(
         PaperResearchPacketQualityHistoryConfig,
     )
 
-    dsn = "postgresql://packet-quality-history.example.invalid/db"
+    dsn = "postgresql://localhost:54322/packet-quality-history_db"
     table_name = "paper_research_packet_quality_reports"
     connection = FakeConnection()
     connect_calls = _install_psycopg_connection_map(

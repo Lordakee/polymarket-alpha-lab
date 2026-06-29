@@ -191,9 +191,9 @@ def test_operator_flow_cli_uses_injected_helpers_persists_reports_and_prints_sta
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    source_dsn = "postgresql://operator-flow.example.invalid/source"
-    packet_dsn = "postgresql://operator-flow.example.invalid/packet"
-    quality_dsn = "postgresql://operator-flow.example.invalid/quality"
+    source_dsn = "postgresql://localhost:54322/operator-flow_source"
+    packet_dsn = "postgresql://localhost:54322/operator-flow_packet"
+    quality_dsn = "postgresql://localhost:54322/operator-flow_quality"
     source_table = "strategy_candidate_research_queue_archive"
     packet_table = "paper_research_packet_archive"
     quality_table = "paper_research_packet_quality_archive"
@@ -481,19 +481,19 @@ def test_operator_flow_cli_redacts_operator_flow_sink_failure_across_all_databas
 ) -> None:
     source_dsn = (
         "postgresql://source_user:source-secret@"
-        "operator-flow-store-source-secret.example.invalid/db"
+        "localhost:54322/operator-flow-store-source-secret_db"
     )
     packet_dsn = (
         "postgresql://packet_user:packet-secret@"
-        "operator-flow-store-packet-secret.example.invalid/db"
+        "localhost:54322/operator-flow-store-packet-secret_db"
     )
     quality_dsn = (
         "postgresql://quality_user:quality-secret@"
-        "operator-flow-store-quality-secret.example.invalid/db"
+        "localhost:54322/operator-flow-store-quality-secret_db"
     )
     operator_flow_dsn = (
         "postgresql://flow_user:flow-secret@"
-        "operator-flow-store-flow-secret.example.invalid/db"
+        "localhost:54322/operator-flow-store-flow-secret_db"
     )
     source_table = "source_schema.strategy_candidate_research_queue_archive"
     packet_table = "packet_schema.paper_research_packet_archive"
@@ -708,10 +708,10 @@ def test_operator_flow_cli_persists_operator_flow_report_when_env_enabled_withou
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    source_dsn = "postgresql://operator-flow-persist.example.invalid/source"
-    packet_dsn = "postgresql://operator-flow-persist.example.invalid/packet"
-    quality_dsn = "postgresql://operator-flow-persist.example.invalid/quality"
-    operator_flow_dsn = "postgresql://operator-flow-persist.example.invalid/flow"
+    source_dsn = "postgresql://localhost:54322/operator-flow-persist_source"
+    packet_dsn = "postgresql://localhost:54322/operator-flow-persist_packet"
+    quality_dsn = "postgresql://localhost:54322/operator-flow-persist_quality"
+    operator_flow_dsn = "postgresql://localhost:54322/operator-flow-persist_flow"
     source_table = "strategy_candidate_research_queue_archive"
     packet_table = "paper_research_packet_archive"
     quality_table = "paper_research_packet_quality_archive"
@@ -907,9 +907,9 @@ def test_operator_flow_cli_skips_operator_flow_sink_when_env_disabled(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    source_dsn = "postgresql://operator-flow-disabled.example.invalid/source"
-    packet_dsn = "postgresql://operator-flow-disabled.example.invalid/packet"
-    quality_dsn = "postgresql://operator-flow-disabled.example.invalid/quality"
+    source_dsn = "postgresql://localhost:54322/operator-flow-disabled_source"
+    packet_dsn = "postgresql://localhost:54322/operator-flow-disabled_packet"
+    quality_dsn = "postgresql://localhost:54322/operator-flow-disabled_quality"
     source_table = "strategy_candidate_research_queue_archive"
     packet_table = "paper_research_packet_archive"
     quality_table = "paper_research_packet_quality_archive"
@@ -1056,9 +1056,9 @@ def test_operator_flow_cli_requires_operator_flow_dsn_before_upstream_persistenc
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    source_dsn = "postgresql://preflight-source-secret.example.invalid/source"
-    packet_dsn = "postgresql://preflight-packet-secret.example.invalid/packet"
-    quality_dsn = "postgresql://preflight-quality-secret.example.invalid/quality"
+    source_dsn = "postgresql://localhost:54322/preflight-source-secret_source"
+    packet_dsn = "postgresql://localhost:54322/preflight-packet-secret_packet"
+    quality_dsn = "postgresql://localhost:54322/preflight-quality-secret_quality"
     source_table = "strategy_candidate_research_queue_archive"
     packet_table = "paper_research_packet_archive"
     quality_table = "paper_research_packet_quality_archive"
@@ -1118,15 +1118,15 @@ def test_operator_flow_cli_redacts_packet_builder_failure_across_all_databases(
 ) -> None:
     source_dsn = (
         "postgresql://source_user:source-secret@"
-        "operator-flow-builder-source-secret.example.invalid/db"
+        "localhost:54322/operator-flow-builder-source-secret_db"
     )
     packet_dsn = (
         "postgresql://packet_user:packet-secret@"
-        "operator-flow-builder-packet-secret.example.invalid/db"
+        "localhost:54322/operator-flow-builder-packet-secret_db"
     )
     quality_dsn = (
         "postgresql://quality_user:quality-secret@"
-        "operator-flow-builder-quality-secret.example.invalid/db"
+        "localhost:54322/operator-flow-builder-quality-secret_db"
     )
     source_table = "source_schema.strategy_candidate_research_queue_archive"
     packet_table = "packet_schema.paper_research_packet_archive"
@@ -1239,15 +1239,15 @@ def test_operator_flow_cli_redacts_source_loader_failure_across_all_databases(
 ) -> None:
     source_dsn = (
         "postgresql://source_user:source-secret@"
-        "operator-flow-loader-source-secret.example.invalid/db"
+        "localhost:54322/operator-flow-loader-source-secret_db"
     )
     packet_dsn = (
         "postgresql://packet_user:packet-secret@"
-        "operator-flow-loader-packet-secret.example.invalid/db"
+        "localhost:54322/operator-flow-loader-packet-secret_db"
     )
     quality_dsn = (
         "postgresql://quality_user:quality-secret@"
-        "operator-flow-loader-quality-secret.example.invalid/db"
+        "localhost:54322/operator-flow-loader-quality-secret_db"
     )
     source_table = "source_schema.strategy_candidate_research_queue_archive"
     packet_table = "packet_schema.paper_research_packet_archive"
@@ -1356,15 +1356,15 @@ def test_operator_flow_cli_redacts_packet_sink_failure_across_all_databases(
 ) -> None:
     source_dsn = (
         "postgresql://source_user:source-secret@"
-        "operator-flow-sink-source-secret.example.invalid/db"
+        "localhost:54322/operator-flow-sink-source-secret_db"
     )
     packet_dsn = (
         "postgresql://packet_user:packet-secret@"
-        "operator-flow-sink-packet-secret.example.invalid/db"
+        "localhost:54322/operator-flow-sink-packet-secret_db"
     )
     quality_dsn = (
         "postgresql://quality_user:quality-secret@"
-        "operator-flow-sink-quality-secret.example.invalid/db"
+        "localhost:54322/operator-flow-sink-quality-secret_db"
     )
     source_table = "source_schema.strategy_candidate_research_queue_archive"
     packet_table = "packet_schema.paper_research_packet_archive"
@@ -1475,15 +1475,15 @@ def test_operator_flow_cli_redacts_quality_runner_failure_across_all_databases(
 ) -> None:
     source_dsn = (
         "postgresql://source_user:source-secret@"
-        "operator-flow-source-secret.example.invalid/db"
+        "localhost:54322/operator-flow-source-secret_db"
     )
     packet_dsn = (
         "postgresql://packet_user:packet-secret@"
-        "operator-flow-packet-secret.example.invalid/db"
+        "localhost:54322/operator-flow-packet-secret_db"
     )
     quality_dsn = (
         "postgresql://quality_user:quality-secret@"
-        "operator-flow-quality-secret.example.invalid/db"
+        "localhost:54322/operator-flow-quality-secret_db"
     )
     source_table = "source_schema.strategy_candidate_research_queue_archive"
     packet_table = "packet_schema.paper_research_packet_archive"
@@ -1592,15 +1592,15 @@ def test_operator_flow_cli_redacts_history_failure_after_quality_persistence(
 ) -> None:
     source_dsn = (
         "postgresql://source_user:source-secret@"
-        "operator-flow-history-source-secret.example.invalid/db"
+        "localhost:54322/operator-flow-history-source-secret_db"
     )
     packet_dsn = (
         "postgresql://packet_user:packet-secret@"
-        "operator-flow-history-packet-secret.example.invalid/db"
+        "localhost:54322/operator-flow-history-packet-secret_db"
     )
     quality_dsn = (
         "postgresql://quality_user:quality-secret@"
-        "operator-flow-history-quality-secret.example.invalid/db"
+        "localhost:54322/operator-flow-history-quality-secret_db"
     )
     source_table = "source_schema.strategy_candidate_research_queue_archive"
     packet_table = "packet_schema.paper_research_packet_archive"

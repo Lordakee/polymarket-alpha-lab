@@ -158,7 +158,7 @@ def test_packet_quality_cli_uses_injected_runner_and_prints_summary(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    dsn = "postgresql://paper-quality.example.invalid/db"
+    dsn = "postgresql://localhost:54322/paper-quality_db"
     table_name = "paper_research_packet_archive"
     _set_packet_db_env(monkeypatch, dsn, table_name=table_name)
     calls: list[dict[str, object]] = []
@@ -215,9 +215,9 @@ def test_packet_quality_cli_persist_uses_quality_db_env_and_prints_marker(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    source_dsn = "postgresql://paper-quality-source.example.invalid/db"
+    source_dsn = "postgresql://localhost:54322/paper-quality-source_db"
     source_table = "paper_research_packet_archive"
-    quality_dsn = "postgresql://paper-quality-target.example.invalid/db"
+    quality_dsn = "postgresql://localhost:54322/paper-quality-target_db"
     quality_table = "paper_research_packet_quality_archive"
     _set_packet_db_env(monkeypatch, source_dsn, table_name=source_table)
     _set_quality_db_env(monkeypatch, quality_dsn, table_name=quality_table)
@@ -310,7 +310,7 @@ def test_packet_quality_cli_persist_requires_enabled_quality_db_before_runner_or
 ) -> None:
     _set_packet_db_env(
         monkeypatch,
-        "postgresql://paper-quality-source.example.invalid/db",
+        "postgresql://localhost:54322/paper-quality-source_db",
     )
     monkeypatch.delenv(
         PAPER_RESEARCH_PACKET_QUALITY_DB_ENABLED_ENV_VAR,
@@ -354,12 +354,12 @@ def test_packet_quality_cli_persist_failure_redacts_source_and_quality_db_secret
 ) -> None:
     source_dsn = (
         "postgresql://source_user:source-secret@"
-        "paper-quality-source-secret.example.invalid/db"
+        "localhost:54322/paper-quality-source-secret_db"
     )
     source_table = "source_schema.paper_research_packet_archive"
     quality_dsn = (
         "postgresql://quality_user:quality-secret@"
-        "paper-quality-target-secret.example.invalid/db"
+        "localhost:54322/paper-quality-target-secret_db"
     )
     quality_table = "quality_schema.paper_research_packet_quality_archive"
     payload_json = '{"secret":"payload-json-secret"}'
@@ -439,7 +439,7 @@ def test_packet_quality_cli_persist_failure_redacts_source_and_quality_db_secret
 def test_packet_quality_helper_default_load_path_builds_report_and_closes_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    dsn = "postgresql://paper-quality.example.invalid/db"
+    dsn = "postgresql://localhost:54322/paper-quality_db"
     table_name = "paper_research_packet_archive"
     source_report = _packet_report()
     connect_calls: list[tuple[str, bool]] = []
@@ -611,7 +611,7 @@ def test_packet_quality_cli_fails_clearly_when_no_source_packet_available(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    dsn = "postgresql://paper-quality-secret.example.invalid/db"
+    dsn = "postgresql://localhost:54322/paper-quality-secret_db"
     table_name = "paper_research_packet_archive"
     _set_packet_db_env(monkeypatch, dsn, table_name=table_name)
 
@@ -666,7 +666,7 @@ def test_packet_quality_cli_runner_failure_redacts_dsn_schema_table_and_tail(
 ) -> None:
     dsn = (
         "postgresql://quality_user:super-secret-password@"
-        "paper-quality-secret.example.invalid/db"
+        "localhost:54322/paper-quality-secret_db"
     )
     table_name = "secret_schema.paper_research_packet_archive"
     payload_json = '{"secret":"payload-json-secret"}'

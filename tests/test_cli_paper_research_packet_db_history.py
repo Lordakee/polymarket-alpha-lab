@@ -191,7 +191,7 @@ def test_packet_db_history_helper_rejects_invalid_limit_before_runner_or_connect
 
     with pytest.raises(ValueError, match=f"{COMMAND} limit must be positive"):
         helper(
-            dsn="postgresql://packet-history.example.invalid/db",
+            dsn="postgresql://localhost:54322/packet-history_db",
             table_name="paper_research_packet_archive",
             limit=bad_limit,
             runner=forbidden_runner,
@@ -204,7 +204,7 @@ def test_packet_db_history_cli_uses_injected_runner_and_prints_summary(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    dsn = "postgresql://packet-db-history.example.invalid/db"
+    dsn = "postgresql://localhost:54322/packet-db-history_db"
     table_name = "paper_research_packet_archive"
     _set_packet_db_env(monkeypatch, dsn, table_name=table_name)
     calls: list[dict[str, object]] = []
@@ -273,7 +273,7 @@ def test_packet_db_history_cli_runner_failure_redacts_dsn_schema_table_and_tail(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    dsn = "postgresql://packet-db-history-secret.example.invalid/db"
+    dsn = "postgresql://localhost:54322/packet-db-history-secret_db"
     table_name = "analytics.paper_research_packet_archive"
     payload_json = '{"secret":"payload-json-secret"}'
     question = "Will secret market resolve yes?"
@@ -313,7 +313,7 @@ def test_packet_db_history_cli_runner_failure_redacts_dsn_schema_table_and_tail(
 def test_packet_db_history_helper_default_load_path_uses_autocommit_and_closes_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    dsn = "postgresql://packet-db-history.example.invalid/db"
+    dsn = "postgresql://localhost:54322/packet-db-history_db"
     table_name = "paper_research_packet_archive"
     report = _history_report()
     connect_calls: list[tuple[str, bool]] = []
@@ -398,7 +398,7 @@ def test_packet_db_history_helper_connect_failure_raises_static_redacted_failure
 ) -> None:
     dsn = (
         "postgresql://packet_user:super-secret-password@"
-        "packet-db-history-secret.example.invalid/db?sslmode=require"
+        "localhost:54322/packet-db-history-secret_db?sslmode=require"
     )
     table_name = "secret_schema.paper_research_packet_archive"
     table_tail = "paper_research_packet_archive"
@@ -460,7 +460,7 @@ def test_packet_db_history_helper_connect_failure_raises_static_redacted_failure
 def test_packet_db_history_helper_default_read_failure_redacts_and_closes_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    dsn = "postgresql://packet-db-history-secret.example.invalid/db"
+    dsn = "postgresql://localhost:54322/packet-db-history-secret_db"
     table_name = "analytics.paper_research_packet_archive"
 
     class FakeConnection:

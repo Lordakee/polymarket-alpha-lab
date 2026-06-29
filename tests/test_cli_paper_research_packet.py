@@ -70,8 +70,8 @@ def test_paper_research_packet_cli_builds_latest_source_by_generated_at_without_
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    source_dsn = "postgresql://paper-research-packet.example.invalid/source"
-    packet_dsn = "postgresql://paper-research-packet.example.invalid/ignored"
+    source_dsn = "postgresql://localhost:54322/paper-research-packet_source"
+    packet_dsn = "postgresql://localhost:54322/paper-research-packet_ignored"
     source_table = "strategy_candidate_research_queue_archive"
     monkeypatch.setenv(STRATEGY_CANDIDATE_RESEARCH_QUEUE_DB_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(STRATEGY_CANDIDATE_RESEARCH_QUEUE_DB_DSN_ENV_VAR, source_dsn)
@@ -175,7 +175,7 @@ def test_paper_research_packet_cli_requires_at_least_one_source_report(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    source_dsn = "postgresql://paper-research-packet.example.invalid/source"
+    source_dsn = "postgresql://localhost:54322/paper-research-packet_source"
     source_table = "strategy_candidate_research_queue_archive"
     monkeypatch.setenv(STRATEGY_CANDIDATE_RESEARCH_QUEUE_DB_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(STRATEGY_CANDIDATE_RESEARCH_QUEUE_DB_DSN_ENV_VAR, source_dsn)
@@ -217,8 +217,8 @@ def test_paper_research_packet_cli_persists_packet_when_requested(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    source_dsn = "postgresql://paper-research-packet.example.invalid/source"
-    packet_dsn = "postgresql://paper-research-packet.example.invalid/packet"
+    source_dsn = "postgresql://localhost:54322/paper-research-packet_source"
+    packet_dsn = "postgresql://localhost:54322/paper-research-packet_packet"
     source_table = "strategy_candidate_research_queue_archive"
     packet_table = "paper_research_packet_archive"
     monkeypatch.setenv(STRATEGY_CANDIDATE_RESEARCH_QUEUE_DB_ENABLED_ENV_VAR, "true")
@@ -287,8 +287,8 @@ def test_paper_research_packet_cli_requires_packet_db_when_persisting(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    source_dsn = "postgresql://paper-research-packet.example.invalid/source"
-    packet_dsn = "postgresql://paper-research-packet.example.invalid/packet"
+    source_dsn = "postgresql://localhost:54322/paper-research-packet_source"
+    packet_dsn = "postgresql://localhost:54322/paper-research-packet_packet"
     monkeypatch.setenv(STRATEGY_CANDIDATE_RESEARCH_QUEUE_DB_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(STRATEGY_CANDIDATE_RESEARCH_QUEUE_DB_DSN_ENV_VAR, source_dsn)
     monkeypatch.delenv(PAPER_RESEARCH_PACKET_DB_ENABLED_ENV_VAR, raising=False)
@@ -332,7 +332,7 @@ def test_paper_research_packet_cli_redacts_source_dsn_on_loader_failure(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    source_dsn = "postgresql://paper-research-packet.example.invalid/source"
+    source_dsn = "postgresql://localhost:54322/paper-research-packet_source"
     source_table = "strategy_candidate_research_queue_archive"
     monkeypatch.setenv(STRATEGY_CANDIDATE_RESEARCH_QUEUE_DB_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(STRATEGY_CANDIDATE_RESEARCH_QUEUE_DB_DSN_ENV_VAR, source_dsn)
@@ -378,8 +378,8 @@ def test_paper_research_packet_cli_redacts_dsns_and_tables_on_builder_failure(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    source_dsn = "postgresql://paper-research-packet.example.invalid/source"
-    packet_dsn = "postgresql://paper-research-packet.example.invalid/packet"
+    source_dsn = "postgresql://localhost:54322/paper-research-packet_source"
+    packet_dsn = "postgresql://localhost:54322/paper-research-packet_packet"
     source_table = "strategy_candidate_research_queue_archive"
     packet_table = "paper_research_packet_archive"
     monkeypatch.setenv(STRATEGY_CANDIDATE_RESEARCH_QUEUE_DB_ENABLED_ENV_VAR, "true")
@@ -446,8 +446,8 @@ def test_paper_research_packet_cli_redacts_dsns_on_sink_failure(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    source_dsn = "postgresql://paper-research-packet.example.invalid/source"
-    packet_dsn = "postgresql://paper-research-packet.example.invalid/packet"
+    source_dsn = "postgresql://localhost:54322/paper-research-packet_source"
+    packet_dsn = "postgresql://localhost:54322/paper-research-packet_packet"
     source_table = "strategy_candidate_research_queue_archive"
     packet_table = "paper_research_packet_archive"
     monkeypatch.setenv(STRATEGY_CANDIDATE_RESEARCH_QUEUE_DB_ENABLED_ENV_VAR, "true")
