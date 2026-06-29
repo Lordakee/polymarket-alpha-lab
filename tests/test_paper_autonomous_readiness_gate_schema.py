@@ -10,6 +10,10 @@ EXPECTED_MIGRATION_NAME = (
     "20260625000007_paper_autonomous_readiness_gate_reports.sql"
 )
 PREVIOUS_MIGRATION_NAME = "20260625000006_probability_selection_summary_history_reports.sql"
+NEW_MIGRATION = (
+    MIGRATIONS_DIR
+    / "20260629000002_paper_autonomous_readiness_gate_strategy_cycle_source.sql"
+)
 DEFAULT_TABLE = "paper_autonomous_readiness_gate_reports"
 
 
@@ -61,6 +65,47 @@ def test_readiness_gate_migration_uses_next_safe_version_and_unique_sequence() -
     assert PREVIOUS_MIGRATION_NAME in names
     assert names[names.index(PREVIOUS_MIGRATION_NAME) + 1] == EXPECTED_MIGRATION_NAME
     assert Counter(versions)[EXPECTED_MIGRATION_NAME.split("_", 1)[0]] == 1
+
+
+def test_readiness_gate_strategy_cycle_source_migration_uses_expected_sequence() -> None:
+    migration_paths = sorted(MIGRATIONS_DIR.glob("*.sql"))
+    versions = [migration_path.name.split("_", 1)[0] for migration_path in migration_paths]
+
+    assert NEW_MIGRATION.exists()
+    assert NEW_MIGRATION.name.startswith("20260629000002_")
+    assert Counter(versions)["20260629000002"] == 1
+
+
+def test_readiness_gate_strategy_cycle_source_migration_relaxes_source_lengths() -> None:
+    sql = NEW_MIGRATION.read_text(encoding="utf-8").lower()
+    assert "jsonb_array_length(source_statuses_json) in (3, 4)" in sql
+    assert "jsonb_array_length(source_config_versions_json) in (3, 4)" in sql
+
+
+def test_readiness_gate_strategy_cycle_source_migration_adds_four_source_sort_index() -> None:
+    sql = " ".join(NEW_MIGRATION.read_text(encoding="utf-8").lower().split())
+    assert "source_statuses_json #>> '{3,status}'" in sql
+    assert "pargr_four_source_status_sort_idx" in sql
+
+
+def test_readiness_gate_strategy_cycle_source_migration_avoids_forbidden_surfaces() -> None:
+    text = NEW_MIGRATION.read_text(encoding="utf-8").lower()
+    forbidden_patterns = (
+        r"\bsqlite\b",
+        r"\bredis\b",
+        r"\bmongo\b",
+        r"\bsqlalchemy\b",
+        r"\bhosted\s+db\b",
+        r"\bauth\b",
+        r"\bwallet\b",
+        r"\bprivate\s+keys?\b",
+        r"\border\s+signing\b",
+        r"\border\s+submission\b",
+        r"\blive\s+trading\b",
+    )
+
+    for pattern in forbidden_patterns:
+        assert not re.search(pattern, text), pattern
 
 
 def test_readiness_gate_migration_creates_report_table_with_contract_columns() -> None:
