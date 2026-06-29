@@ -12,6 +12,7 @@ from polymarket_alpha_lab.paper_autonomous_readiness_gate import (
     ALLOCATION_SOURCE_NAME,
     INVESTMENT_LEDGER_SOURCE_NAME,
     SCREENING_SOURCE_NAME,
+    STRATEGY_CYCLE_HISTORY_GATE_SOURCE_NAME,
     PaperAutonomousReadinessGateReasonCodeCount,
     PaperAutonomousReadinessGateReport,
     PaperAutonomousReadinessGateSourceStatus,
@@ -90,6 +91,39 @@ def _report(
             for reason_code in reason_codes
         ),
         reason_codes=reason_codes,
+    )
+
+
+def _four_source_report() -> PaperAutonomousReadinessGateReport:
+    return _report(
+        source_statuses=(
+            _source_status(
+                SCREENING_SOURCE_NAME,
+                "pass",
+                "screening-health-v0",
+            ),
+            _source_status(
+                STRATEGY_CYCLE_HISTORY_GATE_SOURCE_NAME,
+                "pass",
+                "strategy-cycle-history-gate-v0",
+            ),
+            _source_status(
+                ALLOCATION_SOURCE_NAME,
+                "watch",
+                "allocation-trend-gate-v0",
+            ),
+            _source_status(
+                INVESTMENT_LEDGER_SOURCE_NAME,
+                "pass",
+                "ledger-trend-gate-v0",
+            ),
+        ),
+        reason_codes=(
+            "allocation_proposal_db_history_health_trend_gate_watch",
+            "investment_ledger_db_history_health_trend_gate_pass",
+            "screening_decision_support_gate_db_history_health_pass",
+            "strategy_cycle_report_history_gate_pass",
+        ),
     )
 
 
@@ -215,6 +249,21 @@ def test_readiness_gate_db_row_serializes_payload_and_round_trips() -> None:
     assert codec.paper_autonomous_readiness_gate_report_from_db_row(row) == report
     assert codec.paper_autonomous_readiness_gate_to_db_row(report) == row
     assert codec.paper_autonomous_readiness_gate_from_db_row(row) == report
+
+
+def test_readiness_gate_db_row_serializes_four_source_payload_and_round_trips() -> None:
+    codec = _codec_module()
+    report = _four_source_report()
+
+    row = codec.to_db_row(report)
+
+    assert row.source_config_versions_json == [
+        [SCREENING_SOURCE_NAME, "screening-health-v0"],
+        ["strategy_cycle_report_history_gate", "strategy-cycle-history-gate-v0"],
+        [ALLOCATION_SOURCE_NAME, "allocation-trend-gate-v0"],
+        [INVESTMENT_LEDGER_SOURCE_NAME, "ledger-trend-gate-v0"],
+    ]
+    assert codec.from_db_row(row) == report
 
 
 def test_readiness_gate_db_row_hash_is_deterministic_and_uses_full_payload() -> None:

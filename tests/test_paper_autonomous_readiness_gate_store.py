@@ -220,6 +220,26 @@ def test_load_readiness_gate_reports_filters_in_deterministic_order() -> None:
     )
 
 
+def test_load_readiness_gate_reports_filters_strategy_cycle_history_gate_source() -> None:
+    from polymarket_alpha_lab.paper_autonomous_readiness_gate_store import (
+        load_paper_autonomous_readiness_gate_reports,
+    )
+
+    connection = FakeConnection()
+
+    reports = load_paper_autonomous_readiness_gate_reports(
+        connection,
+        strategy_cycle_history_gate_config_version="strategy-cycle-history-gate-v0",
+    )
+
+    assert reports == ()
+    sql, params = connection.cursor_instance.calls[0]
+    assert "source_config_versions_json @> %s" in sql
+    assert [
+        ["strategy_cycle_report_history_gate", "strategy-cycle-history-gate-v0"],
+    ] in params
+
+
 def test_load_readiness_gate_reports_accepts_positional_rows() -> None:
     from polymarket_alpha_lab.paper_autonomous_readiness_gate_store import (
         load_paper_autonomous_readiness_gate_reports,
@@ -341,6 +361,10 @@ def test_load_accepts_simple_lowercase_table_names(table_name: str) -> None:
         ({"readiness_status": "paused"}, "readiness_status"),
         ({"readiness_status": True}, "readiness_status"),
         ({"screening_config_version": ""}, "screening_config_version"),
+        (
+            {"strategy_cycle_history_gate_config_version": ""},
+            "strategy_cycle_history_gate_config_version",
+        ),
         ({"allocation_config_version": ""}, "allocation_config_version"),
         ({"investment_ledger_config_version": ""}, "investment_ledger_config_version"),
         ({"limit": 0}, "limit"),
