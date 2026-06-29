@@ -12,6 +12,10 @@ MODULE_NAME = "polymarket_alpha_lab.supabase_paper_trade_cost_audit_config"
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DOC_PATH = REPO_ROOT / "docs" / "paper-trade-cost-audit-db-persistence.md"
 ENV_EXAMPLE_PATH = REPO_ROOT / ".env.example"
+LOCAL_POSTGRES_DSN = "postgresql://postgres:postgres@localhost:54322/postgres"
+LOCAL_SECRET_POSTGRES_DSN = (
+    "postgresql://sensitive-token:postgres@localhost:54322/postgres"
+)
 
 
 def _config_module() -> ModuleType:
@@ -40,7 +44,7 @@ def test_enabled_env_config_reads_explicit_dsn_at_process_edge(
     enabled_value: str,
 ) -> None:
     module = _config_module()
-    dsn = "postgresql://example.invalid/postgres"
+    dsn = LOCAL_POSTGRES_DSN
 
     config = module.from_paper_trade_cost_audit_db_env(
         {
@@ -96,7 +100,7 @@ def test_enabled_env_config_requires_dsn_without_echoing_secret() -> None:
 
 def test_invalid_enabled_env_value_names_variable_without_echoing_secret() -> None:
     module = _config_module()
-    secret_dsn = "postgresql://sensitive-token.example.invalid/postgres"
+    secret_dsn = LOCAL_SECRET_POSTGRES_DSN
 
     with pytest.raises(ValueError) as exc_info:
         module.from_paper_trade_cost_audit_db_env(
@@ -123,9 +127,7 @@ def test_enabled_env_config_rejects_non_strict_values(enabled_value: str) -> Non
         module.from_paper_trade_cost_audit_db_env(
             {
                 module.PAPER_TRADE_COST_AUDIT_DB_ENABLED_ENV_VAR: enabled_value,
-                module.PAPER_TRADE_COST_AUDIT_DB_DSN_ENV_VAR: (
-                    "postgresql://example.invalid/postgres"
-                ),
+                module.PAPER_TRADE_COST_AUDIT_DB_DSN_ENV_VAR: LOCAL_POSTGRES_DSN,
             },
         )
 
@@ -162,7 +164,7 @@ def test_config_is_frozen_and_masks_dsn_in_repr() -> None:
     module = _config_module()
     config = module.SupabasePaperTradeCostAuditConfig(
         enabled=True,
-        dsn="postgresql://sensitive-token.example.invalid/postgres",
+        dsn=LOCAL_SECRET_POSTGRES_DSN,
         table_name=module.DEFAULT_PAPER_TRADE_COST_AUDIT_DB_TABLE,
     )
 
@@ -171,8 +173,26 @@ def test_config_is_frozen_and_masks_dsn_in_repr() -> None:
 
     rendered = repr(config)
     assert "sensitive-token" not in rendered
-    assert "postgresql://sensitive-token" not in rendered
+    assert LOCAL_SECRET_POSTGRES_DSN not in rendered
     assert "dsn=<redacted>" in rendered
+
+
+def test_config_rejects_remote_dsn_without_echoing_secret() -> None:
+    module = _config_module()
+    dsn = "postgresql://sensitive-token@example.invalid/postgres"
+
+    with pytest.raises(ValueError) as exc_info:
+        module.SupabasePaperTradeCostAuditConfig(
+            enabled=False,
+            dsn=dsn,
+            table_name=module.DEFAULT_PAPER_TRADE_COST_AUDIT_DB_TABLE,
+        )
+
+    message = str(exc_info.value)
+    assert module.PAPER_TRADE_COST_AUDIT_DB_DSN_ENV_VAR in message
+    assert "local Postgres/Supabase" in message
+    assert dsn not in message
+    assert "sensitive-token" not in message
 
 
 def test_disabled_config_repr_shows_absent_dsn_without_secret_shape() -> None:
@@ -256,7 +276,7 @@ def test_table_name_accepts_63_byte_identifier_parts() -> None:
 
 def test_env_table_name_error_mentions_variable_name_without_echoing_secret() -> None:
     module = _config_module()
-    secret_dsn = "postgresql://sensitive-token.example.invalid/postgres"
+    secret_dsn = LOCAL_SECRET_POSTGRES_DSN
 
     with pytest.raises(ValueError) as exc_info:
         module.from_paper_trade_cost_audit_db_env(
@@ -278,7 +298,7 @@ def test_direct_config_rejects_non_bool_enabled_flag() -> None:
     with pytest.raises(ValueError, match="enabled must be a bool"):
         module.SupabasePaperTradeCostAuditConfig(
             enabled=1,  # type: ignore[arg-type]
-            dsn="postgresql://example.invalid/postgres",
+            dsn=LOCAL_POSTGRES_DSN,
             table_name=module.DEFAULT_PAPER_TRADE_COST_AUDIT_DB_TABLE,
         )
 

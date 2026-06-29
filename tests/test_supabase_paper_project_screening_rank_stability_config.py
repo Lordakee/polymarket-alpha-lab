@@ -12,6 +12,10 @@ ENABLED_ENV_VAR = (
 DSN_ENV_VAR = "POLYMARKET_ALPHA_LAB_PAPER_PROJECT_SCREENING_RANK_STABILITY_DB_DSN"
 TABLE_ENV_VAR = "POLYMARKET_ALPHA_LAB_PAPER_PROJECT_SCREENING_RANK_STABILITY_DB_TABLE"
 DEFAULT_TABLE = "paper_project_screening_rank_stability_reports"
+LOCAL_POSTGRES_DSN = "postgresql://postgres:postgres@localhost:54322/postgres"
+LOCAL_SECRET_POSTGRES_DSN = (
+    "postgresql://sensitive-token:postgres@localhost:54322/postgres"
+)
 CONFIG_SOURCE = (
     Path(__file__).resolve().parents[1]
     / "src"
@@ -84,7 +88,7 @@ def test_enabled_env_config_requires_dsn_without_echoing_secret() -> None:
 
 def test_enabled_env_config_reads_explicit_dsn_at_process_edge() -> None:
     config_module = _config_module()
-    dsn = "postgresql://example.invalid/postgres"
+    dsn = LOCAL_POSTGRES_DSN
 
     config = config_module.from_paper_project_screening_rank_stability_db_env(
         {
@@ -120,7 +124,7 @@ def test_enabled_env_config_accepts_only_strict_values(
     config = config_module.from_paper_project_screening_rank_stability_db_env(
         {
             ENABLED_ENV_VAR: enabled_value,
-            DSN_ENV_VAR: "postgresql://example.invalid/postgres",
+            DSN_ENV_VAR: LOCAL_POSTGRES_DSN,
         },
     )
 
@@ -135,7 +139,7 @@ def test_enabled_env_config_rejects_non_strict_values(enabled_value: str) -> Non
         config_module.from_paper_project_screening_rank_stability_db_env(
             {
                 ENABLED_ENV_VAR: enabled_value,
-                DSN_ENV_VAR: "postgresql://example.invalid/postgres",
+                DSN_ENV_VAR: LOCAL_POSTGRES_DSN,
             },
         )
 
@@ -144,7 +148,7 @@ def test_config_is_frozen_and_masks_dsn_in_repr() -> None:
     config_module = _config_module()
     config = config_module.SupabasePaperProjectScreeningRankStabilityConfig(
         enabled=True,
-        dsn="postgresql://sensitive-token.example.invalid/postgres",
+        dsn=LOCAL_SECRET_POSTGRES_DSN,
         table_name=DEFAULT_TABLE,
     )
 
@@ -153,9 +157,27 @@ def test_config_is_frozen_and_masks_dsn_in_repr() -> None:
 
     rendered = repr(config)
     assert "sensitive-token" not in rendered
-    assert "postgresql://sensitive-token" not in rendered
+    assert LOCAL_SECRET_POSTGRES_DSN not in rendered
     assert "dsn=<redacted>" in rendered
     assert DEFAULT_TABLE in rendered
+
+
+def test_config_rejects_remote_dsn_without_echoing_secret() -> None:
+    config_module = _config_module()
+    dsn = "postgresql://sensitive-token@example.invalid/postgres"
+
+    with pytest.raises(ValueError) as exc_info:
+        config_module.SupabasePaperProjectScreeningRankStabilityConfig(
+            enabled=False,
+            dsn=dsn,
+            table_name=DEFAULT_TABLE,
+        )
+
+    message = str(exc_info.value)
+    assert DSN_ENV_VAR in message
+    assert "local Postgres/Supabase" in message
+    assert dsn not in message
+    assert "sensitive-token" not in message
 
 
 @pytest.mark.parametrize(
@@ -218,7 +240,7 @@ def test_direct_config_rejects_non_bool_enabled_flag() -> None:
     with pytest.raises(ValueError, match="enabled must be a bool"):
         config_module.SupabasePaperProjectScreeningRankStabilityConfig(
             enabled=1,
-            dsn="postgresql://example.invalid/postgres",
+            dsn=LOCAL_POSTGRES_DSN,
             table_name=DEFAULT_TABLE,
         )
 

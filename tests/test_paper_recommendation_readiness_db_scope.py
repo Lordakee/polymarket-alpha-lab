@@ -47,6 +47,7 @@ ALLOWED_IMPORTS = {
         "__future__",
         "dataclasses",
         "os",
+        "polymarket_alpha_lab.supabase_local_dsn",
         "re",
         "typing",
     },
@@ -155,6 +156,11 @@ ALLOWED_FORBIDDEN_NAME_MATCHES = {
     "readonly",
     "supabasepaperrecommendationreadinessconfig",
 }
+
+LOCAL_POSTGRES_DSN = "postgresql://postgres:postgres@localhost:54322/postgres"
+LOCAL_SECRET_POSTGRES_DSN = (
+    "postgresql://sensitive-token:postgres@localhost:54322/postgres"
+)
 
 
 def normalize_identifier(value: str) -> str:
@@ -317,7 +323,7 @@ def test_enabled_env_config_requires_dsn_without_echoing_secret() -> None:
 
 def test_enabled_env_config_reads_explicit_dsn_at_process_edge() -> None:
     module = _config_module()
-    dsn = "postgresql://example.invalid/postgres"
+    dsn = LOCAL_POSTGRES_DSN
 
     config = module.from_paper_recommendation_readiness_db_env(
         {
@@ -336,7 +342,7 @@ def test_config_is_frozen_and_masks_dsn_in_repr() -> None:
     module = _config_module()
     config = module.SupabasePaperRecommendationReadinessConfig(
         enabled=True,
-        dsn="postgresql://sensitive-token.example.invalid/postgres",
+        dsn=LOCAL_SECRET_POSTGRES_DSN,
         table_name=module.DEFAULT_PAPER_RECOMMENDATION_READINESS_DB_TABLE,
     )
 
@@ -345,8 +351,26 @@ def test_config_is_frozen_and_masks_dsn_in_repr() -> None:
 
     rendered = repr(config)
     assert "sensitive-token" not in rendered
-    assert "postgresql://sensitive-token" not in rendered
+    assert LOCAL_SECRET_POSTGRES_DSN not in rendered
     assert "dsn=<redacted>" in rendered
+
+
+def test_config_rejects_remote_dsn_without_echoing_secret() -> None:
+    module = _config_module()
+    dsn = "postgresql://sensitive-token@example.invalid/postgres"
+
+    with pytest.raises(ValueError) as exc_info:
+        module.SupabasePaperRecommendationReadinessConfig(
+            enabled=False,
+            dsn=dsn,
+            table_name=module.DEFAULT_PAPER_RECOMMENDATION_READINESS_DB_TABLE,
+        )
+
+    message = str(exc_info.value)
+    assert module.PAPER_RECOMMENDATION_READINESS_DB_DSN_ENV_VAR in message
+    assert "local Postgres/Supabase" in message
+    assert dsn not in message
+    assert "sensitive-token" not in message
 
 
 @pytest.mark.parametrize(
