@@ -102,12 +102,18 @@ from polymarket_alpha_lab.paper_recommendation_cycle_snapshot_psycopg import (
 )
 from polymarket_alpha_lab.paper_strategy_cycle_report_psycopg import (
     insert_paper_strategy_cycle_report_with_psycopg,
+    load_paper_strategy_cycle_reports_with_psycopg,
 )
 from polymarket_alpha_lab.action_gated_strategy_recommendation_queue_psycopg import (
     insert_paper_action_gated_strategy_recommendation_queue_report_with_psycopg,
 )
 from polymarket_alpha_lab.paper_recommendation_cycle_snapshot_trend import (
     build_paper_recommendation_cycle_snapshot_trend_report,
+)
+from polymarket_alpha_lab.paper_strategy_cycle_report_history import (
+    PaperStrategyCycleReportHistoryConfig,
+    PaperStrategyCycleReportHistoryReport,
+    build_paper_strategy_cycle_report_history_report,
 )
 from polymarket_alpha_lab.paper_recommendation_cycle_review import (
     PaperRecommendationCycleReviewConfig,
@@ -233,6 +239,7 @@ from polymarket_alpha_lab.supabase_paper_trade_journal_config import (
     from_paper_trade_journal_db_env,
 )
 from polymarket_alpha_lab.supabase_paper_strategy_cycle_report_config import (
+    PAPER_STRATEGY_CYCLE_REPORT_DB_DSN_ENV_VAR,
     from_paper_strategy_cycle_report_db_env,
 )
 from polymarket_alpha_lab.supabase_probability_selection_summary_config import (
@@ -284,6 +291,7 @@ PaperNavSnapshotDbSink = Callable[..., object]
 PaperTradeCostAuditDbSink = Callable[..., object]
 StrategyRiskAuditDbSink = Callable[..., object]
 PaperStrategyCycleReportDbSink = Callable[..., object]
+StrategyCycleReportDbHistoryRunner = Callable[..., object]
 NavRiskRunner = Callable[..., "PaperNavRiskMetricsReport"]
 StrategyAuditRunner = Callable[..., PaperStrategyRiskAuditReport]
 StrategyAuditHistoryRunner = Callable[..., PaperStrategyRiskAuditHistoryReport]
@@ -1172,6 +1180,19 @@ def _raise_redacted_db_read_error(exc: Exception, *, dsn: str) -> None:
     raise RuntimeError(message) from None
 
 
+def _raise_redacted_strategy_cycle_report_db_history_error(
+    exc: Exception,
+    *,
+    dsn: str,
+    table_name: str,
+) -> None:
+    message = _redact_db_dsn(str(exc), dsn=dsn)
+    message = _redact_db_table_name_and_tail(message, table_name=table_name)
+    if not message.strip():
+        message = exc.__class__.__name__
+    raise RuntimeError(message) from None
+
+
 def _raise_redacted_multi_db_sink_error(
     exc: Exception,
     *,
@@ -1268,6 +1289,9 @@ def main(
     paper_strategy_cycle_report_db_sink: PaperStrategyCycleReportDbSink = (
         insert_paper_strategy_cycle_report_with_psycopg
     ),
+    strategy_cycle_report_db_history_runner: (
+        StrategyCycleReportDbHistoryRunner | None
+    ) = None,
     paper_nav_snapshot_db_sink: PaperNavSnapshotDbSink = (
         insert_paper_nav_snapshot_with_psycopg
     ),
@@ -1622,6 +1646,13 @@ def main(
         type=Path,
         required=True,
         dest="strategy_audit_log",
+    )
+    strategy_cycle_db_history = subparsers.add_parser("strategy-cycle-db-history")
+    strategy_cycle_db_history.add_argument("--source-config-version", default=None)
+    strategy_cycle_db_history.add_argument(
+        "--limit",
+        type=int,
+        default=50,
     )
     strategy_audit_db_history = subparsers.add_parser("strategy-audit-db-history")
     strategy_audit_db_history.add_argument(
@@ -2937,6 +2968,45 @@ def main(
             return 0
         except Exception as exc:
             print(f"strategy-audit-history failed: {exc}", file=sys.stderr)
+            return 1
+
+    if args.command == "strategy-cycle-db-history":
+        try:
+            if isinstance(args.limit, bool) or type(args.limit) is not int or args.limit <= 0:
+                raise ValueError("strategy-cycle-db-history limit must be positive")
+            paper_strategy_cycle_report_db_config = (
+                from_paper_strategy_cycle_report_db_env()
+            )
+            if not paper_strategy_cycle_report_db_config.enabled:
+                raise ValueError(
+                    "strategy-cycle-db-history requires paper strategy cycle "
+                    "report DB to be enabled",
+                )
+            dsn = paper_strategy_cycle_report_db_config.dsn
+            if dsn is None:
+                raise ValueError(
+                    "strategy-cycle-db-history requires a paper strategy cycle "
+                    "report DB DSN "
+                    f"({PAPER_STRATEGY_CYCLE_REPORT_DB_DSN_ENV_VAR})",
+                )
+            try:
+                report = _run_strategy_cycle_report_db_history(
+                    dsn=dsn,
+                    table_name=paper_strategy_cycle_report_db_config.table_name,
+                    source_config_version=args.source_config_version,
+                    limit=args.limit,
+                    runner=strategy_cycle_report_db_history_runner,
+                )
+            except Exception as exc:
+                _raise_redacted_strategy_cycle_report_db_history_error(
+                    exc,
+                    dsn=dsn,
+                    table_name=paper_strategy_cycle_report_db_config.table_name,
+                )
+            _print_strategy_cycle_report_db_history_summary(report)
+            return 0
+        except Exception as exc:
+            print(f"strategy-cycle-db-history failed: {exc}", file=sys.stderr)
             return 1
 
     if args.command == "strategy-audit-db-history":
@@ -8339,6 +8409,56 @@ def _run_strategy_audit_db_history(
             pass
 
 
+def _run_strategy_cycle_report_db_history(
+    *,
+    dsn: str,
+    table_name: str,
+    source_config_version: str | None,
+    limit: int,
+    runner: StrategyCycleReportDbHistoryRunner | None,
+) -> PaperStrategyCycleReportHistoryReport:
+    if isinstance(limit, bool) or type(limit) is not int or limit <= 0:
+        raise ValueError("strategy-cycle-db-history limit must be positive")
+    generated_at = datetime.now(UTC)
+    config = PaperStrategyCycleReportHistoryConfig()
+    if runner is not None:
+        try:
+            return runner(
+                dsn=dsn,
+                table_name=table_name,
+                source_config_version=source_config_version,
+                limit=limit,
+                config=config,
+                generated_at=generated_at,
+            )
+        except Exception as exc:
+            _raise_redacted_strategy_cycle_report_db_history_error(
+                exc,
+                dsn=dsn,
+                table_name=table_name,
+            )
+    try:
+        reports = load_paper_strategy_cycle_reports_with_psycopg(
+            dsn,
+            config_version=source_config_version,
+            limit=limit,
+            table_name=table_name,
+        )
+        if not reports:
+            raise ValueError("no paper strategy cycle reports found")
+        return build_paper_strategy_cycle_report_history_report(
+            tuple(reversed(reports)),
+            config=config,
+            generated_at=generated_at,
+        )
+    except Exception as exc:
+        _raise_redacted_strategy_cycle_report_db_history_error(
+            exc,
+            dsn=dsn,
+            table_name=table_name,
+        )
+
+
 def _run_cost_audit_db_trend(
     *,
     dsn: str,
@@ -9830,6 +9950,18 @@ def _print_strategy_audit_history_summary(
             f"fail={gate_counts[(gate_name, 'fail')]} "
             f"incomplete={gate_counts[(gate_name, 'incomplete')]}",
         )
+
+
+def _print_strategy_cycle_report_db_history_summary(
+    report: PaperStrategyCycleReportHistoryReport,
+) -> None:
+    print(
+        "strategy-cycle-db-history: "
+        f"status={report.history_status} "
+        f"reports={report.report_count} "
+        f"latest_snapshot_ready_share={report.latest_snapshot_ready_share} "
+        f"blocked_market_share={report.blocked_market_share}",
+    )
 
 
 def _print_strategy_recommendation_history_summary(

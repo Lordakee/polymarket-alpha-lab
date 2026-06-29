@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import polymarket_alpha_lab.cli as cli
 from polymarket_alpha_lab.paper_recommendation_artifact_index import (
     build_paper_recommendation_artifact_index_report,
 )
@@ -40,6 +41,9 @@ from polymarket_alpha_lab.paper_recommendation_cycle_snapshot_db_row import (
 from polymarket_alpha_lab.paper_recommendation_pipeline import (
     PaperRecommendationPipelineStage,
     build_paper_recommendation_pipeline_report,
+)
+from polymarket_alpha_lab.paper_strategy_cycle_report_history import (
+    PaperStrategyCycleReportHistoryConfig,
 )
 from polymarket_alpha_lab.nav_risk_metrics import (
     PaperNavRiskMetricsConfig,
@@ -637,6 +641,375 @@ def test_strategy_cycle_cli_requires_cycle_report_db_dsn_before_runner_work(
     assert PAPER_STRATEGY_CYCLE_REPORT_DB_DSN_ENV_VAR in captured.err
     assert "client should not be created" not in captured.err
     assert "cycle runner should not run" not in captured.err
+
+
+def test_strategy_cycle_db_history_cli_requires_enabled_config(
+    monkeypatch,
+    capsys,
+):
+    monkeypatch.delenv(PAPER_STRATEGY_CYCLE_REPORT_DB_ENABLED_ENV_VAR, raising=False)
+    monkeypatch.delenv(PAPER_STRATEGY_CYCLE_REPORT_DB_DSN_ENV_VAR, raising=False)
+    monkeypatch.delenv(PAPER_STRATEGY_CYCLE_REPORT_DB_TABLE_ENV_VAR, raising=False)
+
+    def forbidden_client_factory():
+        raise AssertionError("client should not be constructed")
+
+    exit_code = main(
+        ["strategy-cycle-db-history"],
+        client_factory=forbidden_client_factory,
+    )
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert (
+        "strategy-cycle-db-history requires paper strategy cycle report DB "
+        "to be enabled"
+    ) in captured.err
+    assert "client should not be constructed" not in captured.err
+
+
+def test_strategy_cycle_db_history_cli_requires_dsn_before_work(
+    monkeypatch,
+    capsys,
+):
+    monkeypatch.setenv(PAPER_STRATEGY_CYCLE_REPORT_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.delenv(PAPER_STRATEGY_CYCLE_REPORT_DB_DSN_ENV_VAR, raising=False)
+
+    def forbidden_runner(**kwargs):
+        raise AssertionError("history runner should not run")
+
+    def forbidden_client_factory():
+        raise AssertionError("client should not be constructed")
+
+    exit_code = main(
+        ["strategy-cycle-db-history"],
+        strategy_cycle_report_db_history_runner=forbidden_runner,
+        client_factory=forbidden_client_factory,
+    )
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert PAPER_STRATEGY_CYCLE_REPORT_DB_DSN_ENV_VAR in captured.err
+    assert "history runner should not run" not in captured.err
+    assert "client should not be constructed" not in captured.err
+
+
+def test_strategy_cycle_db_history_cli_rejects_non_positive_limit_before_env_work(
+    monkeypatch,
+    capsys,
+):
+    env_calls = []
+
+    def forbidden_env_reader():
+        env_calls.append(True)
+        raise AssertionError("env should not be read")
+
+    def forbidden_runner(**kwargs):
+        raise AssertionError("history runner should not run")
+
+    monkeypatch.setattr(cli, "from_paper_strategy_cycle_report_db_env", forbidden_env_reader)
+
+    exit_code = main(
+        ["strategy-cycle-db-history", "--limit", "0"],
+        strategy_cycle_report_db_history_runner=forbidden_runner,
+        client_factory=lambda: (_ for _ in ()).throw(
+            AssertionError("client should not be constructed"),
+        ),
+    )
+
+    assert exit_code == 1
+    assert env_calls == []
+    captured = capsys.readouterr()
+    assert "strategy-cycle-db-history limit must be positive" in captured.err
+    assert "env should not be read" not in captured.err
+    assert "history runner should not run" not in captured.err
+    assert "client should not be constructed" not in captured.err
+
+
+def test_strategy_cycle_db_history_cli_injected_runner_receives_db_config_and_prints_summary(
+    monkeypatch,
+    capsys,
+):
+    dsn = "postgresql://cycle-report:secret@localhost:54322/db"
+    table_name = "paper_strategy_cycle_report_archive"
+    monkeypatch.setenv(PAPER_STRATEGY_CYCLE_REPORT_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(PAPER_STRATEGY_CYCLE_REPORT_DB_DSN_ENV_VAR, dsn)
+    monkeypatch.setenv(PAPER_STRATEGY_CYCLE_REPORT_DB_TABLE_ENV_VAR, table_name)
+    calls = []
+
+    def fake_runner(**kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(
+            history_status="watch",
+            report_count=4,
+            latest_snapshot_ready_share=Decimal("0.250000"),
+            blocked_market_share=Decimal("0.600000"),
+        )
+
+    exit_code = main(
+        [
+            "strategy-cycle-db-history",
+            "--source-config-version",
+            "strategy-cycle-v2",
+            "--limit",
+            "7",
+        ],
+        strategy_cycle_report_db_history_runner=fake_runner,
+        client_factory=lambda: (_ for _ in ()).throw(
+            AssertionError("client should not be constructed"),
+        ),
+    )
+
+    assert exit_code == 0
+    assert len(calls) == 1
+    call = calls[0]
+    assert call["dsn"] == dsn
+    assert call["table_name"] == table_name
+    assert call["source_config_version"] == "strategy-cycle-v2"
+    assert call["limit"] == 7
+    assert type(call["generated_at"]) is datetime
+    assert call["generated_at"].tzinfo is UTC
+    assert type(call["config"]) is PaperStrategyCycleReportHistoryConfig
+    captured = capsys.readouterr()
+    assert captured.out.splitlines() == [
+        (
+            "strategy-cycle-db-history: status=watch reports=4 "
+            "latest_snapshot_ready_share=0.250000 "
+            "blocked_market_share=0.600000"
+        ),
+    ]
+    assert captured.err == ""
+    assert dsn not in captured.out
+    assert dsn not in captured.err
+    assert table_name not in captured.out
+    assert table_name not in captured.err
+
+
+def test_strategy_cycle_db_history_cli_default_load_path_reverses_reports_and_prints_summary(
+    monkeypatch,
+    capsys,
+):
+    dsn = "postgresql://cycle-report:secret@localhost:54322/db"
+    table_name = "paper_strategy_cycle_report_archive"
+    monkeypatch.setenv(PAPER_STRATEGY_CYCLE_REPORT_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(PAPER_STRATEGY_CYCLE_REPORT_DB_DSN_ENV_VAR, dsn)
+    monkeypatch.setenv(PAPER_STRATEGY_CYCLE_REPORT_DB_TABLE_ENV_VAR, table_name)
+    newest = SimpleNamespace(label="newest")
+    middle = SimpleNamespace(label="middle")
+    oldest = SimpleNamespace(label="oldest")
+    load_calls = []
+    builder_calls = []
+
+    def fake_load(load_dsn, *, config_version, limit, table_name):
+        load_calls.append(
+            {
+                "dsn": load_dsn,
+                "config_version": config_version,
+                "limit": limit,
+                "table_name": table_name,
+            },
+        )
+        return (newest, middle, oldest)
+
+    def fake_builder(reports, *, config, generated_at):
+        builder_calls.append(
+            {
+                "reports": reports,
+                "config": config,
+                "generated_at": generated_at,
+            },
+        )
+        return SimpleNamespace(
+            history_status="pass",
+            report_count=3,
+            latest_snapshot_ready_share=Decimal("0.750000"),
+            blocked_market_share=Decimal("0.125000"),
+        )
+
+    monkeypatch.setattr(cli, "load_paper_strategy_cycle_reports_with_psycopg", fake_load)
+    monkeypatch.setattr(
+        cli,
+        "build_paper_strategy_cycle_report_history_report",
+        fake_builder,
+    )
+
+    exit_code = main(
+        [
+            "strategy-cycle-db-history",
+            "--source-config-version",
+            "strategy-cycle-v3",
+            "--limit",
+            "3",
+        ],
+        client_factory=lambda: (_ for _ in ()).throw(
+            AssertionError("client should not be constructed"),
+        ),
+    )
+
+    assert exit_code == 0
+    assert load_calls == [
+        {
+            "dsn": dsn,
+            "config_version": "strategy-cycle-v3",
+            "limit": 3,
+            "table_name": table_name,
+        },
+    ]
+    assert len(builder_calls) == 1
+    builder_call = builder_calls[0]
+    assert builder_call["reports"] == (oldest, middle, newest)
+    assert type(builder_call["config"]) is PaperStrategyCycleReportHistoryConfig
+    assert type(builder_call["generated_at"]) is datetime
+    assert builder_call["generated_at"].tzinfo is UTC
+    captured = capsys.readouterr()
+    assert captured.out.splitlines() == [
+        (
+            "strategy-cycle-db-history: status=pass reports=3 "
+            "latest_snapshot_ready_share=0.750000 "
+            "blocked_market_share=0.125000"
+        ),
+    ]
+    assert captured.err == ""
+    assert dsn not in captured.out
+    assert dsn not in captured.err
+    assert table_name not in captured.out
+    assert table_name not in captured.err
+
+
+def test_strategy_cycle_db_history_cli_default_load_path_rejects_empty_history(
+    monkeypatch,
+    capsys,
+):
+    dsn = "postgresql://cycle-report:secret@localhost:54322/db"
+    table_name = "paper_strategy_cycle_report_archive"
+    monkeypatch.setenv(PAPER_STRATEGY_CYCLE_REPORT_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(PAPER_STRATEGY_CYCLE_REPORT_DB_DSN_ENV_VAR, dsn)
+    monkeypatch.setenv(PAPER_STRATEGY_CYCLE_REPORT_DB_TABLE_ENV_VAR, table_name)
+
+    def fake_load(load_dsn, *, config_version, limit, table_name):
+        return ()
+
+    def forbidden_builder(*args, **kwargs):
+        raise AssertionError("history builder should not run")
+
+    monkeypatch.setattr(cli, "load_paper_strategy_cycle_reports_with_psycopg", fake_load)
+    monkeypatch.setattr(
+        cli,
+        "build_paper_strategy_cycle_report_history_report",
+        forbidden_builder,
+    )
+
+    exit_code = main(
+        ["strategy-cycle-db-history"],
+        client_factory=lambda: (_ for _ in ()).throw(
+            AssertionError("client should not be constructed"),
+        ),
+    )
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert "no paper strategy cycle reports found" in captured.err
+    assert "history builder should not run" not in captured.err
+    assert "client should not be constructed" not in captured.err
+
+
+def test_strategy_cycle_db_history_cli_redacts_dsn_and_table_on_runner_failure(
+    monkeypatch,
+    capsys,
+):
+    dsn = "postgresql://cycle-report:secret@localhost:54322/db"
+    table_name = "paper_strategy_cycle_report_archive"
+    monkeypatch.setenv(PAPER_STRATEGY_CYCLE_REPORT_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(PAPER_STRATEGY_CYCLE_REPORT_DB_DSN_ENV_VAR, dsn)
+    monkeypatch.setenv(PAPER_STRATEGY_CYCLE_REPORT_DB_TABLE_ENV_VAR, table_name)
+
+    def broken_runner(**kwargs):
+        raise RuntimeError(
+            f"could not read {kwargs['dsn']} table={kwargs['table_name']}",
+        )
+
+    exit_code = main(
+        ["strategy-cycle-db-history"],
+        strategy_cycle_report_db_history_runner=broken_runner,
+        client_factory=lambda: (_ for _ in ()).throw(
+            AssertionError("client should not be constructed"),
+        ),
+    )
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert dsn not in captured.out
+    assert dsn not in captured.err
+    assert table_name not in captured.out
+    assert table_name not in captured.err
+    assert "<redacted-dsn>" in captured.err
+    assert "<redacted-table>" in captured.err
+    assert "client should not be constructed" not in captured.err
+
+
+def test_strategy_cycle_db_history_cli_redacts_dsn_and_table_on_default_load_failure(
+    monkeypatch,
+    capsys,
+):
+    dsn = "postgresql://cycle-report:secret@localhost:54322/db"
+    table_name = "paper_strategy_cycle_report_archive"
+    monkeypatch.setenv(PAPER_STRATEGY_CYCLE_REPORT_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(PAPER_STRATEGY_CYCLE_REPORT_DB_DSN_ENV_VAR, dsn)
+    monkeypatch.setenv(PAPER_STRATEGY_CYCLE_REPORT_DB_TABLE_ENV_VAR, table_name)
+
+    def broken_load(load_dsn, *, config_version, limit, table_name):
+        raise RuntimeError(f"could not read {load_dsn} table={table_name}")
+
+    def forbidden_builder(*args, **kwargs):
+        raise AssertionError("history builder should not run")
+
+    monkeypatch.setattr(cli, "load_paper_strategy_cycle_reports_with_psycopg", broken_load)
+    monkeypatch.setattr(
+        cli,
+        "build_paper_strategy_cycle_report_history_report",
+        forbidden_builder,
+    )
+
+    exit_code = main(
+        ["strategy-cycle-db-history"],
+        client_factory=lambda: (_ for _ in ()).throw(
+            AssertionError("client should not be constructed"),
+        ),
+    )
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert dsn not in captured.out
+    assert dsn not in captured.err
+    assert table_name not in captured.out
+    assert table_name not in captured.err
+    assert "<redacted-dsn>" in captured.err
+    assert "<redacted-table>" in captured.err
+    assert "history builder should not run" not in captured.err
+    assert "client should not be constructed" not in captured.err
+
+
+@pytest.mark.parametrize(
+    "flag",
+    (
+        "--dsn",
+        "--db-dsn",
+        "--paper-strategy-cycle-report-db-dsn",
+        "--paper-strategy-cycle-report-db-table",
+        "--paper-strategy-cycle-report-db-enabled",
+        "--table",
+        "--persist",
+    ),
+)
+def test_strategy_cycle_db_history_cli_rejects_db_dsn_table_and_persist_flags(
+    flag,
+    capsys,
+):
+    with pytest.raises(SystemExit):
+        main(["strategy-cycle-db-history", flag, "forbidden-value"])
+
+    captured = capsys.readouterr()
+    assert f"unrecognized arguments: {flag}" in captured.err
 
 
 def test_strategy_cycle_cli_default_omits_paper_execute(tmp_path):
