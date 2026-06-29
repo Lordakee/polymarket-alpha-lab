@@ -13,6 +13,7 @@ EXPECTED_MIGRATION_NAME = (
     "20260625000009_paper_autonomous_screening_gate_transition_reports.sql"
 )
 DEFAULT_TABLE = "paper_autonomous_screening_gate_transition_reports"
+LOCAL_DSN = "postgresql://postgres:postgres@localhost:54322/postgres"
 ENABLED_ENV_VAR = (
     "POLYMARKET_ALPHA_LAB_PAPER_AUTONOMOUS_SCREENING_GATE_TRANSITION_DB_ENABLED"
 )
@@ -275,7 +276,7 @@ def test_transition_config_enabled_env_requires_dsn_without_echoing_secret() -> 
 
 def test_transition_config_reads_explicit_dsn_at_process_edge() -> None:
     config_module = _config_module()
-    dsn = "postgresql://example.invalid/postgres"
+    dsn = LOCAL_DSN
 
     config = (
         config_module.from_paper_autonomous_screening_decision_support_gate_transition_db_env(
@@ -290,6 +291,25 @@ def test_transition_config_reads_explicit_dsn_at_process_edge() -> None:
     assert config.enabled is True
     assert config.dsn == dsn
     assert config.table_name == "paper_autonomous_screening_gate_transition_archive"
+
+
+def test_transition_config_rejects_remote_dsn_without_echoing_secret() -> None:
+    config_module = _config_module()
+    secret_dsn = "postgresql://worker:sensitive-token@db.example.invalid/postgres"
+
+    with pytest.raises(ValueError) as exc_info:
+        config_module.from_paper_autonomous_screening_decision_support_gate_transition_db_env(
+            {
+                ENABLED_ENV_VAR: "false",
+                DSN_ENV_VAR: secret_dsn,
+            },
+        )
+
+    message = str(exc_info.value)
+    assert DSN_ENV_VAR in message
+    assert secret_dsn not in message
+    assert "sensitive-token" not in message
+    assert "secret" not in message.lower()
 
 
 @pytest.mark.parametrize(
@@ -314,7 +334,7 @@ def test_transition_config_accepts_only_strict_enabled_values(
         config_module.from_paper_autonomous_screening_decision_support_gate_transition_db_env(
             {
                 ENABLED_ENV_VAR: enabled_value,
-                DSN_ENV_VAR: "postgresql://example.invalid/postgres",
+                DSN_ENV_VAR: LOCAL_DSN,
             },
         )
     )
@@ -332,7 +352,7 @@ def test_transition_config_rejects_non_strict_enabled_values(
         config_module.from_paper_autonomous_screening_decision_support_gate_transition_db_env(
             {
                 ENABLED_ENV_VAR: enabled_value,
-                DSN_ENV_VAR: "postgresql://example.invalid/postgres",
+                DSN_ENV_VAR: LOCAL_DSN,
             },
         )
 
@@ -341,7 +361,7 @@ def test_transition_config_is_frozen_and_masks_dsn_in_repr() -> None:
     config_module = _config_module()
     config = config_module.SupabasePaperAutonomousScreeningDecisionSupportGateTransitionConfig(
         enabled=True,
-        dsn="postgresql://sensitive-token.example.invalid/postgres",
+        dsn="postgresql://postgres:sensitive-token@localhost:54322/postgres",
         table_name=DEFAULT_TABLE,
     )
 

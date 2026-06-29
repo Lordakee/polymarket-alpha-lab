@@ -8,6 +8,7 @@ import pytest
 
 
 MODULE_NAME = "polymarket_alpha_lab.supabase_paper_broker_config"
+LOCAL_DSN = "postgresql://postgres:postgres@localhost:54322/postgres"
 
 
 def _config_module() -> ModuleType:
@@ -59,7 +60,7 @@ def test_enabled_env_config_reads_explicit_dsn_at_process_edge(
     enabled_value: str,
 ) -> None:
     module = _config_module()
-    dsn = "postgresql://example.invalid/postgres"
+    dsn = LOCAL_DSN
 
     config = module.from_paper_broker_db_env(
         {
@@ -72,6 +73,25 @@ def test_enabled_env_config_reads_explicit_dsn_at_process_edge(
     assert config.enabled is True
     assert config.dsn == dsn
     assert config.table_name == "paper_broker_execution_archive"
+
+
+def test_env_config_rejects_remote_dsn_without_echoing_secret() -> None:
+    module = _config_module()
+    secret_dsn = "postgresql://worker:sensitive-token@db.example.invalid/postgres"
+
+    with pytest.raises(ValueError) as exc_info:
+        module.from_paper_broker_db_env(
+            {
+                module.PAPER_BROKER_DB_ENABLED_ENV_VAR: "false",
+                module.PAPER_BROKER_DB_DSN_ENV_VAR: secret_dsn,
+            },
+        )
+
+    message = str(exc_info.value)
+    assert module.PAPER_BROKER_DB_DSN_ENV_VAR in message
+    assert secret_dsn not in message
+    assert "sensitive-token" not in message
+    assert "secret" not in message.lower()
 
 
 @pytest.mark.parametrize("enabled_value", ["", "0", "false", " FALSE "])
@@ -159,7 +179,7 @@ def test_config_is_frozen_and_masks_dsn_in_repr() -> None:
     module = _config_module()
     config = module.SupabasePaperBrokerConfig(
         enabled=True,
-        dsn="postgresql://sensitive-token.example.invalid/postgres",
+        dsn="postgresql://postgres:sensitive-token@localhost:54322/postgres",
         table_name=module.DEFAULT_PAPER_BROKER_DB_TABLE,
     )
 
@@ -221,6 +241,6 @@ def test_direct_config_rejects_non_bool_enabled_flag() -> None:
     with pytest.raises(ValueError, match="enabled must be a bool"):
         module.SupabasePaperBrokerConfig(
             enabled=1,  # type: ignore[arg-type]
-            dsn="postgresql://example.invalid/postgres",
+            dsn=LOCAL_DSN,
             table_name=module.DEFAULT_PAPER_BROKER_DB_TABLE,
         )

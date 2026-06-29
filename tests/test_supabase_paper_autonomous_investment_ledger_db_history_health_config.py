@@ -26,7 +26,8 @@ MODULE_PATH = (
     / "polymarket_alpha_lab"
     / "supabase_paper_autonomous_investment_ledger_db_history_health_config.py"
 )
-SECRET_DSN = "postgresql://worker:secret@example.invalid/polymarket"
+SECRET_DSN = "postgresql://worker:secret@localhost:54322/polymarket"
+REMOTE_SECRET_DSN = "postgresql://worker:secret@example.invalid/polymarket"
 
 
 def _module():
@@ -104,6 +105,23 @@ def test_investment_ledger_db_history_health_config_reads_enabled_dsn_and_table(
     )
 
 
+def test_investment_ledger_db_history_health_config_rejects_remote_dsn_without_echoing_secret() -> None:
+    config_module = _module()
+
+    with pytest.raises(ValueError) as exc_info:
+        config_module.from_paper_autonomous_investment_ledger_db_history_health_db_env(
+            {
+                ENABLED_ENV_VAR: "false",
+                DSN_ENV_VAR: REMOTE_SECRET_DSN,
+            },
+        )
+
+    message = str(exc_info.value)
+    assert DSN_ENV_VAR in message
+    assert REMOTE_SECRET_DSN not in message
+    assert "secret" not in message.lower()
+
+
 def test_investment_ledger_db_history_health_config_requires_dsn_when_enabled() -> None:
     config_module = _module()
 
@@ -137,11 +155,11 @@ def test_investment_ledger_db_history_health_config_accepts_only_strict_enabled_
     config_module = _module()
 
     config = config_module.from_paper_autonomous_investment_ledger_db_history_health_db_env(
-        {
-            ENABLED_ENV_VAR: enabled_value,
-            DSN_ENV_VAR: "postgresql://example.invalid/postgres",
-        },
-    )
+            {
+                ENABLED_ENV_VAR: enabled_value,
+                DSN_ENV_VAR: SECRET_DSN,
+            },
+        )
 
     assert config.enabled is expected_enabled
 
