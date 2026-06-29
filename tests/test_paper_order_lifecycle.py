@@ -97,6 +97,21 @@ def test_lifecycle_record_rejects_wrong_broker_type():
         )
 
 
+def test_lifecycle_record_rejects_live_route_status():
+    with pytest.raises(ValueError, match="lifecycle_status"):
+        PaperOrderLifecycleRecord(
+            generated_at=datetime(2026, 6, 25, tzinfo=UTC),
+            config_version=DEFAULT_PAPER_ORDER_LIFECYCLE_CONFIG_VERSION,
+            lifecycle_status="reviewed",
+            recommended_next_step="route_to_live_broker",
+            source_execution_status="paper_submitted",
+            source_execution_notional=Decimal("0.000000"),
+            fill_notional=Decimal("0.000000"),
+            is_terminal=False,
+            reason_codes=("paper_order_lifecycle_reviewed",),
+        )
+
+
 def test_lifecycle_record_rejects_subclassed_config():
     with pytest.raises(TypeError, match="does not support subclassing"):
 

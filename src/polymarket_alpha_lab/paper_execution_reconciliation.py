@@ -19,6 +19,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal, localcontext, Context
 
+from polymarket_alpha_lab.paper_order_lifecycle import PaperOrderLifecycleRecord
+
 
 __all__ = (
     "DEFAULT_PAPER_EXECUTION_RECONCILIATION_CONFIG_VERSION",
@@ -249,9 +251,10 @@ def build_paper_execution_reconciliation_report(
         unrealized_pnl = ZERO
 
         for record in lifecycle_records:
-            lifecycle_status = getattr(record, "lifecycle_status", None)
-            fill_notional = getattr(record, "fill_notional", ZERO)
-            source_notional = getattr(record, "source_execution_notional", ZERO)
+            _validate_lifecycle_record(record)
+            lifecycle_status = record.lifecycle_status
+            fill_notional = record.fill_notional
+            source_notional = record.source_execution_notional
 
             if lifecycle_status == "paper_filled":
                 position_status = "filled_pending"
@@ -327,3 +330,11 @@ def build_paper_execution_reconciliation_report(
             report_only=True,
             readonly=True,
         )
+
+
+def _validate_lifecycle_record(record: object) -> None:
+    if type(record) is not PaperOrderLifecycleRecord:
+        raise ValueError(
+            "lifecycle_records entries must be exactly PaperOrderLifecycleRecord",
+        )
+    _validate_hard_flags("lifecycle record", record)

@@ -107,6 +107,36 @@ def test_reconciliation_rejects_naive_generated_at() -> None:
         )
 
 
+def test_reconciliation_rejects_duck_typed_lifecycle_record() -> None:
+    class LifecycleLike:
+        lifecycle_status = "paper_filled"
+        fill_notional = Decimal("1.000000")
+        source_execution_notional = Decimal("1.000000")
+        paper_only = True
+        report_only = True
+        readonly = True
+
+    with pytest.raises(ValueError, match="PaperOrderLifecycleRecord"):
+        build_paper_execution_reconciliation_report(
+            lifecycle_records=(LifecycleLike(),),
+            generated_at=datetime(2026, 6, 25, tzinfo=UTC),
+        )
+
+
+@pytest.mark.parametrize("flag_name", ("paper_only", "report_only", "readonly"))
+def test_reconciliation_rejects_lifecycle_records_with_false_hard_flags(
+    flag_name: str,
+) -> None:
+    record = _lifecycle_record(gate_status="pass")
+    object.__setattr__(record, flag_name, False)
+
+    with pytest.raises(ValueError, match=flag_name):
+        build_paper_execution_reconciliation_report(
+            lifecycle_records=(record,),
+            generated_at=datetime(2026, 6, 25, tzinfo=UTC),
+        )
+
+
 def test_reconciliation_config_defaults() -> None:
     config = PaperExecutionReconciliationConfig()
     assert config.paper_only is True

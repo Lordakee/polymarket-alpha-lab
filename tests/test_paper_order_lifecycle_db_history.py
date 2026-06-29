@@ -180,7 +180,7 @@ def test_history_covers_all_lifecycle_statuses_and_latest_same_status_streak() -
     assert report.latest_lifecycle_status == "rejected"
     assert report.latest_same_status_streak == 3
     assert report.terminal_record_count == 7
-    assert report.nonterminal_record_count == 5
+    assert report.nonterminal_record_count == 4
 
 
 def test_duplicate_generated_at_count_counts_extra_records_per_timestamp() -> None:

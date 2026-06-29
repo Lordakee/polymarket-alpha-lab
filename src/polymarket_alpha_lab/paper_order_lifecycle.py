@@ -37,7 +37,6 @@ LIFECYCLE_STATUSES = (
     "paper_cancelled",
     "paper_expired",
     "human_approval_pending",
-    "reviewed",
     "rejected",
 )
 TERMINAL_STATUSES = frozenset({
@@ -56,7 +55,6 @@ NEXT_STEP_BY_STATUS = {
     "paper_cancelled": "archive_paper_order",
     "paper_expired": "archive_paper_order",
     "human_approval_pending": "await_human_decision",
-    "reviewed": "route_to_live_broker",
     "rejected": "archive_proposal",
 }
 def _validate_hard_flags(label: str, obj: object) -> None:
@@ -229,4 +227,3 @@ def _validate_record_consistency(record: PaperOrderLifecycleRecord) -> None:
         raise ValueError("paper_filled must have positive fill notional")
     if record.lifecycle_status in ("risk_blocked", "human_approval_pending") and record.fill_notional != ZERO:
         raise ValueError("blocked/pending must have zero fill notional")
-

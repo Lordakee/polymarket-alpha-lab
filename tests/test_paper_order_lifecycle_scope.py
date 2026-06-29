@@ -22,6 +22,7 @@ def test_lifecycle_module_has_no_forbidden_surfaces():
         "import logging",
         "import pathlib",
         "private_key",
+        "live",
         "wallet",
         "account",
         "submit_order",

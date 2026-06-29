@@ -18,7 +18,7 @@ create table if not exists public.paper_order_lifecycle_records (
     check (lifecycle_status in (
         'proposed', 'risk_passed', 'risk_blocked',
         'paper_submitted', 'paper_filled', 'paper_cancelled',
-        'paper_expired', 'human_approval_pending', 'reviewed', 'rejected'
+        'paper_expired', 'human_approval_pending', 'rejected'
     )),
     check (source_execution_status in ('paper_submitted', 'paper_blocked', 'paper_held')),
     check (source_execution_notional >= 0),
