@@ -694,12 +694,20 @@ trading.
 
 Paper Autonomous Readiness Gate:
 
-The paper autonomous readiness gate is a pure Python reducer that combines three
-already-built Phase 1 health gates:
+The paper autonomous readiness gate is a pure Python reducer that combines
+required sources plus optional pure sources from already-built Phase 1 health
+gates.
+
+Required sources:
 
 - screening decision-support gate DB-history health
 - allocation proposal DB-history health trend gate
 - investment-ledger DB-history health trend gate
+
+Optional pure sources:
+
+- strategy-cycle report history gate
+- strategy-risk-audit history gate
 
 Operator notes: `docs/paper-autonomous-readiness-gate.md`.
 

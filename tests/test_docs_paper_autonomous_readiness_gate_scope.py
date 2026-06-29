@@ -20,12 +20,19 @@ REQUIRED_PHRASES = (
     "already-built typed reports",
     "screening decision-support gate DB-history health",
     "strategy-cycle report history gate",
-    "optional fourth source",
     "strategy_cycle_report_history_gate",
     "allocation proposal DB-history health trend gate",
     "investment-ledger DB-history health trend gate",
+    "strategy-risk-audit history gate",
+    "strategy_risk_audit_history_gate",
     "three-source legacy reports remain valid",
+    "strategy-cycle-only four-source reports remain valid",
+    "strategy-risk-only four-source reports remain valid",
+    "combined five-source reports are used when both optional pure sources are supplied",
+    "strategy-risk source is appended after the investment-ledger source",
     "does not query or load DB history",
+    "does not add persistence/schema/store compatibility",
+    "does not add DB loaders/env/CLI/live/auth/wallet/key/order behavior",
     "no CLI",
     "no runner",
     "no sink",
@@ -57,6 +64,10 @@ REQUIRED_PHRASES = (
 
 README_PHRASES = (
     "Paper Autonomous Readiness Gate",
+    "required sources",
+    "optional pure sources",
+    "strategy-cycle report history gate",
+    "strategy-risk-audit history gate",
     "paper-only/report-only/readonly readiness report",
     "operator-facing paper review",
     "does not alter strategy behavior",
@@ -78,6 +89,7 @@ SECRET_VALUE_PATTERNS = (
 
 def test_readiness_gate_doc_exists_and_has_required_boundary_language() -> None:
     doc = DOC_PATH.read_text(encoding="utf-8")
+    normalized_doc = re.sub(r"\s+", " ", doc)
     lower_doc = doc.lower()
 
     previous_index = -1
@@ -86,14 +98,16 @@ def test_readiness_gate_doc_exists_and_has_required_boundary_language() -> None:
         assert index > previous_index, heading
         previous_index = index
     for phrase in REQUIRED_PHRASES:
-        assert phrase in doc
+        assert phrase in normalized_doc
+    assert "optional fourth source" not in normalized_doc
     for pattern in SECRET_VALUE_PATTERNS:
         assert re.search(pattern, lower_doc) is None
 
 
 def test_readiness_gate_readme_links_operator_doc_and_boundary() -> None:
     readme = README_PATH.read_text(encoding="utf-8")
+    normalized_readme = re.sub(r"\s+", " ", readme)
 
     assert "docs/paper-autonomous-readiness-gate.md" in readme
     for phrase in README_PHRASES:
-        assert phrase in readme
+        assert phrase in normalized_readme
