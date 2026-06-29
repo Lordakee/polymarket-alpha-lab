@@ -1,4 +1,5 @@
 import importlib
+from pathlib import Path
 
 import polymarket_alpha_lab as lab
 from polymarket_alpha_lab import (
@@ -663,6 +664,102 @@ def test_strategy_cycle_public_api_exports():
     assert lab.PaperStrategyCycleReport is PaperStrategyCycleReport
     assert lab.PaperStrategyCycleLog is PaperStrategyCycleLog
     assert lab.run_strategy_cycle is run_strategy_cycle
+
+
+def test_paper_strategy_cycle_report_history_gate_public_api_exports():
+    gate_module = importlib.import_module(
+        "polymarket_alpha_lab.paper_strategy_cycle_report_history_gate",
+    )
+    expected_exports = {
+        "DEFAULT_PAPER_STRATEGY_CYCLE_REPORT_HISTORY_GATE_CONFIG_VERSION",
+        "PaperStrategyCycleReportHistoryGateConfig",
+        "PaperStrategyCycleReportHistoryGateReasonCodeCount",
+        "PaperStrategyCycleReportHistoryGateReport",
+        "build_paper_strategy_cycle_report_history_gate_report",
+    }
+    forbidden_exports = {
+        "DEFAULT_PAPER_STRATEGY_CYCLE_REPORT_HISTORY_GATE_DB_TABLE",
+        "DEFAULT_PAPER_STRATEGY_CYCLE_REPORT_HISTORY_GATE_REPORTS_TABLE",
+        "MISSING_LATEST_REASON_CODE",
+        "NEXT_STEP_BY_STATUS",
+        "PAPER_STRATEGY_CYCLE_REPORT_HISTORY_GATE_DB_DSN_ENV_VAR",
+        "PAPER_STRATEGY_CYCLE_REPORT_HISTORY_GATE_DB_ENABLED_ENV_VAR",
+        "PAPER_STRATEGY_CYCLE_REPORT_HISTORY_GATE_DB_TABLE_ENV_VAR",
+        "PASS_REASON_CODE",
+        "PaperStrategyCycleReportHistoryGateDbRow",
+        "PaperStrategyCycleReportHistoryGateInsertResult",
+        "SOURCE_BLOCKED_REASON_CODE",
+        "SOURCE_WATCH_REASON_CODE",
+        "STALE_REASON_CODE",
+        "SupabasePaperStrategyCycleReportHistoryGateConfig",
+        "from_paper_strategy_cycle_report_history_gate_db_env",
+        "insert_paper_strategy_cycle_report_history_gate_report",
+        "insert_paper_strategy_cycle_report_history_gate_report_with_psycopg",
+        "insert_paper_strategy_cycle_report_history_gate_report_with_result",
+        "load_paper_strategy_cycle_report_history_gate_reports",
+        "load_paper_strategy_cycle_report_history_gate_reports_with_psycopg",
+        "paper_strategy_cycle_report_history_gate_report_from_db_row",
+        "paper_strategy_cycle_report_history_gate_report_to_db_row",
+    }
+
+    assert expected_exports <= set(lab.__all__)
+    assert not (forbidden_exports & set(lab.__all__))
+    assert (
+        lab.DEFAULT_PAPER_STRATEGY_CYCLE_REPORT_HISTORY_GATE_CONFIG_VERSION
+        is gate_module.DEFAULT_PAPER_STRATEGY_CYCLE_REPORT_HISTORY_GATE_CONFIG_VERSION
+    )
+    assert (
+        lab.PaperStrategyCycleReportHistoryGateConfig
+        is gate_module.PaperStrategyCycleReportHistoryGateConfig
+    )
+    assert (
+        lab.PaperStrategyCycleReportHistoryGateReasonCodeCount
+        is gate_module.PaperStrategyCycleReportHistoryGateReasonCodeCount
+    )
+    assert (
+        lab.PaperStrategyCycleReportHistoryGateReport
+        is gate_module.PaperStrategyCycleReportHistoryGateReport
+    )
+    assert (
+        lab.build_paper_strategy_cycle_report_history_gate_report
+        is gate_module.build_paper_strategy_cycle_report_history_gate_report
+    )
+    for name in forbidden_exports:
+        assert not hasattr(lab, name)
+
+
+def test_paper_strategy_cycle_report_history_gate_runbook_documents_scope():
+    runbook_path = Path("docs/paper-strategy-cycle-report-history-gate.md")
+
+    assert runbook_path.is_file()
+
+    runbook = runbook_path.read_text(encoding="utf-8")
+    required_snippets = (
+        "POLYMARKET_ALPHA_LAB_PAPER_STRATEGY_CYCLE_REPORT_DB_ENABLED",
+        "POLYMARKET_ALPHA_LAB_PAPER_STRATEGY_CYCLE_REPORT_DB_DSN",
+        "POLYMARKET_ALPHA_LAB_PAPER_STRATEGY_CYCLE_REPORT_DB_TABLE",
+        "POLYMARKET_ALPHA_LAB_STRATEGY_CYCLE_HISTORY_GATE_DB_ENABLED",
+        "POLYMARKET_ALPHA_LAB_STRATEGY_CYCLE_HISTORY_GATE_DB_DSN",
+        "POLYMARKET_ALPHA_LAB_STRATEGY_CYCLE_HISTORY_GATE_DB_TABLE",
+        "polymarket-alpha-lab strategy-cycle-history-gate --limit 50",
+        "polymarket-alpha-lab strategy-cycle-history-gate --limit 50 --persist",
+        "strategy-cycle-history-gate: status=<status> "
+        "source_history_status=<status> reports=<count> "
+        "latest_snapshot_ready_share=<rate> blocked_market_share=<rate> "
+        "persisted=<true|false>",
+        "no live trading",
+        "account auth",
+        "wallet",
+        "private keys",
+        "order signing",
+        "order submission",
+        "order cancellation",
+        "order replacement",
+        "exchange mutation",
+    )
+
+    for snippet in required_snippets:
+        assert snippet in runbook
 
 
 def test_strategy_risk_audit_public_api_exports():

@@ -70,6 +70,13 @@ from polymarket_alpha_lab.strategy_cycle import (
     PaperStrategyCycleLog,
     run_strategy_cycle,
 )
+from polymarket_alpha_lab.paper_strategy_cycle_report_history_gate import (
+    DEFAULT_PAPER_STRATEGY_CYCLE_REPORT_HISTORY_GATE_CONFIG_VERSION,
+    PaperStrategyCycleReportHistoryGateConfig,
+    PaperStrategyCycleReportHistoryGateReasonCodeCount,
+    PaperStrategyCycleReportHistoryGateReport,
+    build_paper_strategy_cycle_report_history_gate_report,
+)
 from polymarket_alpha_lab.strategy_risk_audit import (
     PaperStrategyRiskAuditConfig,
     PaperStrategyRiskAuditGateResult,
@@ -414,6 +421,7 @@ __all__ = [
     "DEFAULT_PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_HISTORY_CONFIG_VERSION",
     "DEFAULT_PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_CONFIG_VERSION",
     "DEFAULT_PAPER_AUTONOMOUS_SCREENING_DECISION_SUPPORT_GATE_CONFIG_VERSION",
+    "DEFAULT_PAPER_STRATEGY_CYCLE_REPORT_HISTORY_GATE_CONFIG_VERSION",
     "PaperAutonomousAllocationProposalConfig",
     "PaperAutonomousAllocationProposalDbHistoryConfig",
     "PaperAutonomousAllocationProposalDbHistoryGateConfig",
@@ -473,6 +481,9 @@ __all__ = [
     "PaperProjectScreeningReport",
     "PaperProjectScreeningLog",
     "PaperStrategyCycleConfig",
+    "PaperStrategyCycleReportHistoryGateConfig",
+    "PaperStrategyCycleReportHistoryGateReasonCodeCount",
+    "PaperStrategyCycleReportHistoryGateReport",
     "PaperStrategyCycleReport",
     "PaperStrategyCycleLog",
     "PaperStrategyRiskAuditConfig",
@@ -657,6 +668,7 @@ __all__ = [
     "polymarket_default_cost_assumptions",
     "build_paper_cost_aware_event_market_snapshot",
     "build_paper_project_screening_report",
+    "build_paper_strategy_cycle_report_history_gate_report",
     "build_paper_drawdown_points",
     "build_paper_forecast_evidence_report",
     "build_paper_naive_forecast",
