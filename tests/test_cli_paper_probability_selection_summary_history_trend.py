@@ -256,7 +256,7 @@ def test_history_trend_cli_uses_history_env_config_and_prints_aggregate_summary(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    dsn = "postgresql://history.example.invalid/db"
+    dsn = "postgresql://selection-history:secret@localhost:54322/db"
     table_name = "paper_probability_selection_summary_history_reports"
     _set_history_db_env(monkeypatch, dsn, table_name=table_name)
     calls: list[dict[str, object]] = []
@@ -330,7 +330,7 @@ def test_history_trend_cli_read_errors_redact_dsn_table_payload_and_hash(
 ) -> None:
     dsn = (
         "postgresql://history_user:super-secret-password@"
-        "history-source-secret.example.invalid/db?sslmode=require"
+        "localhost:54322/db?sslmode=require"
     )
     table_name = "paper_probability_selection_summary_history_reports_secret"
     _set_history_db_env(monkeypatch, dsn, table_name=table_name)
@@ -372,7 +372,7 @@ def test_history_trend_cli_read_errors_redact_market_detail_and_secret_fields(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    dsn = "postgresql://history.example.invalid/db"
+    dsn = "postgresql://selection-history:secret@localhost:54322/db"
     table_name = "paper_probability_selection_summary_history_reports"
     _set_history_db_env(monkeypatch, dsn, table_name=table_name)
 
@@ -431,7 +431,7 @@ def test_history_trend_cli_read_errors_redact_case_variant_secret_fields(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    dsn = "postgresql://history.example.invalid/db"
+    dsn = "postgresql://selection-history:secret@localhost:54322/db"
     table_name = "paper_probability_selection_summary_history_reports"
     _set_history_db_env(monkeypatch, dsn, table_name=table_name)
 
@@ -478,7 +478,7 @@ def test_history_trend_cli_sanitizes_reason_code_output_from_runner(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    dsn = "postgresql://history.example.invalid/db"
+    dsn = "postgresql://selection-history:secret@localhost:54322/db"
     table_name = "paper_probability_selection_summary_history_reports"
     _set_history_db_env(monkeypatch, dsn, table_name=table_name)
     report = _trend_report()
@@ -520,7 +520,7 @@ def test_history_trend_cli_sanitizes_reason_code_output_from_runner(
 def test_history_trend_helper_default_load_path_reads_history_chronologically(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    dsn = "postgresql://history.example.invalid/db"
+    dsn = "postgresql://selection-history:secret@localhost:54322/db"
     table_name = "paper_probability_selection_summary_history_reports"
     report = _trend_report()
     newest = SimpleNamespace(generated_at=datetime(2026, 6, 28, 11, 0, tzinfo=UTC))

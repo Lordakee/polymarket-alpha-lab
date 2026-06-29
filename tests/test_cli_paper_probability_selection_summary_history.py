@@ -242,7 +242,7 @@ def test_history_cli_uses_source_env_config_and_prints_aggregate_summary(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    dsn = "postgresql://selection-summary.example.invalid/db"
+    dsn = "postgresql://selection-summary:secret@localhost:54322/db"
     table_name = "paper_probability_selection_summary_reports"
     _set_source_summary_db_env(monkeypatch, dsn, table_name=table_name)
     calls: list[dict[str, object]] = []
@@ -321,8 +321,8 @@ def test_history_cli_without_persist_does_not_read_history_db_env_or_sink(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    dsn = "postgresql://selection-summary.example.invalid/db"
-    history_dsn = "postgresql://history-destination.example.invalid/db"
+    dsn = "postgresql://selection-summary:secret@localhost:54322/db"
+    history_dsn = "postgresql://selection-history:secret@localhost:54322/db"
     _set_source_summary_db_env(monkeypatch, dsn)
     _set_history_db_env(monkeypatch, history_dsn)
     history_env_calls = 0
@@ -368,7 +368,7 @@ def test_history_cli_db_read_errors_redact_dsn_table_payload_and_hash(
 ) -> None:
     dsn = (
         "postgresql://history_user:super-secret-password@"
-        "selection-source-secret.example.invalid/db?sslmode=require"
+        "localhost:54322/db?sslmode=require"
     )
     table_name = "paper_probability_selection_summary_reports"
     _set_source_summary_db_env(monkeypatch, dsn, table_name=table_name)
@@ -410,8 +410,8 @@ def test_history_cli_optional_persistence_uses_history_env_db_config_not_local_f
     capsys: pytest.CaptureFixture[str],
     tmp_path: Any,
 ) -> None:
-    source_dsn = "postgresql://selection-summary.example.invalid/db"
-    history_dsn = "postgresql://selection-summary-history.example.invalid/db"
+    source_dsn = "postgresql://selection-summary:secret@localhost:54322/db"
+    history_dsn = "postgresql://selection-history:secret@localhost:54322/db"
     source_table_name = "paper_probability_selection_summary_reports"
     history_table_name = "paper_probability_selection_summary_history_reports"
     _set_source_summary_db_env(monkeypatch, source_dsn, table_name=source_table_name)
@@ -458,11 +458,11 @@ def test_history_cli_persistence_errors_redact_source_history_payload_and_hash(
 ) -> None:
     source_dsn = (
         "postgresql://source_user:source-secret-password@"
-        "selection-source-secret.example.invalid/db?sslmode=require"
+        "localhost:54322/db?sslmode=require"
     )
     history_dsn = (
         "postgresql://history_user:history-secret-password@"
-        "selection-history-secret.example.invalid/db?sslmode=require"
+        "localhost:54322/db?sslmode=require"
     )
     source_table_name = "paper_probability_selection_summary_reports_secret"
     history_table_name = "paper_probability_selection_summary_history_reports_secret"
@@ -545,7 +545,7 @@ def test_history_helper_rejects_invalid_limit_before_runner_or_psycopg(
 
     with pytest.raises(ValueError, match=f"{COMMAND} limit must be positive"):
         helper(
-            dsn="postgresql://selection-summary.example.invalid/db",
+            dsn="postgresql://selection-summary:secret@localhost:54322/db",
             table_name="paper_probability_selection_summary_reports",
             limit=bad_limit,
             runner=forbidden_runner,
@@ -558,7 +558,7 @@ def test_history_helper_rejects_invalid_limit_before_runner_or_psycopg(
 def test_history_helper_default_load_path_reads_source_summaries_chronologically(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    dsn = "postgresql://selection-summary.example.invalid/db"
+    dsn = "postgresql://selection-summary:secret@localhost:54322/db"
     table_name = "paper_probability_selection_summary_reports"
     report = _history_report()
     newest = SimpleNamespace(generated_at=datetime(2026, 6, 27, 11, 0, tzinfo=UTC))
