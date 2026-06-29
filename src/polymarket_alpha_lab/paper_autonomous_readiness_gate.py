@@ -17,6 +17,9 @@ from polymarket_alpha_lab.paper_autonomous_screening_decision_support_gate_db_hi
 from polymarket_alpha_lab.paper_strategy_cycle_report_history_gate import (
     PaperStrategyCycleReportHistoryGateReport,
 )
+from polymarket_alpha_lab.paper_strategy_risk_audit_history_gate import (
+    PaperStrategyRiskAuditHistoryGateReport,
+)
 
 
 DEFAULT_PAPER_AUTONOMOUS_READINESS_GATE_CONFIG_VERSION = (
@@ -33,17 +36,20 @@ SCREENING_SOURCE_NAME = "screening_decision_support_gate_db_history_health"
 STRATEGY_CYCLE_HISTORY_GATE_SOURCE_NAME = "strategy_cycle_report_history_gate"
 ALLOCATION_SOURCE_NAME = "allocation_proposal_db_history_health_trend_gate"
 INVESTMENT_LEDGER_SOURCE_NAME = "investment_ledger_db_history_health_trend_gate"
-LEGACY_SOURCE_NAMES = (
-    SCREENING_SOURCE_NAME,
-    ALLOCATION_SOURCE_NAME,
-    INVESTMENT_LEDGER_SOURCE_NAME,
-)
-SOURCE_NAMES = (
+STRATEGY_RISK_AUDIT_HISTORY_GATE_SOURCE_NAME = "strategy_risk_audit_history_gate"
+CANONICAL_SOURCE_NAMES = (
     SCREENING_SOURCE_NAME,
     STRATEGY_CYCLE_HISTORY_GATE_SOURCE_NAME,
     ALLOCATION_SOURCE_NAME,
     INVESTMENT_LEDGER_SOURCE_NAME,
+    STRATEGY_RISK_AUDIT_HISTORY_GATE_SOURCE_NAME,
 )
+REQUIRED_SOURCE_NAMES = (
+    SCREENING_SOURCE_NAME,
+    ALLOCATION_SOURCE_NAME,
+    INVESTMENT_LEDGER_SOURCE_NAME,
+)
+SOURCE_NAMES = CANONICAL_SOURCE_NAMES
 
 __all__ = (
     "DEFAULT_PAPER_AUTONOMOUS_READINESS_GATE_CONFIG_VERSION",
@@ -200,6 +206,7 @@ def build_paper_autonomous_readiness_gate_report(
     config: PaperAutonomousReadinessGateConfig,
     generated_at: datetime,
     strategy_cycle_history_gate_report: object | None = None,
+    strategy_risk_audit_history_gate_report: object | None = None,
 ) -> PaperAutonomousReadinessGateReport:
     if type(screening_report) is not PaperAutonomousScreeningDecisionSupportGateDbHistoryHealthReport:
         raise ValueError(
@@ -231,6 +238,15 @@ def build_paper_autonomous_readiness_gate_report(
             "strategy_cycle_history_gate_report must be a "
             "PaperStrategyCycleReportHistoryGateReport",
         )
+    if (
+        strategy_risk_audit_history_gate_report is not None
+        and type(strategy_risk_audit_history_gate_report)
+        is not PaperStrategyRiskAuditHistoryGateReport
+    ):
+        raise ValueError(
+            "strategy_risk_audit_history_gate_report must be a "
+            "PaperStrategyRiskAuditHistoryGateReport",
+        )
     if type(config) is not PaperAutonomousReadinessGateConfig:
         raise ValueError("config must be a PaperAutonomousReadinessGateConfig")
 
@@ -243,6 +259,11 @@ def build_paper_autonomous_readiness_gate_report(
         _validate_hard_flags(
             "strategy_cycle_history_gate_report",
             strategy_cycle_history_gate_report,
+        )
+    if strategy_risk_audit_history_gate_report is not None:
+        _validate_hard_flags(
+            "strategy_risk_audit_history_gate_report",
+            strategy_risk_audit_history_gate_report,
         )
 
     source_statuses = [
@@ -284,6 +305,18 @@ def build_paper_autonomous_readiness_gate_report(
             ),
         ),
     )
+    if strategy_risk_audit_history_gate_report is not None:
+        source_statuses.append(
+            PaperAutonomousReadinessGateSourceStatus(
+                source_name=STRATEGY_RISK_AUDIT_HISTORY_GATE_SOURCE_NAME,
+                status=strategy_risk_audit_history_gate_report.gate_status,
+                recommended_next_step=(
+                    strategy_risk_audit_history_gate_report.recommended_next_step
+                ),
+                generated_at=strategy_risk_audit_history_gate_report.generated_at,
+                config_version=strategy_risk_audit_history_gate_report.config_version,
+            ),
+        )
     source_statuses_tuple = tuple(source_statuses)
     source_config_versions = tuple(
         (row.source_name, row.config_version) for row in source_statuses_tuple
@@ -367,8 +400,10 @@ def _normalize_source_statuses(
     for row in rows:
         if type(row) is not PaperAutonomousReadinessGateSourceStatus:
             raise ValueError("source_statuses must contain exact source status rows")
-    if tuple(row.source_name for row in rows) not in (LEGACY_SOURCE_NAMES, SOURCE_NAMES):
-        raise ValueError("source_statuses must contain the canonical source sequence")
+    _validate_source_name_sequence(
+        "source_statuses",
+        tuple(row.source_name for row in rows),
+    )
     return rows
 
 
@@ -385,12 +420,22 @@ def _normalize_source_config_versions(
         _require_source_name("source_config_versions", source_name)
         _require_canonical_string("source_config_versions", config_version)
         rows.append((source_name, config_version))
-    if tuple(source_name for source_name, _config_version in rows) not in (
-        LEGACY_SOURCE_NAMES,
-        SOURCE_NAMES,
-    ):
-        raise ValueError("source_config_versions must contain the canonical source sequence")
+    _validate_source_name_sequence(
+        "source_config_versions",
+        tuple(source_name for source_name, _config_version in rows),
+    )
     return tuple(rows)
+
+
+def _validate_source_name_sequence(field_name: str, source_names: tuple[str, ...]) -> None:
+    if len(set(source_names)) != len(source_names):
+        raise ValueError(f"{field_name} must not contain duplicate sources")
+    if not set(REQUIRED_SOURCE_NAMES).issubset(source_names):
+        raise ValueError(f"{field_name} must contain required sources")
+    if source_names != tuple(
+        name for name in CANONICAL_SOURCE_NAMES if name in source_names
+    ):
+        raise ValueError(f"{field_name} must contain the canonical source sequence")
 
 
 def _normalize_reason_code_counts(

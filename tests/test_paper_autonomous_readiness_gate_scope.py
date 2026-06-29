@@ -24,6 +24,7 @@ ALLOWED_IMPORTS = {
         "paper_autonomous_screening_decision_support_gate_db_history_health"
     ),
     "polymarket_alpha_lab.paper_strategy_cycle_report_history_gate",
+    "polymarket_alpha_lab.paper_strategy_risk_audit_history_gate",
 }
 
 

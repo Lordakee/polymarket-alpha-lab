@@ -25,6 +25,10 @@ from polymarket_alpha_lab.paper_strategy_cycle_report_history_gate import (
     PaperStrategyCycleReportHistoryGateReasonCodeCount,
     PaperStrategyCycleReportHistoryGateReport,
 )
+from polymarket_alpha_lab.paper_strategy_risk_audit_history_gate import (
+    PaperStrategyRiskAuditHistoryGateReasonCodeCount,
+    PaperStrategyRiskAuditHistoryGateReport,
+)
 
 
 GENERATED_AT = datetime(2026, 6, 25, 12, 0, tzinfo=UTC)
@@ -276,6 +280,79 @@ def _strategy_cycle_history_gate_report(
     )
 
 
+def _strategy_risk_audit_history_gate_report(
+    *,
+    gate_status: str = "pass",
+    recommended_next_step: str | None = None,
+    generated_at: datetime = GENERATED_AT,
+    config_version: str = "paper-strategy-risk-audit-history-gate-v0",
+    source_config_version: str = "paper-strategy-risk-audit-history-v0",
+    reason_codes: tuple[str, ...] | None = None,
+    reason_code_counts: tuple[
+        PaperStrategyRiskAuditHistoryGateReasonCodeCount,
+        ...
+    ]
+    | None = None,
+) -> PaperStrategyRiskAuditHistoryGateReport:
+    if recommended_next_step is None:
+        recommended_next_step = {
+            "pass": "allow_strategy_risk_audit_history_gate",
+            "watch": "throttle_strategy_risk_audit_history_gate",
+            "blocked": "block_strategy_risk_audit_history_gate",
+        }[gate_status]
+    if reason_codes is None:
+        reason_codes = {
+            "pass": ("paper_strategy_risk_audit_history_gate_passed",),
+            "watch": (
+                "source_strategy_risk_audit_history_insufficient_evidence",
+            ),
+            "blocked": ("source_strategy_risk_audit_history_blocked_by_risk",),
+        }[gate_status]
+    if reason_code_counts is None:
+        reason_code_counts = tuple(
+            PaperStrategyRiskAuditHistoryGateReasonCodeCount(
+                reason_code=reason_code,
+                report_count=1,
+            )
+            for reason_code in reason_codes
+        )
+    source_history_status = {
+        "pass": "latest_audit_ready",
+        "watch": "latest_insufficient_evidence",
+        "blocked": "latest_blocked_by_risk",
+    }[gate_status]
+    latest_audit_status = {
+        "pass": "audit_ready",
+        "watch": "insufficient_evidence",
+        "blocked": "blocked_by_risk",
+    }[gate_status]
+    return PaperStrategyRiskAuditHistoryGateReport(
+        generated_at=generated_at,
+        config_version=config_version,
+        source_config_version=source_config_version,
+        source_generated_at=generated_at - timedelta(minutes=25),
+        gate_status=gate_status,
+        recommended_next_step=recommended_next_step,
+        reason_code_counts=reason_code_counts,
+        source_history_status=source_history_status,
+        source_report_count=3,
+        latest_source_generated_at=generated_at - timedelta(minutes=25),
+        latest_source_age_seconds=1_500,
+        latest_audit_status=latest_audit_status,
+        latest_pass_count=6 if gate_status == "pass" else 0,
+        latest_fail_count=6 if gate_status == "blocked" else 0,
+        latest_incomplete_count=6 if gate_status == "watch" else 0,
+        consecutive_non_ready_count=0 if gate_status == "pass" else 1,
+        consecutive_blocked_by_risk_count=1 if gate_status == "blocked" else 0,
+        consecutive_insufficient_evidence_count=1 if gate_status == "watch" else 0,
+        latest_failed_gate_names=("paper_history",) if gate_status == "blocked" else (),
+        latest_incomplete_gate_names=(
+            ("settlement_evidence",) if gate_status == "watch" else ()
+        ),
+        reason_codes=reason_codes,
+    )
+
+
 def _readiness_report(
     *,
     screening_report: (
@@ -290,6 +367,9 @@ def _readiness_report(
     strategy_cycle_history_gate_report: (
         PaperStrategyCycleReportHistoryGateReport | None
     ) = None,
+    strategy_risk_audit_history_gate_report: (
+        PaperStrategyRiskAuditHistoryGateReport | None
+    ) = None,
     generated_at: datetime = GENERATED_AT,
 ):
     api = _api()
@@ -300,6 +380,9 @@ def _readiness_report(
         config=api.PaperAutonomousReadinessGateConfig(),
         generated_at=generated_at,
         strategy_cycle_history_gate_report=strategy_cycle_history_gate_report,
+        strategy_risk_audit_history_gate_report=(
+            strategy_risk_audit_history_gate_report
+        ),
     )
 
 
@@ -436,6 +519,119 @@ def test_readiness_gate_strategy_cycle_watch_throttles_and_blocked_blocks():
     )
     assert blocked_report.readiness_status == "blocked"
     assert "strategy_cycle_report_history_gate_blocked" in blocked_report.reason_codes
+
+
+def test_readiness_gate_includes_strategy_risk_audit_history_gate_as_optional_source():
+    report = _readiness_report(
+        strategy_risk_audit_history_gate_report=(
+            _strategy_risk_audit_history_gate_report()
+        ),
+    )
+
+    assert tuple(row.source_name for row in report.source_statuses) == (
+        "screening_decision_support_gate_db_history_health",
+        "allocation_proposal_db_history_health_trend_gate",
+        "investment_ledger_db_history_health_trend_gate",
+        "strategy_risk_audit_history_gate",
+    )
+    assert "strategy_risk_audit_history_gate_pass" in report.reason_codes
+
+
+def test_readiness_gate_strategy_risk_audit_history_gate_watch_throttles_readiness():
+    report = _readiness_report(
+        strategy_risk_audit_history_gate_report=(
+            _strategy_risk_audit_history_gate_report(gate_status="watch")
+        ),
+    )
+
+    assert report.readiness_status == "watch"
+    assert report.recommended_next_step == "throttle_paper_autonomous_readiness_review"
+    assert "strategy_risk_audit_history_gate_watch" in report.reason_codes
+    assert "paper_autonomous_readiness_gate_passed" not in report.reason_codes
+
+
+def test_readiness_gate_strategy_risk_audit_history_gate_blocked_blocks_readiness():
+    report = _readiness_report(
+        strategy_risk_audit_history_gate_report=(
+            _strategy_risk_audit_history_gate_report(gate_status="blocked")
+        ),
+    )
+
+    assert report.readiness_status == "blocked"
+    assert report.recommended_next_step == "block_paper_autonomous_readiness_review"
+    assert "strategy_risk_audit_history_gate_blocked" in report.reason_codes
+
+
+def test_readiness_gate_optional_sources_produce_five_source_canonical_order():
+    report = _readiness_report(
+        strategy_cycle_history_gate_report=_strategy_cycle_history_gate_report(),
+        strategy_risk_audit_history_gate_report=(
+            _strategy_risk_audit_history_gate_report()
+        ),
+    )
+
+    assert tuple(row.source_name for row in report.source_statuses) == (
+        "screening_decision_support_gate_db_history_health",
+        "strategy_cycle_report_history_gate",
+        "allocation_proposal_db_history_health_trend_gate",
+        "investment_ledger_db_history_health_trend_gate",
+        "strategy_risk_audit_history_gate",
+    )
+    assert report.reason_codes == (
+        "allocation_proposal_db_history_health_trend_gate_pass",
+        "investment_ledger_db_history_health_trend_gate_pass",
+        "paper_autonomous_readiness_gate_passed",
+        "screening_decision_support_gate_db_history_health_pass",
+        "strategy_cycle_report_history_gate_pass",
+        "strategy_risk_audit_history_gate_pass",
+    )
+
+
+def test_readiness_gate_rejects_noncanonical_optional_source_constructor_ordering():
+    report = _readiness_report(
+        strategy_cycle_history_gate_report=_strategy_cycle_history_gate_report(),
+        strategy_risk_audit_history_gate_report=(
+            _strategy_risk_audit_history_gate_report()
+        ),
+    )
+    source_statuses = (
+        report.source_statuses[0],
+        report.source_statuses[1],
+        report.source_statuses[2],
+        report.source_statuses[4],
+        report.source_statuses[3],
+    )
+
+    with pytest.raises(ValueError, match="canonical source sequence"):
+        replace(
+            report,
+            source_statuses=source_statuses,
+            source_config_versions=tuple(
+                (row.source_name, row.config_version) for row in source_statuses
+            ),
+        )
+
+
+def test_readiness_gate_builder_rejects_non_exact_strategy_risk_audit_history_gate_report_type():
+    api = _api()
+
+    class RiskAuditGateReportSubclass(PaperStrategyRiskAuditHistoryGateReport):
+        pass
+
+    with pytest.raises(
+        ValueError,
+        match="strategy_risk_audit_history_gate_report must be a",
+    ):
+        api.build_paper_autonomous_readiness_gate_report(
+            _screening_report(),
+            _allocation_report(),
+            _ledger_report(),
+            config=api.PaperAutonomousReadinessGateConfig(),
+            generated_at=GENERATED_AT,
+            strategy_risk_audit_history_gate_report=(
+                object.__new__(RiskAuditGateReportSubclass)
+            ),
+        )
 
 
 def test_readiness_gate_rejects_noncanonical_four_source_constructor_sequence():
@@ -674,6 +870,20 @@ def test_readiness_gate_rejects_source_reports_without_hard_flags(flag_name: str
 
     with pytest.raises(ValueError, match=f"allocation_report must be {flag_name}"):
         _readiness_report(allocation_report=source_report)
+
+
+@pytest.mark.parametrize("flag_name", ("paper_only", "report_only", "readonly"))
+def test_readiness_gate_rejects_strategy_risk_audit_history_gate_without_hard_flags(
+    flag_name: str,
+):
+    source_report = _strategy_risk_audit_history_gate_report()
+    object.__setattr__(source_report, flag_name, False)
+
+    with pytest.raises(
+        ValueError,
+        match=f"strategy_risk_audit_history_gate_report must be {flag_name}",
+    ):
+        _readiness_report(strategy_risk_audit_history_gate_report=source_report)
 
 
 def test_readiness_gate_source_code_has_no_unsafe_surface():
