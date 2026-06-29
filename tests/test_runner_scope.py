@@ -241,6 +241,8 @@ ALLOWED_REQUIRED_DOMAIN_NAMES = {
     "client",
     "cycle_config",
     "cycle_report_log_path",
+    "cycle_report_sink",
+    "cycle_reports_persisted",
     "nav_log_path",
     "on_cycle_error",
     "repeat_mode",
@@ -313,6 +315,26 @@ def runner_exports(exports: tuple[str, ...]) -> tuple[str, ...]:
         for name in exports
         if name == "run_strategy_loop" or name == "RunLoopSummary"
     )
+
+
+def run_strategy_loop_keyword_names(tree: ast.AST) -> tuple[str, ...]:
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == "run_strategy_loop":
+            return tuple(argument.arg for argument in node.args.kwonlyargs)
+    raise AssertionError("run_strategy_loop not found")
+
+
+def run_loop_summary_field_names(tree: ast.AST) -> tuple[str, ...]:
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ClassDef) or node.name != "RunLoopSummary":
+            continue
+        return tuple(
+            statement.target.id
+            for statement in node.body
+            if isinstance(statement, ast.AnnAssign)
+            and isinstance(statement.target, ast.Name)
+        )
+    raise AssertionError("RunLoopSummary not found")
 
 
 def public_export_fragment_matches(name: str) -> bool:
@@ -441,6 +463,17 @@ def test_runner_public_exports_exactly_loop_api():
     assert assigned_exports == EXPECTED_EXPORTS
     for name in assigned_exports:
         assert not public_export_fragment_matches(name), name
+
+
+def test_runner_public_loop_api_allows_cycle_report_sink_without_db_imports():
+    tree = parse_module()
+    keyword_names = run_strategy_loop_keyword_names(tree)
+    summary_fields = run_loop_summary_field_names(tree)
+
+    assert "cycle_report_sink" in keyword_names
+    assert "cycle_reports_persisted" in summary_fields
+    assert not any("db" in module_name for module_name in imported_modules(tree))
+    assert not any("psycopg" in module_name for module_name in imported_modules(tree))
 
 
 def test_runner_does_not_define_forbidden_live_or_advice_surface_names():

@@ -95,6 +95,7 @@ class RunLoopSummary:
     action_gated_queues_persisted: int = 0
     execution_pipelines_persisted: int = 0
     execution_reconciliations_persisted: int = 0
+    cycle_reports_persisted: int = 0
 
     def __post_init__(self) -> None:
         _require_nonnegative_int("iterations_completed", self.iterations_completed)
@@ -111,6 +112,10 @@ class RunLoopSummary:
         _require_nonnegative_int(
             "execution_reconciliations_persisted",
             self.execution_reconciliations_persisted,
+        )
+        _require_nonnegative_int(
+            "cycle_reports_persisted",
+            self.cycle_reports_persisted,
         )
         if not isinstance(self.first_iteration_at, datetime):
             raise ValueError("first_iteration_at must be a datetime")
@@ -144,6 +149,7 @@ def run_strategy_loop(
     starting_cash: Decimal,
     nav_log_path: Path | str | None,
     cycle_report_log_path: Path | str,
+    cycle_report_sink: object | None = None,
     repeat_mode: str = "once",
     interval_seconds: int = 0,
     max_iterations: int = 1,
@@ -165,14 +171,15 @@ def run_strategy_loop(
 
     (a) ``report = run_strategy_cycle(client, scan_config, cycle_config)``.
     (b) ``PaperStrategyCycleLog(cycle_report_log_path).append(report)``.
-    (c) If ``cycle_config.paper_trade_journal_path`` is set AND the journal file
+    (c) If ``cycle_report_sink`` is set, call ``cycle_report_sink(report)``.
+    (d) If ``cycle_config.paper_trade_journal_path`` is set AND the journal file
         exists, ``mark_paper_portfolio_nav(...)``; otherwise skip the NAV mark
         (first-run / no paper trades yet) and increment ``nav_marks_skipped``.
         ``FileNotFoundError`` from the NAV journal read (race: file vanished
         between the existence check and read) is also treated as a benign skip,
         never a cycle failure. Later NAV log/client/sink failures are cycle
         failures.
-    (d) If ``repeat_mode == "interval"`` and more iterations remain,
+    (e) If ``repeat_mode == "interval"`` and more iterations remain,
         ``time.sleep(interval_seconds)``.
 
     ``on_cycle_error="log_and_continue"`` records the failure
@@ -180,7 +187,12 @@ def run_strategy_loop(
     ``on_cycle_error="raise"`` propagates immediately. The returned
     ``RunLoopSummary`` is paper-only/report-only.
 
-    ``cycle_snapshot_source`` / ``cycle_snapshot_sink``,
+    During this transition node, the DB sink intentionally runs after the
+    legacy JSONL append. A DB sink failure can therefore leave the compatibility
+    JSONL row present while the DB row is missing; later DB-primary default work
+    can reverse or remove that asymmetry.
+
+    ``cycle_report_sink``, ``cycle_snapshot_source`` / ``cycle_snapshot_sink``,
     ``action_gated_queue_source`` / ``action_gated_queue_sink``,
     ``paper_trade_record_sink``, ``nav_snapshot_sink``,
     ``execution_pipeline_source`` / ``execution_pipeline_sink``, and
@@ -195,6 +207,7 @@ def run_strategy_loop(
         starting_cash=starting_cash,
         nav_log_path=nav_log_path,
         cycle_report_log_path=cycle_report_log_path,
+        cycle_report_sink=cycle_report_sink,
         repeat_mode=repeat_mode,
         interval_seconds=interval_seconds,
         max_iterations=max_iterations,
@@ -214,6 +227,7 @@ def run_strategy_loop(
     iterations_completed = 0
     iterations_failed = 0
     nav_marks_skipped = 0
+    cycle_reports_persisted = 0
     cycle_snapshots_persisted = 0
     action_gated_queues_persisted = 0
     execution_pipelines_persisted = 0
@@ -238,7 +252,11 @@ def run_strategy_loop(
             )
             # (b) Append the validated report to the cycle JSONL log.
             PaperStrategyCycleLog(cycle_report_log_path).append(report)
-            # (c) Optional supplied recommendation-cycle snapshot persistence.
+            # (c) Optional supplied full cycle report persistence.
+            if cycle_report_sink is not None:
+                cycle_report_sink(report)
+                cycle_reports_persisted += 1
+            # (d) Optional supplied recommendation-cycle snapshot persistence.
             if cycle_snapshot_source is not None and cycle_snapshot_sink is not None:
                 cycle_snapshot = cycle_snapshot_source(
                     cycle_report=report,
@@ -247,7 +265,7 @@ def run_strategy_loop(
                 _require_snapshot_safety_flags(cycle_snapshot)
                 cycle_snapshot_sink(cycle_snapshot)
                 cycle_snapshots_persisted += 1
-            # (d) Optional supplied action-gated queue persistence.
+            # (e) Optional supplied action-gated queue persistence.
             if (
                 action_gated_queue_source is not None
                 and action_gated_queue_sink is not None
@@ -259,7 +277,7 @@ def run_strategy_loop(
                 _require_action_gated_queue_safety_flags(action_gated_queue)
                 action_gated_queue_sink(action_gated_queue)
                 action_gated_queues_persisted += 1
-            # (e) Optional paper execution pipeline.
+            # (f) Optional paper execution pipeline.
             if (
                 execution_pipeline_source is not None
                 and execution_pipeline_sink is not None
@@ -270,7 +288,7 @@ def run_strategy_loop(
                 )
                 execution_pipeline_sink(pipeline_report)
                 execution_pipelines_persisted += 1
-            # (f) Optional execution reconciliation persistence.
+            # (g) Optional execution reconciliation persistence.
             if (
                 execution_reconciliation_source is not None
                 and execution_reconciliation_sink is not None
@@ -284,7 +302,7 @@ def run_strategy_loop(
                 )
                 execution_reconciliation_sink(reconciliation_report)
                 execution_reconciliations_persisted += 1
-            # (g) Optional NAV mark.
+            # (h) Optional NAV mark.
             nav_marks_skipped += _mark_nav_or_skip(
                 cycle_config=cycle_config,
                 client=client,
@@ -318,6 +336,7 @@ def run_strategy_loop(
         action_gated_queues_persisted=action_gated_queues_persisted,
         execution_pipelines_persisted=execution_pipelines_persisted,
         execution_reconciliations_persisted=execution_reconciliations_persisted,
+        cycle_reports_persisted=cycle_reports_persisted,
     )
 
 
@@ -370,6 +389,7 @@ def _validate_loop_params(
     starting_cash: object,
     nav_log_path: object,
     cycle_report_log_path: object,
+    cycle_report_sink: object,
     repeat_mode: str,
     interval_seconds: object,
     max_iterations: object,
@@ -419,6 +439,8 @@ def _validate_loop_params(
         raise ValueError("max_iterations must be positive")
     if on_cycle_error not in ("log_and_continue", "raise"):
         raise ValueError("on_cycle_error must be 'log_and_continue' or 'raise'")
+    if cycle_report_sink is not None and not callable(cycle_report_sink):
+        raise ValueError("cycle_report_sink must be callable or None")
     if cycle_snapshot_source is not None and not callable(cycle_snapshot_source):
         raise ValueError("cycle_snapshot_source must be callable or None")
     if cycle_snapshot_sink is not None and not callable(cycle_snapshot_sink):

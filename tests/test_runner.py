@@ -767,6 +767,101 @@ def test_none_journal_path_skips_nav_mark_without_counting_as_skip(tmp_path):
     assert not nav_log.exists()
 
 
+def test_cycle_report_sink_receives_each_successful_report(tmp_path):
+    market, books = _screening_ready_market_and_books()
+    reports = []
+
+    with patch("polymarket_alpha_lab.runner.time.sleep"):
+        summary = run_strategy_loop(
+            client=FakeMarketDataClient([market], books),
+            scan_config=scan_config(tmp_path),
+            cycle_config=cycle_config(),
+            starting_cash=Decimal("10000"),
+            nav_log_path=tmp_path / "nav.jsonl",
+            cycle_report_log_path=tmp_path / "cycle.jsonl",
+            repeat_mode="interval",
+            interval_seconds=0,
+            max_iterations=2,
+            cycle_report_sink=reports.append,
+        )
+
+    assert summary.iterations_completed == 2
+    assert summary.iterations_failed == 0
+    assert summary.cycle_reports_persisted == 2
+    assert len(reports) == 2
+    assert all(report.paper_only is True for report in reports)
+    assert all(report.report_only is True for report in reports)
+    assert len(PaperStrategyCycleLog.read(tmp_path / "cycle.jsonl")) == 2
+
+
+def test_cycle_report_sink_failure_counts_as_iteration_failure(tmp_path):
+    market, books = _screening_ready_market_and_books()
+
+    def broken_cycle_report_sink(report):
+        raise RuntimeError("cycle report db unavailable")
+
+    summary = run_strategy_loop(
+        client=FakeMarketDataClient([market], books),
+        scan_config=scan_config(tmp_path),
+        cycle_config=cycle_config(),
+        starting_cash=Decimal("10000"),
+        nav_log_path=tmp_path / "nav.jsonl",
+        cycle_report_log_path=tmp_path / "cycle.jsonl",
+        cycle_report_sink=broken_cycle_report_sink,
+        on_cycle_error="log_and_continue",
+    )
+
+    assert summary.iterations_completed == 0
+    assert summary.iterations_failed == 1
+    assert summary.cycle_reports_persisted == 0
+    assert summary.last_error == "RuntimeError: cycle report db unavailable"
+
+
+def test_cycle_report_sink_failure_propagates_under_raise(tmp_path):
+    market, books = _screening_ready_market_and_books()
+
+    def broken_cycle_report_sink(report):
+        raise RuntimeError("cycle report db unavailable")
+
+    with pytest.raises(RuntimeError, match="cycle report db unavailable"):
+        run_strategy_loop(
+            client=FakeMarketDataClient([market], books),
+            scan_config=scan_config(tmp_path),
+            cycle_config=cycle_config(),
+            starting_cash=Decimal("10000"),
+            nav_log_path=tmp_path / "nav.jsonl",
+            cycle_report_log_path=tmp_path / "cycle.jsonl",
+            cycle_report_sink=broken_cycle_report_sink,
+            on_cycle_error="raise",
+        )
+
+
+def test_cycle_report_log_is_appended_before_cycle_report_sink_failure(tmp_path):
+    market, books = _screening_ready_market_and_books()
+    cycle_log = tmp_path / "cycle.jsonl"
+
+    def broken_cycle_report_sink(report):
+        assert len(PaperStrategyCycleLog.read(cycle_log)) == 1
+        raise RuntimeError("cycle report db unavailable")
+
+    summary = run_strategy_loop(
+        client=FakeMarketDataClient([market], books),
+        scan_config=scan_config(tmp_path),
+        cycle_config=cycle_config(),
+        starting_cash=Decimal("10000"),
+        nav_log_path=tmp_path / "nav.jsonl",
+        cycle_report_log_path=cycle_log,
+        cycle_report_sink=broken_cycle_report_sink,
+        on_cycle_error="log_and_continue",
+    )
+
+    assert summary.iterations_completed == 0
+    assert summary.iterations_failed == 1
+    assert summary.cycle_reports_persisted == 0
+    assert summary.last_error == "RuntimeError: cycle report db unavailable"
+    assert len(PaperStrategyCycleLog.read(cycle_log)) == 1
+
+
 def test_cycle_snapshot_source_and_sink_run_once_per_completed_iteration(tmp_path):
     market, books = _screening_ready_market_and_books()
     client = FakeMarketDataClient([market], books)
@@ -1249,6 +1344,10 @@ def test_execution_reconciliation_sink_failure_counts_as_iteration_failure(tmp_p
             "nav_snapshot_sink must be callable or None",
         ),
         (
+            {"cycle_report_sink": object()},
+            "cycle_report_sink must be callable or None",
+        ),
+        (
             {"action_gated_queue_source": object()},
             "action_gated_queue_source must be callable or None",
         ),
@@ -1280,6 +1379,7 @@ def test_run_strategy_loop_rejects_invalid_loop_params(tmp_path, overrides, mess
     defaults.update(overrides)
     with pytest.raises(ValueError, match=message):
         run_strategy_loop(**defaults)
+    assert client.list_markets_calls == []
 
 
 def test_run_strategy_loop_rejects_non_protocol_client(tmp_path):
@@ -1307,6 +1407,7 @@ def test_run_loop_summary_is_frozen_and_enforces_paper_flags():
     with pytest.raises(FrozenInstanceError):
         summary.last_error = "x"  # type: ignore[misc]
     assert summary.action_gated_queues_persisted == 0
+    assert summary.cycle_reports_persisted == 0
     assert summary.execution_reconciliations_persisted == 0
 
 
@@ -1325,6 +1426,7 @@ def test_run_loop_summary_preserves_legacy_positional_constructor_shape():
 
     assert summary.paper_only is True
     assert summary.report_only is True
+    assert summary.cycle_reports_persisted == 0
     assert summary.action_gated_queues_persisted == 0
     assert summary.execution_reconciliations_persisted == 0
 
@@ -1335,6 +1437,10 @@ def test_run_loop_summary_preserves_legacy_positional_constructor_shape():
         ({"iterations_completed": -1}, "iterations_completed|nonnegative"),
         ({"iterations_failed": -1}, "iterations_failed|nonnegative"),
         ({"nav_marks_skipped": -1}, "nav_marks_skipped|nonnegative"),
+        (
+            {"cycle_reports_persisted": -1},
+            "cycle_reports_persisted|nonnegative",
+        ),
         (
             {"action_gated_queues_persisted": -1},
             "action_gated_queues_persisted|nonnegative",
