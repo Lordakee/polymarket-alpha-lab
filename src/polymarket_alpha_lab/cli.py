@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import urlsplit
 
 from polymarket_alpha_lab.api import PolymarketPublicClient
 from polymarket_alpha_lab.cost_aware_event_strategy import (
@@ -230,16 +230,19 @@ from polymarket_alpha_lab.supabase_paper_trade_journal_config import (
     from_paper_trade_journal_db_env,
 )
 from polymarket_alpha_lab.supabase_probability_selection_summary_config import (
+    PAPER_PROBABILITY_SELECTION_SUMMARY_DB_DSN_ENV_VAR,
     from_paper_probability_selection_summary_db_env,
 )
 from polymarket_alpha_lab.supabase_probability_selection_scorer_agreement_config import (
     PROBABILITY_SELECTION_SCORER_AGREEMENT_DB_DSN_ENV_VAR,
     from_probability_selection_scorer_agreement_db_env,
 )
+from polymarket_alpha_lab.supabase_local_dsn import validate_local_postgres_dsn
 from polymarket_alpha_lab.supabase_paper_probability_selection_summary_history_config import (
     from_paper_probability_selection_summary_history_db_env,
 )
 from polymarket_alpha_lab.supabase_autonomous_market_scorer_config import (
+    AUTONOMOUS_MARKET_SCORER_DB_DSN_ENV_VAR,
     from_autonomous_market_scorer_db_env,
 )
 from polymarket_alpha_lab.supabase_strategy_candidate_research_queue_config import (
@@ -362,11 +365,6 @@ ProbabilitySelectionScorerAgreementDbSink = Callable[..., object]
 ProbabilitySelectionScorerAgreementTrendRunner = Callable[..., object]
 ProbabilitySelectionScorerAgreementTrendGateRunner = Callable[..., object]
 MAX_PAPER_AUTONOMOUS_READINESS_DIGEST_READ_LIMIT = 500
-_LOCAL_POSTGRES_HOSTS = frozenset(("localhost", "127.0.0.1", "::1"))
-_LOCAL_POSTGRES_DSN_ERROR = (
-    "DSN must point to local Postgres/Supabase on localhost, 127.0.0.1, "
-    "::1, or an explicit Unix socket path"
-)
 _MISSING = object()
 
 
@@ -1142,89 +1140,8 @@ def _require_probability_selection_scorer_agreement_limit(limit: object) -> None
         raise ValueError(f"{command_name} limit must be positive")
 
 
-def _require_local_postgres_dsn(value: str) -> None:
-    if value.startswith("postgresql://"):
-        if _is_local_postgresql_uri(value):
-            return
-        raise ValueError(_LOCAL_POSTGRES_DSN_ERROR)
-    if _is_simple_keyword_dsn(value):
-        if _is_local_keyword_dsn(value):
-            return
-        raise ValueError(_LOCAL_POSTGRES_DSN_ERROR)
-    raise ValueError(_LOCAL_POSTGRES_DSN_ERROR)
-
-
-def _is_local_postgresql_uri(value: str) -> bool:
-    try:
-        parsed = urlsplit(value)
-        port = parsed.port
-    except ValueError:
-        return False
-    if parsed.scheme != "postgresql":
-        return False
-    if port is not None and not _is_valid_port(port):
-        return False
-    query = parse_qs(parsed.query, keep_blank_values=True)
-    if "hostaddr" in query or "service" in query:
-        return False
-    query_hosts = query.get("host", ())
-    if len(query_hosts) > 1:
-        return False
-    hostname = parsed.hostname
-    if hostname:
-        if query_hosts:
-            return False
-        return _is_local_postgres_host(hostname)
-    if not query_hosts:
-        return False
-    return _is_local_query_postgres_host(query_hosts[0])
-
-
 def _is_simple_keyword_dsn(value: str) -> bool:
     return "=" in value and "://" not in value
-
-
-def _is_local_keyword_dsn(value: str) -> bool:
-    try:
-        tokens = shlex.split(value)
-    except ValueError:
-        return False
-    params: dict[str, str] = {}
-    for token in tokens:
-        if "=" not in token:
-            return False
-        key, field_value = token.split("=", 1)
-        if not key:
-            return False
-        params[key.lower()] = field_value
-    if "hostaddr" in params or "service" in params:
-        return False
-    host = params.get("host")
-    if host is None or host == "":
-        return False
-    port = params.get("port")
-    if port is not None:
-        if not port.isdecimal() or not _is_valid_port(int(port)):
-            return False
-    return _is_local_query_postgres_host(host)
-
-
-def _is_local_query_postgres_host(value: str) -> bool:
-    if "," in value or not value:
-        return False
-    if value.startswith("/"):
-        return True
-    return _is_local_postgres_host(value)
-
-
-def _is_local_postgres_host(value: str) -> bool:
-    if "," in value:
-        return False
-    return value.lower() in _LOCAL_POSTGRES_HOSTS
-
-
-def _is_valid_port(value: int) -> bool:
-    return 1 <= value <= 65535
 
 
 def _raise_redacted_db_sink_error(
@@ -3438,15 +3355,26 @@ def main(
                     f"{command_name} requires an autonomous market scorer DB DSN",
                 )
             agreement_dsn = agreement_db_config.dsn
-            _require_local_postgres_dsn(selection_summary_dsn)
-            _require_local_postgres_dsn(scorer_dsn)
+            validate_local_postgres_dsn(
+                selection_summary_dsn,
+                env_var_name=PAPER_PROBABILITY_SELECTION_SUMMARY_DB_DSN_ENV_VAR,
+            )
+            validate_local_postgres_dsn(
+                scorer_dsn,
+                env_var_name=AUTONOMOUS_MARKET_SCORER_DB_DSN_ENV_VAR,
+            )
             if agreement_db_config.enabled:
                 if agreement_dsn is None:
                     raise ValueError(
                         f"{command_name} requires a probability selection scorer "
                         "agreement DB DSN",
                     )
-                _require_local_postgres_dsn(agreement_dsn)
+                validate_local_postgres_dsn(
+                    agreement_dsn,
+                    env_var_name=(
+                        PROBABILITY_SELECTION_SCORER_AGREEMENT_DB_DSN_ENV_VAR
+                    ),
+                )
             try:
                 report = _run_probability_selection_scorer_agreement(
                     selection_summary_dsn=selection_summary_dsn,
@@ -3512,7 +3440,10 @@ def main(
                     f"{PROBABILITY_SELECTION_SCORER_AGREEMENT_DB_DSN_ENV_VAR} "
                     "must be set when DB is enabled",
                 )
-            _require_local_postgres_dsn(dsn)
+            validate_local_postgres_dsn(
+                dsn,
+                env_var_name=PROBABILITY_SELECTION_SCORER_AGREEMENT_DB_DSN_ENV_VAR,
+            )
             try:
                 report = _run_probability_selection_scorer_agreement_trend(
                     dsn=dsn,
@@ -3553,7 +3484,10 @@ def main(
                     f"{PROBABILITY_SELECTION_SCORER_AGREEMENT_DB_DSN_ENV_VAR} "
                     "must be set when DB is enabled",
                 )
-            _require_local_postgres_dsn(dsn)
+            validate_local_postgres_dsn(
+                dsn,
+                env_var_name=PROBABILITY_SELECTION_SCORER_AGREEMENT_DB_DSN_ENV_VAR,
+            )
             try:
                 report = _run_probability_selection_scorer_agreement_trend_gate(
                     dsn=dsn,
@@ -5255,7 +5189,12 @@ def main(
                         f"{PROBABILITY_SELECTION_SCORER_AGREEMENT_DB_DSN_ENV_VAR} "
                         "must be set when DB is enabled",
                     )
-                _require_local_postgres_dsn(agreement_dsn)
+                validate_local_postgres_dsn(
+                    agreement_dsn,
+                    env_var_name=(
+                        PROBABILITY_SELECTION_SCORER_AGREEMENT_DB_DSN_ENV_VAR
+                    ),
+                )
             try:
                 report = _run_paper_autonomous_readiness_digest(
                     dsn=dsn,
@@ -7033,7 +6972,10 @@ def _run_paper_autonomous_readiness_digest(
 ) -> object:
     _require_paper_autonomous_readiness_digest_limit(limit)
     if agreement_dsn is not None:
-        _require_local_postgres_dsn(agreement_dsn)
+        validate_local_postgres_dsn(
+            agreement_dsn,
+            env_var_name=PROBABILITY_SELECTION_SCORER_AGREEMENT_DB_DSN_ENV_VAR,
+        )
     generated_at = datetime.now(UTC)
 
     from polymarket_alpha_lab.paper_autonomous_readiness_digest import (

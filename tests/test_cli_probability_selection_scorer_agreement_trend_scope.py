@@ -103,13 +103,14 @@ FORBIDDEN_PHASE_ESCAPE_FRAGMENTS = {
 
 EXPECTED_BRANCH_CALLS = {
     "from_probability_selection_scorer_agreement_db_env",
-    "_require_local_postgres_dsn",
+    "validate_local_postgres_dsn",
     "_redacted_probability_selection_scorer_agreement_trend_error",
     HELPER,
     SUMMARY,
 }
 
 FORBIDDEN_BRANCH_CALLS = {
+    "_require_local_postgres_dsn",
     "from_paper_probability_selection_summary_db_env",
     "from_autonomous_market_scorer_db_env",
     "from_paper_probability_selection_summary_history_db_env",

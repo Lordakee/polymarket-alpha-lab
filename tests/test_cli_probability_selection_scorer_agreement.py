@@ -20,6 +20,7 @@ from polymarket_alpha_lab.supabase_autonomous_market_scorer_config import (
     AUTONOMOUS_MARKET_SCORER_DB_TABLE_ENV_VAR,
     DEFAULT_AUTONOMOUS_MARKET_SCORER_DB_TABLE,
 )
+from polymarket_alpha_lab.supabase_local_dsn import validate_local_postgres_dsn
 from polymarket_alpha_lab.supabase_probability_selection_summary_config import (
     DEFAULT_PAPER_PROBABILITY_SELECTION_SUMMARY_DB_TABLE,
     PAPER_PROBABILITY_SELECTION_SUMMARY_DB_DSN_ENV_VAR,
@@ -448,8 +449,8 @@ def test_agreement_cli_uses_source_env_configs_and_prints_aggregate_summary(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    selection_dsn = "postgresql://selection:secret@localhost:54322/postgres"
-    scorer_dsn = "postgresql://scorer:secret@127.0.0.1:54322/postgres"
+    selection_dsn = "postgres://selection:secret@localhost:54322/postgres"
+    scorer_dsn = "postgres://scorer:secret@127.0.0.1:54322/postgres"
     selection_table = "paper_probability_selection_summary_reports"
     scorer_table = "autonomous_market_scorer_reports"
     _set_selection_summary_db_env(
@@ -841,7 +842,10 @@ def test_agreement_cli_rejects_remote_db_dsn_before_connecting_or_running(
     ),
 )
 def test_agreement_local_postgres_dsn_validator_accepts_local_forms(dsn: str) -> None:
-    cli._require_local_postgres_dsn(dsn)
+    validate_local_postgres_dsn(
+        dsn,
+        env_var_name=PROBABILITY_SELECTION_SCORER_AGREEMENT_DB_DSN_ENV_VAR,
+    )
 
 
 @pytest.mark.parametrize(
@@ -858,7 +862,10 @@ def test_agreement_local_postgres_dsn_validator_accepts_local_forms(dsn: str) ->
 )
 def test_agreement_local_postgres_dsn_validator_rejects_remote_forms(dsn: str) -> None:
     with pytest.raises(ValueError, match="must point to local Postgres/Supabase"):
-        cli._require_local_postgres_dsn(dsn)
+        validate_local_postgres_dsn(
+            dsn,
+            env_var_name=PROBABILITY_SELECTION_SCORER_AGREEMENT_DB_DSN_ENV_VAR,
+        )
 
 
 def test_agreement_helper_default_load_path_is_readonly_and_honors_limit(

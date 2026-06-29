@@ -12,7 +12,7 @@ SUMMARY = "_print_paper_autonomous_readiness_digest_summary"
 READINESS_DB_ENV = "from_paper_autonomous_readiness_gate_db_env"
 DIGEST_DB_ENV = "from_paper_autonomous_readiness_digest_db_env"
 AGREEMENT_DB_ENV = "from_probability_selection_scorer_agreement_db_env"
-LOCAL_POSTGRES_DSN_VALIDATOR = "_require_local_postgres_dsn"
+LOCAL_POSTGRES_DSN_VALIDATOR = "validate_local_postgres_dsn"
 DEFAULT_DIGEST_DB_SINK = "insert_paper_autonomous_readiness_digest_report_with_psycopg"
 FORBIDDEN_MUTATING_OR_PRIVATE_REFS = (
     "commit",
