@@ -382,7 +382,7 @@ def test_local_observability_trends_db_history_cli_uses_injected_runner_and_prin
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    dsn = "postgresql://local-observability-history.example.invalid/db"
+    dsn = "postgresql://local-observability-history@localhost/db"
     monkeypatch.setenv(LOCAL_OBSERVABILITY_TRENDS_DB_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(LOCAL_OBSERVABILITY_TRENDS_DB_DSN_ENV_VAR, dsn)
     monkeypatch.setenv(
@@ -441,7 +441,7 @@ def test_local_observability_trends_db_history_cli_default_load_path_no_network(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    dsn = "postgresql://local-observability-history.example.invalid/db"
+    dsn = "postgresql://local-observability-history@localhost/db"
     monkeypatch.setenv(LOCAL_OBSERVABILITY_TRENDS_DB_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(LOCAL_OBSERVABILITY_TRENDS_DB_DSN_ENV_VAR, dsn)
     monkeypatch.setenv(
@@ -551,7 +551,7 @@ def test_local_observability_trends_db_history_cli_redacts_dsn_on_read_failure(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    dsn = "postgresql://local-observability-history.example.invalid/db"
+    dsn = "postgresql://local-observability-history@localhost/db"
     monkeypatch.setenv(LOCAL_OBSERVABILITY_TRENDS_DB_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(LOCAL_OBSERVABILITY_TRENDS_DB_DSN_ENV_VAR, dsn)
 
@@ -603,7 +603,7 @@ def test_local_observability_trends_db_history_cli_rejects_non_positive_limit(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    dsn = "postgresql://local-observability-history.example.invalid/db"
+    dsn = "postgresql://local-observability-history@localhost/db"
     monkeypatch.setenv(LOCAL_OBSERVABILITY_TRENDS_DB_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(LOCAL_OBSERVABILITY_TRENDS_DB_DSN_ENV_VAR, dsn)
 

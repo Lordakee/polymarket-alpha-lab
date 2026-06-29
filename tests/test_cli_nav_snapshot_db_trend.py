@@ -137,7 +137,7 @@ def test_nav_snapshot_db_trend_cli_uses_injected_runner_and_prints_summary(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    dsn = "postgresql://nav-snapshot-db-trend.example.invalid/db"
+    dsn = "postgresql://nav-snapshot-db-trend@localhost/db"
     monkeypatch.setenv(PAPER_NAV_SNAPSHOT_DB_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(PAPER_NAV_SNAPSHOT_DB_DSN_ENV_VAR, dsn)
     monkeypatch.setenv(PAPER_NAV_SNAPSHOT_DB_TABLE_ENV_VAR, "paper_nav_archive")
@@ -186,7 +186,7 @@ def test_nav_snapshot_db_trend_cli_default_load_path_no_network(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    dsn = "postgresql://nav-snapshot-db-trend.example.invalid/db"
+    dsn = "postgresql://nav-snapshot-db-trend@localhost/db"
     monkeypatch.setenv(PAPER_NAV_SNAPSHOT_DB_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(PAPER_NAV_SNAPSHOT_DB_DSN_ENV_VAR, dsn)
     monkeypatch.setenv(PAPER_NAV_SNAPSHOT_DB_TABLE_ENV_VAR, "paper_nav_archive")
@@ -284,7 +284,7 @@ def test_nav_snapshot_db_trend_cli_redacts_dsn_on_read_failure(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    dsn = "postgresql://nav-snapshot-db-trend-secret.example.invalid/db"
+    dsn = "postgresql://nav-snapshot-db-trend-secret@localhost/db"
     monkeypatch.setenv(PAPER_NAV_SNAPSHOT_DB_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(PAPER_NAV_SNAPSHOT_DB_DSN_ENV_VAR, dsn)
 
@@ -321,7 +321,7 @@ def test_nav_snapshot_db_trend_cli_rejects_non_positive_limit(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    dsn = "postgresql://nav-snapshot-db-trend.example.invalid/db"
+    dsn = "postgresql://nav-snapshot-db-trend@localhost/db"
     monkeypatch.setenv(PAPER_NAV_SNAPSHOT_DB_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(PAPER_NAV_SNAPSHOT_DB_DSN_ENV_VAR, dsn)
 

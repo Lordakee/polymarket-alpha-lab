@@ -163,7 +163,7 @@ def test_outcome_tracking_db_history_cli_uses_injected_runner_and_prints_summary
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    dsn = "postgresql://outcome-tracking-db-history.example.invalid/db"
+    dsn = "postgresql://outcome-tracking-db-history@localhost/db"
     monkeypatch.setenv(OUTCOME_TRACKING_DB_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(OUTCOME_TRACKING_DB_DSN_ENV_VAR, dsn)
     monkeypatch.setenv(OUTCOME_TRACKING_DB_TABLE_ENV_VAR, "outcome_tracking_archive")
@@ -216,7 +216,7 @@ def test_outcome_tracking_db_history_cli_default_load_path_no_network(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    dsn = "postgresql://outcome-tracking-db-history.example.invalid/db"
+    dsn = "postgresql://outcome-tracking-db-history@localhost/db"
     monkeypatch.setenv(OUTCOME_TRACKING_DB_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(OUTCOME_TRACKING_DB_DSN_ENV_VAR, dsn)
     monkeypatch.setenv(OUTCOME_TRACKING_DB_TABLE_ENV_VAR, "outcome_tracking_archive")
@@ -320,7 +320,7 @@ def test_outcome_tracking_db_history_cli_redacts_dsn_on_read_failure(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    dsn = "postgresql://outcome-tracking-db-history-secret.example.invalid/db"
+    dsn = "postgresql://outcome-tracking-db-history-secret@localhost/db"
     monkeypatch.setenv(OUTCOME_TRACKING_DB_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(OUTCOME_TRACKING_DB_DSN_ENV_VAR, dsn)
 
@@ -357,7 +357,7 @@ def test_outcome_tracking_db_history_cli_rejects_non_positive_limit(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    dsn = "postgresql://outcome-tracking-db-history.example.invalid/db"
+    dsn = "postgresql://outcome-tracking-db-history@localhost/db"
     monkeypatch.setenv(OUTCOME_TRACKING_DB_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(OUTCOME_TRACKING_DB_DSN_ENV_VAR, dsn)
 

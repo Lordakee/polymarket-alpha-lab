@@ -393,7 +393,7 @@ def test_strategy_cycle_cli_wires_paper_trade_db_sink_when_enabled(
     monkeypatch,
     capsys,
 ):
-    fake_dsn = "postgresql://paper-trade.example.invalid/db"
+    fake_dsn = "postgresql://paper-trade@localhost/db"
     monkeypatch.setenv(PAPER_TRADE_JOURNAL_DB_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(PAPER_TRADE_JOURNAL_DB_DSN_ENV_VAR, fake_dsn)
     monkeypatch.setenv(
@@ -454,7 +454,7 @@ def test_strategy_cycle_cli_redacts_dsn_when_paper_trade_db_sink_fails(
     monkeypatch,
     capsys,
 ):
-    fake_dsn = "postgresql://paper-trade.example.invalid/db"
+    fake_dsn = "postgresql://paper-trade@localhost/db"
     monkeypatch.setenv(PAPER_TRADE_JOURNAL_DB_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(PAPER_TRADE_JOURNAL_DB_DSN_ENV_VAR, fake_dsn)
     monkeypatch.setenv(
@@ -1093,7 +1093,7 @@ def test_portfolio_nav_cli_wires_nav_snapshot_db_sink_when_enabled(
     monkeypatch,
     capsys,
 ):
-    fake_dsn = "postgresql://paper-nav.example.invalid/db"
+    fake_dsn = "postgresql://paper-nav@localhost/db"
     monkeypatch.setenv(PAPER_NAV_SNAPSHOT_DB_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(PAPER_NAV_SNAPSHOT_DB_DSN_ENV_VAR, fake_dsn)
     monkeypatch.setenv(
@@ -1150,7 +1150,7 @@ def test_portfolio_nav_cli_redacts_dsn_when_nav_snapshot_db_sink_fails(
     monkeypatch,
     capsys,
 ):
-    fake_dsn = "postgresql://paper-nav.example.invalid/db"
+    fake_dsn = "postgresql://paper-nav@localhost/db"
     monkeypatch.setenv(PAPER_NAV_SNAPSHOT_DB_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(PAPER_NAV_SNAPSHOT_DB_DSN_ENV_VAR, fake_dsn)
     monkeypatch.setenv(
@@ -4122,7 +4122,7 @@ def test_cycle_snapshot_db_trend_cli_reads_db_config_and_prints_summary(
     capsys,
 ):
     monkeypatch.setenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_ENABLED", "true")
-    monkeypatch.setenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_DSN", "test-dsn-value")
+    monkeypatch.setenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_DSN", "postgresql://cycle-snapshot@localhost/test-dsn-value")
     monkeypatch.setenv(
         "POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_TABLE",
         "cycle_snapshot_archive",
@@ -4187,7 +4187,7 @@ def test_cycle_snapshot_db_trend_cli_reads_db_config_and_prints_summary(
 
     assert exit_code == 0
     assert len(calls) == 1
-    assert calls[0]["dsn"] == "test-dsn-value"
+    assert calls[0]["dsn"] == "postgresql://cycle-snapshot@localhost/test-dsn-value"
     assert calls[0]["config_version"] == "cycle-snapshot-db-trend-v0"
     assert (
         calls[0]["source_config_version"]
@@ -4207,15 +4207,15 @@ def test_cycle_snapshot_db_trend_cli_reads_db_config_and_prints_summary(
     assert "blocked_share=0.333333" in captured.out
     assert "trend_reason_codes: blocked_snapshot:2,watch_snapshot:1" in captured.out
     assert "latest_reason_codes: blocked_snapshot,thin_liquidity" in captured.out
-    assert "test-dsn-value" not in captured.out
-    assert "test-dsn-value" not in captured.err
+    assert "postgresql://cycle-snapshot@localhost/test-dsn-value" not in captured.out
+    assert "postgresql://cycle-snapshot@localhost/test-dsn-value" not in captured.err
 
 
 def test_cycle_snapshot_db_trend_cli_default_psycopg_load_path_no_network(
     monkeypatch,
     capsys,
 ):
-    fake_dsn = "postgresql://fake.example.invalid/cycle-snapshots"
+    fake_dsn = "postgresql://cycle-snapshot@localhost/cycle-snapshots"
     monkeypatch.setenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_ENABLED", "true")
     monkeypatch.setenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_DSN", fake_dsn)
     monkeypatch.setenv(
@@ -4384,7 +4384,7 @@ def test_cycle_snapshot_db_trend_cli_runner_failure_redacts_dsn(
     capsys,
 ):
     monkeypatch.setenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_ENABLED", "true")
-    monkeypatch.setenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_DSN", "test-dsn-value")
+    monkeypatch.setenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_DSN", "postgresql://cycle-snapshot@localhost/test-dsn-value")
 
     def broken_runner(**kwargs):
         raise RuntimeError("database unavailable")
@@ -4397,7 +4397,7 @@ def test_cycle_snapshot_db_trend_cli_runner_failure_redacts_dsn(
     assert exit_code == 1
     captured = capsys.readouterr()
     assert "cycle-snapshot-db-trend failed: database unavailable" in captured.err
-    assert "test-dsn-value" not in captured.err
+    assert "postgresql://cycle-snapshot@localhost/test-dsn-value" not in captured.err
 
 
 def test_paper_recommendation_cycle_review_cli_requires_enabled_db_config(
@@ -4430,7 +4430,7 @@ def test_paper_recommendation_cycle_review_cli_reads_db_config_and_prints_summar
     capsys,
 ):
     monkeypatch.setenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_ENABLED", "true")
-    monkeypatch.setenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_DSN", "test-dsn-value")
+    monkeypatch.setenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_DSN", "postgresql://cycle-snapshot@localhost/test-dsn-value")
     monkeypatch.setenv(
         "POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_TABLE",
         "cycle_snapshot_archive",
@@ -4496,7 +4496,7 @@ def test_paper_recommendation_cycle_review_cli_reads_db_config_and_prints_summar
 
     assert exit_code == 0
     assert len(calls) == 1
-    assert calls[0]["dsn"] == "test-dsn-value"
+    assert calls[0]["dsn"] == "postgresql://cycle-snapshot@localhost/test-dsn-value"
     assert calls[0]["config"].config_version == "paper-recommendation-cycle-review-v0"
     assert calls[0]["config"].stale_after_hours == Decimal("12.000000")
     assert (
@@ -4519,15 +4519,15 @@ def test_paper_recommendation_cycle_review_cli_reads_db_config_and_prints_summar
     assert "missing_required_artifacts=strategy_cycle_screening_report" in captured.out
     assert "reason_codes=artifact_index_blocked:1,watch_spread:2" in captured.out
     assert "review_status=watch" in captured.out
-    assert "test-dsn-value" not in captured.out
-    assert "test-dsn-value" not in captured.err
+    assert "postgresql://cycle-snapshot@localhost/test-dsn-value" not in captured.out
+    assert "postgresql://cycle-snapshot@localhost/test-dsn-value" not in captured.err
 
 
 def test_paper_recommendation_cycle_review_cli_quantizes_stale_after_hours(
     monkeypatch,
 ):
     monkeypatch.setenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_ENABLED", "true")
-    monkeypatch.setenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_DSN", "test-dsn-value")
+    monkeypatch.setenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_DSN", "postgresql://cycle-snapshot@localhost/test-dsn-value")
     calls = []
 
     def fake_review_runner(
@@ -4577,7 +4577,7 @@ def test_paper_recommendation_cycle_review_cli_default_psycopg_load_path_no_netw
     monkeypatch,
     capsys,
 ):
-    fake_dsn = "postgresql://fake.example.invalid/cycle-review"
+    fake_dsn = "postgresql://cycle-review@localhost/cycle-review"
     monkeypatch.setenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_ENABLED", "true")
     monkeypatch.setenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_DSN", fake_dsn)
     monkeypatch.setenv(
@@ -4764,10 +4764,13 @@ def test_paper_recommendation_cycle_review_cli_runner_failure_redacts_dsn(
     capsys,
 ):
     monkeypatch.setenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_ENABLED", "true")
-    monkeypatch.setenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_DSN", "test-dsn-value")
+    monkeypatch.setenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_DSN", "postgresql://cycle-snapshot@localhost/test-dsn-value")
 
     def broken_runner(**kwargs):
-        raise RuntimeError("could not connect to test-dsn-value")
+        raise RuntimeError(
+            "could not connect to "
+            "postgresql://cycle-snapshot@localhost/test-dsn-value",
+        )
 
     exit_code = main(
         ["paper-recommendation-cycle-review"],
@@ -4780,7 +4783,7 @@ def test_paper_recommendation_cycle_review_cli_runner_failure_redacts_dsn(
         "paper-recommendation-cycle-review failed: "
         "could not connect to <redacted-dsn>"
     ) in captured.err
-    assert "test-dsn-value" not in captured.err
+    assert "postgresql://cycle-snapshot@localhost/test-dsn-value" not in captured.err
 
 
 def test_paper_recommendation_cycle_action_gate_cli_requires_enabled_db_config(
@@ -4813,7 +4816,7 @@ def test_paper_recommendation_cycle_action_gate_cli_reads_db_config_and_prints_s
     capsys,
 ):
     monkeypatch.setenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_ENABLED", "true")
-    monkeypatch.setenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_DSN", "test-dsn-value")
+    monkeypatch.setenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_DSN", "postgresql://cycle-snapshot@localhost/test-dsn-value")
     monkeypatch.setenv(
         "POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_TABLE",
         "cycle_snapshot_archive",
@@ -4877,7 +4880,7 @@ def test_paper_recommendation_cycle_action_gate_cli_reads_db_config_and_prints_s
 
     assert exit_code == 0
     assert len(calls) == 1
-    assert calls[0]["dsn"] == "test-dsn-value"
+    assert calls[0]["dsn"] == "postgresql://cycle-snapshot@localhost/test-dsn-value"
     assert (
         calls[0]["review_config"].config_version
         == "paper-recommendation-cycle-review-v0"
@@ -4905,15 +4908,15 @@ def test_paper_recommendation_cycle_action_gate_cli_reads_db_config_and_prints_s
     assert "blocked_reasons=0" in captured.out
     assert "watch_reasons=0" in captured.out
     assert "reason_codes=cycle_review_pass:1" in captured.out
-    assert "test-dsn-value" not in captured.out
-    assert "test-dsn-value" not in captured.err
+    assert "postgresql://cycle-snapshot@localhost/test-dsn-value" not in captured.out
+    assert "postgresql://cycle-snapshot@localhost/test-dsn-value" not in captured.err
 
 
 def test_paper_recommendation_cycle_action_gate_cli_default_psycopg_load_path_no_network(
     monkeypatch,
     capsys,
 ):
-    fake_dsn = "postgresql://fake.example.invalid/action-gate"
+    fake_dsn = "postgresql://action-gate@localhost/action-gate"
     monkeypatch.setenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_ENABLED", "true")
     monkeypatch.setenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_DSN", fake_dsn)
     monkeypatch.setenv(
@@ -5097,10 +5100,13 @@ def test_paper_recommendation_cycle_action_gate_cli_runner_failure_redacts_dsn(
     capsys,
 ):
     monkeypatch.setenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_ENABLED", "true")
-    monkeypatch.setenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_DSN", "test-dsn-value")
+    monkeypatch.setenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_DSN", "postgresql://cycle-snapshot@localhost/test-dsn-value")
 
     def broken_runner(**kwargs):
-        raise RuntimeError("could not connect to test-dsn-value")
+        raise RuntimeError(
+            "could not connect to "
+            "postgresql://cycle-snapshot@localhost/test-dsn-value",
+        )
 
     exit_code = main(
         ["paper-recommendation-cycle-action-gate"],
@@ -5113,7 +5119,7 @@ def test_paper_recommendation_cycle_action_gate_cli_runner_failure_redacts_dsn(
         "paper-recommendation-cycle-action-gate failed: "
         "could not connect to <redacted-dsn>"
     ) in captured.err
-    assert "test-dsn-value" not in captured.err
+    assert "postgresql://cycle-snapshot@localhost/test-dsn-value" not in captured.err
 
 
 def _strategy_evidence_stub_report(
@@ -5652,7 +5658,7 @@ def test_observability_trends_cli_defaults_to_no_persist_without_db(
     monkeypatch.delenv(LOCAL_OBSERVABILITY_TRENDS_DB_ENABLED_ENV_VAR, raising=False)
     monkeypatch.setenv(
         LOCAL_OBSERVABILITY_TRENDS_DB_DSN_ENV_VAR,
-        "postgresql://observability.example.invalid/ignored",
+        "postgresql://observability@localhost/ignored",
     )
     sink_calls = []
     client_factory_calls = 0
@@ -5701,7 +5707,7 @@ def test_observability_trends_cli_persists_report_when_requested(
     tmp_path,
     capsys,
 ):
-    dsn = "postgresql://observability.example.invalid/persist"
+    dsn = "postgresql://observability@localhost/persist"
     monkeypatch.setenv(LOCAL_OBSERVABILITY_TRENDS_DB_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(LOCAL_OBSERVABILITY_TRENDS_DB_DSN_ENV_VAR, dsn)
     monkeypatch.setenv(
@@ -5805,7 +5811,7 @@ def test_observability_trends_cli_redacts_dsn_on_persistence_failure(
     tmp_path,
     capsys,
 ):
-    dsn = "postgresql://observability-secret.example.invalid/persist"
+    dsn = "postgresql://observability-secret@localhost/persist"
     monkeypatch.setenv(LOCAL_OBSERVABILITY_TRENDS_DB_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(LOCAL_OBSERVABILITY_TRENDS_DB_DSN_ENV_VAR, dsn)
     cycle_log, trade_log, nav_log, outcome_log = _write_strategy_audit_inputs(
@@ -5852,7 +5858,7 @@ def test_observability_trends_cli_default_psycopg_persist_path_no_network(
     tmp_path,
     capsys,
 ):
-    dsn = "postgresql://observability.example.invalid/persist"
+    dsn = "postgresql://observability@localhost/persist"
     monkeypatch.setenv(LOCAL_OBSERVABILITY_TRENDS_DB_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(LOCAL_OBSERVABILITY_TRENDS_DB_DSN_ENV_VAR, dsn)
     monkeypatch.setenv(
@@ -6845,8 +6851,8 @@ def test_run_cli_wires_paper_trade_and_nav_db_sinks_when_env_enabled(
     monkeypatch,
     capsys,
 ):
-    trade_dsn = "postgresql://paper-trade.example.invalid/db"
-    nav_dsn = "postgresql://paper-nav.example.invalid/db"
+    trade_dsn = "postgresql://paper-trade@localhost/db"
+    nav_dsn = "postgresql://paper-nav@localhost/db"
     monkeypatch.setenv(PAPER_TRADE_JOURNAL_DB_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(PAPER_TRADE_JOURNAL_DB_DSN_ENV_VAR, trade_dsn)
     monkeypatch.setenv(
@@ -6995,7 +7001,7 @@ def test_run_cli_execution_pipeline_uses_screening_gate_source_and_pipeline_sink
     monkeypatch,
 ):
     screening_gate_dsn = "postgresql://screening-gate.example.invalid/db"
-    execution_pipeline_dsn = "postgresql://execution-pipeline.example.invalid/db"
+    execution_pipeline_dsn = "postgresql://execution-pipeline@localhost/db"
     monkeypatch.setenv(
         PAPER_AUTONOMOUS_SCREENING_DECISION_SUPPORT_GATE_DB_ENABLED_ENV_VAR,
         "true",
@@ -7082,7 +7088,7 @@ def test_run_cli_execution_pipeline_persists_broker_and_ledger_when_enabled(
     monkeypatch,
 ):
     screening_gate_dsn = "postgresql://screening-gate.example.invalid/db"
-    execution_pipeline_dsn = "postgresql://execution-pipeline.example.invalid/db"
+    execution_pipeline_dsn = "postgresql://execution-pipeline@localhost/db"
     broker_dsn = "postgresql://broker.example.invalid/db"
     ledger_dsn = "postgresql://ledger.example.invalid/db"
     monkeypatch.setenv(
@@ -7194,7 +7200,7 @@ def test_paper_execution_pipeline_persist_cli_passes_optional_broker_and_ledger_
     capsys,
 ):
     screening_gate_dsn = "postgresql://screening-gate.example.invalid/db"
-    execution_pipeline_dsn = "postgresql://execution-pipeline.example.invalid/db"
+    execution_pipeline_dsn = "postgresql://execution-pipeline@localhost/db"
     broker_dsn = "postgresql://broker.example.invalid/db"
     ledger_dsn = "postgresql://ledger.example.invalid/db"
     monkeypatch.setenv(
@@ -7292,7 +7298,7 @@ def test_run_cli_redacts_execution_pipeline_broker_and_ledger_sink_dsns(
     capsys,
 ):
     screening_gate_dsn = "postgresql://screening-gate.example.invalid/db"
-    execution_pipeline_dsn = "postgresql://execution-pipeline.example.invalid/db"
+    execution_pipeline_dsn = "postgresql://execution-pipeline@localhost/db"
     broker_dsn = "postgresql://broker.example.invalid/db"
     ledger_dsn = "postgresql://ledger.example.invalid/db"
     monkeypatch.setenv(
@@ -9369,7 +9375,7 @@ def test_run_cli_redacts_dsn_when_paper_trade_db_sink_failure_is_reported(
     monkeypatch,
     capsys,
 ):
-    trade_dsn = "postgresql://paper-trade.example.invalid/db"
+    trade_dsn = "postgresql://paper-trade@localhost/db"
     monkeypatch.setenv(PAPER_TRADE_JOURNAL_DB_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(PAPER_TRADE_JOURNAL_DB_DSN_ENV_VAR, trade_dsn)
     monkeypatch.setenv(
@@ -9425,7 +9431,7 @@ def test_run_cli_wires_cycle_snapshot_db_sink_when_env_enabled(
     monkeypatch,
 ):
     monkeypatch.setenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_ENABLED", "true")
-    monkeypatch.setenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_DSN", "test-dsn-value")
+    monkeypatch.setenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_DSN", "postgresql://cycle-snapshot@localhost/test-dsn-value")
     monkeypatch.setenv(
         "POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_TABLE",
         "cycle_snapshot_archive",
@@ -9478,7 +9484,7 @@ def test_run_cli_wires_cycle_snapshot_db_sink_when_env_enabled(
     assert len(calls) == 1
     assert sink_calls == [
         (
-            "test-dsn-value",
+            "postgresql://cycle-snapshot@localhost/test-dsn-value",
             source_value,
             "cycle_snapshot_archive",
         ),
@@ -9491,7 +9497,7 @@ def test_run_cli_uses_default_cycle_snapshot_source_when_db_enabled_without_inje
     capsys,
 ):
     monkeypatch.setenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_ENABLED", "true")
-    monkeypatch.setenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_DSN", "test-dsn-value")
+    monkeypatch.setenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_DSN", "postgresql://cycle-snapshot@localhost/test-dsn-value")
     monkeypatch.setenv(
         "POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_TABLE",
         "cycle_snapshot_archive",
@@ -9548,7 +9554,7 @@ def test_run_cli_uses_default_cycle_snapshot_source_when_db_enabled_without_inje
     assert len(calls) == 1
     assert len(sink_calls) == 1
     dsn, report, table_name = sink_calls[0]
-    assert dsn == "test-dsn-value"
+    assert dsn == "postgresql://cycle-snapshot@localhost/test-dsn-value"
     assert table_name == "cycle_snapshot_archive"
     assert report.paper_only is True
     assert report.report_only is True
@@ -9556,8 +9562,8 @@ def test_run_cli_uses_default_cycle_snapshot_source_when_db_enabled_without_inje
     assert report.final_status == "blocked"
     captured = capsys.readouterr()
     assert "cycle_snapshots_persisted=1" in captured.out
-    assert "test-dsn-value" not in captured.out
-    assert "test-dsn-value" not in captured.err
+    assert "postgresql://cycle-snapshot@localhost/test-dsn-value" not in captured.out
+    assert "postgresql://cycle-snapshot@localhost/test-dsn-value" not in captured.err
 
 
 def test_run_cli_default_loop_persists_default_snapshot_report_from_real_cycle(
@@ -9565,7 +9571,7 @@ def test_run_cli_default_loop_persists_default_snapshot_report_from_real_cycle(
     monkeypatch,
     capsys,
 ):
-    fake_dsn = "postgresql://fake.example.invalid/paper-only"
+    fake_dsn = "postgresql://cycle-snapshot@localhost/paper-only"
     monkeypatch.setenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_ENABLED", "true")
     monkeypatch.setenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_DSN", fake_dsn)
     monkeypatch.setenv(
@@ -9712,8 +9718,8 @@ def test_run_cli_default_loop_persists_paper_trade_and_nav_db_sinks_from_real_cy
     monkeypatch.delenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_DSN", raising=False)
     monkeypatch.delenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_TABLE", raising=False)
     monkeypatch.chdir(tmp_path)
-    trade_dsn = "postgresql://paper-trade.example.invalid/default-loop"
-    nav_dsn = "postgresql://paper-nav.example.invalid/default-loop"
+    trade_dsn = "postgresql://paper-trade@localhost/default-loop"
+    nav_dsn = "postgresql://paper-nav@localhost/default-loop"
     monkeypatch.setenv(PAPER_TRADE_JOURNAL_DB_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(PAPER_TRADE_JOURNAL_DB_DSN_ENV_VAR, trade_dsn)
     monkeypatch.setenv(
@@ -10711,7 +10717,7 @@ def test_check_outcomes_cli_wires_outcome_tracking_db_sink_when_enabled(
     monkeypatch,
     capsys,
 ):
-    fake_dsn = "postgresql://outcome-db.example.invalid/outcomes"
+    fake_dsn = "postgresql://outcome-db@localhost/outcomes"
     monkeypatch.setenv(OUTCOME_TRACKING_DB_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(OUTCOME_TRACKING_DB_DSN_ENV_VAR, fake_dsn)
     monkeypatch.setenv(
@@ -10757,7 +10763,7 @@ def test_check_outcomes_cli_returns_one_when_outcome_tracking_db_sink_fails_with
     monkeypatch,
     capsys,
 ):
-    fake_dsn = "postgresql://outcome-db.example.invalid/outcomes"
+    fake_dsn = "postgresql://outcome-db@localhost/outcomes"
     monkeypatch.setenv(OUTCOME_TRACKING_DB_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(OUTCOME_TRACKING_DB_DSN_ENV_VAR, fake_dsn)
     monkeypatch.setenv(
@@ -10794,7 +10800,7 @@ def test_check_outcomes_cli_redacts_dsn_when_outcome_tracking_db_sink_fails(
     monkeypatch,
     capsys,
 ):
-    fake_dsn = "postgresql://outcome-db.example.invalid/outcomes"
+    fake_dsn = "postgresql://outcome-db@localhost/outcomes"
     monkeypatch.setenv(OUTCOME_TRACKING_DB_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(OUTCOME_TRACKING_DB_DSN_ENV_VAR, fake_dsn)
     monkeypatch.setenv(
