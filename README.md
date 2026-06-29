@@ -364,6 +364,32 @@ reason-code summaries, and writes nothing. It does not fetch data, rank markets,
 recommend trades, handle wallets or private keys, place/sign/submit/cancel
 orders, or mutate exchange state.
 
+Probability Selection Scorer Agreement Trend Gate:
+
+The pure reducer callable
+`build_probability_selection_scorer_agreement_trend_gate_report` in the
+`probability_selection_scorer_agreement_trend_gate` module converts an
+already-built `ProbabilitySelectionScorerAgreementTrendReport` into a
+paper-only/report-only/readonly gate report with `pass`, `watch`, or `blocked`
+status. It has no CLI, runner, loader, DB connection, environment-variable read,
+Supabase/Postgres access, SQLite, JSONL durable history, Redis, Mongo,
+SQLAlchemy, hosted DB assumption, generic durable store, file-backed cache,
+insert/update/delete/DDL/sink path, trend-gate persistence, DSN/table/file
+inputs, live trading, auth, private keys, wallets, accounts, order
+construction/signing/submission, cancellation, replacement, or exchange
+mutation.
+
+Stable aligned agreement trends pass. Insufficient history, any latest
+`gate_blocked` agreement status, and repeated scorer-gate blockers block. Stale
+trend evidence, latest non-aligned non-blocking statuses such as low overlap,
+missing inputs, or insufficient identifiers, and repeated source reason codes
+watch unless a blocking condition also applies.
+
+The gate report is only paper observability evidence. It is not permission to
+trade, financial advice, investment ranking, order instruction, execution
+authorization, or an approval workflow. It is not wired into the readiness gate
+or readiness digest yet.
+
 Paper Autonomous Allocation Proposal combines a passed autonomous screening
 gate, latest action-gated queue decision-support reports, and source queue
 reports into a paper-only/report-only/read-only allocation proposal:
