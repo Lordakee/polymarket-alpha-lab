@@ -12,12 +12,13 @@ Strategy Risk Audit v0 consumes caller-supplied typed reports:
 - `PaperNavRiskMetricsReport`
 - optional `OutcomeTrackingReport`
 - optional `PaperTradeCostAuditReport`
+- optional `PaperNavSettlementRiskOverlayReport`
 
-The module may import `PaperTradeCostAuditReport` as a typed report input. The module itself does not read files, fetch market data, authenticate, use browser automation, handle wallets or keys, submit orders, rank markets, recommend trades, or change strategy-cycle behavior.
+The module may import `PaperTradeCostAuditReport` and `PaperNavSettlementRiskOverlayReport` as typed report inputs. The module itself does not read files, fetch market data, authenticate, use browser automation, handle wallets or keys, submit orders, rank markets, recommend trades, or change strategy-cycle behavior.
 
 ## Gates
 
-The v0 report has six gates:
+The v0 report has six gates when no settlement/NAV overlay source is supplied:
 
 - `paper_history`: requires enough strategy cycles, paper trades, and NAV snapshots to make the audit meaningful.
 - `settlement_evidence`: requires enough resolved paper outcomes from `OutcomeTrackingReport`; absent outcome tracking is incomplete.
@@ -25,6 +26,15 @@ The v0 report has six gates:
 - `cost_discipline`: reads optional `PaperTradeCostAuditReport` cost evidence, requires enough paper trades with measurable edge-cost drag, and blocks when average edge-cost drag or negative cost-adjusted edge counts exceed configured limits.
 - `nav_drawdown`: blocks when NAV drawdown exceeds the configured limit.
 - `open_exposure`: includes open paper position count for context and blocks when no-exit-depth marks or exposure concentration exceed configured limits.
+
+When the caller supplies an existing `PaperNavSettlementRiskOverlayReport`, the
+report appends a seventh gate:
+
+- `settlement_nav_risk`: reads optional settlement/NAV overlay evidence and
+  fails when blocked or missing-exit settlement exposure breaches the configured
+  share limit.
+
+The optional `settlement_nav_risk` source is paper-only/report-only/readonly; it does not add live trading; does not add auth or wallet handling; does not add order submission, cancellation, or replacement; and does not add persistence, DB loaders, env reads, or CLI flags.
 
 The report status is:
 

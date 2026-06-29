@@ -63,11 +63,13 @@ The `nav-risk` command is separate from strategy-cycle, NAV marking, outcome tra
 
 ## Strategy Risk Audit v0 Status
 
-Strategy Risk Audit v0 is a pure, paper-only/report-only/read-only audit over caller-supplied typed reports: `PerformanceSummary`, `PaperNavRiskMetricsReport`, optional `OutcomeTrackingReport`, and optional `PaperTradeCostAuditReport`. It reduces existing paper history, settlement evidence, nested forecast probability quality, paper trade cost evidence, NAV drawdown, and open-exposure observations into six gates: `paper_history`, `settlement_evidence`, `forecast_quality`, `cost_discipline`, `nav_drawdown`, and `open_exposure`.
+Strategy Risk Audit v0 is a pure, paper-only/report-only/read-only audit over caller-supplied typed reports: `PerformanceSummary`, `PaperNavRiskMetricsReport`, optional `OutcomeTrackingReport`, optional `PaperTradeCostAuditReport`, and optional `PaperNavSettlementRiskOverlayReport`. It reduces existing paper history, settlement evidence, nested forecast probability quality, paper trade cost evidence, NAV drawdown, and open-exposure observations into the six legacy gates: `paper_history`, `settlement_evidence`, `forecast_quality`, `cost_discipline`, `nav_drawdown`, and `open_exposure`. When a settlement/NAV overlay report is supplied, the audit appends the optional `settlement_nav_risk` gate.
 
 The report emits one status: `audit_ready` when every gate passes, `blocked_by_risk` when any risk gate fails, and `insufficient_evidence` when evidence is incomplete and no gate fails. `paper_only is True` and `report_only is True` are hard-enforced on every report.
 
 The `cost_discipline` gate uses the local paper trade cost audit evidence: paper trade count, mean edge cost drag, and negative cost-adjusted edge count. It is incomplete when cost evidence is absent, when mean edge cost drag is unavailable, or when the trade count is below the configured floor; it fails when cost drag or negative cost-adjusted edge counts breach configured limits; and it otherwise passes as report-only evidence.
+
+The optional `settlement_nav_risk` gate consumes only an already-built paper settlement/NAV overlay report. This source is paper-only/report-only/readonly; it does not add live trading; does not add auth or wallet handling; does not add order submission, cancellation, or replacement; and does not add persistence, DB loaders, env reads, or CLI flags.
 
 Optional local Supabase/Postgres persistence for `PaperStrategyRiskAuditReport` snapshots is available as a DB foundation only. It is default-off, env-driven, has no DSN CLI flags, stores canonical `payload_json` plus audit status/count scalars, and preserves `paper_only`, `report_only`, and row-level `readonly` flags. See `docs/strategy-risk-audit-db-persistence.md`.
 
@@ -76,8 +78,8 @@ Phase 1 boundary: this module is pure local report math. It does not score marke
 ## Strategy Risk Audit v0 Python API
 
 - Configure the audit with `PaperStrategyRiskAuditConfig(...)`, including the minimum paper-history, settlement-evidence, forecast-probability-observation, and cost-audit trade-count thresholds plus cost-drag, NAV drawdown, and open-exposure limits.
-- Build the audit with `build_paper_strategy_risk_audit_report(performance_summary=..., nav_risk_report=..., outcome_report=..., cost_audit_report=..., config=..., generated_at=...)`, which returns `PaperStrategyRiskAuditReport` from caller-supplied typed reports only.
-- Inspect deterministic gate rows with `PaperStrategyRiskAuditGateResult` values on `report.gate_results`; gate names are `paper_history`, `settlement_evidence`, `forecast_quality`, `cost_discipline`, `nav_drawdown`, and `open_exposure`, and the final `report.status` is one of `audit_ready`, `blocked_by_risk`, or `insufficient_evidence`.
+- Build the audit with `build_paper_strategy_risk_audit_report(performance_summary=..., nav_risk_report=..., outcome_report=..., cost_audit_report=..., config=..., generated_at=...)`, with optional `settlement_nav_risk_report=...` when the caller already has a `PaperNavSettlementRiskOverlayReport`; the builder returns `PaperStrategyRiskAuditReport` from caller-supplied typed reports only.
+- Inspect deterministic gate rows with `PaperStrategyRiskAuditGateResult` values on `report.gate_results`; legacy gate names are `paper_history`, `settlement_evidence`, `forecast_quality`, `cost_discipline`, `nav_drawdown`, and `open_exposure`, with optional `settlement_nav_risk` appended only when the settlement/NAV overlay source is supplied, and the final `report.status` is one of `audit_ready`, `blocked_by_risk`, or `insufficient_evidence`.
 - There is no file reader, log writer, fetch path, live-trading path, auth path, wallet path, private-key path, account-read path, API-client path, order placement/signing/submission/cancellation path, recommendation path, ranking path, trade-instruction path, strategy-weight tuning, project selection, market scoring, position sizing, or financial-advice surface.
 
 ## Strategy Risk Audit v0 CLI

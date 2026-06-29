@@ -34,6 +34,7 @@ ALLOWED_IMPORT_MODULES = {
     "decimal",
     "polymarket_alpha_lab.nav_risk_metrics",
     "polymarket_alpha_lab.outcome_tracker",
+    "polymarket_alpha_lab.paper_nav_settlement_risk_overlay",
     "polymarket_alpha_lab.paper_trade_cost_audit",
     "polymarket_alpha_lab.performance_summary",
 }
@@ -41,6 +42,9 @@ ALLOWED_IMPORT_MODULES = {
 EXPECTED_FIRST_PARTY_IMPORTS = {
     "polymarket_alpha_lab.nav_risk_metrics": {"PaperNavRiskMetricsReport"},
     "polymarket_alpha_lab.outcome_tracker": {"OutcomeTrackingReport"},
+    "polymarket_alpha_lab.paper_nav_settlement_risk_overlay": {
+        "PaperNavSettlementRiskOverlayReport",
+    },
     "polymarket_alpha_lab.paper_trade_cost_audit": {"PaperTradeCostAuditReport"},
     "polymarket_alpha_lab.performance_summary": {"PerformanceSummary"},
 }

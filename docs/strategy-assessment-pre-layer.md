@@ -82,7 +82,12 @@ Import these names from the module that defines them:
   - `signals_from_exposure_gate_report(...)`
   - `signals_from_liquidity_gate_report(...)`
   - `signals_from_market_context_freshness_report(...)`
+  - `signals_from_nav_settlement_risk_overlay_report(...)`
   - `signals_from_settlement_freshness_gate_report(...)`
+
+`signals_from_nav_settlement_risk_overlay_report(...)` adapts an existing
+`PaperNavSettlementRiskOverlayReport` into the optional readiness signal source
+`nav_settlement_risk_overlay`. This source is paper-only/report-only/readonly; it does not add live trading; does not add auth or wallet handling; does not add order submission, cancellation, or replacement; and does not add persistence, DB loaders, env reads, or CLI flags.
 
 The shared pattern is the same in each module:
 
