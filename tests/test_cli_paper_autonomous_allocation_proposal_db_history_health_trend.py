@@ -273,7 +273,7 @@ def test_allocation_proposal_db_history_health_trend_helper_rejects_invalid_limi
 
     with pytest.raises(ValueError, match=f"{COMMAND} limit must be positive"):
         helper(
-            dsn="postgresql://allocation-proposal-history-health-trend.example.invalid/db",
+            dsn="postgresql://allocation-proposal:secret@localhost:54322/db",
             table_name="paper_autonomous_allocation_proposal_db_history_health_reports",
             limit=bad_limit,
             runner=forbidden_runner,
@@ -290,7 +290,7 @@ def test_allocation_proposal_db_history_health_trend_cli_uses_injected_runner_an
 ) -> None:
     health_api = _install_or_get_health_api(monkeypatch)
     trend_api = _install_or_get_trend_api(monkeypatch)
-    dsn = "postgresql://allocation-proposal-history-health-trend.example.invalid/db"
+    dsn = "postgresql://allocation-proposal:secret@localhost:54322/db"
     table_name = (
         "analytics.paper_autonomous_allocation_proposal_db_history_health_reports"
     )
@@ -399,7 +399,7 @@ def test_allocation_proposal_db_history_health_trend_helper_default_load_path_us
 ) -> None:
     health_api = _install_or_get_health_api(monkeypatch)
     trend_api = _install_or_get_trend_api(monkeypatch)
-    dsn = "postgresql://allocation-proposal-history-health-trend.example.invalid/db"
+    dsn = "postgresql://allocation-proposal:secret@localhost:54322/db"
     table_name = "paper_autonomous_allocation_proposal_db_history_health_reports"
     report = _trend_report()
     connect_calls: list[tuple[str, bool]] = []
@@ -503,7 +503,7 @@ def test_allocation_proposal_db_history_health_trend_helper_raises_on_missing_ps
 
     with pytest.raises(RuntimeError, match="psycopg is required"):
         helper(
-            dsn="postgresql://allocation-proposal-history-health-trend-secret.example.invalid/db",
+            dsn="postgresql://allocation-proposal:secret@localhost:54322/db",
             table_name="paper_autonomous_allocation_proposal_db_history_health_reports",
             limit=7,
             runner=None,
@@ -515,7 +515,7 @@ def test_allocation_proposal_db_history_health_trend_helper_uses_shared_redactio
 ) -> None:
     _install_or_get_health_api(monkeypatch)
     _install_or_get_trend_api(monkeypatch)
-    dsn = "postgresql://allocation-proposal-history-health-trend-secret.example.invalid/db"
+    dsn = "postgresql://allocation-proposal:secret@localhost:54322/db"
     table_name = "paper_autonomous_allocation_proposal_db_history_health_reports"
     calls: list[dict[str, object]] = []
 

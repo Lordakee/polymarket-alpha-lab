@@ -101,7 +101,7 @@ def test_strategy_audit_cli_defaults_to_no_persist_without_flag(
     tmp_path,
     capsys,
 ):
-    dsn = "postgresql://strategy-audit.example.invalid/ignored"
+    dsn = "postgresql://strategy-audit:secret@localhost:54322/db"
     monkeypatch.setenv(STRATEGY_RISK_AUDIT_DB_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(STRATEGY_RISK_AUDIT_DB_DSN_ENV_VAR, dsn)
     monkeypatch.setenv(
@@ -181,7 +181,7 @@ def test_strategy_audit_cli_persists_report_when_requested(
     tmp_path,
     capsys,
 ):
-    dsn = "postgresql://strategy-audit.example.invalid/persist"
+    dsn = "postgresql://strategy-audit:secret@localhost:54322/db"
     monkeypatch.setenv(STRATEGY_RISK_AUDIT_DB_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(STRATEGY_RISK_AUDIT_DB_DSN_ENV_VAR, dsn)
     monkeypatch.setenv(
@@ -250,7 +250,7 @@ def test_strategy_audit_cli_requires_db_config_before_persisting(
     tmp_path,
     capsys,
 ):
-    dsn = "postgresql://strategy-audit.example.invalid/disabled"
+    dsn = "postgresql://strategy-audit:secret@localhost:54322/db"
     monkeypatch.delenv(STRATEGY_RISK_AUDIT_DB_ENABLED_ENV_VAR, raising=False)
     monkeypatch.setenv(STRATEGY_RISK_AUDIT_DB_DSN_ENV_VAR, dsn)
     monkeypatch.delenv(STRATEGY_RISK_AUDIT_DB_TABLE_ENV_VAR, raising=False)
@@ -294,7 +294,7 @@ def test_strategy_audit_cli_redacts_dsn_on_persistence_failure(
     tmp_path,
     capsys,
 ):
-    dsn = "postgresql://strategy-audit-secret.example.invalid/persist"
+    dsn = "postgresql://strategy-audit:secret@localhost:54322/db"
     monkeypatch.setenv(STRATEGY_RISK_AUDIT_DB_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(STRATEGY_RISK_AUDIT_DB_DSN_ENV_VAR, dsn)
     cycle_log, trade_log, nav_log = _write_strategy_audit_runner_inputs(tmp_path)
@@ -331,8 +331,8 @@ def test_strategy_audit_cli_redacts_dsn_on_persistence_failure(
     )
     assert dsn not in captured.out
     assert dsn not in captured.err
-    assert "strategy-audit-secret" not in captured.out
-    assert "strategy-audit-secret" not in captured.err
+    assert "localhost:54322" not in captured.out
+    assert "localhost:54322" not in captured.err
 
 
 def test_strategy_audit_cli_default_psycopg_persist_path_no_network(
@@ -340,7 +340,7 @@ def test_strategy_audit_cli_default_psycopg_persist_path_no_network(
     tmp_path,
     capsys,
 ):
-    dsn = "postgresql://strategy-audit.example.invalid/persist"
+    dsn = "postgresql://strategy-audit:secret@localhost:54322/db"
     monkeypatch.setenv(STRATEGY_RISK_AUDIT_DB_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(STRATEGY_RISK_AUDIT_DB_DSN_ENV_VAR, dsn)
     monkeypatch.setenv(

@@ -195,7 +195,7 @@ def test_allocation_proposal_db_history_health_trend_gate_command_uses_injected_
     health_api = _install_or_get_health_api(monkeypatch)
     trend_api = _install_or_get_trend_api(monkeypatch)
     gate_api = _install_or_get_gate_api(monkeypatch)
-    dsn = "postgresql://allocation-proposal-health-trend-gate.example.invalid/db"
+    dsn = "postgresql://allocation-proposal:secret@localhost:54322/db"
     table_name = (
         "analytics.paper_autonomous_allocation_proposal_db_history_health_reports"
     )
@@ -322,7 +322,7 @@ def test_health_trend_gate_helper_uses_psycopg_autocommit_and_closes_once(
     health_api = _install_or_get_health_api(monkeypatch)
     trend_api = _install_or_get_trend_api(monkeypatch)
     gate_api = _install_or_get_gate_api(monkeypatch)
-    dsn = "postgresql://allocation-proposal-health-trend-gate.example.invalid/db"
+    dsn = "postgresql://allocation-proposal:secret@localhost:54322/db"
     table_name = "paper_autonomous_allocation_proposal_db_history_health_reports"
     report = _gate_report()
     connect_calls: list[tuple[str, bool]] = []
@@ -420,7 +420,7 @@ def test_health_trend_gate_default_path_redacts_dsn_and_table_on_loader_error(
     _install_or_get_health_api(monkeypatch)
     _install_or_get_trend_api(monkeypatch)
     _install_or_get_gate_api(monkeypatch)
-    dsn = "postgresql://user:secret@example.invalid/db"
+    dsn = "postgresql://user:secret@localhost:54322/db"
     table_name = "private_schema.paper_autonomous_allocation_proposal_db_history_health_reports"
     _set_allocation_proposal_db_history_health_db_env(
         monkeypatch,
@@ -471,7 +471,7 @@ def test_health_trend_gate_runner_failure_redacts_direct_operator_fields(
     _install_or_get_health_api(monkeypatch)
     _install_or_get_trend_api(monkeypatch)
     _install_or_get_gate_api(monkeypatch)
-    dsn = "postgresql://user:secret@example.invalid/db"
+    dsn = "postgresql://user:secret@localhost:54322/db"
     table_name = "private_schema.paper_autonomous_allocation_proposal_db_history_health_reports"
     market_slug = "secret-market-slug"
     question = "Will the direct secret question resolve yes?"
@@ -558,7 +558,7 @@ def test_health_trend_gate_summary_suppresses_sensitive_fields(
                 report_count=1,
             ),
         ),
-        dsn="postgresql://user:secret@example.invalid/db",
+        dsn="postgresql://user:secret@localhost:54322/db",
         table_name="private_schema.paper_autonomous_allocation_proposal_db_history_health_reports",
         payload_json={"market_slug": "secret-market", "question": "secret question"},
         report_sha256="a" * 64,
@@ -587,7 +587,7 @@ def test_health_trend_gate_summary_suppresses_sensitive_fields(
         in captured.out
     )
     for forbidden in (
-        "postgresql://user:secret@example.invalid/db",
+        "postgresql://user:secret@localhost:54322/db",
         "private_schema.paper_autonomous_allocation_proposal_db_history_health_reports",
         "private_schema",
         "payload_json",

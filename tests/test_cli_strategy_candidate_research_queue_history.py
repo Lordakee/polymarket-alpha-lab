@@ -101,7 +101,7 @@ def test_strategy_candidate_research_queue_history_cli_uses_injected_loader_and_
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    source_dsn = "postgresql://candidate-queue-history.example.invalid/db"
+    source_dsn = "postgresql://candidate-queue:secret@localhost:54322/source"
     monkeypatch.setenv(STRATEGY_CANDIDATE_RESEARCH_QUEUE_DB_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(STRATEGY_CANDIDATE_RESEARCH_QUEUE_DB_DSN_ENV_VAR, source_dsn)
     monkeypatch.setenv(
@@ -202,7 +202,7 @@ def test_strategy_candidate_research_queue_history_cli_redacts_source_dsn_on_loa
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    source_dsn = "postgresql://candidate-queue-history.example.invalid/source"
+    source_dsn = "postgresql://candidate-queue:secret@localhost:54322/source"
     source_table = "strategy_candidate_research_queue_archive"
     monkeypatch.setenv(STRATEGY_CANDIDATE_RESEARCH_QUEUE_DB_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(STRATEGY_CANDIDATE_RESEARCH_QUEUE_DB_DSN_ENV_VAR, source_dsn)
@@ -253,8 +253,8 @@ def test_strategy_candidate_research_queue_history_cli_persists_built_report_whe
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    source_dsn = "postgresql://candidate-queue-history.example.invalid/source"
-    history_dsn = "postgresql://candidate-queue-history.example.invalid/history"
+    source_dsn = "postgresql://candidate-queue:secret@localhost:54322/source"
+    history_dsn = "postgresql://candidate-queue:secret@localhost:54322/history"
     monkeypatch.setenv(STRATEGY_CANDIDATE_RESEARCH_QUEUE_DB_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(STRATEGY_CANDIDATE_RESEARCH_QUEUE_DB_DSN_ENV_VAR, source_dsn)
     monkeypatch.setenv(
@@ -341,8 +341,8 @@ def test_strategy_candidate_research_queue_history_cli_requires_history_db_when_
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    source_dsn = "postgresql://candidate-queue-history.example.invalid/source"
-    history_dsn = "postgresql://candidate-queue-history.example.invalid/history"
+    source_dsn = "postgresql://candidate-queue:secret@localhost:54322/source"
+    history_dsn = "postgresql://candidate-queue:secret@localhost:54322/history"
     monkeypatch.setenv(STRATEGY_CANDIDATE_RESEARCH_QUEUE_DB_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(STRATEGY_CANDIDATE_RESEARCH_QUEUE_DB_DSN_ENV_VAR, source_dsn)
     monkeypatch.delenv(
@@ -392,8 +392,8 @@ def test_strategy_candidate_research_queue_history_cli_redacts_dsns_on_sink_fail
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    source_dsn = "postgresql://candidate-queue-history.example.invalid/source"
-    history_dsn = "postgresql://candidate-queue-history.example.invalid/history"
+    source_dsn = "postgresql://candidate-queue:secret@localhost:54322/source"
+    history_dsn = "postgresql://candidate-queue:secret@localhost:54322/history"
     source_table = "strategy_candidate_research_queue_archive"
     history_table = "strategy_candidate_research_queue_history_archive"
     monkeypatch.setenv(STRATEGY_CANDIDATE_RESEARCH_QUEUE_DB_ENABLED_ENV_VAR, "true")
