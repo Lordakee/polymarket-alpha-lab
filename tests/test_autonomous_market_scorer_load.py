@@ -15,7 +15,7 @@ from polymarket_alpha_lab.supabase_autonomous_market_scorer_config import (
 )
 
 
-SECRET_DSN = "postgresql://worker:secret@example.invalid/polymarket"
+SECRET_DSN = "postgresql://market-scorer:secret@localhost:54322/db"
 
 
 class FakeConnection:
@@ -213,7 +213,7 @@ def test_load_error_is_redacted_and_connection_is_closed(
     assert "failed to load autonomous market scorer reports" in message
     assert "postgresql://" not in message
     assert "secret" not in message
-    assert "example.invalid" not in message
+    assert "localhost" not in message
     assert secret_table not in message
     assert "Who wins?" not in message
     assert "market-slug" not in message
@@ -245,7 +245,7 @@ def test_connect_error_is_redacted(
     assert "failed to connect to the autonomous market scorer database" in message
     assert "postgresql://" not in message
     assert "secret" not in message
-    assert "example.invalid" not in message
+    assert "localhost" not in message
     assert secret_table not in message
 
 
@@ -276,7 +276,7 @@ def test_injected_connect_psycopg_prefix_error_is_redacted(
     assert "psycopg is required but leaked" not in message
     assert "postgresql://" not in message
     assert "secret" not in message
-    assert "example.invalid" not in message
+    assert "localhost" not in message
     assert secret_table not in message
     assert "Who wins?" not in message
     assert "market-slug" not in message
@@ -308,7 +308,7 @@ def test_missing_psycopg_message_does_not_leak_dsn(
     assert "postgres extra" in message
     assert "postgresql://" not in message
     assert "secret" not in message
-    assert "example.invalid" not in message
+    assert "localhost" not in message
 
 
 def test_default_connect_uses_psycopg_autocommit_and_no_commit_or_rollback(
