@@ -288,6 +288,9 @@ RECOMMENDATION_IMPORT_ALLOWLIST: dict[
         "polymarket_alpha_lab.paper_nav_liquidity_risk": frozenset(
             {"PaperNavLiquidityRiskReport"},
         ),
+        "polymarket_alpha_lab.paper_nav_settlement_risk_overlay": frozenset(
+            {"PaperNavSettlementRiskOverlayReport"},
+        ),
         "polymarket_alpha_lab.settlement_freshness_gate": frozenset(
             {"PaperSettlementFreshnessGateReport"},
         ),
