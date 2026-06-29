@@ -125,10 +125,10 @@ def test_enabled_env_config_accepts_only_strict_values(
     config_module = _config_module()
 
     config = config_module.from_strategy_risk_audit_db_env(
-        {
-            ENABLED_ENV_VAR: enabled_value,
-            DSN_ENV_VAR: "postgresql://example.invalid/postgres",
-        },
+            {
+                ENABLED_ENV_VAR: enabled_value,
+                DSN_ENV_VAR: "postgresql://localhost:54322/postgres",
+            },
     )
 
     assert config.enabled is expected_enabled
@@ -145,7 +145,7 @@ def test_enabled_env_config_rejects_non_strict_values(enabled_value: str) -> Non
         config_module.from_strategy_risk_audit_db_env(
             {
                 ENABLED_ENV_VAR: enabled_value,
-                DSN_ENV_VAR: "postgresql://example.invalid/postgres",
+                DSN_ENV_VAR: "postgresql://localhost:54322/postgres",
             },
         )
 
@@ -154,7 +154,7 @@ def test_enabled_env_config_rejects_non_strict_values(enabled_value: str) -> Non
 
 def test_enabled_env_config_reads_explicit_dsn_and_table_name() -> None:
     config_module = _config_module()
-    dsn = "postgresql://example.invalid/postgres"
+    dsn = "postgresql://localhost:54322/postgres"
 
     config = config_module.from_strategy_risk_audit_db_env(
         {
@@ -173,7 +173,7 @@ def test_config_is_frozen_and_masks_dsn_in_repr() -> None:
     config_module = _config_module()
     config = config_module.SupabaseStrategyRiskAuditConfig(
         enabled=True,
-        dsn="postgresql://topsecret.example.invalid/postgres",
+        dsn="postgresql://topsecret@localhost:54322/postgres",
         table_name=DEFAULT_TABLE,
     )
 
@@ -185,6 +185,23 @@ def test_config_is_frozen_and_masks_dsn_in_repr() -> None:
     assert "postgresql://topsecret" not in rendered
     assert "dsn=<redacted>" in rendered
     assert DEFAULT_TABLE in rendered
+
+
+def test_direct_config_rejects_remote_dsn_without_echoing_secret() -> None:
+    config_module = _config_module()
+    secret_dsn = "postgresql://topsecret@example.invalid/postgres"
+
+    with pytest.raises(ValueError) as exc_info:
+        config_module.SupabaseStrategyRiskAuditConfig(
+            enabled=False,
+            dsn=secret_dsn,
+            table_name=DEFAULT_TABLE,
+        )
+
+    message = str(exc_info.value)
+    assert DSN_ENV_VAR in message
+    assert secret_dsn not in message
+    assert "topsecret" not in message
 
 
 def test_disabled_config_repr_shows_absent_dsn_without_secret_shape() -> None:
@@ -280,7 +297,7 @@ def test_direct_config_rejects_non_bool_enabled_flag() -> None:
     with pytest.raises(ValueError, match="enabled must be a bool"):
         config_module.SupabaseStrategyRiskAuditConfig(
             enabled=1,
-            dsn="postgresql://example.invalid/postgres",
+            dsn="postgresql://localhost:54322/postgres",
             table_name=DEFAULT_TABLE,
         )
 
