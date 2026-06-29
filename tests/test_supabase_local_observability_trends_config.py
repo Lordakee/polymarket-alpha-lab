@@ -16,6 +16,7 @@ ENABLED_ENV_VAR = "POLYMARKET_ALPHA_LAB_LOCAL_OBSERVABILITY_TRENDS_DB_ENABLED"
 DSN_ENV_VAR = "POLYMARKET_ALPHA_LAB_LOCAL_OBSERVABILITY_TRENDS_DB_DSN"
 TABLE_ENV_VAR = "POLYMARKET_ALPHA_LAB_LOCAL_OBSERVABILITY_TRENDS_DB_TABLE"
 DEFAULT_TABLE = "local_observability_trends_reports"
+LOCAL_POSTGRES_DSN = "postgresql://postgres:postgres@localhost:54322/postgres"
 
 
 def _config_module():
@@ -59,7 +60,7 @@ def test_disabled_env_config_uses_default_table_and_accepts_absent_dsn() -> None
 
 def test_enabled_env_config_requires_dsn_without_echoing_secret() -> None:
     config_module = _config_module()
-    unrelated_secret = "postgresql://topsecret.example.invalid/postgres"
+    unrelated_secret = "postgresql://topsecret:postgres@localhost:54322/postgres"
 
     with pytest.raises(ValueError) as exc_info:
         config_module.from_local_observability_trends_db_env(
@@ -77,7 +78,7 @@ def test_enabled_env_config_requires_dsn_without_echoing_secret() -> None:
 
 def test_enabled_env_config_rejects_padded_dsn_without_echoing_it() -> None:
     config_module = _config_module()
-    secret_dsn = "postgresql://topsecret.example.invalid/postgres"
+    secret_dsn = "postgresql://topsecret:postgres@localhost:54322/postgres"
 
     with pytest.raises(ValueError) as exc_info:
         config_module.from_local_observability_trends_db_env(
@@ -112,7 +113,7 @@ def test_enabled_env_config_accepts_only_strict_values(
     config = config_module.from_local_observability_trends_db_env(
         {
             ENABLED_ENV_VAR: enabled_value,
-            DSN_ENV_VAR: "postgresql://example.invalid/postgres",
+            DSN_ENV_VAR: LOCAL_POSTGRES_DSN,
         },
     )
 
@@ -130,7 +131,7 @@ def test_enabled_env_config_rejects_non_strict_values(enabled_value: str) -> Non
         config_module.from_local_observability_trends_db_env(
             {
                 ENABLED_ENV_VAR: enabled_value,
-                DSN_ENV_VAR: "postgresql://example.invalid/postgres",
+                DSN_ENV_VAR: LOCAL_POSTGRES_DSN,
             },
         )
 
@@ -139,7 +140,7 @@ def test_enabled_env_config_rejects_non_strict_values(enabled_value: str) -> Non
 
 def test_enabled_env_config_reads_explicit_dsn_and_table_name() -> None:
     config_module = _config_module()
-    dsn = "postgresql://example.invalid/postgres"
+    dsn = LOCAL_POSTGRES_DSN
 
     config = config_module.from_local_observability_trends_db_env(
         {
@@ -154,11 +155,61 @@ def test_enabled_env_config_reads_explicit_dsn_and_table_name() -> None:
     assert config.table_name == "audit.local_observability_trends_reports"
 
 
+@pytest.mark.parametrize(
+    "dsn",
+    [
+        "postgresql://postgres:postgres@localhost:54322/postgres",
+        "postgres://postgres:postgres@127.0.0.1:54322/postgres",
+        "host=localhost port=54322 dbname=postgres",
+        "postgresql:///postgres?host=/var/run/postgresql",
+        "host=/var/run/postgresql dbname=postgres",
+    ],
+)
+def test_config_accepts_local_postgres_dsn_shapes(dsn: str) -> None:
+    config_module = _config_module()
+
+    config = config_module.SupabaseLocalObservabilityTrendsConfig(
+        enabled=False,
+        dsn=dsn,
+        table_name=DEFAULT_TABLE,
+    )
+
+    assert config.dsn == dsn
+
+
+@pytest.mark.parametrize(
+    "dsn",
+    [
+        "postgresql://topsecret@example.invalid/postgres",
+        "postgres://db.example.com/postgres",
+        "postgresql://localhost:54322/postgres?hostaddr=127.0.0.1",
+        "host=example.invalid dbname=postgres",
+    ],
+)
+def test_config_rejects_remote_or_unsafe_dsn_without_echoing_secret(
+    dsn: str,
+) -> None:
+    config_module = _config_module()
+
+    with pytest.raises(ValueError) as exc_info:
+        config_module.SupabaseLocalObservabilityTrendsConfig(
+            enabled=False,
+            dsn=dsn,
+            table_name=DEFAULT_TABLE,
+        )
+
+    message = str(exc_info.value)
+    assert DSN_ENV_VAR in message
+    assert "local Postgres/Supabase" in message
+    assert dsn not in message
+    assert "topsecret" not in message
+
+
 def test_config_is_frozen_and_masks_dsn_in_repr() -> None:
     config_module = _config_module()
     config = config_module.SupabaseLocalObservabilityTrendsConfig(
         enabled=True,
-        dsn="postgresql://topsecret.example.invalid/postgres",
+        dsn="postgresql://topsecret:postgres@localhost:54322/postgres",
         table_name=DEFAULT_TABLE,
     )
 
@@ -265,7 +316,7 @@ def test_direct_config_rejects_non_bool_enabled_flag() -> None:
     with pytest.raises(ValueError, match="enabled must be a bool"):
         config_module.SupabaseLocalObservabilityTrendsConfig(
             enabled=1,
-            dsn="postgresql://example.invalid/postgres",
+            dsn=LOCAL_POSTGRES_DSN,
             table_name=DEFAULT_TABLE,
         )
 

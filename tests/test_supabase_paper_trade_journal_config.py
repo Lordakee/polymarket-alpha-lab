@@ -17,6 +17,7 @@ PAPER_TRADE_JOURNAL_DB_TABLE_ENV_VAR = (
     "POLYMARKET_ALPHA_LAB_PAPER_TRADE_JOURNAL_DB_TABLE"
 )
 DEFAULT_PAPER_TRADE_JOURNAL_DB_TABLE = "paper_trade_journal_records"
+LOCAL_POSTGRES_DSN = "postgresql://postgres:postgres@localhost:54322/postgres"
 
 
 def _load_module() -> ModuleType:
@@ -51,7 +52,7 @@ def test_disabled_env_config_accepts_missing_dsn_and_uses_default_table() -> Non
 )
 def test_enabled_env_config_accepts_explicit_true_values(enabled_value: str) -> None:
     module = _load_module()
-    dsn = "postgresql://example.invalid/postgres"
+    dsn = LOCAL_POSTGRES_DSN
 
     config = module.from_paper_trade_journal_db_env(
         {
@@ -96,9 +97,7 @@ def test_enabled_env_config_rejects_invalid_enabled_values(enabled_value: str) -
         module.from_paper_trade_journal_db_env(
             {
                 module.PAPER_TRADE_JOURNAL_DB_ENABLED_ENV_VAR: enabled_value,
-                module.PAPER_TRADE_JOURNAL_DB_DSN_ENV_VAR: (
-                    "postgresql://example.invalid/postgres"
-                ),
+                module.PAPER_TRADE_JOURNAL_DB_DSN_ENV_VAR: LOCAL_POSTGRES_DSN,
             },
         )
 
@@ -108,13 +107,63 @@ def test_enabled_env_config_rejects_invalid_enabled_values(enabled_value: str) -
 
 
 @pytest.mark.parametrize(
+    "dsn",
+    [
+        "postgresql://postgres:postgres@localhost:54322/postgres",
+        "postgres://postgres:postgres@127.0.0.1:54322/postgres",
+        "host=localhost port=54322 dbname=postgres",
+        "postgresql:///postgres?host=/var/run/postgresql",
+        "host=/var/run/postgresql dbname=postgres",
+    ],
+)
+def test_config_accepts_local_postgres_dsn_shapes(dsn: str) -> None:
+    module = _load_module()
+
+    config = module.SupabasePaperTradeJournalConfig(
+        enabled=False,
+        dsn=dsn,
+        table_name=module.DEFAULT_PAPER_TRADE_JOURNAL_DB_TABLE,
+    )
+
+    assert config.dsn == dsn
+
+
+@pytest.mark.parametrize(
+    "dsn",
+    [
+        "postgresql://topsecret@example.invalid/postgres",
+        "postgres://db.example.com/postgres",
+        "postgresql://localhost:54322/postgres?hostaddr=127.0.0.1",
+        "host=example.invalid dbname=postgres",
+    ],
+)
+def test_config_rejects_remote_or_unsafe_dsn_without_echoing_secret(
+    dsn: str,
+) -> None:
+    module = _load_module()
+
+    with pytest.raises(ValueError) as exc_info:
+        module.SupabasePaperTradeJournalConfig(
+            enabled=False,
+            dsn=dsn,
+            table_name=module.DEFAULT_PAPER_TRADE_JOURNAL_DB_TABLE,
+        )
+
+    message = str(exc_info.value)
+    assert module.PAPER_TRADE_JOURNAL_DB_DSN_ENV_VAR in message
+    assert "local Postgres/Supabase" in message
+    assert dsn not in message
+    assert "topsecret" not in message
+
+
+@pytest.mark.parametrize(
     "dsn_value",
     [
         None,
         "",
         " ",
         "\t\n",
-        " postgresql://sensitive-token.example.invalid/postgres ",
+        " postgresql://sensitive-token:postgres@localhost:54322/postgres ",
     ],
 )
 def test_dsn_normalizes_missing_blank_or_padded_values_to_none(
@@ -136,7 +185,7 @@ def test_enabled_config_requires_dsn_without_echoing_secret(
     dsn_value: str | None,
 ) -> None:
     module = _load_module()
-    secret_dsn = "postgresql://sensitive-token.example.invalid/postgres"
+    secret_dsn = "postgresql://sensitive-token:postgres@localhost:54322/postgres"
 
     with pytest.raises(ValueError) as exc_info:
         module.from_paper_trade_journal_db_env(
@@ -155,7 +204,7 @@ def test_enabled_config_requires_dsn_without_echoing_secret(
 
 def test_padded_enabled_dsn_is_rejected_without_echoing_secret() -> None:
     module = _load_module()
-    secret_dsn = "postgresql://sensitive-token.example.invalid/postgres"
+    secret_dsn = "postgresql://sensitive-token:postgres@localhost:54322/postgres"
 
     with pytest.raises(ValueError) as exc_info:
         module.from_paper_trade_journal_db_env(
@@ -176,7 +225,7 @@ def test_config_is_frozen_and_masks_dsn_in_repr() -> None:
 
     config = module.SupabasePaperTradeJournalConfig(
         enabled=True,
-        dsn="postgresql://sensitive-token.example.invalid/postgres",
+        dsn="postgresql://sensitive-token:postgres@localhost:54322/postgres",
         table_name=module.DEFAULT_PAPER_TRADE_JOURNAL_DB_TABLE,
     )
 
@@ -276,7 +325,7 @@ def test_direct_config_rejects_non_bool_enabled_flag() -> None:
     with pytest.raises(ValueError, match="enabled must be a bool"):
         module.SupabasePaperTradeJournalConfig(
             enabled=1,  # type: ignore[arg-type]
-            dsn="postgresql://example.invalid/postgres",
+            dsn=LOCAL_POSTGRES_DSN,
             table_name=module.DEFAULT_PAPER_TRADE_JOURNAL_DB_TABLE,
         )
 
