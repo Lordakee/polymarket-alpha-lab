@@ -150,7 +150,7 @@ def test_disabled_env_config_accepts_missing_dsn() -> None:
 
 
 def test_enabled_env_config_requires_dsn_without_echoing_secret() -> None:
-    secret_dsn = "postgresql://sensitive-token.example.invalid/postgres"
+    secret_dsn = "postgresql://user:sensitive-token@localhost/postgres"
 
     with pytest.raises(ValueError) as exc_info:
         from_cycle_snapshot_db_env(
@@ -167,7 +167,7 @@ def test_enabled_env_config_requires_dsn_without_echoing_secret() -> None:
 
 
 def test_enabled_config_requires_dsn_without_echoing_secret() -> None:
-    secret_dsn = "postgresql://sensitive-token.example.invalid/postgres"
+    secret_dsn = "postgresql://user:sensitive-token@localhost/postgres"
 
     with pytest.raises(ValueError) as exc_info:
         SupabaseCycleSnapshotConfig(
@@ -182,7 +182,7 @@ def test_enabled_config_requires_dsn_without_echoing_secret() -> None:
 
 
 def test_enabled_env_config_reads_explicit_dsn_at_process_edge() -> None:
-    dsn = "postgresql://example.invalid/postgres"
+    dsn = "postgresql://localhost/postgres"
 
     config = from_cycle_snapshot_db_env(
         {
@@ -198,7 +198,7 @@ def test_enabled_env_config_reads_explicit_dsn_at_process_edge() -> None:
 
 
 def test_padded_enabled_dsn_is_rejected_without_echoing_secret() -> None:
-    secret_dsn = "postgresql://sensitive-token.example.invalid/postgres"
+    secret_dsn = "postgresql://user:sensitive-token@localhost/postgres"
 
     with pytest.raises(ValueError) as exc_info:
         from_cycle_snapshot_db_env(
@@ -217,7 +217,7 @@ def test_padded_enabled_dsn_is_rejected_without_echoing_secret() -> None:
 def test_config_is_frozen_and_masks_dsn_in_repr() -> None:
     config = SupabaseCycleSnapshotConfig(
         enabled=True,
-        dsn="postgresql://sensitive-token.example.invalid/postgres",
+        dsn="postgresql://user:sensitive-token@localhost/postgres",
         table_name=DEFAULT_CYCLE_SNAPSHOT_DB_TABLE,
     )
 
@@ -226,8 +226,71 @@ def test_config_is_frozen_and_masks_dsn_in_repr() -> None:
 
     rendered = repr(config)
     assert "sensitive-token" not in rendered
-    assert "postgresql://sensitive-token" not in rendered
+    assert "postgresql://user:sensitive-token" not in rendered
     assert "dsn=<redacted>" in rendered
+
+
+@pytest.mark.parametrize(
+    "dsn",
+    [
+        "postgresql://localhost/postgres",
+        "postgres://127.0.0.1:54322/postgres",
+        "host=localhost port=54322 dbname=postgres",
+        "postgresql:///postgres?host=/var/run/postgresql",
+    ],
+)
+def test_config_accepts_local_postgres_dsn_forms(dsn: str) -> None:
+    config = SupabaseCycleSnapshotConfig(
+        enabled=True,
+        dsn=dsn,
+        table_name=DEFAULT_CYCLE_SNAPSHOT_DB_TABLE,
+    )
+
+    assert config.dsn == dsn
+
+
+@pytest.mark.parametrize(
+    "dsn",
+    [
+        "postgresql://example.invalid/postgres",
+        "postgres://db.example.com/postgres",
+        "postgresql://localhost/postgres?hostaddr=127.0.0.1",
+        "host=example.invalid dbname=postgres",
+        "sqlite:///tmp/project.db",
+    ],
+)
+def test_config_rejects_remote_or_unsafe_dsn_without_echoing_secret(
+    dsn: str,
+) -> None:
+    with pytest.raises(ValueError) as exc_info:
+        SupabaseCycleSnapshotConfig(
+            enabled=False,
+            dsn=dsn,
+            table_name=DEFAULT_CYCLE_SNAPSHOT_DB_TABLE,
+        )
+
+    message = str(exc_info.value)
+    assert CYCLE_SNAPSHOT_DB_DSN_ENV_VAR in message
+    assert "local Postgres/Supabase" in message
+    assert dsn not in message
+
+
+def test_env_config_rejects_remote_dsn_without_echoing_secret() -> None:
+    secret_dsn = "postgresql://user:sensitive-token@example.invalid/postgres"
+
+    with pytest.raises(ValueError) as exc_info:
+        from_cycle_snapshot_db_env(
+            {
+                CYCLE_SNAPSHOT_DB_ENABLED_ENV_VAR: "true",
+                CYCLE_SNAPSHOT_DB_DSN_ENV_VAR: secret_dsn,
+            },
+        )
+
+    message = str(exc_info.value)
+    assert CYCLE_SNAPSHOT_DB_DSN_ENV_VAR in message
+    assert "local Postgres/Supabase" in message
+    assert secret_dsn not in message
+    assert "sensitive-token" not in message
 
 
 def test_disabled_config_repr_shows_absent_dsn_without_secret_shape() -> None:
@@ -315,7 +378,7 @@ def test_enabled_flag_is_explicit_and_strict() -> None:
         from_cycle_snapshot_db_env(
             {
                 CYCLE_SNAPSHOT_DB_ENABLED_ENV_VAR: "yes",
-                CYCLE_SNAPSHOT_DB_DSN_ENV_VAR: "postgresql://example.test/postgres",
+                CYCLE_SNAPSHOT_DB_DSN_ENV_VAR: "postgresql://localhost/postgres",
             },
         )
 
@@ -324,7 +387,7 @@ def test_direct_config_rejects_non_bool_enabled_flag() -> None:
     with pytest.raises(ValueError, match="enabled must be a bool"):
         SupabaseCycleSnapshotConfig(
             enabled=1,  # type: ignore[arg-type]
-            dsn="postgresql://example.test/postgres",
+            dsn="postgresql://localhost/postgres",
             table_name=DEFAULT_CYCLE_SNAPSHOT_DB_TABLE,
         )
 
