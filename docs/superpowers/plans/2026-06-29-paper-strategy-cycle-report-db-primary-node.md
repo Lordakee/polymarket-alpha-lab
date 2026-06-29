@@ -29,6 +29,7 @@
 - Modify `src/polymarket_alpha_lab/runner.py`: add optional `cycle_report_sink` callable and count persisted full cycle reports without removing existing JSONL compatibility yet.
 - Modify `src/polymarket_alpha_lab/cli.py`: add optional DB sink wiring for `strategy-cycle` and `run` when `POLYMARKET_ALPHA_LAB_PAPER_STRATEGY_CYCLE_REPORT_DB_ENABLED=true`.
 - Modify `src/polymarket_alpha_lab/__init__.py` only if existing export conventions require exporting new public row/config helpers; otherwise keep module-level `__all__` only.
+- Add `supabase/migrations/20260629000000_paper_strategy_cycle_reports.sql` and `tests/test_paper_strategy_cycle_report_schema.py` as the schema gate for the full cycle-report table.
 - Add tests:
   - `tests/test_paper_strategy_cycle_report_db_row.py`
   - `tests/test_paper_strategy_cycle_report_store.py`
