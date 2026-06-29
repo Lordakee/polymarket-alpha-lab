@@ -35,7 +35,7 @@ LOADER_MODULE = (
     "polymarket_alpha_lab."
     "paper_autonomous_investment_ledger_db_history_health_trend_gate_load"
 )
-SECRET_DSN = "postgresql://paper-ledger-trend-gate-secret.example.invalid/db"
+SECRET_DSN = "postgresql://paper-ledger:secret@localhost:54322/db"
 SECRET_TABLE = "secret_schema.paper_ledger_secret_archive"
 SECRET_PAYLOAD = '{"market_slug":"hidden-market","question":"hidden question"}'
 SECRET_QUESTION = "Will hidden investment ledger trend gate resolve yes?"
@@ -49,7 +49,7 @@ SECRET_SHA256 = (
 def _enable_ledger_db(
     monkeypatch: pytest.MonkeyPatch,
     *,
-    dsn: str = "postgresql://paper-ledger-trend-gate.example.invalid/db",
+    dsn: str = "postgresql://paper-ledger:secret@localhost:54322/db",
     table_name: str = "paper_autonomous_investment_ledger_db_history_health_reports",
 ) -> None:
     monkeypatch.setenv(PAPER_AUTONOMOUS_INVESTMENT_LEDGER_DB_HISTORY_HEALTH_DB_ENABLED_ENV_VAR, "true")
@@ -298,7 +298,7 @@ def test_run_investment_ledger_db_history_health_trend_gate_rejects_invalid_limi
 
     with pytest.raises(ValueError, match=f"{COMMAND} limit must be positive"):
         helper(
-            dsn="postgresql://paper-ledger-trend-gate.example.invalid/db",
+            dsn="postgresql://paper-ledger:secret@localhost:54322/db",
             table_name="paper_autonomous_investment_ledger_db_history_health_reports",
             limit=bad_limit,
             runner=forbidden_runner,
@@ -313,7 +313,7 @@ def test_investment_ledger_db_history_health_trend_gate_cli_uses_injected_runner
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    dsn = "postgresql://paper-ledger-trend-gate.example.invalid/db"
+    dsn = "postgresql://paper-ledger:secret@localhost:54322/db"
     table_name = "paper_autonomous_investment_ledger_db_history_health_reports"
     _enable_ledger_db(monkeypatch, dsn=dsn, table_name=table_name)
     calls: list[dict[str, object]] = []
@@ -377,7 +377,7 @@ def test_investment_ledger_db_history_health_trend_gate_cli_uses_default_health_
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    dsn = "postgresql://paper-ledger-trend-gate.example.invalid/db"
+    dsn = "postgresql://paper-ledger:secret@localhost:54322/db"
     monkeypatch.setenv(
         PAPER_AUTONOMOUS_INVESTMENT_LEDGER_DB_HISTORY_HEALTH_DB_ENABLED_ENV_VAR,
         "true",
@@ -417,7 +417,7 @@ def test_run_investment_ledger_db_history_health_trend_gate_default_loader_owns_
         cli,
         "_run_paper_autonomous_investment_ledger_db_history_health_trend_gate",
     )
-    dsn = "postgresql://paper-ledger-trend-gate.example.invalid/db"
+    dsn = "postgresql://paper-ledger:secret@localhost:54322/db"
     table_name = "paper_autonomous_investment_ledger_db_history_health_reports"
     expected_report = object()
     connect_calls: list[dict[str, object]] = []

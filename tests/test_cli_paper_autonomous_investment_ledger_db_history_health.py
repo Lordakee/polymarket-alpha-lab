@@ -26,7 +26,7 @@ LOADER_MODULE = (
     "polymarket_alpha_lab."
     "paper_autonomous_investment_ledger_db_history_health_load"
 )
-SECRET_DSN = "postgresql://paper-ledger-secret.example.invalid/db"
+SECRET_DSN = "postgresql://paper-ledger:secret@localhost:54322/db"
 SECRET_TABLE = "paper_ledger_secret_archive"
 SECRET_PAYLOAD = '{"market_slug":"hidden-market","question":"hidden question"}'
 SECRET_QUESTION = "Will hidden investment ledger market resolve yes?"
@@ -40,7 +40,7 @@ SECRET_SHA256 = (
 def _enable_ledger_db(
     monkeypatch: pytest.MonkeyPatch,
     *,
-    dsn: str = "postgresql://paper-ledger.example.invalid/db",
+    dsn: str = "postgresql://paper-ledger:secret@localhost:54322/db",
     table_name: str = "paper_autonomous_investment_ledger_reports",
 ) -> None:
     monkeypatch.setenv(PAPER_AUTONOMOUS_INVESTMENT_LEDGER_DB_ENABLED_ENV_VAR, "true")
@@ -273,7 +273,7 @@ def test_run_investment_ledger_db_history_health_rejects_invalid_limit_before_ru
 
     with pytest.raises(ValueError, match=f"{COMMAND} limit must be positive"):
         helper(
-            dsn="postgresql://paper-ledger.example.invalid/db",
+            dsn="postgresql://paper-ledger:secret@localhost:54322/db",
             table_name="paper_autonomous_investment_ledger_reports",
             limit=bad_limit,
             runner=forbidden_runner,
@@ -288,7 +288,7 @@ def test_investment_ledger_db_history_health_cli_uses_injected_runner_and_prints
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    dsn = "postgresql://paper-ledger.example.invalid/db"
+    dsn = "postgresql://paper-ledger:secret@localhost:54322/db"
     table_name = "paper_autonomous_investment_ledger_reports"
     _enable_ledger_db(monkeypatch, dsn=dsn, table_name=table_name)
     calls: list[dict[str, object]] = []
@@ -346,7 +346,7 @@ def test_run_investment_ledger_db_history_health_default_loader_owns_connection_
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     helper = getattr(cli, "_run_paper_autonomous_investment_ledger_db_history_health")
-    dsn = "postgresql://paper-ledger.example.invalid/db"
+    dsn = "postgresql://paper-ledger:secret@localhost:54322/db"
     table_name = "paper_autonomous_investment_ledger_reports"
     expected_report = object()
     connect_calls: list[dict[str, object]] = []
