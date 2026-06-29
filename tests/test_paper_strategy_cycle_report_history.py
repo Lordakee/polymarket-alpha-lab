@@ -9,6 +9,7 @@ import pytest
 
 from polymarket_alpha_lab.paper_strategy_cycle_report_history import (
     DEFAULT_PAPER_STRATEGY_CYCLE_REPORT_HISTORY_CONFIG_VERSION,
+    PaperStrategyCycleReportHistoryBlockedReasonRow,
     PaperStrategyCycleReportHistoryConfig,
     PaperStrategyCycleReportHistoryReport,
     build_paper_strategy_cycle_report_history_report,
@@ -441,6 +442,50 @@ def test_strategy_cycle_report_history_outputs_are_frozen_and_validated() -> Non
         replace(history, blocked_market_share=d("NaN"))
     with pytest.raises(ValueError, match="readonly"):
         replace(history, readonly=False)
+
+
+def test_strategy_cycle_report_history_dataclasses_quantize_decimal_rates() -> None:
+    config = PaperStrategyCycleReportHistoryConfig(
+        min_latest_snapshot_ready_share=d("0.1"),
+        max_blocked_market_share=d("0.5"),
+    )
+
+    assert str(config.min_latest_snapshot_ready_share) == "0.100000"
+    assert str(config.max_blocked_market_share) == "0.500000"
+
+    history = PaperStrategyCycleReportHistoryReport(
+        generated_at=GENERATED_AT,
+        config_version=DEFAULT_PAPER_STRATEGY_CYCLE_REPORT_HISTORY_CONFIG_VERSION,
+        history_status="pass",
+        report_count=1,
+        first_report_generated_at=GENERATED_AT,
+        latest_report_generated_at=GENERATED_AT,
+        total_scan_market_count=10,
+        total_considered_count=10,
+        total_snapshot_ready_count=8,
+        total_cost_aware_report_count=8,
+        total_blocked_market_count=2,
+        latest_scan_market_count=10,
+        latest_considered_count=10,
+        latest_snapshot_ready_count=8,
+        latest_cost_aware_report_count=8,
+        latest_blocked_market_count=2,
+        overall_snapshot_ready_share=d("0.8"),
+        latest_snapshot_ready_share=d("0.8"),
+        blocked_market_share=d("0.2"),
+        blocked_reason_rows=(
+            PaperStrategyCycleReportHistoryBlockedReasonRow(
+                reason_code="blocked_fetch_error",
+                blocked_market_count=2,
+                report_count=1,
+            ),
+        ),
+        reason_codes=(),
+    )
+
+    assert str(history.overall_snapshot_ready_share) == "0.800000"
+    assert str(history.latest_snapshot_ready_share) == "0.800000"
+    assert str(history.blocked_market_share) == "0.200000"
 
 
 def test_strategy_cycle_report_history_module_scope_stays_pure_readonly() -> None:

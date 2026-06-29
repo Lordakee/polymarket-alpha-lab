@@ -44,13 +44,21 @@ class PaperStrategyCycleReportHistoryConfig:
     def __post_init__(self) -> None:
         _require_canonical_string("config_version", self.config_version)
         _require_positive_int("min_report_count", self.min_report_count)
-        _require_probability_decimal(
+        object.__setattr__(
+            self,
             "min_latest_snapshot_ready_share",
-            self.min_latest_snapshot_ready_share,
+            _normalize_probability_decimal(
+                "min_latest_snapshot_ready_share",
+                self.min_latest_snapshot_ready_share,
+            ),
         )
-        _require_probability_decimal(
+        object.__setattr__(
+            self,
             "max_blocked_market_share",
-            self.max_blocked_market_share,
+            _normalize_probability_decimal(
+                "max_blocked_market_share",
+                self.max_blocked_market_share,
+            ),
         )
         _require_hard_flags("config", self)
 
@@ -130,7 +138,11 @@ class PaperStrategyCycleReportHistoryReport:
             "latest_snapshot_ready_share",
             "blocked_market_share",
         ):
-            _require_probability_decimal(field_name, getattr(self, field_name))
+            object.__setattr__(
+                self,
+                field_name,
+                _normalize_probability_decimal(field_name, getattr(self, field_name)),
+            )
         object.__setattr__(
             self,
             "blocked_reason_rows",
@@ -413,14 +425,20 @@ def _require_positive_int(field_name: str, value: Any) -> None:
 
 
 def _require_probability_decimal(field_name: str, value: Any) -> None:
+    _normalize_probability_decimal(field_name, value)
+
+
+def _normalize_probability_decimal(field_name: str, value: Any) -> Decimal:
     if type(value) is not Decimal:
         raise ValueError(f"{field_name} must be a Decimal")
     if not value.is_finite():
         raise ValueError(f"{field_name} must be finite")
     if value < 0 or value > 1:
         raise ValueError(f"{field_name} must be between zero and one")
-    if value != value.quantize(RATIO_QUANTUM):
+    normalized = value.quantize(RATIO_QUANTUM)
+    if value != normalized:
         raise ValueError(f"{field_name} must have at most six decimal places")
+    return normalized
 
 
 def _require_hard_flags(
