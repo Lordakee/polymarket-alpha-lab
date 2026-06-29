@@ -390,6 +390,44 @@ trade, financial advice, investment ranking, order instruction, execution
 authorization, or an approval workflow. It is not wired into the readiness gate
 or readiness digest yet.
 
+Probability Selection Scorer Agreement Trend Gate CLI/readback:
+
+```bash
+polymarket-alpha-lab probability-selection-scorer-agreement-trend-gate --limit 25
+```
+
+The command is env-only, read-only, paper-only/report-only/readonly, and
+composes existing local pieces only: the existing local Supabase/Postgres
+persisted aggregate agreement report loader, the chronological agreement trend
+reducer, the pure agreement trend-gate reducer, and aggregate-only stdout.
+
+It reads only persisted aggregate reports from the existing local
+Supabase/Postgres table
+`probability_selection_scorer_agreement_reports` through the existing
+`POLYMARKET_ALPHA_LAB_PROBABILITY_SELECTION_SCORER_AGREEMENT_DB_*`
+environment/config boundary and loader. It accepts only `--limit`; it does not
+accept DSN, table, persist, file, live, auth, private-key, wallet, account,
+order, signing, submission, cancellation, replacement, or exchange-mutation
+flags.
+
+The command writes nothing, adds no durable table, and does not persist trend or
+gate reports. There is no new durable gate table, JSONL/SQLite/file durable
+store, Redis, Mongo, SQLAlchemy, generic durable-store abstraction, hosted DB
+assumption, or file-backed cache. All durable data for this node remains in
+local Supabase/Postgres only.
+
+The gate CLI output is aggregate-only. It prints gate status, recommended next
+step, source report count, trend status, latest agreement status/streak,
+timestamp/span fields, aggregate status counts, aggregate averages, and
+sanitized reason-code summaries. It must not print source rows, payloads,
+report hashes, DB internals, market slugs, questions, condition ids, wallets,
+accounts, auth material, private keys, or order-like data.
+
+This readback command is not permission to trade, not financial advice, not an
+investment ranking, not a trade recommendation, not an order instruction, not
+execution authorization, and not an approval workflow. It is not wired into the
+readiness gate, readiness digest, or strategy policy yet.
+
 Paper Autonomous Allocation Proposal combines a passed autonomous screening
 gate, latest action-gated queue decision-support reports, and source queue
 reports into a paper-only/report-only/read-only allocation proposal:
