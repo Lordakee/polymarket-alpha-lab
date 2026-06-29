@@ -292,6 +292,8 @@ PaperTradeCostAuditDbSink = Callable[..., object]
 StrategyRiskAuditDbSink = Callable[..., object]
 PaperStrategyCycleReportDbSink = Callable[..., object]
 StrategyCycleReportDbHistoryRunner = Callable[..., object]
+StrategyCycleHistoryGateRunner = Callable[..., object]
+StrategyCycleHistoryGateDbSink = Callable[..., object]
 NavRiskRunner = Callable[..., "PaperNavRiskMetricsReport"]
 StrategyAuditRunner = Callable[..., PaperStrategyRiskAuditReport]
 StrategyAuditHistoryRunner = Callable[..., PaperStrategyRiskAuditHistoryReport]
@@ -381,6 +383,9 @@ ProbabilitySelectionScorerAgreementTrendRunner = Callable[..., object]
 ProbabilitySelectionScorerAgreementTrendGateRunner = Callable[..., object]
 MAX_PAPER_AUTONOMOUS_READINESS_DIGEST_READ_LIMIT = 500
 _MISSING = object()
+STRATEGY_CYCLE_HISTORY_GATE_DB_DSN_ENV_VAR = (
+    "POLYMARKET_ALPHA_LAB_STRATEGY_CYCLE_HISTORY_GATE_DB_DSN"
+)
 
 
 @dataclass(frozen=True)
@@ -1193,6 +1198,26 @@ def _raise_redacted_strategy_cycle_report_db_history_error(
     raise RuntimeError(message) from None
 
 
+def _raise_redacted_strategy_cycle_history_gate_error(
+    exc: Exception,
+    *,
+    source_dsn: str,
+    source_table_name: str,
+    gate_dsn: str | None = None,
+    gate_table_name: str | None = None,
+) -> None:
+    message = str(exc)
+    for dsn in (source_dsn, gate_dsn):
+        if dsn is not None:
+            message = _redact_db_dsn(message, dsn=dsn)
+    for table_name in (source_table_name, gate_table_name):
+        if table_name is not None:
+            message = _redact_db_table_name_and_tail(message, table_name=table_name)
+    if not message.strip():
+        message = exc.__class__.__name__
+    raise RuntimeError(message) from None
+
+
 def _raise_redacted_multi_db_sink_error(
     exc: Exception,
     *,
@@ -1292,6 +1317,8 @@ def main(
     strategy_cycle_report_db_history_runner: (
         StrategyCycleReportDbHistoryRunner | None
     ) = None,
+    strategy_cycle_history_gate_runner: StrategyCycleHistoryGateRunner | None = None,
+    strategy_cycle_history_gate_db_sink: StrategyCycleHistoryGateDbSink | None = None,
     paper_nav_snapshot_db_sink: PaperNavSnapshotDbSink = (
         insert_paper_nav_snapshot_with_psycopg
     ),
@@ -1653,6 +1680,22 @@ def main(
         "--limit",
         type=int,
         default=50,
+    )
+    strategy_cycle_history_gate = subparsers.add_parser(
+        "strategy-cycle-history-gate",
+        allow_abbrev=False,
+    )
+    strategy_cycle_history_gate.add_argument("--source-config-version", default=None)
+    strategy_cycle_history_gate.add_argument(
+        "--limit",
+        type=int,
+        default=50,
+    )
+    strategy_cycle_history_gate.add_argument(
+        "--persist",
+        action="store_true",
+        default=False,
+        dest="persist",
     )
     strategy_audit_db_history = subparsers.add_parser("strategy-audit-db-history")
     strategy_audit_db_history.add_argument(
@@ -3007,6 +3050,85 @@ def main(
             return 0
         except Exception as exc:
             print(f"strategy-cycle-db-history failed: {exc}", file=sys.stderr)
+            return 1
+
+    if args.command == "strategy-cycle-history-gate":
+        try:
+            if isinstance(args.limit, bool) or type(args.limit) is not int or args.limit <= 0:
+                raise ValueError("strategy-cycle-history-gate limit must be positive")
+            paper_strategy_cycle_report_db_config = (
+                from_paper_strategy_cycle_report_db_env()
+            )
+            if not paper_strategy_cycle_report_db_config.enabled:
+                raise ValueError(
+                    "strategy-cycle-history-gate requires paper strategy cycle "
+                    "report DB to be enabled",
+                )
+            source_dsn = paper_strategy_cycle_report_db_config.dsn
+            if source_dsn is None:
+                raise ValueError(
+                    "strategy-cycle-history-gate requires a paper strategy cycle "
+                    "report DB DSN "
+                    f"({PAPER_STRATEGY_CYCLE_REPORT_DB_DSN_ENV_VAR})",
+                )
+            source_table_name = paper_strategy_cycle_report_db_config.table_name
+            try:
+                report = _run_strategy_cycle_history_gate(
+                    dsn=source_dsn,
+                    table_name=source_table_name,
+                    source_config_version=args.source_config_version,
+                    limit=args.limit,
+                    gate_runner=strategy_cycle_history_gate_runner,
+                )
+            except Exception as exc:
+                _raise_redacted_strategy_cycle_history_gate_error(
+                    exc,
+                    source_dsn=source_dsn,
+                    source_table_name=source_table_name,
+                )
+
+            persisted = False
+            if args.persist:
+                gate_db_config = (
+                    _from_paper_strategy_cycle_report_history_gate_db_env()
+                )
+                if not gate_db_config.enabled:
+                    raise ValueError(
+                        "strategy-cycle-history-gate requires strategy cycle "
+                        "history gate DB to be enabled",
+                    )
+                gate_dsn = gate_db_config.dsn
+                if gate_dsn is None:
+                    raise ValueError(
+                        "strategy-cycle-history-gate requires strategy cycle "
+                        "history gate DB DSN "
+                        f"({STRATEGY_CYCLE_HISTORY_GATE_DB_DSN_ENV_VAR})",
+                    )
+                gate_table_name = gate_db_config.table_name
+                gate_sink = (
+                    strategy_cycle_history_gate_db_sink
+                    or _insert_paper_strategy_cycle_report_history_gate_report_with_psycopg
+                )
+                try:
+                    gate_sink(
+                        dsn=gate_dsn,
+                        report=report,
+                        table_name=gate_table_name,
+                    )
+                except Exception as exc:
+                    _raise_redacted_strategy_cycle_history_gate_error(
+                        exc,
+                        source_dsn=source_dsn,
+                        source_table_name=source_table_name,
+                        gate_dsn=gate_dsn,
+                        gate_table_name=gate_table_name,
+                    )
+                persisted = True
+
+            _print_strategy_cycle_history_gate_summary(report, persisted=persisted)
+            return 0
+        except Exception as exc:
+            print(f"strategy-cycle-history-gate failed: {exc}", file=sys.stderr)
             return 1
 
     if args.command == "strategy-audit-db-history":
@@ -8459,6 +8581,97 @@ def _run_strategy_cycle_report_db_history(
         )
 
 
+def _run_strategy_cycle_history_gate(
+    *,
+    dsn: str,
+    table_name: str,
+    source_config_version: str | None,
+    limit: int,
+    gate_runner: StrategyCycleHistoryGateRunner | None,
+) -> object:
+    if isinstance(limit, bool) or type(limit) is not int or limit <= 0:
+        raise ValueError("strategy-cycle-history-gate limit must be positive")
+    generated_at = datetime.now(UTC)
+    history_config = PaperStrategyCycleReportHistoryConfig()
+    try:
+        reports = load_paper_strategy_cycle_reports_with_psycopg(
+            dsn,
+            config_version=source_config_version,
+            limit=limit,
+            table_name=table_name,
+        )
+        if not reports:
+            raise ValueError("no paper strategy cycle reports found")
+        history_report = build_paper_strategy_cycle_report_history_report(
+            tuple(reversed(reports)),
+            config=history_config,
+            generated_at=generated_at,
+        )
+    except Exception as exc:
+        _raise_redacted_strategy_cycle_history_gate_error(
+            exc,
+            source_dsn=dsn,
+            source_table_name=table_name,
+        )
+    gate_config = _paper_strategy_cycle_report_history_gate_config()
+    gate_builder = gate_runner or _build_paper_strategy_cycle_report_history_gate_report
+    return gate_builder(
+        history_report,
+        config=gate_config,
+        generated_at=generated_at,
+    )
+
+
+def _paper_strategy_cycle_report_history_gate_config() -> object:
+    from polymarket_alpha_lab.paper_strategy_cycle_report_history_gate import (
+        PaperStrategyCycleReportHistoryGateConfig,
+    )
+
+    return PaperStrategyCycleReportHistoryGateConfig()
+
+
+def _build_paper_strategy_cycle_report_history_gate_report(
+    source_history_report: object,
+    *,
+    config: object,
+    generated_at: datetime,
+) -> object:
+    from polymarket_alpha_lab.paper_strategy_cycle_report_history_gate import (
+        build_paper_strategy_cycle_report_history_gate_report,
+    )
+
+    return build_paper_strategy_cycle_report_history_gate_report(
+        source_history_report,
+        config=config,
+        generated_at=generated_at,
+    )
+
+
+def _from_paper_strategy_cycle_report_history_gate_db_env() -> object:
+    from polymarket_alpha_lab.supabase_paper_strategy_cycle_report_history_gate_config import (
+        from_paper_strategy_cycle_report_history_gate_db_env,
+    )
+
+    return from_paper_strategy_cycle_report_history_gate_db_env()
+
+
+def _insert_paper_strategy_cycle_report_history_gate_report_with_psycopg(
+    *,
+    dsn: str,
+    report: object,
+    table_name: str,
+) -> object:
+    from polymarket_alpha_lab.paper_strategy_cycle_report_history_gate_psycopg import (
+        insert_paper_strategy_cycle_report_history_gate_report_with_psycopg,
+    )
+
+    return insert_paper_strategy_cycle_report_history_gate_report_with_psycopg(
+        dsn=dsn,
+        report=report,
+        table_name=table_name,
+    )
+
+
 def _run_cost_audit_db_trend(
     *,
     dsn: str,
@@ -9961,6 +10174,23 @@ def _print_strategy_cycle_report_db_history_summary(
         f"reports={report.report_count} "
         f"latest_snapshot_ready_share={report.latest_snapshot_ready_share} "
         f"blocked_market_share={report.blocked_market_share}",
+    )
+
+
+def _print_strategy_cycle_history_gate_summary(
+    report: object,
+    *,
+    persisted: bool,
+) -> None:
+    persisted_text = "true" if persisted else "false"
+    print(
+        "strategy-cycle-history-gate: "
+        f"status={report.gate_status} "
+        f"source_history_status={report.source_history_status} "
+        f"reports={report.source_report_count} "
+        f"latest_snapshot_ready_share={report.latest_snapshot_ready_share} "
+        f"blocked_market_share={report.blocked_market_share} "
+        f"persisted={persisted_text}",
     )
 
 
