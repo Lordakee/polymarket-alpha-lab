@@ -171,6 +171,14 @@ def test_readiness_digest_composes_optional_evidence_in_canonical_order() -> Non
             recommended_next_step="review_allocation_watch",
             reason_codes=("allocation_watch",),
         ),
+        agreement_trend_gate_report=_source_report(
+            status="watch",
+            field_name="gate_status",
+            generated_at=GENERATED_AT - timedelta(minutes=3),
+            config_version="agreement-trend-gate-v0",
+            recommended_next_step="review_agreement_trend_gate_watch",
+            reason_codes=("agreement_trend_gate_watch",),
+        ),
         ledger_report=_source_report(
             status="pass",
             field_name="gate_status",
@@ -192,12 +200,14 @@ def test_readiness_digest_composes_optional_evidence_in_canonical_order() -> Non
         "screening",
         "transition",
         "allocation",
+        "agreement_trend_gate",
         "ledger",
     )
     assert tuple(row.status for row in report.evidence) == (
         "watch",
         "pass",
         "blocked",
+        "watch",
         "watch",
         "pass",
     )
@@ -206,9 +216,11 @@ def test_readiness_digest_composes_optional_evidence_in_canonical_order() -> Non
         ("screening", "screening-health-v0"),
         ("transition", "transition-v0"),
         ("allocation", "allocation-gate-v0"),
+        ("agreement_trend_gate", "agreement-trend-gate-v0"),
         ("ledger", "ledger-gate-v0"),
     )
     assert report.reason_codes == (
+        "agreement_trend_gate_watch",
         "allocation_watch",
         "ledger_pass",
         "readiness_gate_watch",
@@ -216,6 +228,10 @@ def test_readiness_digest_composes_optional_evidence_in_canonical_order() -> Non
         "transition_blocked",
     )
     assert report.reason_code_counts == (
+        api.PaperAutonomousReadinessDigestReasonCodeCount(
+            "agreement_trend_gate_watch",
+            1,
+        ),
         api.PaperAutonomousReadinessDigestReasonCodeCount("allocation_watch", 1),
         api.PaperAutonomousReadinessDigestReasonCodeCount("ledger_pass", 1),
         api.PaperAutonomousReadinessDigestReasonCodeCount("readiness_gate_watch", 1),
@@ -229,6 +245,13 @@ def test_readiness_digest_watches_when_any_evidence_watches_without_blockers() -
 
     report = api.build_paper_autonomous_readiness_digest_report(
         _readiness_report(),
+        agreement_trend_gate_report=_source_report(
+            status="watch",
+            field_name="gate_status",
+            config_version="agreement-trend-gate-v0",
+            recommended_next_step="review_agreement_trend_gate_watch",
+            reason_codes=("agreement_trend_gate_watch",),
+        ),
         allocation_report=_source_report(
             status="watch",
             field_name="gate_status",
@@ -244,6 +267,7 @@ def test_readiness_digest_watches_when_any_evidence_watches_without_blockers() -
         "review_watch_paper_autonomous_readiness_evidence"
     )
     assert report.reason_codes == (
+        "agreement_trend_gate_watch",
         "allocation_watch",
         "readiness_gate_pass",
     )

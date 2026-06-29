@@ -387,8 +387,10 @@ watch unless a blocking condition also applies.
 
 The gate report is only paper observability evidence. It is not permission to
 trade, financial advice, investment ranking, order instruction, execution
-authorization, or an approval workflow. It is not wired into the readiness gate
-or readiness digest yet.
+authorization, or an approval workflow. It is available as optional
+`agreement_trend_gate` evidence for the paper autonomous readiness digest pure
+reducer and dependency-injected loader; it is not wired into the readiness gate
+or strategy policy.
 
 Probability Selection Scorer Agreement Trend Gate CLI/readback:
 
@@ -425,8 +427,11 @@ accounts, auth material, private keys, or order-like data.
 
 This readback command is not permission to trade, not financial advice, not an
 investment ranking, not a trade recommendation, not an order instruction, not
-execution authorization, and not an approval workflow. It is not wired into the
-readiness gate, readiness digest, or strategy policy yet.
+execution authorization, and not an approval workflow. Its report shape is
+accepted as optional `agreement_trend_gate` evidence by the paper autonomous
+readiness digest pure reducer and dependency-injected loader, but this CLI is
+not automatically wired into the readiness digest command, readiness gate, or
+strategy policy yet.
 
 Paper Autonomous Allocation Proposal combines a passed autonomous screening
 gate, latest action-gated queue decision-support reports, and source queue

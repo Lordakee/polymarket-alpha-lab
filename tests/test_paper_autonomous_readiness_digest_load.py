@@ -86,6 +86,7 @@ def test_digest_loader_composes_injected_loaders_and_digest_reducer(
     screening_report = SourceReport("screening")
     transition_report = SourceReport("transition")
     allocation_report = SourceReport("allocation")
+    agreement_trend_gate_report = SourceReport("agreement_trend_gate")
     ledger_report = SourceReport("ledger")
     expected_digest = object()
     calls: list[tuple[str, object, str, int | None]] = []
@@ -111,6 +112,7 @@ def test_digest_loader_composes_injected_loaders_and_digest_reducer(
         screening_report: object | None = None,
         transition_report: object | None = None,
         allocation_report: object | None = None,
+        agreement_trend_gate_report: object | None = None,
         ledger_report: object | None = None,
         config: object,
         generated_at: datetime,
@@ -121,6 +123,7 @@ def test_digest_loader_composes_injected_loaders_and_digest_reducer(
                 "screening_report": screening_report,
                 "transition_report": transition_report,
                 "allocation_report": allocation_report,
+                "agreement_trend_gate_report": agreement_trend_gate_report,
                 "ledger_report": ledger_report,
                 "config": config,
                 "generated_at": generated_at,
@@ -144,6 +147,11 @@ def test_digest_loader_composes_injected_loaders_and_digest_reducer(
         transition_table_name="transition_reports",
         allocation_loader=make_loader("allocation", allocation_report),
         allocation_table_name="allocation_reports",
+        agreement_trend_gate_loader=make_loader(
+            "agreement_trend_gate",
+            agreement_trend_gate_report,
+        ),
+        agreement_trend_gate_table_name="agreement_trend_gate_reports",
         ledger_loader=make_loader("ledger", ledger_report),
         ledger_table_name="ledger_reports",
         limit=5,
@@ -157,6 +165,7 @@ def test_digest_loader_composes_injected_loaders_and_digest_reducer(
         ("screening", connection, "screening_reports", 5),
         ("transition", connection, "transition_reports", 5),
         ("allocation", connection, "allocation_reports", 5),
+        ("agreement_trend_gate", connection, "agreement_trend_gate_reports", 5),
         ("ledger", connection, "ledger_reports", 5),
     ]
     assert reducer_calls == [
@@ -165,6 +174,7 @@ def test_digest_loader_composes_injected_loaders_and_digest_reducer(
             "screening_report": screening_report,
             "transition_report": transition_report,
             "allocation_report": allocation_report,
+            "agreement_trend_gate_report": agreement_trend_gate_report,
             "ledger_report": ledger_report,
             "config": config,
             "generated_at": GENERATED_AT,
@@ -261,6 +271,7 @@ def test_digest_loader_does_not_manage_connection_lifecycle_or_write(
         screening_report: object | None = None,
         transition_report: object | None = None,
         allocation_report: object | None = None,
+        agreement_trend_gate_report: object | None = None,
         ledger_report: object | None = None,
         config: object,
         generated_at: datetime,

@@ -31,6 +31,8 @@ def load_paper_autonomous_readiness_digest_report(
     transition_table_name: str | None = None,
     allocation_loader: ReportLoader | None = None,
     allocation_table_name: str | None = None,
+    agreement_trend_gate_loader: ReportLoader | None = None,
+    agreement_trend_gate_table_name: str | None = None,
     ledger_loader: ReportLoader | None = None,
     ledger_table_name: str | None = None,
 ) -> PaperAutonomousReadinessDigestReport:
@@ -66,6 +68,13 @@ def load_paper_autonomous_readiness_digest_report(
         limit=limit,
         generated_at=generated_at,
     )
+    agreement_trend_gate_report = _load_optional_report(
+        connection,
+        loader=agreement_trend_gate_loader,
+        table_name=agreement_trend_gate_table_name,
+        limit=limit,
+        generated_at=generated_at,
+    )
     ledger_report = _load_optional_report(
         connection,
         loader=ledger_loader,
@@ -79,6 +88,7 @@ def load_paper_autonomous_readiness_digest_report(
         screening_report=screening_report,
         transition_report=transition_report,
         allocation_report=allocation_report,
+        agreement_trend_gate_report=agreement_trend_gate_report,
         ledger_report=ledger_report,
         config=config,
         generated_at=generated_at,
