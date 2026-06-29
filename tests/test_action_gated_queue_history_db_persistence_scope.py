@@ -31,6 +31,9 @@ ALLOWED_STDLIB_IMPORTS = {
     "re",
     "typing",
 }
+ALLOWED_LOCAL_IMPORTS = {
+    "polymarket_alpha_lab.supabase_local_dsn",
+}
 
 FORBIDDEN_SOURCE_FRAGMENTS = (
     "auth",
@@ -100,8 +103,10 @@ def test_history_env_config_stays_at_env_boundary() -> None:
         module
         for module in imported_modules(tree)
         if module.startswith("polymarket_alpha_lab.")
-    } == set()
+    } == ALLOWED_LOCAL_IMPORTS
     for module in imported_modules(tree):
+        if module in ALLOWED_LOCAL_IMPORTS:
+            continue
         top_level = module.split(".", 1)[0]
         assert top_level in ALLOWED_STDLIB_IMPORTS, module
 

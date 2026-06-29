@@ -750,7 +750,7 @@ def test_enabled_config_sink_writes_converted_db_row_with_configured_dsn_and_tab
     store_fixture: StoreFixture,
 ) -> None:
     Config = _config_class()
-    secret_dsn = "postgresql://research:topsecret@example.invalid/postgres"
+    secret_dsn = "postgresql://research:topsecret@localhost:54322/postgres"
     config = Config(
         enabled=True,
         dsn=secret_dsn,
@@ -791,7 +791,7 @@ def test_enabled_config_sink_redacts_dsn_from_errors_and_repr(
     store_fixture: StoreFixture,
 ) -> None:
     Config = _config_class()
-    secret_dsn = "postgresql://research:topsecret@example.invalid/postgres"
+    secret_dsn = "postgresql://research:topsecret@localhost:54322/postgres"
     config = Config(enabled=True, dsn=secret_dsn, table_name=DEFAULT_TABLE)
 
     def report_sink(
@@ -819,7 +819,7 @@ def test_enabled_config_sink_redacts_dsn_from_errors_and_repr(
     assert "insert failed" in message
     assert "postgresql://" not in message
     assert "topsecret" not in message
-    assert "example.invalid" not in message
+    assert "localhost:54322" not in message
 
 
 def test_store_surface_does_not_require_live_trading_auth_wallet_or_order_objects(

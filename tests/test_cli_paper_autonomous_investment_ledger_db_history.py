@@ -90,7 +90,7 @@ def test_investment_ledger_db_history_cli_uses_injected_runner_and_prints_recent
     monkeypatch,
     capsys,
 ) -> None:
-    dsn = "postgresql://paper-ledger.example.invalid/db"
+    dsn = "postgresql://paper-ledger:secret@localhost:54322/db"
     _enable_ledger_db(
         monkeypatch,
         dsn=dsn,
@@ -169,7 +169,7 @@ def test_investment_ledger_db_history_cli_prints_empty_history(
 ) -> None:
     _enable_ledger_db(
         monkeypatch,
-        dsn="postgresql://paper-ledger.example.invalid/db",
+        dsn="postgresql://paper-ledger:secret@localhost:54322/db",
         table_name="paper_investment_ledger_archive",
     )
 
@@ -187,7 +187,7 @@ def test_investment_ledger_db_history_cli_runner_failure_redacts_db_and_payload(
     monkeypatch,
     capsys,
 ) -> None:
-    dsn = "postgresql://paper-ledger-secret.example.invalid/db"
+    dsn = "postgresql://paper-ledger:secret@localhost:54322/db"
     table_name = "paper_ledger_secret_archive"
     payload_json = '{"market_slug":"secret-market","question":"hidden question"}'
     _enable_ledger_db(monkeypatch, dsn=dsn, table_name=table_name)
@@ -249,7 +249,7 @@ def test_load_investment_ledger_db_history_uses_psycopg_loader(
     )
 
     actual = _load_paper_autonomous_investment_ledger_db_history(
-        dsn="postgresql://paper-ledger.example.invalid/db",
+        dsn="postgresql://paper-ledger:secret@localhost:54322/db",
         table_name="paper_investment_ledger_archive",
         limit=13,
         config_version="paper-autonomous-investment-ledger-v0",
@@ -259,7 +259,7 @@ def test_load_investment_ledger_db_history_uses_psycopg_loader(
     assert actual == reports
     assert loader_calls == [
         {
-            "dsn": "postgresql://paper-ledger.example.invalid/db",
+            "dsn": "postgresql://paper-ledger:secret@localhost:54322/db",
             "table_name": "paper_investment_ledger_archive",
             "limit": 13,
             "config_version": "paper-autonomous-investment-ledger-v0",
@@ -288,7 +288,7 @@ def test_load_investment_ledger_db_history_rejects_invalid_limit_before_load(
 
     with pytest.raises(ValueError, match="limit must be positive"):
         _load_paper_autonomous_investment_ledger_db_history(
-            dsn="postgresql://paper-ledger.example.invalid/db",
+            dsn="postgresql://paper-ledger:secret@localhost:54322/db",
             table_name="paper_investment_ledger_archive",
             limit=limit,  # type: ignore[arg-type]
         )

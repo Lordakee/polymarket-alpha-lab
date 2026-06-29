@@ -44,7 +44,7 @@ def test_cost_audit_cli_ignores_db_env_without_persist_flag(
     monkeypatch.setenv(PAPER_TRADE_COST_AUDIT_DB_ENABLED_ENV_VAR, "not-a-bool")
     monkeypatch.setenv(
         PAPER_TRADE_COST_AUDIT_DB_DSN_ENV_VAR,
-        "postgresql://cost-audit.example.invalid/ignored",
+        "postgresql://cost-audit:secret@localhost:54322/db",
     )
     sink_calls = []
 
@@ -73,8 +73,8 @@ def test_cost_audit_cli_ignores_db_env_without_persist_flag(
     captured = capsys.readouterr()
     assert "cost-audit:" in captured.out
     assert "cost-audit failed:" not in captured.err
-    assert "cost-audit.example.invalid" not in captured.out
-    assert "cost-audit.example.invalid" not in captured.err
+    assert "localhost:54322" not in captured.out
+    assert "localhost:54322" not in captured.err
 
 
 def test_cost_audit_cli_persists_report_when_requested(
@@ -82,7 +82,7 @@ def test_cost_audit_cli_persists_report_when_requested(
     tmp_path,
     capsys,
 ):
-    dsn = "postgresql://cost-audit.example.invalid/persist"
+    dsn = "postgresql://cost-audit:secret@localhost:54322/db"
     monkeypatch.setenv(PAPER_TRADE_COST_AUDIT_DB_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(PAPER_TRADE_COST_AUDIT_DB_DSN_ENV_VAR, dsn)
     monkeypatch.setenv(
@@ -176,7 +176,7 @@ def test_cost_audit_cli_redacts_dsn_on_persistence_failure(
     tmp_path,
     capsys,
 ):
-    dsn = "postgresql://cost-audit-secret.example.invalid/persist"
+    dsn = "postgresql://cost-audit:secret@localhost:54322/db"
     monkeypatch.setenv(PAPER_TRADE_COST_AUDIT_DB_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(PAPER_TRADE_COST_AUDIT_DB_DSN_ENV_VAR, dsn)
     trade_log = tmp_path / "paper-trades.jsonl"
@@ -204,8 +204,8 @@ def test_cost_audit_cli_redacts_dsn_on_persistence_failure(
     assert "cost-audit failed: failed to persist to <redacted-dsn>" in captured.err
     assert dsn not in captured.out
     assert dsn not in captured.err
-    assert "cost-audit-secret" not in captured.out
-    assert "cost-audit-secret" not in captured.err
+    assert "localhost:54322" not in captured.out
+    assert "localhost:54322" not in captured.err
 
 
 def test_cost_audit_cli_default_psycopg_persist_path_no_network(
@@ -213,7 +213,7 @@ def test_cost_audit_cli_default_psycopg_persist_path_no_network(
     tmp_path,
     capsys,
 ):
-    dsn = "postgresql://cost-audit.example.invalid/persist"
+    dsn = "postgresql://cost-audit:secret@localhost:54322/db"
     monkeypatch.setenv(PAPER_TRADE_COST_AUDIT_DB_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(PAPER_TRADE_COST_AUDIT_DB_DSN_ENV_VAR, dsn)
     monkeypatch.setenv(

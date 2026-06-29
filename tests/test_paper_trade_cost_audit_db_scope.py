@@ -36,6 +36,7 @@ ALLOWED_IMPORT_MODULES = {
     "polymarket_alpha_lab.paper_trade_cost_audit",
     "polymarket_alpha_lab.paper_trade_cost_audit_db_row",
     "polymarket_alpha_lab.paper_trade_cost_audit_store",
+    "polymarket_alpha_lab.supabase_local_dsn",
     "re",
     "typing",
 }

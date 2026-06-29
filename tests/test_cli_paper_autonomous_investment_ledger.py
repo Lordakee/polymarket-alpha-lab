@@ -125,7 +125,7 @@ def test_paper_autonomous_investment_ledger_cli_loads_broker_records_and_prints_
     monkeypatch,
     capsys,
 ) -> None:
-    broker_dsn = "postgresql://paper-broker.example.invalid/db"
+    broker_dsn = "postgresql://paper-broker:secret@localhost:54322/db"
     _enable_broker_db(
         monkeypatch,
         dsn=broker_dsn,
@@ -194,12 +194,12 @@ def test_paper_autonomous_investment_ledger_cli_without_persist_skips_ledger_db_
 ) -> None:
     _enable_broker_db(
         monkeypatch,
-        dsn="postgresql://paper-broker.example.invalid/db",
+        dsn="postgresql://paper-broker:secret@localhost:54322/db",
         table_name="paper_broker_archive",
     )
     _enable_ledger_db(
         monkeypatch,
-        dsn="postgresql://paper-ledger.example.invalid/db",
+        dsn="postgresql://paper-ledger:secret@localhost:54322/db",
         table_name="paper_investment_ledger_archive",
     )
     ledger_env_calls = 0
@@ -235,8 +235,8 @@ def test_paper_autonomous_investment_ledger_cli_persists_when_requested(
     monkeypatch,
     capsys,
 ) -> None:
-    broker_dsn = "postgresql://paper-broker.example.invalid/db"
-    ledger_dsn = "postgresql://paper-ledger.example.invalid/db"
+    broker_dsn = "postgresql://paper-broker:secret@localhost:54322/db"
+    ledger_dsn = "postgresql://paper-ledger:secret@localhost:54322/db"
     _enable_broker_db(
         monkeypatch,
         dsn=broker_dsn,
@@ -282,12 +282,12 @@ def test_paper_autonomous_investment_ledger_cli_reports_duplicate_persist_noop(
 ) -> None:
     _enable_broker_db(
         monkeypatch,
-        dsn="postgresql://paper-broker.example.invalid/db",
+        dsn="postgresql://paper-broker:secret@localhost:54322/db",
         table_name="paper_broker_archive",
     )
     _enable_ledger_db(
         monkeypatch,
-        dsn="postgresql://paper-ledger.example.invalid/db",
+        dsn="postgresql://paper-ledger:secret@localhost:54322/db",
         table_name="paper_investment_ledger_archive",
     )
 
@@ -310,7 +310,7 @@ def test_paper_autonomous_investment_ledger_cli_persist_requires_ledger_db_enabl
 ) -> None:
     _enable_broker_db(
         monkeypatch,
-        dsn="postgresql://paper-broker.example.invalid/db",
+        dsn="postgresql://paper-broker:secret@localhost:54322/db",
         table_name="paper_broker_archive",
     )
 
@@ -332,7 +332,7 @@ def test_paper_autonomous_investment_ledger_cli_runner_failure_redacts_source_db
     monkeypatch,
     capsys,
 ) -> None:
-    broker_dsn = "postgresql://paper-broker-secret.example.invalid/db"
+    broker_dsn = "postgresql://paper-broker:secret@localhost:54322/db"
     broker_table = "paper_broker_secret_archive"
     _enable_broker_db(monkeypatch, dsn=broker_dsn, table_name=broker_table)
     payload_json = '{"market_slug":"secret-market","question":"hidden question"}'
@@ -369,9 +369,9 @@ def test_paper_autonomous_investment_ledger_cli_sink_failure_redacts_source_and_
     monkeypatch,
     capsys,
 ) -> None:
-    broker_dsn = "postgresql://paper-broker-secret.example.invalid/db"
+    broker_dsn = "postgresql://paper-broker:secret@localhost:54322/db"
     broker_table = "paper_broker_secret_archive"
-    ledger_dsn = "postgresql://paper-ledger-secret.example.invalid/db"
+    ledger_dsn = "postgresql://paper-ledger:secret@localhost:54322/db"
     ledger_table = "paper_ledger_secret_archive"
     _enable_broker_db(monkeypatch, dsn=broker_dsn, table_name=broker_table)
     _enable_ledger_db(monkeypatch, dsn=ledger_dsn, table_name=ledger_table)
@@ -434,7 +434,7 @@ def test_load_paper_autonomous_investment_ledger_from_broker_db_uses_psycopg_loa
     )
 
     actual = _load_paper_autonomous_investment_ledger_from_broker_db(
-        broker_dsn="postgresql://paper-broker.example.invalid/db",
+        broker_dsn="postgresql://paper-broker:secret@localhost:54322/db",
         broker_table_name="paper_broker_archive",
         limit=11,
         source_config_version="paper-broker-v0",
@@ -447,7 +447,7 @@ def test_load_paper_autonomous_investment_ledger_from_broker_db_uses_psycopg_loa
     assert actual is report
     assert loader_calls == [
         {
-            "dsn": "postgresql://paper-broker.example.invalid/db",
+            "dsn": "postgresql://paper-broker:secret@localhost:54322/db",
             "table_name": "paper_broker_archive",
             "limit": 11,
             "config_version": "paper-broker-v0",
@@ -488,7 +488,7 @@ def test_load_paper_autonomous_investment_ledger_from_broker_db_rejects_invalid_
 
     with pytest.raises(ValueError, match="limit must be positive"):
         _load_paper_autonomous_investment_ledger_from_broker_db(
-            broker_dsn="postgresql://paper-broker.example.invalid/db",
+            broker_dsn="postgresql://paper-broker:secret@localhost:54322/db",
             broker_table_name="paper_broker_archive",
             limit=limit,  # type: ignore[arg-type]
         )

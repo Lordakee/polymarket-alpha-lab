@@ -23,7 +23,7 @@ from polymarket_alpha_lab.supabase_paper_autonomous_investment_ledger_config imp
 )
 
 
-SECRET_DSN = "postgresql://worker:secret@example.invalid/polymarket"
+SECRET_DSN = "postgresql://paper-ledger:secret@localhost:54322/db"
 ADAPTER_MODULE_NAME = (
     "polymarket_alpha_lab.paper_autonomous_investment_ledger_psycopg"
 )
@@ -666,7 +666,7 @@ def test_operation_failure_rolls_back_closes_reraises_and_does_not_echo_dsn(
     assert "<redacted>" in message
     assert "postgresql://" not in message
     assert "secret" not in message
-    assert "example.invalid" not in message
+    assert "localhost" not in message
     assert connection.commit_count == 0
     assert connection.rollback_count == 1
     assert connection.close_count == 1
@@ -724,7 +724,7 @@ def test_commit_failure_rolls_back_closes_reraises_and_does_not_echo_dsn(
     assert "commit failed without dsn" in message
     assert "postgresql://" not in message
     assert "secret" not in message
-    assert "example.invalid" not in message
+    assert "localhost" not in message
     assert connection.commit_count == 1
     assert connection.rollback_count == 1
     assert connection.close_count == 1
@@ -748,7 +748,7 @@ def test_connect_failure_raises_clean_error_without_dsn(
     assert "failed to connect" in str(exc_info.value)
     assert "postgresql://" not in str(exc_info.value)
     assert "secret" not in str(exc_info.value)
-    assert "example.invalid" not in str(exc_info.value)
+    assert "localhost" not in str(exc_info.value)
     assert exc_info.value.__cause__ is None
     assert exc_info.value.__suppress_context__ is True
     formatted = "".join(

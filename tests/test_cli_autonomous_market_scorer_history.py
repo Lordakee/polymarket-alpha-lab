@@ -22,6 +22,7 @@ from polymarket_alpha_lab.supabase_autonomous_market_scorer_config import (
 
 COMMAND = "autonomous-market-scorer-history"
 HISTORY_CONFIG_VERSION = "autonomous-market-scorer-history-v0"
+LOCAL_SCORER_DSN = "postgresql://market-scorer:secret@localhost:54322/db"
 
 
 def _recurring_market(market_slug: str, report_count: int) -> SimpleNamespace:
@@ -263,7 +264,7 @@ def test_history_cli_uses_scorer_env_config_and_prints_aggregate_summary(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    dsn = "postgresql://history.example.invalid/db"
+    dsn = LOCAL_SCORER_DSN
     table_name = "autonomous_market_scorer_reports"
     _set_scorer_db_env(monkeypatch, dsn, table_name=table_name)
     calls: list[dict[str, object]] = []
@@ -350,7 +351,7 @@ def test_history_cli_read_errors_redact_dsn_table_payload_market_and_hash(
 ) -> None:
     dsn = (
         "postgresql://scorer_user:super-secret-password@"
-        "scorer-source-secret.example.invalid/db?sslmode=require"
+        "localhost:54322/db?sslmode=disable"
     )
     table_name = "autonomous_market_scorer_reports_secret"
     _set_scorer_db_env(monkeypatch, dsn, table_name=table_name)
@@ -394,7 +395,7 @@ def test_history_cli_read_errors_redact_reason_code_fields(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    dsn = "postgresql://history.example.invalid/db"
+    dsn = LOCAL_SCORER_DSN
     table_name = "autonomous_market_scorer_reports"
     _set_scorer_db_env(monkeypatch, dsn, table_name=table_name)
 
@@ -435,7 +436,7 @@ def test_history_cli_read_errors_redact_quoted_structured_payload_values(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    dsn = "postgresql://history.example.invalid/db"
+    dsn = LOCAL_SCORER_DSN
     table_name = "autonomous_market_scorer_reports"
     _set_scorer_db_env(monkeypatch, dsn, table_name=table_name)
 
@@ -471,7 +472,7 @@ def test_history_cli_read_errors_redact_market_detail_and_secret_fields(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    dsn = "postgresql://history.example.invalid/db"
+    dsn = LOCAL_SCORER_DSN
     table_name = "autonomous_market_scorer_reports"
     _set_scorer_db_env(monkeypatch, dsn, table_name=table_name)
 
@@ -532,7 +533,7 @@ def test_history_cli_read_errors_redact_market_detail_and_secret_fields(
 def test_history_helper_default_load_path_reads_scorer_reports_chronologically(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    dsn = "postgresql://history.example.invalid/db"
+    dsn = LOCAL_SCORER_DSN
     table_name = "autonomous_market_scorer_reports"
     report = _history_report()
     newest = SimpleNamespace(generated_at=datetime(2026, 6, 28, 12, 0, tzinfo=UTC))
@@ -646,7 +647,7 @@ def test_history_helper_rejects_invalid_limit_before_runner_or_connect(
     helper = getattr(cli, "_run_autonomous_market_scorer_history")
     with pytest.raises(ValueError, match="limit must be positive"):
         helper(
-            dsn="postgresql://history.example.invalid/db",
+            dsn=LOCAL_SCORER_DSN,
             table_name="autonomous_market_scorer_reports",
             limit=limit,
             runner=forbidden_runner,

@@ -169,7 +169,7 @@ def test_cost_audit_db_trend_cli_uses_injected_runner_and_prints_summary(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    dsn = "postgresql://cost-audit-db-trend.example.invalid/db"
+    dsn = "postgresql://cost-audit:secret@localhost:54322/db"
     monkeypatch.setenv(PAPER_TRADE_COST_AUDIT_DB_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(PAPER_TRADE_COST_AUDIT_DB_DSN_ENV_VAR, dsn)
     monkeypatch.setenv(
@@ -229,7 +229,7 @@ def test_cost_audit_db_trend_cli_default_load_path_no_network(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    dsn = "postgresql://cost-audit-db-trend.example.invalid/db"
+    dsn = "postgresql://cost-audit:secret@localhost:54322/db"
     monkeypatch.setenv(PAPER_TRADE_COST_AUDIT_DB_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(PAPER_TRADE_COST_AUDIT_DB_DSN_ENV_VAR, dsn)
     monkeypatch.setenv(
@@ -358,7 +358,7 @@ def test_cost_audit_db_trend_cli_redacts_dsn_on_read_failure(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    dsn = "postgresql://cost-audit-db-trend-secret.example.invalid/db"
+    dsn = "postgresql://cost-audit:secret@localhost:54322/db"
     monkeypatch.setenv(PAPER_TRADE_COST_AUDIT_DB_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(PAPER_TRADE_COST_AUDIT_DB_DSN_ENV_VAR, dsn)
 
@@ -409,7 +409,7 @@ def test_cost_audit_db_trend_cli_rejects_non_positive_limit(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    dsn = "postgresql://cost-audit-db-trend.example.invalid/db"
+    dsn = "postgresql://cost-audit:secret@localhost:54322/db"
     monkeypatch.setenv(PAPER_TRADE_COST_AUDIT_DB_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(PAPER_TRADE_COST_AUDIT_DB_DSN_ENV_VAR, dsn)
 
