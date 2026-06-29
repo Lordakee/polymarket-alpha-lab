@@ -33,6 +33,7 @@ ALL_GATE_NAMES = (
     "nav_drawdown",
     "open_exposure",
 )
+SETTLEMENT_GATE_NAMES = ALL_GATE_NAMES + ("settlement_nav_risk",)
 
 
 class PaperStrategyRiskAuditHistoryGateConfigSubclass(
@@ -82,6 +83,31 @@ def _audit_report(
     )
 
 
+def _settlement_audit_report(
+    status: str,
+    generated_at: datetime,
+) -> PaperStrategyRiskAuditReport:
+    status_map = {
+        "audit_ready": ("pass", 7, 0, 0),
+        "insufficient_evidence": ("incomplete", 0, 0, 7),
+        "blocked_by_risk": ("fail", 0, 7, 0),
+    }
+    gate_status, pass_count, fail_count, incomplete_count = status_map[status]
+    return PaperStrategyRiskAuditReport(
+        generated_at=generated_at,
+        config_version="strategy-risk-audit-v0",
+        status=status,
+        gate_count=7,
+        pass_count=pass_count,
+        fail_count=fail_count,
+        incomplete_count=incomplete_count,
+        gate_results=tuple(
+            PaperStrategyRiskAuditGateResult(gate_name, gate_status, "message")
+            for gate_name in SETTLEMENT_GATE_NAMES
+        ),
+    )
+
+
 def _history_config() -> PaperStrategyRiskAuditHistoryConfig:
     return PaperStrategyRiskAuditHistoryConfig(
         config_version="strategy-risk-audit-history-v0",
@@ -118,6 +144,21 @@ def _gate_report(
         config=config or PaperStrategyRiskAuditHistoryGateConfig(),
         generated_at=generated_at,
     )
+
+
+def test_strategy_risk_audit_history_gate_preserves_settlement_nav_risk_gate_names() -> None:
+    history = build_paper_strategy_risk_audit_history_report(
+        (_settlement_audit_report("blocked_by_risk", GENERATED_AT - timedelta(hours=1)),),
+        config=_history_config(),
+        generated_at=GENERATED_AT,
+    )
+
+    gate = _gate_report(history)
+
+    assert gate.gate_status == "blocked"
+    assert gate.latest_fail_count == 7
+    assert gate.latest_failed_gate_names == SETTLEMENT_GATE_NAMES
+    assert "settlement_nav_risk" in gate.latest_failed_gate_names
 
 
 def test_strategy_risk_audit_history_gate_passes_fresh_ready_history() -> None:

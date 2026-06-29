@@ -59,6 +59,7 @@ GATE_NAMES = frozenset(
         "cost_discipline",
         "nav_drawdown",
         "open_exposure",
+        "settlement_nav_risk",
     ),
 )
 
