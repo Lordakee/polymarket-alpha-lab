@@ -13,6 +13,7 @@ MODULE_PATH = (
     / "polymarket_alpha_lab"
     / "supabase_paper_recommendation_health_config.py"
 )
+LOCAL_SUPABASE_DSN = "postgresql://postgres:postgres@localhost:54322/postgres"
 
 
 def _module():
@@ -55,7 +56,7 @@ def test_disabled_env_config_accepts_missing_dsn() -> None:
 
 def test_enabled_env_config_requires_dsn_without_echoing_secret() -> None:
     module = _module()
-    secret_dsn = "postgresql://sensitive-token.example.invalid/postgres"
+    secret_dsn = "postgresql://postgres:sensitive-token@localhost:54322/postgres"
 
     with pytest.raises(ValueError) as exc_info:
         module.from_paper_recommendation_health_db_env(
@@ -74,7 +75,7 @@ def test_enabled_env_config_requires_dsn_without_echoing_secret() -> None:
 
 def test_enabled_config_requires_dsn_without_echoing_secret() -> None:
     module = _module()
-    secret_dsn = "postgresql://sensitive-token.example.invalid/postgres"
+    secret_dsn = "postgresql://postgres:sensitive-token@localhost:54322/postgres"
 
     with pytest.raises(ValueError) as exc_info:
         module.SupabasePaperRecommendationHealthConfig(
@@ -90,7 +91,7 @@ def test_enabled_config_requires_dsn_without_echoing_secret() -> None:
 
 def test_enabled_env_config_reads_explicit_dsn_at_process_edge() -> None:
     module = _module()
-    dsn = "postgresql://example.invalid/postgres"
+    dsn = LOCAL_SUPABASE_DSN
 
     config = module.from_paper_recommendation_health_db_env(
         {
@@ -107,7 +108,7 @@ def test_enabled_env_config_reads_explicit_dsn_at_process_edge() -> None:
 
 def test_padded_enabled_dsn_is_rejected_without_echoing_secret() -> None:
     module = _module()
-    secret_dsn = "postgresql://sensitive-token.example.invalid/postgres"
+    secret_dsn = "postgresql://postgres:sensitive-token@localhost:54322/postgres"
 
     with pytest.raises(ValueError) as exc_info:
         module.from_paper_recommendation_health_db_env(
@@ -123,11 +124,71 @@ def test_padded_enabled_dsn_is_rejected_without_echoing_secret() -> None:
     assert "secret" not in message.lower()
 
 
+@pytest.mark.parametrize(
+    "dsn",
+    [
+        "postgresql://postgres:postgres@localhost:54322/postgres",
+        "postgres://postgres:postgres@127.0.0.1:54322/postgres",
+        "postgresql://postgres:postgres@[::1]:54322/postgres",
+        "host=localhost port=54322 dbname=postgres user=postgres",
+        "postgresql:///postgres?host=/var/run/postgresql",
+        "host=/var/run/postgresql dbname=postgres user=postgres",
+    ],
+)
+def test_enabled_env_config_accepts_local_postgres_dsns(dsn: str) -> None:
+    module = _module()
+
+    config = module.from_paper_recommendation_health_db_env(
+        {
+            module.PAPER_RECOMMENDATION_HEALTH_DB_ENABLED_ENV_VAR: "true",
+            module.PAPER_RECOMMENDATION_HEALTH_DB_DSN_ENV_VAR: dsn,
+        },
+    )
+
+    assert config.enabled is True
+    assert config.dsn == dsn
+    assert config.table_name == module.DEFAULT_PAPER_RECOMMENDATION_HEALTH_DB_TABLE
+
+
+@pytest.mark.parametrize(
+    "dsn",
+    [
+        "postgresql://postgres:super-secret@hosted.example.invalid:5432/postgres",
+        "postgres://postgres:super-secret@192.168.1.10:5432/postgres",
+        "host=hosted.example.invalid dbname=postgres password=super-secret",
+        "postgresql:///postgres?hostaddr=127.0.0.1",
+        "postgresql:///postgres?service=local-supabase",
+        "hostaddr=127.0.0.1 dbname=postgres password=super-secret",
+        "service=local-supabase password=super-secret",
+    ],
+)
+def test_enabled_env_config_rejects_remote_or_unsafe_dsns_without_echoing_secret(
+    dsn: str,
+) -> None:
+    module = _module()
+
+    with pytest.raises(ValueError) as exc_info:
+        module.from_paper_recommendation_health_db_env(
+            {
+                module.PAPER_RECOMMENDATION_HEALTH_DB_ENABLED_ENV_VAR: "true",
+                module.PAPER_RECOMMENDATION_HEALTH_DB_DSN_ENV_VAR: dsn,
+            },
+        )
+
+    message = str(exc_info.value)
+    assert module.PAPER_RECOMMENDATION_HEALTH_DB_DSN_ENV_VAR in message
+    assert "local Postgres/Supabase" in message
+    assert dsn not in message
+    assert "hosted.example.invalid" not in message
+    assert "192.168.1.10" not in message
+    assert "super-secret" not in message
+
+
 def test_config_is_frozen_and_masks_dsn_in_repr() -> None:
     module = _module()
     config = module.SupabasePaperRecommendationHealthConfig(
         enabled=True,
-        dsn="postgresql://sensitive-token.example.invalid/postgres",
+        dsn="postgresql://postgres:sensitive-token@localhost:54322/postgres",
         table_name=module.DEFAULT_PAPER_RECOMMENDATION_HEALTH_DB_TABLE,
     )
 
@@ -233,7 +294,7 @@ def test_enabled_flag_is_explicit_and_strict() -> None:
         module.from_paper_recommendation_health_db_env(
             {
                 module.PAPER_RECOMMENDATION_HEALTH_DB_ENABLED_ENV_VAR: "yes",
-                module.PAPER_RECOMMENDATION_HEALTH_DB_DSN_ENV_VAR: "postgresql://example.test/postgres",
+                module.PAPER_RECOMMENDATION_HEALTH_DB_DSN_ENV_VAR: LOCAL_SUPABASE_DSN,
             },
         )
 
@@ -244,7 +305,7 @@ def test_direct_config_rejects_non_bool_enabled_flag() -> None:
     with pytest.raises(ValueError, match="enabled must be a bool"):
         module.SupabasePaperRecommendationHealthConfig(
             enabled=1,
-            dsn="postgresql://example.test/postgres",
+            dsn=LOCAL_SUPABASE_DSN,
             table_name=module.DEFAULT_PAPER_RECOMMENDATION_HEALTH_DB_TABLE,
         )
 
