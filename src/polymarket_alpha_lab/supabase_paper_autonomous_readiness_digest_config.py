@@ -5,9 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from os import environ
 import re
-import shlex
 from typing import Mapping
-from urllib.parse import parse_qs, urlsplit
+
+from polymarket_alpha_lab.supabase_local_dsn import validate_local_postgres_dsn
 
 
 PAPER_AUTONOMOUS_READINESS_DIGEST_DB_ENABLED_ENV_VAR = (
@@ -27,12 +27,6 @@ _IDENTIFIER_PATTERN = re.compile(r"^[a-z][a-z0-9_]*[a-z0-9]$")
 _TRUE_VALUES = frozenset(("1", "true"))
 _FALSE_VALUES = frozenset(("", "0", "false"))
 _TABLE_NAME_ERROR = "table_name must be a simple lowercase identifier"
-_LOCAL_DSN_ERROR = (
-    f"{PAPER_AUTONOMOUS_READINESS_DIGEST_DB_DSN_ENV_VAR} must point to local "
-    "Postgres/Supabase on localhost, 127.0.0.1, ::1, or an explicit Unix "
-    "socket path"
-)
-_LOCAL_HOSTS = frozenset(("localhost", "127.0.0.1", "::1"))
 
 
 @dataclass(frozen=True)
@@ -47,7 +41,10 @@ class SupabasePaperAutonomousReadinessDigestConfig:
         object.__setattr__(self, "dsn", _normalize_optional_dsn(self.dsn))
         object.__setattr__(self, "table_name", _validate_table_name(self.table_name))
         if self.dsn is not None:
-            _validate_local_postgres_dsn(self.dsn)
+            validate_local_postgres_dsn(
+                self.dsn,
+                env_var_name=PAPER_AUTONOMOUS_READINESS_DIGEST_DB_DSN_ENV_VAR,
+            )
         if self.enabled and self.dsn is None:
             raise ValueError(
                 f"{PAPER_AUTONOMOUS_READINESS_DIGEST_DB_DSN_ENV_VAR} "
@@ -119,91 +116,6 @@ def _normalize_optional_dsn(value: object) -> str | None:
     if not value or value.strip() != value:
         return None
     return value
-
-
-def _validate_local_postgres_dsn(value: str) -> None:
-    if value.startswith("postgresql://"):
-        if _is_local_postgresql_uri(value):
-            return
-        raise ValueError(_LOCAL_DSN_ERROR)
-    if _is_simple_keyword_dsn(value):
-        if _is_local_keyword_dsn(value):
-            return
-        raise ValueError(_LOCAL_DSN_ERROR)
-    raise ValueError(_LOCAL_DSN_ERROR)
-
-
-def _is_local_postgresql_uri(value: str) -> bool:
-    try:
-        parsed = urlsplit(value)
-        port = parsed.port
-    except ValueError:
-        return False
-    if parsed.scheme != "postgresql":
-        return False
-    if port is not None and not _is_valid_port(port):
-        return False
-    query = parse_qs(parsed.query, keep_blank_values=True)
-    if "hostaddr" in query or "service" in query:
-        return False
-    query_hosts = query.get("host", ())
-    if len(query_hosts) > 1:
-        return False
-    hostname = parsed.hostname
-    if hostname:
-        if query_hosts:
-            return False
-        return _is_local_host(hostname)
-    if not query_hosts:
-        return False
-    return _is_local_query_host(query_hosts[0])
-
-
-def _is_simple_keyword_dsn(value: str) -> bool:
-    return "=" in value and "://" not in value
-
-
-def _is_local_keyword_dsn(value: str) -> bool:
-    try:
-        tokens = shlex.split(value)
-    except ValueError:
-        return False
-    params: dict[str, str] = {}
-    for token in tokens:
-        if "=" not in token:
-            return False
-        key, field_value = token.split("=", 1)
-        if not key:
-            return False
-        params[key.lower()] = field_value
-    if "hostaddr" in params or "service" in params:
-        return False
-    host = params.get("host")
-    if host is None or host == "":
-        return False
-    port = params.get("port")
-    if port is not None:
-        if not port.isdecimal() or not _is_valid_port(int(port)):
-            return False
-    return _is_local_query_host(host)
-
-
-def _is_local_query_host(value: str) -> bool:
-    if "," in value or not value:
-        return False
-    if value.startswith("/"):
-        return True
-    return _is_local_host(value)
-
-
-def _is_local_host(value: str) -> bool:
-    if "," in value:
-        return False
-    return value.lower() in _LOCAL_HOSTS
-
-
-def _is_valid_port(value: int) -> bool:
-    return 1 <= value <= 65535
 
 
 def _validate_table_name(value: object) -> str:

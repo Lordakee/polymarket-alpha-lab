@@ -285,7 +285,7 @@ def test_allocation_proposal_db_history_gate_helper_rejects_invalid_limit_before
 
     with pytest.raises(ValueError, match=f"{COMMAND} limit must be positive"):
         helper(
-            dsn="postgresql://allocation-proposal-history-gate.example.invalid/db",
+            dsn="postgresql://allocation-proposal-history-gate@localhost/db",
             table_name="paper_autonomous_allocation_proposal_reports",
             limit=bad_limit,
             runner=forbidden_runner,
@@ -301,7 +301,7 @@ def test_allocation_proposal_db_history_gate_cli_uses_injected_runner_and_prints
 ) -> None:
     history_api = _install_or_get_history_api(monkeypatch)
     gate_api = _install_or_get_gate_api(monkeypatch)
-    dsn = "postgresql://allocation-proposal-history-gate.example.invalid/db"
+    dsn = "postgresql://allocation-proposal-history-gate@localhost/db"
     table_name = "analytics.paper_autonomous_allocation_proposal_reports"
     _set_allocation_proposal_db_env(monkeypatch, dsn, table_name=table_name)
     calls: list[dict[str, object]] = []
@@ -378,7 +378,7 @@ def test_allocation_proposal_db_history_gate_helper_default_load_path_uses_autoc
 ) -> None:
     history_api = _install_or_get_history_api(monkeypatch)
     gate_api = _install_or_get_gate_api(monkeypatch)
-    dsn = "postgresql://allocation-proposal-history-gate.example.invalid/db"
+    dsn = "postgresql://allocation-proposal-history-gate@localhost/db"
     table_name = "paper_autonomous_allocation_proposal_reports"
     report = _gate_report()
     connect_calls: list[tuple[str, bool]] = []
@@ -477,7 +477,7 @@ def test_allocation_proposal_db_history_gate_helper_raises_on_missing_psycopg(
     )
     monkeypatch.setitem(sys.modules, "psycopg", None)
     helper = getattr(cli, "_run_paper_autonomous_allocation_proposal_db_history_gate")
-    dsn = "postgresql://allocation-proposal-history-gate-secret.example.invalid/db"
+    dsn = "postgresql://allocation-proposal-history-gate-secret@localhost/db"
 
     with pytest.raises(RuntimeError, match="psycopg is required"):
         helper(
@@ -492,7 +492,7 @@ def test_allocation_proposal_db_history_gate_helper_uses_shared_redaction_helper
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _install_or_get_history_api(monkeypatch)
-    dsn = "postgresql://allocation-proposal-history-gate-secret.example.invalid/db"
+    dsn = "postgresql://allocation-proposal-history-gate-secret@localhost/db"
     table_name = "paper_autonomous_allocation_proposal_reports"
     calls: list[dict[str, object]] = []
 
@@ -528,7 +528,7 @@ def test_allocation_proposal_db_history_gate_cli_runner_failure_redacts_dsn_sche
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     _install_or_get_history_api(monkeypatch)
-    dsn = "postgresql://allocation-proposal-history-gate-secret.example.invalid/db"
+    dsn = "postgresql://allocation-proposal-history-gate-secret@localhost/db"
     table_name = "analytics.paper_autonomous_allocation_proposal_reports"
     payload_json = '{"market_slug":"secret-market-slug","question":"nested secret"}'
     question = "Will hidden allocation proposal market resolve yes?"
@@ -574,7 +574,7 @@ def test_allocation_proposal_db_history_gate_cli_runner_failure_redacts_dsn_sche
 @pytest.mark.parametrize(
     "argv",
     (
-        [COMMAND, "--dsn", "postgresql://allocation-proposal.example.invalid/db"],
+        [COMMAND, "--dsn", "postgresql://allocation-proposal@localhost/db"],
         [COMMAND, "--table", "paper_autonomous_allocation_proposal_reports"],
         [COMMAND, "--persist"],
         [COMMAND, "--fast"],

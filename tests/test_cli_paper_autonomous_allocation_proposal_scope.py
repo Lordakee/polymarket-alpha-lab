@@ -87,7 +87,7 @@ def _set_upstream_db_env(
 def _set_allocation_proposal_db_env(
     monkeypatch: pytest.MonkeyPatch,
     *,
-    proposal_dsn: str = "postgresql://allocation-proposal.example.invalid/db",
+    proposal_dsn: str = "postgresql://allocation-proposal@localhost/db",
     proposal_table_name: str = "paper_autonomous_allocation_proposal_reports",
 ) -> None:
     monkeypatch.setenv(
@@ -151,9 +151,9 @@ def test_allocation_cli_requires_enabled_screening_gate_db_before_runner_or_clie
 ) -> None:
     _set_upstream_db_env(
         monkeypatch,
-        screening_gate_dsn="postgresql://screening.example.invalid/db",
-        decision_support_dsn="postgresql://decision.example.invalid/db",
-        source_queue_dsn="postgresql://source.example.invalid/db",
+        screening_gate_dsn="postgresql://screening@localhost/db",
+        decision_support_dsn="postgresql://decision@localhost/db",
+        source_queue_dsn="postgresql://source@localhost/db",
     )
     monkeypatch.delenv(
         PAPER_AUTONOMOUS_SCREENING_DECISION_SUPPORT_GATE_DB_ENABLED_ENV_VAR,
@@ -194,9 +194,9 @@ def test_allocation_cli_requires_enabled_decision_support_db(
 ) -> None:
     _set_upstream_db_env(
         monkeypatch,
-        screening_gate_dsn="postgresql://screening.example.invalid/db",
-        decision_support_dsn="postgresql://decision.example.invalid/db",
-        source_queue_dsn="postgresql://source.example.invalid/db",
+        screening_gate_dsn="postgresql://screening@localhost/db",
+        decision_support_dsn="postgresql://decision@localhost/db",
+        source_queue_dsn="postgresql://source@localhost/db",
     )
     monkeypatch.delenv(
         ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_ENABLED_ENV_VAR,
@@ -226,9 +226,9 @@ def test_allocation_cli_requires_enabled_source_queue_db(
 ) -> None:
     _set_upstream_db_env(
         monkeypatch,
-        screening_gate_dsn="postgresql://screening.example.invalid/db",
-        decision_support_dsn="postgresql://decision.example.invalid/db",
-        source_queue_dsn="postgresql://source.example.invalid/db",
+        screening_gate_dsn="postgresql://screening@localhost/db",
+        decision_support_dsn="postgresql://decision@localhost/db",
+        source_queue_dsn="postgresql://source@localhost/db",
     )
     monkeypatch.delenv(ACTION_GATED_QUEUE_DB_ENABLED_ENV_VAR, raising=False)
 
@@ -349,9 +349,9 @@ def test_allocation_cli_uses_injected_runner_before_psycopg_or_client(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    screening_gate_dsn = "postgresql://screening.example.invalid/db"
-    decision_support_dsn = "postgresql://decision.example.invalid/db"
-    source_queue_dsn = "postgresql://source.example.invalid/db"
+    screening_gate_dsn = "postgresql://screening@localhost/db"
+    decision_support_dsn = "postgresql://decision@localhost/db"
+    source_queue_dsn = "postgresql://source@localhost/db"
     _set_upstream_db_env(
         monkeypatch,
         screening_gate_dsn=screening_gate_dsn,
@@ -429,10 +429,10 @@ def test_allocation_persist_cli_uses_injected_runner_sink_and_prints_persistence
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    screening_gate_dsn = "postgresql://screening.example.invalid/db"
-    decision_support_dsn = "postgresql://decision.example.invalid/db"
-    source_queue_dsn = "postgresql://source.example.invalid/db"
-    proposal_dsn = "postgresql://allocation-proposal.example.invalid/db"
+    screening_gate_dsn = "postgresql://screening@localhost/db"
+    decision_support_dsn = "postgresql://decision@localhost/db"
+    source_queue_dsn = "postgresql://source@localhost/db"
+    proposal_dsn = "postgresql://allocation-proposal@localhost/db"
     proposal_table_name = "paper_autonomous_allocation_proposal_reports"
     report = _proposal_report()
     runner_calls: list[dict[str, object]] = []
@@ -486,9 +486,9 @@ def test_allocation_persist_cli_requires_enabled_output_db_before_runner_or_sink
 ) -> None:
     _set_upstream_db_env(
         monkeypatch,
-        screening_gate_dsn="postgresql://screening.example.invalid/db",
-        decision_support_dsn="postgresql://decision.example.invalid/db",
-        source_queue_dsn="postgresql://source.example.invalid/db",
+        screening_gate_dsn="postgresql://screening@localhost/db",
+        decision_support_dsn="postgresql://decision@localhost/db",
+        source_queue_dsn="postgresql://source@localhost/db",
     )
     monkeypatch.delenv(
         PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_ENABLED_ENV_VAR,
@@ -530,9 +530,9 @@ def test_allocation_persist_cli_requires_output_db_dsn_before_runner_or_sink(
 ) -> None:
     _set_upstream_db_env(
         monkeypatch,
-        screening_gate_dsn="postgresql://screening.example.invalid/db",
-        decision_support_dsn="postgresql://decision.example.invalid/db",
-        source_queue_dsn="postgresql://source.example.invalid/db",
+        screening_gate_dsn="postgresql://screening@localhost/db",
+        decision_support_dsn="postgresql://decision@localhost/db",
+        source_queue_dsn="postgresql://source@localhost/db",
     )
     monkeypatch.setenv(
         PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_ENABLED_ENV_VAR,
@@ -578,11 +578,11 @@ def test_allocation_persist_cli_requires_output_db_table_before_runner_or_sink(
 ) -> None:
     _set_upstream_db_env(
         monkeypatch,
-        screening_gate_dsn="postgresql://screening.example.invalid/db",
-        decision_support_dsn="postgresql://decision.example.invalid/db",
-        source_queue_dsn="postgresql://source.example.invalid/db",
+        screening_gate_dsn="postgresql://screening@localhost/db",
+        decision_support_dsn="postgresql://decision@localhost/db",
+        source_queue_dsn="postgresql://source@localhost/db",
     )
-    proposal_dsn = "postgresql://allocation-proposal.example.invalid/db"
+    proposal_dsn = "postgresql://allocation-proposal@localhost/db"
     runner_calls = 0
     sink_calls = 0
 
@@ -631,13 +631,13 @@ def test_allocation_persist_cli_sink_failure_redacts_dsns_tables_and_payloads(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    proposal_dsn = "postgresql://allocation-secret.example.invalid/db"
+    proposal_dsn = "postgresql://allocation-secret@localhost/db"
     proposal_table_name = "paper_autonomous_allocation_proposal_reports"
     _set_upstream_db_env(
         monkeypatch,
-        screening_gate_dsn="postgresql://screening-secret.example.invalid/db",
-        decision_support_dsn="postgresql://decision-secret.example.invalid/db",
-        source_queue_dsn="postgresql://source-secret.example.invalid/db",
+        screening_gate_dsn="postgresql://screening-secret@localhost/db",
+        decision_support_dsn="postgresql://decision-secret@localhost/db",
+        source_queue_dsn="postgresql://source-secret@localhost/db",
     )
     _set_allocation_proposal_db_env(
         monkeypatch,
@@ -684,13 +684,13 @@ def test_allocation_default_cli_ignores_output_db_env_and_sink(
 ) -> None:
     _set_upstream_db_env(
         monkeypatch,
-        screening_gate_dsn="postgresql://screening.example.invalid/db",
-        decision_support_dsn="postgresql://decision.example.invalid/db",
-        source_queue_dsn="postgresql://source.example.invalid/db",
+        screening_gate_dsn="postgresql://screening@localhost/db",
+        decision_support_dsn="postgresql://decision@localhost/db",
+        source_queue_dsn="postgresql://source@localhost/db",
     )
     _set_allocation_proposal_db_env(
         monkeypatch,
-        proposal_dsn="postgresql://allocation-proposal.example.invalid/db",
+        proposal_dsn="postgresql://allocation-proposal@localhost/db",
     )
     sink_calls = 0
 
@@ -755,13 +755,13 @@ def test_allocation_helper_rejects_invalid_limit_before_runner_or_connect(
 
     with pytest.raises(ValueError, match=expected_error):
         helper(
-            screening_gate_dsn="postgresql://screening.example.invalid/db",
+            screening_gate_dsn="postgresql://screening@localhost/db",
             screening_gate_table_name="screening_reports",
             action_gated_queue_decision_support_dsn=(
-                "postgresql://decision.example.invalid/db"
+                "postgresql://decision@localhost/db"
             ),
             action_gated_queue_decision_support_table_name="decision_reports",
-            source_queue_dsn="postgresql://source.example.invalid/db",
+            source_queue_dsn="postgresql://source@localhost/db",
             source_queue_table_name="source_reports",
             limit=bad_limit,
             runner=forbidden_runner,
@@ -790,13 +790,13 @@ def test_allocation_helper_default_path_requires_all_dsns_to_match(
 
     with pytest.raises(RuntimeError, match="requires all upstream DB DSNs to match"):
         helper(
-            screening_gate_dsn="postgresql://screening.example.invalid/db",
+            screening_gate_dsn="postgresql://screening@localhost/db",
             screening_gate_table_name="screening_reports",
             action_gated_queue_decision_support_dsn=(
-                "postgresql://decision.example.invalid/db"
+                "postgresql://decision@localhost/db"
             ),
             action_gated_queue_decision_support_table_name="decision_reports",
-            source_queue_dsn="postgresql://source.example.invalid/db",
+            source_queue_dsn="postgresql://source@localhost/db",
             source_queue_table_name="source_reports",
             limit=7,
             runner=None,
@@ -808,7 +808,7 @@ def test_allocation_helper_default_path_requires_all_dsns_to_match(
 def test_allocation_helper_default_path_uses_one_autocommit_connection(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    shared_dsn = "postgresql://shared.example.invalid/db"
+    shared_dsn = "postgresql://shared@localhost/db"
     connect_calls: list[tuple[str, bool]] = []
     loader_calls: list[dict[str, object]] = []
     report = _proposal_report()
@@ -883,13 +883,13 @@ def test_allocation_cli_runner_failure_redacts_dsns_tables_payloads_questions_ha
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    screening_gate_dsn = "postgresql://screening-secret.example.invalid/db"
+    screening_gate_dsn = "postgresql://screening-secret@localhost/db"
     screening_gate_table_name = "paper_autonomous_screening_decision_support_gate_reports"
-    decision_support_dsn = "postgresql://decision-secret.example.invalid/db"
+    decision_support_dsn = "postgresql://decision-secret@localhost/db"
     decision_support_table_name = (
         "paper_action_gated_queue_decision_support_reports"
     )
-    source_queue_dsn = "postgresql://source-secret.example.invalid/db"
+    source_queue_dsn = "postgresql://source-secret@localhost/db"
     source_queue_table_name = (
         "paper_action_gated_strategy_recommendation_queue_reports"
     )
@@ -963,9 +963,9 @@ def test_allocation_cli_runner_failure_redacts_multiline_payload_and_key_like_qu
     question = "Will foo=bar leak?"
     _set_upstream_db_env(
         monkeypatch,
-        screening_gate_dsn="postgresql://screening.example.invalid/db",
-        decision_support_dsn="postgresql://decision.example.invalid/db",
-        source_queue_dsn="postgresql://source.example.invalid/db",
+        screening_gate_dsn="postgresql://screening@localhost/db",
+        decision_support_dsn="postgresql://decision@localhost/db",
+        source_queue_dsn="postgresql://source@localhost/db",
     )
 
     def broken_runner(**_kwargs: Any) -> object:
@@ -1006,9 +1006,9 @@ def test_allocation_cli_runner_failure_redacts_quoted_payload_and_question_field
     report_sha256 = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
     _set_upstream_db_env(
         monkeypatch,
-        screening_gate_dsn="postgresql://screening.example.invalid/db",
-        decision_support_dsn="postgresql://decision.example.invalid/db",
-        source_queue_dsn="postgresql://source.example.invalid/db",
+        screening_gate_dsn="postgresql://screening@localhost/db",
+        decision_support_dsn="postgresql://decision@localhost/db",
+        source_queue_dsn="postgresql://source@localhost/db",
     )
 
     def broken_runner(**_kwargs: Any) -> object:
@@ -1035,7 +1035,7 @@ def test_allocation_cli_runner_failure_redacts_quoted_payload_and_question_field
 @pytest.mark.parametrize(
     "argv",
     (
-        [COMMAND, "--dsn", "postgresql://allocation.example.invalid/db"],
+        [COMMAND, "--dsn", "postgresql://allocation@localhost/db"],
         [COMMAND, "--table", "paper_autonomous_allocation_proposal_reports"],
         [COMMAND, "--persist"],
         [COMMAND, "--fast"],
@@ -1050,7 +1050,7 @@ def test_allocation_cli_runner_failure_redacts_quoted_payload_and_question_field
         [COMMAND, "--execute"],
         [COMMAND, "--submit"],
         [COMMAND, "--approve"],
-        [PERSIST_COMMAND, "--dsn", "postgresql://allocation.example.invalid/db"],
+        [PERSIST_COMMAND, "--dsn", "postgresql://allocation@localhost/db"],
         [PERSIST_COMMAND, "--table", "paper_autonomous_allocation_proposal_reports"],
         [PERSIST_COMMAND, "--persist"],
         [PERSIST_COMMAND, "--fast"],

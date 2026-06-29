@@ -102,6 +102,7 @@ def test_enabled_env_config_accepts_only_strict_values(
     "dsn",
     [
         "postgresql://postgres:postgres@localhost:54322/postgres",
+        "postgres://postgres:postgres@localhost:54322/postgres",
         "postgresql://postgres:postgres@127.0.0.1:54322/postgres",
         "postgresql://postgres:postgres@[::1]:54322/postgres",
         "postgresql:///postgres?host=/var/run/postgresql",
@@ -109,6 +110,7 @@ def test_enabled_env_config_accepts_only_strict_values(
     ],
     ids=[
         "localhost-supabase-port",
+        "localhost-supabase-port-postgres-scheme",
         "ipv4-loopback-supabase-port",
         "ipv6-loopback-supabase-port",
         "unix-socket-uri-query",

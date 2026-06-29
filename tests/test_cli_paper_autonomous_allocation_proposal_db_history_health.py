@@ -320,7 +320,7 @@ def test_allocation_proposal_db_history_health_helper_rejects_invalid_limit_befo
 
     with pytest.raises(ValueError, match=f"{COMMAND} limit must be positive"):
         helper(
-            dsn="postgresql://allocation-proposal-history-health.example.invalid/db",
+            dsn="postgresql://allocation-proposal-history-health@localhost/db",
             table_name="paper_autonomous_allocation_proposal_reports",
             limit=bad_limit,
             runner=forbidden_runner,
@@ -337,7 +337,7 @@ def test_allocation_proposal_db_history_health_cli_uses_injected_runner_and_prin
 ) -> None:
     history_api = _install_or_get_history_api(monkeypatch)
     health_api = _install_or_get_health_api(monkeypatch)
-    dsn = "postgresql://allocation-proposal-history-health.example.invalid/db"
+    dsn = "postgresql://allocation-proposal-history-health@localhost/db"
     table_name = "analytics.paper_autonomous_allocation_proposal_reports"
     _set_allocation_proposal_db_env(monkeypatch, dsn, table_name=table_name)
     calls: list[dict[str, object]] = []
@@ -416,9 +416,9 @@ def test_allocation_proposal_db_history_health_cli_without_persist_does_not_read
 ) -> None:
     _install_or_get_history_api(monkeypatch)
     _install_or_get_health_api(monkeypatch)
-    dsn = "postgresql://allocation-proposal-history-health.example.invalid/db"
+    dsn = "postgresql://allocation-proposal-history-health@localhost/db"
     table_name = "analytics.paper_autonomous_allocation_proposal_reports"
-    tempting_health_dsn = "postgresql://unused-health-target.example.invalid/db"
+    tempting_health_dsn = "postgresql://unused-health-target@localhost/db"
     tempting_health_table_name = "audit.db_history_health_archive"
     _set_allocation_proposal_db_env(monkeypatch, dsn, table_name=table_name)
     _set_allocation_proposal_db_history_health_db_env(
@@ -475,9 +475,9 @@ def test_allocation_proposal_db_history_health_cli_persist_uses_health_db_env_an
 ) -> None:
     _install_or_get_history_api(monkeypatch)
     _install_or_get_health_api(monkeypatch)
-    source_dsn = "postgresql://allocation-proposal-history-health.example.invalid/db"
+    source_dsn = "postgresql://allocation-proposal-history-health@localhost/db"
     source_table_name = "analytics.paper_autonomous_allocation_proposal_reports"
-    health_dsn = "postgresql://allocation-proposal-history-health-target.example.invalid/db"
+    health_dsn = "postgresql://allocation-proposal-history-health-target@localhost/db"
     health_table_name = "audit.db_history_health_archive"
     _set_allocation_proposal_db_env(
         monkeypatch,
@@ -542,9 +542,9 @@ def test_allocation_proposal_db_history_health_cli_persist_uses_default_health_d
 ) -> None:
     _install_or_get_history_api(monkeypatch)
     _install_or_get_health_api(monkeypatch)
-    source_dsn = "postgresql://allocation-proposal-history-health.example.invalid/db"
+    source_dsn = "postgresql://allocation-proposal-history-health@localhost/db"
     source_table_name = "analytics.paper_autonomous_allocation_proposal_reports"
-    health_dsn = "postgresql://allocation-proposal-history-health-target.example.invalid/db"
+    health_dsn = "postgresql://allocation-proposal-history-health-target@localhost/db"
     health_table_name = "audit.db_history_health_archive"
     _set_allocation_proposal_db_env(
         monkeypatch,
@@ -597,12 +597,12 @@ def test_allocation_proposal_db_history_health_cli_persist_prints_false_for_dupl
     _install_or_get_health_api(monkeypatch)
     _set_allocation_proposal_db_env(
         monkeypatch,
-        "postgresql://allocation-proposal-history-health.example.invalid/db",
+        "postgresql://allocation-proposal-history-health@localhost/db",
         table_name="analytics.paper_autonomous_allocation_proposal_reports",
     )
     _set_allocation_proposal_db_history_health_db_env(
         monkeypatch,
-        "postgresql://allocation-proposal-history-health-target.example.invalid/db",
+        "postgresql://allocation-proposal-history-health-target@localhost/db",
         table_name="audit.db_history_health_archive",
     )
     report = _health_report()
@@ -627,7 +627,7 @@ def test_allocation_proposal_db_history_health_cli_persist_requires_enabled_heal
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    source_dsn = "postgresql://allocation-proposal-history-health.example.invalid/db"
+    source_dsn = "postgresql://allocation-proposal-history-health@localhost/db"
     source_table_name = "analytics.paper_autonomous_allocation_proposal_reports"
     _set_allocation_proposal_db_env(
         monkeypatch,
@@ -678,7 +678,7 @@ def test_allocation_proposal_db_history_health_cli_persist_requires_health_db_ds
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    source_dsn = "postgresql://allocation-proposal-history-health.example.invalid/db"
+    source_dsn = "postgresql://allocation-proposal-history-health@localhost/db"
     source_table_name = "analytics.paper_autonomous_allocation_proposal_reports"
     _set_allocation_proposal_db_env(
         monkeypatch,
@@ -732,9 +732,9 @@ def test_allocation_proposal_db_history_health_cli_persist_runner_failure_redact
 ) -> None:
     _install_or_get_history_api(monkeypatch)
     _install_or_get_health_api(monkeypatch)
-    source_dsn = "postgresql://allocation-proposal-history-health-secret.example.invalid/db"
+    source_dsn = "postgresql://allocation-proposal-history-health-secret@localhost/db"
     source_table_name = "analytics.paper_autonomous_allocation_proposal_reports"
-    health_dsn = "postgresql://allocation-proposal-health-target-secret.example.invalid/db"
+    health_dsn = "postgresql://allocation-proposal-health-target-secret@localhost/db"
     health_table_name = "audit.db_history_health_archive"
     payload_json = '{"market_slug":"secret-market-slug","question":"nested secret"}'
     question = "Will hidden allocation proposal market resolve yes?"
@@ -809,9 +809,9 @@ def test_allocation_proposal_db_history_health_cli_persist_sink_failure_redacts_
 ) -> None:
     _install_or_get_history_api(monkeypatch)
     _install_or_get_health_api(monkeypatch)
-    source_dsn = "postgresql://allocation-proposal-history-health-secret.example.invalid/db"
+    source_dsn = "postgresql://allocation-proposal-history-health-secret@localhost/db"
     source_table_name = "analytics.paper_autonomous_allocation_proposal_reports"
-    health_dsn = "postgresql://allocation-proposal-health-target-secret.example.invalid/db"
+    health_dsn = "postgresql://allocation-proposal-health-target-secret@localhost/db"
     health_table_name = "audit.db_history_health_archive"
     payload_json = '{"market_slug":"secret-market-slug","question":"nested secret"}'
     question = "Will hidden allocation proposal market resolve yes?"
@@ -919,7 +919,7 @@ def test_allocation_proposal_db_history_health_helper_default_load_path_uses_aut
 ) -> None:
     history_api = _install_or_get_history_api(monkeypatch)
     health_api = _install_or_get_health_api(monkeypatch)
-    dsn = "postgresql://allocation-proposal-history-health.example.invalid/db"
+    dsn = "postgresql://allocation-proposal-history-health@localhost/db"
     table_name = "paper_autonomous_allocation_proposal_reports"
     report = _health_report()
     connect_calls: list[tuple[str, bool]] = []
@@ -1025,7 +1025,7 @@ def test_allocation_proposal_db_history_health_helper_raises_on_missing_psycopg(
         cli,
         "_run_paper_autonomous_allocation_proposal_db_history_health",
     )
-    dsn = "postgresql://allocation-proposal-history-health-secret.example.invalid/db"
+    dsn = "postgresql://allocation-proposal-history-health-secret@localhost/db"
 
     with pytest.raises(RuntimeError, match="psycopg is required"):
         helper(
@@ -1041,7 +1041,7 @@ def test_allocation_proposal_db_history_health_helper_uses_shared_redaction_help
 ) -> None:
     _install_or_get_history_api(monkeypatch)
     _install_or_get_health_api(monkeypatch)
-    dsn = "postgresql://allocation-proposal-history-health-secret.example.invalid/db"
+    dsn = "postgresql://allocation-proposal-history-health-secret@localhost/db"
     table_name = "paper_autonomous_allocation_proposal_reports"
     calls: list[dict[str, object]] = []
 
@@ -1081,7 +1081,7 @@ def test_allocation_proposal_db_history_health_cli_runner_failure_redacts_dsn_sc
 ) -> None:
     _install_or_get_history_api(monkeypatch)
     _install_or_get_health_api(monkeypatch)
-    dsn = "postgresql://allocation-proposal-history-health-secret.example.invalid/db"
+    dsn = "postgresql://allocation-proposal-history-health-secret@localhost/db"
     table_name = "analytics.paper_autonomous_allocation_proposal_reports"
     payload_json = '{"market_slug":"secret-market-slug","question":"nested secret"}'
     question = "Will hidden allocation proposal market resolve yes?"
@@ -1131,7 +1131,7 @@ def test_allocation_proposal_db_history_health_helper_loader_failure_redacts_dsn
 ) -> None:
     _install_or_get_history_api(monkeypatch)
     _install_or_get_health_api(monkeypatch)
-    dsn = "postgresql://allocation-proposal-history-health-secret.example.invalid/db"
+    dsn = "postgresql://allocation-proposal-history-health-secret@localhost/db"
     table_name = "analytics.paper_autonomous_allocation_proposal_reports"
     payload_json = '{"market_slug":"secret-market-slug","question":"nested secret"}'
     question = "Will hidden allocation proposal market resolve yes?"

@@ -311,7 +311,7 @@ def test_allocation_proposal_db_history_metrics_cli_uses_injected_runner_and_pri
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     metrics_api = _install_or_get_metrics_api(monkeypatch)
-    dsn = "postgresql://allocation-proposal-history-metrics.example.invalid/db"
+    dsn = "postgresql://allocation-proposal-history-metrics@localhost/db"
     table_name = "analytics.paper_autonomous_allocation_proposal_reports"
     _set_allocation_proposal_db_env(monkeypatch, dsn, table_name=table_name)
     calls: list[dict[str, object]] = []
@@ -376,7 +376,7 @@ def test_allocation_proposal_db_history_metrics_helper_default_load_path_imports
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     metrics_api = _install_or_get_metrics_api(monkeypatch)
-    dsn = "postgresql://allocation-proposal-history-metrics.example.invalid/db"
+    dsn = "postgresql://allocation-proposal-history-metrics@localhost/db"
     table_name = "paper_autonomous_allocation_proposal_reports"
     report = _metrics_report()
     connect_calls: list[tuple[str, bool]] = []
@@ -489,7 +489,7 @@ def test_allocation_proposal_db_history_metrics_helper_raises_on_missing_psycopg
         cli,
         "_run_paper_autonomous_allocation_proposal_db_history_metrics",
     )
-    dsn = "postgresql://allocation-proposal-history-metrics-secret.example.invalid/db"
+    dsn = "postgresql://allocation-proposal-history-metrics-secret@localhost/db"
 
     with pytest.raises(RuntimeError, match="psycopg is required"):
         helper(
@@ -505,7 +505,7 @@ def test_allocation_proposal_db_history_metrics_cli_connect_failure_redacts_dsn_
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     _install_or_get_metrics_api(monkeypatch)
-    dsn = "postgresql://allocation-proposal-history-metrics-secret.example.invalid/db"
+    dsn = "postgresql://allocation-proposal-history-metrics-secret@localhost/db"
     table_name = "analytics.paper_autonomous_allocation_proposal_reports"
     payload_json = '{"market_slug":"secret-market-slug","question":"nested secret"}'
     question = "Will hidden allocation proposal market resolve yes?"
@@ -560,7 +560,7 @@ def test_allocation_proposal_db_history_metrics_cli_loader_failure_redacts_dsn_s
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     _install_or_get_metrics_api(monkeypatch)
-    dsn = "postgresql://allocation-proposal-history-metrics-secret.example.invalid/db"
+    dsn = "postgresql://allocation-proposal-history-metrics-secret@localhost/db"
     table_name = "analytics.paper_autonomous_allocation_proposal_reports"
     payload_json = '{"market_slug":"secret-market-slug","question":"nested secret"}'
     question = "Will hidden allocation proposal market resolve yes?"

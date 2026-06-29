@@ -708,7 +708,7 @@ def test_paper_autonomous_allocation_proposal_cli_prints_aggregate_summary(
     capsys,
 ):
     command = "paper-autonomous-allocation-proposal"
-    shared_dsn = "postgresql://allocation-proposal.example.invalid/db"
+    shared_dsn = "postgresql://allocation-proposal@localhost/db"
     screening_gate_table_name = "paper_autonomous_screening_decision_support_gate_reports"
     decision_support_table_name = (
         "paper_action_gated_queue_decision_support_reports"
@@ -838,7 +838,7 @@ def test_paper_autonomous_allocation_proposal_persist_cli_prints_persistence_mar
     capsys,
 ):
     command = "paper-autonomous-allocation-proposal-persist"
-    shared_dsn = "postgresql://allocation-proposal.example.invalid/db"
+    shared_dsn = "postgresql://allocation-proposal@localhost/db"
     proposal_table_name = "paper_autonomous_allocation_proposal_reports"
     screening_gate_table_name = "paper_autonomous_screening_decision_support_gate_reports"
     decision_support_table_name = (
