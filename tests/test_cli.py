@@ -191,6 +191,11 @@ from polymarket_alpha_lab.supabase_paper_research_packet_operator_flow_config im
     PAPER_RESEARCH_PACKET_OPERATOR_FLOW_DB_ENABLED_ENV_VAR,
     PAPER_RESEARCH_PACKET_OPERATOR_FLOW_DB_TABLE_ENV_VAR,
 )
+from polymarket_alpha_lab.supabase_paper_strategy_cycle_report_config import (
+    PAPER_STRATEGY_CYCLE_REPORT_DB_DSN_ENV_VAR,
+    PAPER_STRATEGY_CYCLE_REPORT_DB_ENABLED_ENV_VAR,
+    PAPER_STRATEGY_CYCLE_REPORT_DB_TABLE_ENV_VAR,
+)
 from polymarket_alpha_lab.supabase_paper_trade_journal_config import (
     PAPER_TRADE_JOURNAL_DB_DSN_ENV_VAR,
     PAPER_TRADE_JOURNAL_DB_ENABLED_ENV_VAR,
@@ -253,6 +258,19 @@ def test_scan_cli_returns_one_when_runner_fails(tmp_path):
     )
 
     assert exit_code == 1
+
+
+def _empty_strategy_cycle_report() -> PaperStrategyCycleReport:
+    return PaperStrategyCycleReport(
+        generated_at=datetime(2026, 6, 29, 12, 0, tzinfo=UTC),
+        config_version="strategy-cycle-v1",
+        scan_market_count=0,
+        considered_count=0,
+        snapshot_ready_count=0,
+        cost_aware_report_count=0,
+        blocked_counts=(),
+        screening_report=None,
+    )
 
 
 def test_strategy_cycle_cli_builds_read_only_cycle_config(tmp_path, capsys):
@@ -491,6 +509,134 @@ def test_strategy_cycle_cli_redacts_dsn_when_paper_trade_db_sink_fails(
     assert fake_dsn not in captured.out
     assert fake_dsn not in captured.err
     assert "<redacted-dsn>" in captured.err
+
+
+def test_strategy_cycle_cli_wires_cycle_report_db_sink_when_enabled(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    cycle_report_dsn = "postgresql://cycle-report:secret@localhost:54322/db"
+    monkeypatch.setenv(PAPER_STRATEGY_CYCLE_REPORT_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(PAPER_STRATEGY_CYCLE_REPORT_DB_DSN_ENV_VAR, cycle_report_dsn)
+    monkeypatch.setenv(
+        PAPER_STRATEGY_CYCLE_REPORT_DB_TABLE_ENV_VAR,
+        "paper_strategy_cycle_report_archive",
+    )
+    report = _empty_strategy_cycle_report()
+    output_path = tmp_path / "strategy-cycle.jsonl"
+    sink_calls = []
+
+    def fake_cycle_runner(*, client, scan_config, cycle_config):
+        return report
+
+    def fake_cycle_report_db_sink(*, dsn, report, table_name):
+        rows_at_sink = PaperStrategyCycleLog.read(output_path)
+        assert rows_at_sink == (report,)
+        sink_calls.append((dsn, report, table_name))
+
+    exit_code = main(
+        [
+            "strategy-cycle",
+            "--archive-root",
+            str(tmp_path / "raw"),
+            "--output",
+            str(output_path),
+        ],
+        cycle_runner=fake_cycle_runner,
+        paper_strategy_cycle_report_db_sink=fake_cycle_report_db_sink,
+        client_factory=lambda: "fake-client",
+    )
+
+    assert exit_code == 0
+    assert sink_calls == [
+        (
+            cycle_report_dsn,
+            report,
+            "paper_strategy_cycle_report_archive",
+        ),
+    ]
+    captured = capsys.readouterr()
+    assert cycle_report_dsn not in captured.out
+    assert cycle_report_dsn not in captured.err
+
+
+def test_strategy_cycle_cli_redacts_dsn_when_cycle_report_db_sink_fails(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    cycle_report_dsn = "postgresql://cycle-report:secret@localhost:54322/db"
+    monkeypatch.setenv(PAPER_STRATEGY_CYCLE_REPORT_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(PAPER_STRATEGY_CYCLE_REPORT_DB_DSN_ENV_VAR, cycle_report_dsn)
+    monkeypatch.setenv(
+        PAPER_STRATEGY_CYCLE_REPORT_DB_TABLE_ENV_VAR,
+        "paper_strategy_cycle_report_archive",
+    )
+    report = _empty_strategy_cycle_report()
+    output_path = tmp_path / "strategy-cycle.jsonl"
+
+    def fake_cycle_runner(*, client, scan_config, cycle_config):
+        return report
+
+    def broken_cycle_report_db_sink(*, dsn, report, table_name):
+        rows_at_sink = PaperStrategyCycleLog.read(output_path)
+        assert rows_at_sink == (report,)
+        raise RuntimeError(f"could not connect to {dsn}")
+
+    exit_code = main(
+        [
+            "strategy-cycle",
+            "--archive-root",
+            str(tmp_path / "raw"),
+            "--output",
+            str(output_path),
+        ],
+        cycle_runner=fake_cycle_runner,
+        paper_strategy_cycle_report_db_sink=broken_cycle_report_db_sink,
+        client_factory=lambda: "fake-client",
+    )
+
+    assert exit_code == 1
+    rows_after_failure = PaperStrategyCycleLog.read(output_path)
+    assert rows_after_failure == (report,)
+    captured = capsys.readouterr()
+    assert cycle_report_dsn not in captured.out
+    assert cycle_report_dsn not in captured.err
+    assert "<redacted-dsn>" in captured.err
+
+
+def test_strategy_cycle_cli_requires_cycle_report_db_dsn_before_runner_work(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    monkeypatch.setenv(PAPER_STRATEGY_CYCLE_REPORT_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.delenv(PAPER_STRATEGY_CYCLE_REPORT_DB_DSN_ENV_VAR, raising=False)
+
+    def forbidden_client_factory():
+        raise AssertionError("client should not be created")
+
+    def forbidden_cycle_runner(*, client, scan_config, cycle_config):
+        raise AssertionError("cycle runner should not run")
+
+    exit_code = main(
+        [
+            "strategy-cycle",
+            "--archive-root",
+            str(tmp_path / "raw"),
+            "--output",
+            str(tmp_path / "strategy-cycle.jsonl"),
+        ],
+        cycle_runner=forbidden_cycle_runner,
+        client_factory=forbidden_client_factory,
+    )
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert PAPER_STRATEGY_CYCLE_REPORT_DB_DSN_ENV_VAR in captured.err
+    assert "client should not be created" not in captured.err
+    assert "cycle runner should not run" not in captured.err
 
 
 def test_strategy_cycle_cli_default_omits_paper_execute(tmp_path):
@@ -6591,6 +6737,7 @@ def test_run_cli_builds_loop_call_single_shot(tmp_path, capsys):
     def fake_loop_runner(*, client, scan_config, cycle_config, starting_cash,
                          nav_log_path, cycle_report_log_path, repeat_mode,
                          interval_seconds, max_iterations,
+                         cycle_report_sink=None,
                          cycle_snapshot_source=None, cycle_snapshot_sink=None,
                          action_gated_queue_source=None,
                          action_gated_queue_sink=None,
@@ -6606,6 +6753,7 @@ def test_run_cli_builds_loop_call_single_shot(tmp_path, capsys):
                 "repeat_mode": repeat_mode,
                 "interval_seconds": interval_seconds,
                 "max_iterations": max_iterations,
+                "cycle_report_sink": cycle_report_sink,
                 "cycle_snapshot_source": cycle_snapshot_source,
                 "cycle_snapshot_sink": cycle_snapshot_sink,
                 "action_gated_queue_source": action_gated_queue_source,
@@ -6658,6 +6806,7 @@ def test_run_cli_builds_loop_call_single_shot(tmp_path, capsys):
     assert call["repeat_mode"] == "once"
     assert call["interval_seconds"] == 0
     assert call["max_iterations"] == 1
+    assert call["cycle_report_sink"] is None
     assert call["cycle_snapshot_source"] is None
     assert call["cycle_snapshot_sink"] is None
     assert call["action_gated_queue_source"] is None
@@ -6677,6 +6826,7 @@ def test_run_cli_maps_positive_repeat_interval_to_interval_mode(tmp_path):
     def fake_loop_runner(*, client, scan_config, cycle_config, starting_cash,
                          nav_log_path, cycle_report_log_path, repeat_mode,
                          interval_seconds, max_iterations,
+                         cycle_report_sink=None,
                          cycle_snapshot_source=None, cycle_snapshot_sink=None,
                          action_gated_queue_source=None,
                          action_gated_queue_sink=None,
@@ -6686,6 +6836,7 @@ def test_run_cli_maps_positive_repeat_interval_to_interval_mode(tmp_path):
                 "repeat_mode": repeat_mode,
                 "interval_seconds": interval_seconds,
                 "max_iterations": max_iterations,
+                "cycle_report_sink": cycle_report_sink,
                 "cycle_snapshot_source": cycle_snapshot_source,
                 "cycle_snapshot_sink": cycle_snapshot_sink,
                 "action_gated_queue_source": action_gated_queue_source,
@@ -6720,6 +6871,7 @@ def test_run_cli_maps_positive_repeat_interval_to_interval_mode(tmp_path):
             "repeat_mode": "interval",
             "interval_seconds": 3600,
             "max_iterations": 10,
+            "cycle_report_sink": None,
             "cycle_snapshot_source": None,
             "cycle_snapshot_sink": None,
             "action_gated_queue_source": None,
@@ -6736,10 +6888,12 @@ def test_run_cli_paper_execute_flag_enables_inline_paper_pass(tmp_path):
     def fake_loop_runner(*, client, scan_config, cycle_config, starting_cash,
                          nav_log_path, cycle_report_log_path, repeat_mode,
                          interval_seconds, max_iterations,
+                         cycle_report_sink=None,
                          cycle_snapshot_source=None, cycle_snapshot_sink=None,
                          action_gated_queue_source=None,
                          action_gated_queue_sink=None,
                          paper_trade_record_sink=None, nav_snapshot_sink=None):
+        assert cycle_report_sink is None
         calls.append(cycle_config)
         return _empty_run_summary()
 
@@ -6776,6 +6930,8 @@ def test_run_cli_leaves_cycle_snapshot_db_disabled_by_default(
 ):
     monkeypatch.delenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_ENABLED", raising=False)
     monkeypatch.delenv("POLYMARKET_ALPHA_LAB_CYCLE_SNAPSHOT_DB_DSN", raising=False)
+    monkeypatch.delenv(PAPER_STRATEGY_CYCLE_REPORT_DB_ENABLED_ENV_VAR, raising=False)
+    monkeypatch.delenv(PAPER_STRATEGY_CYCLE_REPORT_DB_DSN_ENV_VAR, raising=False)
     monkeypatch.delenv(PAPER_TRADE_JOURNAL_DB_ENABLED_ENV_VAR, raising=False)
     monkeypatch.delenv(PAPER_TRADE_JOURNAL_DB_DSN_ENV_VAR, raising=False)
     monkeypatch.delenv(PAPER_NAV_SNAPSHOT_DB_ENABLED_ENV_VAR, raising=False)
@@ -6805,6 +6961,7 @@ def test_run_cli_leaves_cycle_snapshot_db_disabled_by_default(
 
     assert exit_code == 0
     assert len(calls) == 1
+    assert calls[0]["cycle_report_sink"] is None
     assert calls[0]["cycle_snapshot_source"] is None
     assert calls[0]["cycle_snapshot_sink"] is None
     assert "action_gated_queue_source" not in calls[0]
@@ -9429,6 +9586,116 @@ def test_run_cli_redacts_dsn_when_paper_trade_db_sink_failure_is_reported(
     )
 
 
+def test_run_cli_wires_cycle_report_db_sink_when_env_enabled(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    cycle_report_dsn = "postgresql://cycle-report:secret@localhost:54322/db"
+    monkeypatch.setenv(PAPER_STRATEGY_CYCLE_REPORT_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(PAPER_STRATEGY_CYCLE_REPORT_DB_DSN_ENV_VAR, cycle_report_dsn)
+    monkeypatch.setenv(
+        PAPER_STRATEGY_CYCLE_REPORT_DB_TABLE_ENV_VAR,
+        "paper_strategy_cycle_report_archive",
+    )
+    report = _empty_strategy_cycle_report()
+    sink_calls = []
+
+    def fake_loop_runner(**kwargs):
+        assert kwargs["cycle_report_sink"] is not None
+        kwargs["cycle_report_sink"](report)
+        return RunLoopSummary(
+            iterations_completed=1,
+            iterations_failed=0,
+            first_iteration_at=datetime(2026, 6, 29, 12, 0, tzinfo=UTC),
+            last_iteration_at=datetime(2026, 6, 29, 12, 0, tzinfo=UTC),
+            last_error=None,
+            cycle_reports_persisted=1,
+        )
+
+    def fake_cycle_report_db_sink(*, dsn, report, table_name):
+        sink_calls.append((dsn, report, table_name))
+
+    exit_code = main(
+        [
+            "run",
+            "--archive-root",
+            str(tmp_path / "raw"),
+            "--starting-cash",
+            "10000",
+            "--cycle-log",
+            str(tmp_path / "cycle.jsonl"),
+        ],
+        loop_runner=fake_loop_runner,
+        paper_strategy_cycle_report_db_sink=fake_cycle_report_db_sink,
+        client_factory=lambda: "fake-client",
+    )
+
+    assert exit_code == 0
+    assert sink_calls == [
+        (
+            cycle_report_dsn,
+            report,
+            "paper_strategy_cycle_report_archive",
+        ),
+    ]
+    captured = capsys.readouterr()
+    assert "cycle_reports_persisted=1" in captured.out
+    assert cycle_report_dsn not in captured.out
+    assert cycle_report_dsn not in captured.err
+
+
+def test_run_cli_redacts_dsn_when_cycle_report_db_sink_failure_is_reported(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    cycle_report_dsn = "postgresql://cycle-report:secret@localhost:54322/db"
+    monkeypatch.setenv(PAPER_STRATEGY_CYCLE_REPORT_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(PAPER_STRATEGY_CYCLE_REPORT_DB_DSN_ENV_VAR, cycle_report_dsn)
+    report = _empty_strategy_cycle_report()
+
+    def fake_loop_runner(**kwargs):
+        assert kwargs["cycle_report_sink"] is not None
+        try:
+            kwargs["cycle_report_sink"](report)
+        except Exception as exc:
+            return RunLoopSummary(
+                iterations_completed=0,
+                iterations_failed=1,
+                first_iteration_at=datetime(2026, 6, 29, 12, 0, tzinfo=UTC),
+                last_iteration_at=datetime(2026, 6, 29, 12, 0, tzinfo=UTC),
+                last_error=f"{type(exc).__name__}: {exc}",
+            )
+        raise AssertionError("sink should fail")
+
+    def broken_cycle_report_db_sink(*, dsn, report, table_name):
+        raise RuntimeError(f"could not connect to {dsn}")
+
+    exit_code = main(
+        [
+            "run",
+            "--archive-root",
+            str(tmp_path / "raw"),
+            "--starting-cash",
+            "10000",
+            "--cycle-log",
+            str(tmp_path / "cycle.jsonl"),
+        ],
+        loop_runner=fake_loop_runner,
+        paper_strategy_cycle_report_db_sink=broken_cycle_report_db_sink,
+        client_factory=lambda: "fake-client",
+    )
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    assert cycle_report_dsn not in captured.out
+    assert cycle_report_dsn not in captured.err
+    assert "last_error=RuntimeError: could not connect to <redacted-dsn>" in (
+        captured.out
+    )
+
+
 def test_run_cli_wires_cycle_snapshot_db_sink_when_env_enabled(
     tmp_path,
     monkeypatch,
@@ -9888,10 +10155,12 @@ def test_run_cli_returns_one_when_loop_runner_fails(tmp_path, capsys):
     def broken_loop_runner(*, client, scan_config, cycle_config, starting_cash,
                            nav_log_path, cycle_report_log_path, repeat_mode,
                            interval_seconds, max_iterations,
+                           cycle_report_sink=None,
                            cycle_snapshot_source=None, cycle_snapshot_sink=None,
                            action_gated_queue_source=None,
                            action_gated_queue_sink=None,
                            paper_trade_record_sink=None, nav_snapshot_sink=None):
+        assert cycle_report_sink is None
         raise RuntimeError("loop failed")
 
     exit_code = main(
@@ -9917,10 +10186,12 @@ def test_run_cli_prints_last_error_when_iterations_failed(tmp_path, capsys):
     def partial_loop_runner(*, client, scan_config, cycle_config, starting_cash,
                             nav_log_path, cycle_report_log_path, repeat_mode,
                             interval_seconds, max_iterations,
+                            cycle_report_sink=None,
                             cycle_snapshot_source=None, cycle_snapshot_sink=None,
                             action_gated_queue_source=None,
                             action_gated_queue_sink=None,
                             paper_trade_record_sink=None, nav_snapshot_sink=None):
+        assert cycle_report_sink is None
         return RunLoopSummary(
             iterations_completed=2,
             iterations_failed=1,

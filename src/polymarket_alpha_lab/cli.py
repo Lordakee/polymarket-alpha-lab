@@ -100,6 +100,9 @@ from polymarket_alpha_lab.paper_recommendation_cycle_snapshot_psycopg import (
     insert_paper_recommendation_cycle_snapshot_with_psycopg,
     load_paper_recommendation_cycle_snapshots_with_psycopg,
 )
+from polymarket_alpha_lab.paper_strategy_cycle_report_psycopg import (
+    insert_paper_strategy_cycle_report_with_psycopg,
+)
 from polymarket_alpha_lab.action_gated_strategy_recommendation_queue_psycopg import (
     insert_paper_action_gated_strategy_recommendation_queue_report_with_psycopg,
 )
@@ -229,6 +232,9 @@ from polymarket_alpha_lab.supabase_paper_trade_cost_audit_config import (
 from polymarket_alpha_lab.supabase_paper_trade_journal_config import (
     from_paper_trade_journal_db_env,
 )
+from polymarket_alpha_lab.supabase_paper_strategy_cycle_report_config import (
+    from_paper_strategy_cycle_report_db_env,
+)
 from polymarket_alpha_lab.supabase_probability_selection_summary_config import (
     PAPER_PROBABILITY_SELECTION_SUMMARY_DB_DSN_ENV_VAR,
     from_paper_probability_selection_summary_db_env,
@@ -277,6 +283,7 @@ PaperTradeRecordDbSink = Callable[..., object]
 PaperNavSnapshotDbSink = Callable[..., object]
 PaperTradeCostAuditDbSink = Callable[..., object]
 StrategyRiskAuditDbSink = Callable[..., object]
+PaperStrategyCycleReportDbSink = Callable[..., object]
 NavRiskRunner = Callable[..., "PaperNavRiskMetricsReport"]
 StrategyAuditRunner = Callable[..., PaperStrategyRiskAuditReport]
 StrategyAuditHistoryRunner = Callable[..., PaperStrategyRiskAuditHistoryReport]
@@ -1257,6 +1264,9 @@ def main(
     ),
     paper_trade_record_db_sink: PaperTradeRecordDbSink = (
         insert_paper_trade_record_with_psycopg
+    ),
+    paper_strategy_cycle_report_db_sink: PaperStrategyCycleReportDbSink = (
+        insert_paper_strategy_cycle_report_with_psycopg
     ),
     paper_nav_snapshot_db_sink: PaperNavSnapshotDbSink = (
         insert_paper_nav_snapshot_with_psycopg
@@ -2599,7 +2609,39 @@ def main(
 
     if args.command == "strategy-cycle":
         try:
+            paper_strategy_cycle_report_db_config = (
+                from_paper_strategy_cycle_report_db_env()
+            )
             paper_trade_db_config = from_paper_trade_journal_db_env()
+            strategy_cycle_report_sink = None
+            if paper_strategy_cycle_report_db_config.enabled:
+                dsn = paper_strategy_cycle_report_db_config.dsn
+                if dsn is None:
+                    raise ValueError(
+                        "paper strategy cycle report DB persistence requires a DB DSN",
+                    )
+
+                def strategy_cycle_report_sink(
+                    report: PaperStrategyCycleReport,
+                    *,
+                    db_dsn: str = dsn,
+                    table_name: str = (
+                        paper_strategy_cycle_report_db_config.table_name
+                    ),
+                ) -> object:
+                    try:
+                        return paper_strategy_cycle_report_db_sink(
+                            dsn=db_dsn,
+                            report=report,
+                            table_name=table_name,
+                        )
+                    except Exception as exc:
+                        _raise_redacted_db_sink_error(
+                            exc,
+                            dsn=db_dsn,
+                            table_name=table_name,
+                        )
+
             strategy_cycle_paper_trade_record_sink = None
             if paper_trade_db_config.enabled:
                 dsn = paper_trade_db_config.dsn
@@ -2652,6 +2694,8 @@ def main(
                 )
             report = cycle_runner(**cycle_runner_kwargs)
             PaperStrategyCycleLog(args.output).append(report)
+            if strategy_cycle_report_sink is not None:
+                strategy_cycle_report_sink(report)
             _print_strategy_cycle_summary(report)
             return 0
         except Exception as exc:
@@ -5427,17 +5471,49 @@ def main(
     if args.command == "run":
         try:
             cycle_snapshot_db_config = from_cycle_snapshot_db_env()
+            paper_strategy_cycle_report_db_config = (
+                from_paper_strategy_cycle_report_db_env()
+            )
             action_gated_queue_db_config = (
                 from_action_gated_strategy_recommendation_queue_db_env()
             )
             paper_trade_db_config = from_paper_trade_journal_db_env()
             paper_nav_db_config = from_paper_nav_snapshot_db_env()
+            run_cycle_report_sink = None
             run_cycle_snapshot_source = None
             run_cycle_snapshot_sink = None
             run_action_gated_queue_source = None
             run_action_gated_queue_sink = None
             run_paper_trade_record_sink = None
             run_nav_snapshot_sink = None
+            if paper_strategy_cycle_report_db_config.enabled:
+                dsn = paper_strategy_cycle_report_db_config.dsn
+                if dsn is None:
+                    raise ValueError(
+                        "paper strategy cycle report DB persistence requires a DB DSN",
+                    )
+
+                def run_cycle_report_sink(
+                    report: PaperStrategyCycleReport,
+                    *,
+                    db_dsn: str = dsn,
+                    table_name: str = (
+                        paper_strategy_cycle_report_db_config.table_name
+                    ),
+                ) -> object:
+                    try:
+                        return paper_strategy_cycle_report_db_sink(
+                            dsn=db_dsn,
+                            report=report,
+                            table_name=table_name,
+                        )
+                    except Exception as exc:
+                        _raise_redacted_db_sink_error(
+                            exc,
+                            dsn=db_dsn,
+                            table_name=table_name,
+                        )
+
             if cycle_snapshot_db_config.enabled:
                 dsn = cycle_snapshot_db_config.dsn
                 if dsn is None:
@@ -5582,6 +5658,7 @@ def main(
                 "repeat_mode": repeat_mode,
                 "interval_seconds": args.repeat_interval,
                 "max_iterations": args.max_iterations,
+                "cycle_report_sink": run_cycle_report_sink,
                 "cycle_snapshot_source": run_cycle_snapshot_source,
                 "cycle_snapshot_sink": run_cycle_snapshot_sink,
                 "paper_trade_record_sink": run_paper_trade_record_sink,
@@ -12130,6 +12207,11 @@ def _format_cost_trend_status_row_counts(rows: tuple[object, ...]) -> str:
 
 
 def _print_run_loop_summary(summary: RunLoopSummary) -> None:
+    cycle_reports_text = ""
+    if hasattr(summary, "cycle_reports_persisted"):
+        cycle_reports_text = (
+            f" cycle_reports_persisted={summary.cycle_reports_persisted}"
+        )
     cycle_snapshots_text = ""
     if hasattr(summary, "cycle_snapshots_persisted"):
         cycle_snapshots_text = (
@@ -12146,6 +12228,7 @@ def _print_run_loop_summary(summary: RunLoopSummary) -> None:
         f"completed={summary.iterations_completed} "
         f"failed={summary.iterations_failed} "
         f"nav_skipped={summary.nav_marks_skipped}"
+        f"{cycle_reports_text}"
         f"{cycle_snapshots_text}"
         f"{action_gated_queues_text} "
         f"span={summary.first_iteration_at.isoformat()} "
