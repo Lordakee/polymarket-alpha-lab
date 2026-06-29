@@ -57,7 +57,7 @@ def test_enabled_env_config_reads_explicit_dsn_and_table() -> None:
         {
             api.PAPER_RESEARCH_PACKET_QUALITY_DB_ENABLED_ENV_VAR: "1",
             api.PAPER_RESEARCH_PACKET_QUALITY_DB_DSN_ENV_VAR: (
-                "postgresql://user:secret@db/app"
+                "postgresql://user:secret@localhost:54322/app"
             ),
             api.PAPER_RESEARCH_PACKET_QUALITY_DB_TABLE_ENV_VAR: (
                 "audit.paper_research_packet_quality_reports"
@@ -66,8 +66,26 @@ def test_enabled_env_config_reads_explicit_dsn_and_table() -> None:
     )
 
     assert config.enabled is True
-    assert config.dsn == "postgresql://user:secret@db/app"
+    assert config.dsn == "postgresql://user:secret@localhost:54322/app"
     assert config.table_name == "audit.paper_research_packet_quality_reports"
+
+
+def test_env_config_rejects_remote_dsn_without_echoing_secret() -> None:
+    api = _config_api()
+    secret_dsn = "postgresql://user:topsecret@db.example.invalid/app"
+
+    with pytest.raises(ValueError) as exc_info:
+        api.from_paper_research_packet_quality_db_env(
+            {
+                api.PAPER_RESEARCH_PACKET_QUALITY_DB_DSN_ENV_VAR: secret_dsn,
+            },
+        )
+
+    message = str(exc_info.value)
+    assert api.PAPER_RESEARCH_PACKET_QUALITY_DB_DSN_ENV_VAR in message
+    assert secret_dsn not in message
+    assert "topsecret" not in message
+    assert "db.example.invalid" not in message
 
 
 @pytest.mark.parametrize("value", ("", "0", "false", " FALSE "))
@@ -85,7 +103,7 @@ def test_enabled_values_are_strict_but_case_and_space_tolerant(value: str) -> No
         {
             api.PAPER_RESEARCH_PACKET_QUALITY_DB_ENABLED_ENV_VAR: value,
             api.PAPER_RESEARCH_PACKET_QUALITY_DB_DSN_ENV_VAR: (
-                "postgresql://user:secret@db/app"
+                "postgresql://user:secret@localhost:54322/app"
             ),
         },
     )
@@ -109,7 +127,7 @@ def test_config_is_frozen_and_masks_dsn_in_repr() -> None:
     api = _config_api()
     config = api.SupabasePaperResearchPacketQualityConfig(
         enabled=True,
-        dsn="postgresql://user:secret@db/app",
+        dsn="postgresql://user:secret@localhost:54322/app",
         table_name="research_packet_quality_archive",
     )
 

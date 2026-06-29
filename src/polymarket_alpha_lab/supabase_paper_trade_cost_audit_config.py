@@ -7,6 +7,8 @@ from os import environ
 import re
 from typing import Mapping
 
+from polymarket_alpha_lab.supabase_local_dsn import validate_local_postgres_dsn
+
 
 PAPER_TRADE_COST_AUDIT_DB_ENABLED_ENV_VAR = (
     "POLYMARKET_ALPHA_LAB_PAPER_TRADE_COST_AUDIT_DB_ENABLED"
@@ -43,6 +45,11 @@ class SupabasePaperTradeCostAuditConfig:
             "table_name",
             _validate_table_name("table_name", self.table_name),
         )
+        if self.dsn is not None:
+            validate_local_postgres_dsn(
+                self.dsn,
+                env_var_name=PAPER_TRADE_COST_AUDIT_DB_DSN_ENV_VAR,
+            )
         if self.enabled and self.dsn is None:
             raise ValueError(
                 f"{PAPER_TRADE_COST_AUDIT_DB_DSN_ENV_VAR} must be set when DB is enabled",

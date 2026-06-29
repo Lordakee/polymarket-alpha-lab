@@ -7,6 +7,8 @@ from os import environ
 import re
 from typing import Mapping
 
+from polymarket_alpha_lab.supabase_local_dsn import validate_local_postgres_dsn
+
 
 STRATEGY_RISK_AUDIT_DB_DSN_ENV_VAR = (
     "POLYMARKET_ALPHA_LAB_STRATEGY_RISK_AUDIT_DB_DSN"
@@ -43,6 +45,11 @@ class SupabaseStrategyRiskAuditConfig:
             "table_name",
             _validate_table_name("table_name", self.table_name),
         )
+        if self.dsn is not None:
+            validate_local_postgres_dsn(
+                self.dsn,
+                env_var_name=STRATEGY_RISK_AUDIT_DB_DSN_ENV_VAR,
+            )
         if self.enabled and self.dsn is None:
             raise ValueError(
                 f"{STRATEGY_RISK_AUDIT_DB_DSN_ENV_VAR} "

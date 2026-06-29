@@ -38,7 +38,7 @@ def test_enabled_env_config_reads_explicit_dsn_at_process_edge(
     enabled_value: str,
 ) -> None:
     module = _config_module()
-    dsn = "postgresql://example.invalid/postgres"
+    dsn = "postgresql://localhost:54322/postgres"
 
     config = module.from_probability_selection_scorer_agreement_db_env(
         {
@@ -105,7 +105,7 @@ def test_enabled_env_config_requires_dsn_without_echoing_secret() -> None:
 
 def test_invalid_enabled_env_value_names_variable_without_echoing_secret() -> None:
     module = _config_module()
-    secret_dsn = "postgresql://sensitive-token.example.invalid/postgres"
+    secret_dsn = "postgresql://sensitive-token@localhost:54322/postgres"
 
     with pytest.raises(ValueError) as exc_info:
         module.from_probability_selection_scorer_agreement_db_env(
@@ -151,11 +151,28 @@ def test_dsn_normalizes_absent_blank_or_padded_values_to_none(
     assert "secret" not in repr(config).lower()
 
 
+def test_direct_config_rejects_remote_dsn_without_echoing_secret() -> None:
+    module = _config_module()
+    secret_dsn = "postgresql://sensitive-token@example.invalid/postgres"
+
+    with pytest.raises(ValueError) as exc_info:
+        module.SupabaseProbabilitySelectionScorerAgreementConfig(
+            enabled=False,
+            dsn=secret_dsn,
+            table_name=module.DEFAULT_PROBABILITY_SELECTION_SCORER_AGREEMENT_DB_TABLE,
+        )
+
+    message = str(exc_info.value)
+    assert module.PROBABILITY_SELECTION_SCORER_AGREEMENT_DB_DSN_ENV_VAR in message
+    assert secret_dsn not in message
+    assert "sensitive-token" not in message
+
+
 def test_config_is_frozen_and_masks_dsn_in_repr() -> None:
     module = _config_module()
     config = module.SupabaseProbabilitySelectionScorerAgreementConfig(
         enabled=True,
-        dsn="postgresql://sensitive-token.example.invalid/postgres",
+        dsn="postgresql://sensitive-token@localhost:54322/postgres",
         table_name=module.DEFAULT_PROBABILITY_SELECTION_SCORER_AGREEMENT_DB_TABLE,
     )
 

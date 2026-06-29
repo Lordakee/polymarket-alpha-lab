@@ -17,6 +17,8 @@ from polymarket_alpha_lab.supabase_paper_autonomous_allocation_proposal_db_histo
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+LOCAL_DSN = "postgresql://user:secret@localhost:54322/db"
+REMOTE_SECRET_DSN = "postgresql://user:secret@example.invalid/db"
 MIGRATION = (
     REPO_ROOT
     / "supabase"
@@ -69,7 +71,7 @@ def test_env_config_defaults_disabled_and_masks_dsn() -> None:
 
     enabled = SupabasePaperAutonomousAllocationProposalDbHistoryMetricsEvaluationConfig(
         enabled=True,
-        dsn="postgresql://user:secret@example.invalid/db",
+        dsn=LOCAL_DSN,
         table_name="paper_ops.metrics_evaluation_archive",
     )
     assert "secret" not in repr(enabled)
@@ -84,7 +86,7 @@ def test_env_config_parses_enabled_values_and_validates_dsn_and_table() -> None:
                 " TRUE "
             ),
             PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_HISTORY_METRICS_EVALUATION_DB_DSN_ENV_VAR: (
-                "postgresql://user:secret@example.invalid/db"
+                LOCAL_DSN
             ),
             PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_HISTORY_METRICS_EVALUATION_DB_TABLE_ENV_VAR: (
                 "paper_ops.metrics_evaluation_archive"
@@ -93,7 +95,7 @@ def test_env_config_parses_enabled_values_and_validates_dsn_and_table() -> None:
     )
 
     assert config.enabled is True
-    assert config.dsn == "postgresql://user:secret@example.invalid/db"
+    assert config.dsn == LOCAL_DSN
     assert config.table_name == "paper_ops.metrics_evaluation_archive"
 
     disabled = from_paper_autonomous_allocation_proposal_db_history_metrics_evaluation_db_env(
@@ -102,7 +104,7 @@ def test_env_config_parses_enabled_values_and_validates_dsn_and_table() -> None:
                 " FALSE "
             ),
             PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_HISTORY_METRICS_EVALUATION_DB_DSN_ENV_VAR: (
-                "postgresql://user:secret@example.invalid/db"
+                LOCAL_DSN
             ),
         },
     )
@@ -134,6 +136,28 @@ def test_env_config_parses_enabled_values_and_validates_dsn_and_table() -> None:
                 ),
             },
         )
+
+
+def test_env_config_rejects_remote_dsn_without_echoing_secret() -> None:
+    with pytest.raises(ValueError) as exc_info:
+        from_paper_autonomous_allocation_proposal_db_history_metrics_evaluation_db_env(
+            {
+                PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_HISTORY_METRICS_EVALUATION_DB_ENABLED_ENV_VAR: (
+                    "false"
+                ),
+                PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_HISTORY_METRICS_EVALUATION_DB_DSN_ENV_VAR: (
+                    REMOTE_SECRET_DSN
+                ),
+            },
+        )
+
+    message = str(exc_info.value)
+    assert (
+        PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_HISTORY_METRICS_EVALUATION_DB_DSN_ENV_VAR
+        in message
+    )
+    assert REMOTE_SECRET_DSN not in message
+    assert "secret" not in message.lower()
 
 
 def test_migration_creates_metrics_evaluation_table_with_required_columns():

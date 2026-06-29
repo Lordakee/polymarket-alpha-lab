@@ -16,6 +16,7 @@ TABLE_ENV_VAR = (
     "POLYMARKET_ALPHA_LAB_PAPER_AUTONOMOUS_SCREENING_DECISION_SUPPORT_GATE_DB_TABLE"
 )
 DEFAULT_TABLE = "paper_autonomous_screening_decision_support_gate_reports"
+LOCAL_DSN = "postgresql://postgres:postgres@localhost:54322/postgres"
 CONFIG_SOURCE = (
     Path(__file__).resolve().parents[1]
     / "src"
@@ -114,7 +115,7 @@ def test_enabled_env_config_requires_dsn_without_echoing_secret() -> None:
 
 def test_enabled_env_config_reads_explicit_dsn_at_process_edge() -> None:
     config_module = _config_module()
-    dsn = "postgresql://example.invalid/postgres"
+    dsn = LOCAL_DSN
 
     config = config_module.from_paper_autonomous_screening_decision_support_gate_db_env(
         {
@@ -127,6 +128,25 @@ def test_enabled_env_config_reads_explicit_dsn_at_process_edge() -> None:
     assert config.enabled is True
     assert config.dsn == dsn
     assert config.table_name == "paper_autonomous_screening_gate_archive"
+
+
+def test_env_config_rejects_remote_dsn_without_echoing_secret() -> None:
+    config_module = _config_module()
+    secret_dsn = "postgresql://worker:sensitive-token@db.example.invalid/postgres"
+
+    with pytest.raises(ValueError) as exc_info:
+        config_module.from_paper_autonomous_screening_decision_support_gate_db_env(
+            {
+                ENABLED_ENV_VAR: "false",
+                DSN_ENV_VAR: secret_dsn,
+            },
+        )
+
+    message = str(exc_info.value)
+    assert DSN_ENV_VAR in message
+    assert secret_dsn not in message
+    assert "sensitive-token" not in message
+    assert "secret" not in message.lower()
 
 
 @pytest.mark.parametrize(
@@ -150,7 +170,7 @@ def test_enabled_env_config_accepts_only_strict_values(
     config = config_module.from_paper_autonomous_screening_decision_support_gate_db_env(
         {
             ENABLED_ENV_VAR: enabled_value,
-            DSN_ENV_VAR: "postgresql://example.invalid/postgres",
+            DSN_ENV_VAR: LOCAL_DSN,
         },
     )
 
@@ -165,7 +185,7 @@ def test_enabled_env_config_rejects_non_strict_values(enabled_value: str) -> Non
         config_module.from_paper_autonomous_screening_decision_support_gate_db_env(
             {
                 ENABLED_ENV_VAR: enabled_value,
-                DSN_ENV_VAR: "postgresql://example.invalid/postgres",
+                DSN_ENV_VAR: LOCAL_DSN,
             },
         )
 
@@ -174,7 +194,7 @@ def test_config_is_frozen_and_masks_dsn_in_repr() -> None:
     config_module = _config_module()
     config = config_module.SupabasePaperAutonomousScreeningDecisionSupportGateConfig(
         enabled=True,
-        dsn="postgresql://sensitive-token.example.invalid/postgres",
+        dsn="postgresql://postgres:sensitive-token@localhost:54322/postgres",
         table_name=DEFAULT_TABLE,
     )
 
@@ -252,7 +272,7 @@ def test_direct_config_rejects_non_bool_enabled_flag() -> None:
     with pytest.raises(ValueError, match="enabled must be a bool"):
         config_module.SupabasePaperAutonomousScreeningDecisionSupportGateConfig(
             enabled=1,
-            dsn="postgresql://example.invalid/postgres",
+            dsn=LOCAL_DSN,
             table_name=DEFAULT_TABLE,
         )
 
