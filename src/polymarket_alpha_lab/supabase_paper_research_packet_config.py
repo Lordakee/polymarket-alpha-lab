@@ -10,6 +10,7 @@ from typing import Mapping
 from polymarket_alpha_lab.paper_research_packet_store import (
     DEFAULT_PAPER_RESEARCH_PACKET_REPORTS_TABLE,
 )
+from polymarket_alpha_lab.supabase_local_dsn import validate_local_postgres_dsn
 
 
 PAPER_RESEARCH_PACKET_DB_ENABLED_ENV_VAR = (
@@ -40,6 +41,11 @@ class SupabasePaperResearchPacketConfig:
             raise ValueError("enabled must be a bool")
         object.__setattr__(self, "dsn", _normalize_optional_dsn(self.dsn))
         object.__setattr__(self, "table_name", _validate_table_name(self.table_name))
+        if self.dsn is not None:
+            validate_local_postgres_dsn(
+                self.dsn,
+                env_var_name=PAPER_RESEARCH_PACKET_DB_DSN_ENV_VAR,
+            )
         if self.enabled and self.dsn is None:
             raise ValueError(
                 f"{PAPER_RESEARCH_PACKET_DB_DSN_ENV_VAR} must be set when DB is enabled",

@@ -41,6 +41,23 @@ def test_enabled_env_config_requires_dsn_without_echoing_secret() -> None:
     assert "topsecret" not in message
 
 
+def test_env_config_rejects_remote_dsn_without_echoing_secret() -> None:
+    secret_dsn = "postgresql://user:topsecret@example.invalid/postgres"
+
+    with pytest.raises(ValueError) as exc_info:
+        from_strategy_candidate_research_queue_history_db_env(
+            {
+                STRATEGY_CANDIDATE_RESEARCH_QUEUE_HISTORY_DB_DSN_ENV_VAR: secret_dsn,
+            },
+        )
+
+    message = str(exc_info.value)
+    assert STRATEGY_CANDIDATE_RESEARCH_QUEUE_HISTORY_DB_DSN_ENV_VAR in message
+    assert secret_dsn not in message
+    assert "topsecret" not in message
+    assert "example.invalid" not in message
+
+
 @pytest.mark.parametrize(
     ("enabled_value", "expected_enabled"),
     [
@@ -58,7 +75,7 @@ def test_enabled_env_config_accepts_only_strict_values(
     env = {
         STRATEGY_CANDIDATE_RESEARCH_QUEUE_HISTORY_DB_ENABLED_ENV_VAR: enabled_value,
         STRATEGY_CANDIDATE_RESEARCH_QUEUE_HISTORY_DB_DSN_ENV_VAR: (
-            "postgresql://example.invalid/postgres"
+            "postgresql://user:secret@localhost:54322/postgres"
         ),
     }
 
@@ -76,7 +93,7 @@ def test_enabled_env_config_rejects_non_strict_values(enabled_value: str) -> Non
                     enabled_value
                 ),
                 STRATEGY_CANDIDATE_RESEARCH_QUEUE_HISTORY_DB_DSN_ENV_VAR: (
-                    "postgresql://example.invalid/postgres"
+                    "postgresql://user:secret@localhost:54322/postgres"
                 ),
             },
         )
@@ -87,7 +104,7 @@ def test_enabled_env_config_rejects_non_strict_values(enabled_value: str) -> Non
 
 
 def test_enabled_env_config_reads_explicit_dsn_and_table() -> None:
-    dsn = "postgresql://example.invalid/postgres"
+    dsn = "postgresql://user:secret@localhost:54322/postgres"
 
     config = from_strategy_candidate_research_queue_history_db_env(
         {
@@ -107,7 +124,7 @@ def test_enabled_env_config_reads_explicit_dsn_and_table() -> None:
 def test_config_is_frozen_and_masks_dsn_in_repr() -> None:
     config = SupabaseStrategyCandidateResearchQueueHistoryConfig(
         enabled=True,
-        dsn="postgresql://topsecret.example.invalid/postgres",
+        dsn="postgresql://topsecret@localhost:54322/postgres",
         table_name=DEFAULT_STRATEGY_CANDIDATE_RESEARCH_QUEUE_HISTORY_DB_TABLE,
     )
 

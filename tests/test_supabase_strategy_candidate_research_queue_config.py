@@ -92,6 +92,24 @@ def test_enabled_env_config_rejects_padded_dsn_without_echoing_it() -> None:
     assert "topsecret" not in message
 
 
+def test_env_config_rejects_remote_dsn_without_echoing_secret() -> None:
+    module = _load_module()
+    secret_dsn = "postgresql://user:topsecret@example.invalid/postgres"
+
+    with pytest.raises(ValueError) as exc_info:
+        module.from_strategy_candidate_research_queue_db_env(
+            {
+                module.STRATEGY_CANDIDATE_RESEARCH_QUEUE_DB_DSN_ENV_VAR: secret_dsn,
+            },
+        )
+
+    message = str(exc_info.value)
+    assert module.STRATEGY_CANDIDATE_RESEARCH_QUEUE_DB_DSN_ENV_VAR in message
+    assert secret_dsn not in message
+    assert "topsecret" not in message
+    assert "example.invalid" not in message
+
+
 @pytest.mark.parametrize(
     ("enabled_value", "expected_enabled"),
     [
@@ -110,7 +128,7 @@ def test_enabled_env_config_accepts_only_strict_values(
     env = {
         module.STRATEGY_CANDIDATE_RESEARCH_QUEUE_DB_ENABLED_ENV_VAR: enabled_value,
         module.STRATEGY_CANDIDATE_RESEARCH_QUEUE_DB_DSN_ENV_VAR: (
-            "postgresql://example.invalid/postgres"
+            "postgresql://user:secret@localhost:54322/postgres"
         ),
     }
 
@@ -130,7 +148,7 @@ def test_enabled_env_config_rejects_non_strict_values(enabled_value: str) -> Non
                     enabled_value
                 ),
                 module.STRATEGY_CANDIDATE_RESEARCH_QUEUE_DB_DSN_ENV_VAR: (
-                    "postgresql://example.invalid/postgres"
+                    "postgresql://user:secret@localhost:54322/postgres"
                 ),
             },
         )
@@ -142,7 +160,7 @@ def test_enabled_env_config_rejects_non_strict_values(enabled_value: str) -> Non
 
 def test_enabled_env_config_reads_explicit_dsn_at_process_edge() -> None:
     module = _load_module()
-    dsn = "postgresql://example.invalid/postgres"
+    dsn = "postgresql://user:secret@localhost:54322/postgres"
 
     config = module.from_strategy_candidate_research_queue_db_env(
         {
@@ -163,7 +181,7 @@ def test_config_is_frozen_and_masks_dsn_in_repr() -> None:
     module = _load_module()
     config = module.SupabaseStrategyCandidateResearchQueueConfig(
         enabled=True,
-        dsn="postgresql://topsecret.example.invalid/postgres",
+        dsn="postgresql://topsecret@localhost:54322/postgres",
         table_name=module.DEFAULT_STRATEGY_CANDIDATE_RESEARCH_QUEUE_DB_TABLE,
     )
 
@@ -270,7 +288,7 @@ def test_direct_config_rejects_non_bool_enabled_flag() -> None:
     with pytest.raises(ValueError, match="enabled must be a bool"):
         module.SupabaseStrategyCandidateResearchQueueConfig(
             enabled=1,
-            dsn="postgresql://example.invalid/postgres",
+            dsn="postgresql://user:secret@localhost:54322/postgres",
             table_name=module.DEFAULT_STRATEGY_CANDIDATE_RESEARCH_QUEUE_DB_TABLE,
         )
 
