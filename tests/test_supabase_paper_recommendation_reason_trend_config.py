@@ -13,6 +13,7 @@ ENABLED_ENV_VAR = (
 DSN_ENV_VAR = "POLYMARKET_ALPHA_LAB_PAPER_RECOMMENDATION_REASON_TREND_DB_DSN"
 TABLE_ENV_VAR = "POLYMARKET_ALPHA_LAB_PAPER_RECOMMENDATION_REASON_TREND_DB_TABLE"
 DEFAULT_TABLE = "paper_recommendation_reason_trend_reports"
+LOCAL_POSTGRESQL_DSN = "postgresql://localhost:54322/postgres"
 MODULE_PATH = (
     Path(__file__).resolve().parents[1]
     / "src"
@@ -61,7 +62,7 @@ def test_disabled_env_config_accepts_missing_dsn() -> None:
 
 def test_enabled_env_config_requires_dsn_without_echoing_secret() -> None:
     config_module = _config_module()
-    secret_dsn = "postgresql://sensitive-token.example.invalid/postgres"
+    secret_dsn = "postgresql://sensitive-token@localhost:54322/postgres"
 
     with pytest.raises(ValueError) as exc_info:
         config_module.from_paper_recommendation_reason_trend_db_env(
@@ -93,7 +94,7 @@ def test_enabled_config_requires_dsn_without_echoing_secret() -> None:
 
 def test_enabled_env_config_reads_explicit_dsn_at_process_edge() -> None:
     config_module = _config_module()
-    dsn = "postgresql://example.invalid/postgres"
+    dsn = LOCAL_POSTGRESQL_DSN
 
     config = config_module.from_paper_recommendation_reason_trend_db_env(
         {
@@ -108,9 +109,58 @@ def test_enabled_env_config_reads_explicit_dsn_at_process_edge() -> None:
     assert config.table_name == "paper_recommendation_reason_trend_archive"
 
 
+@pytest.mark.parametrize(
+    "dsn",
+    [
+        "postgresql://localhost:54322/postgres",
+        "postgres://127.0.0.1:5432/postgres",
+        "host=localhost port=54322 dbname=postgres",
+        "postgresql:///postgres?host=/var/run/postgresql",
+    ],
+)
+def test_config_accepts_local_postgres_dsn_forms(dsn: str) -> None:
+    config_module = _config_module()
+
+    config = config_module.SupabasePaperRecommendationReasonTrendConfig(
+        enabled=True,
+        dsn=dsn,
+        table_name=DEFAULT_TABLE,
+    )
+
+    assert config.dsn == dsn
+
+
+@pytest.mark.parametrize(
+    "dsn",
+    [
+        "postgresql://sensitive-token@db.example.com/postgres",
+        "postgres://192.168.1.10/postgres",
+        "hostaddr=127.0.0.1 password=sensitive-token dbname=postgres",
+        "sqlite:///tmp/sensitive-token.db",
+    ],
+)
+def test_config_rejects_remote_or_unsafe_dsn_without_echoing_secret(
+    dsn: str,
+) -> None:
+    config_module = _config_module()
+
+    with pytest.raises(ValueError) as exc_info:
+        config_module.SupabasePaperRecommendationReasonTrendConfig(
+            enabled=True,
+            dsn=dsn,
+            table_name=DEFAULT_TABLE,
+        )
+
+    message = str(exc_info.value)
+    assert DSN_ENV_VAR in message
+    assert "local Postgres/Supabase" in message
+    assert dsn not in message
+    assert "sensitive-token" not in message
+
+
 def test_padded_enabled_dsn_is_rejected_without_echoing_secret() -> None:
     config_module = _config_module()
-    secret_dsn = "postgresql://sensitive-token.example.invalid/postgres"
+    secret_dsn = "postgresql://sensitive-token@localhost:54322/postgres"
 
     with pytest.raises(ValueError) as exc_info:
         config_module.from_paper_recommendation_reason_trend_db_env(
@@ -130,7 +180,7 @@ def test_config_is_frozen_and_masks_dsn_in_repr() -> None:
     config_module = _config_module()
     config = config_module.SupabasePaperRecommendationReasonTrendConfig(
         enabled=True,
-        dsn="postgresql://sensitive-token.example.invalid/postgres",
+        dsn="postgresql://sensitive-token@localhost:54322/postgres",
         table_name=DEFAULT_TABLE,
     )
 
@@ -238,7 +288,7 @@ def test_enabled_flag_is_explicit_and_strict() -> None:
         config_module.from_paper_recommendation_reason_trend_db_env(
             {
                 ENABLED_ENV_VAR: "yes",
-                DSN_ENV_VAR: "postgresql://example.test/postgres",
+                DSN_ENV_VAR: LOCAL_POSTGRESQL_DSN,
             },
         )
 
@@ -249,7 +299,7 @@ def test_direct_config_rejects_non_bool_enabled_flag() -> None:
     with pytest.raises(ValueError, match="enabled must be a bool"):
         config_module.SupabasePaperRecommendationReasonTrendConfig(
             enabled=1,
-            dsn="postgresql://example.test/postgres",
+            dsn=LOCAL_POSTGRESQL_DSN,
             table_name=DEFAULT_TABLE,
         )
 
