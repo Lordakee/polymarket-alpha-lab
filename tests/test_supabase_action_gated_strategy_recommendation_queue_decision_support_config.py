@@ -26,6 +26,7 @@ RENAME_MIGRATION_PATH = Path(
     "supabase/migrations/"
     "20260624000000_shorten_action_gated_queue_decision_support_table.sql",
 )
+LOCAL_POSTGRES_DSN = "postgresql://postgres:postgres@localhost:54322/postgres"
 
 
 def test_disabled_env_config_uses_default_table_and_accepts_absent_dsn() -> None:
@@ -103,9 +104,7 @@ def test_enabled_env_config_accepts_only_strict_values(
 ) -> None:
     env = {
         ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_ENABLED_ENV_VAR: enabled_value,
-        ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_DSN_ENV_VAR: (
-            "postgresql://example.invalid/postgres"
-        ),
+        ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_DSN_ENV_VAR: LOCAL_POSTGRES_DSN,
     }
 
     config = from_action_gated_strategy_recommendation_queue_decision_support_db_env(
@@ -121,9 +120,7 @@ def test_enabled_env_config_rejects_non_strict_values(enabled_value: str) -> Non
         from_action_gated_strategy_recommendation_queue_decision_support_db_env(
             {
                 ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_ENABLED_ENV_VAR: enabled_value,
-                ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_DSN_ENV_VAR: (
-                    "postgresql://example.invalid/postgres"
-                ),
+                ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_DSN_ENV_VAR: LOCAL_POSTGRES_DSN,
             },
         )
 
@@ -133,7 +130,7 @@ def test_enabled_env_config_rejects_non_strict_values(enabled_value: str) -> Non
 
 
 def test_enabled_env_config_reads_explicit_dsn_at_process_edge() -> None:
-    dsn = "postgresql://example.invalid/postgres"
+    dsn = LOCAL_POSTGRES_DSN
 
     config = from_action_gated_strategy_recommendation_queue_decision_support_db_env(
         {
@@ -153,7 +150,7 @@ def test_enabled_env_config_reads_explicit_dsn_at_process_edge() -> None:
 def test_config_is_frozen_and_masks_dsn_in_repr() -> None:
     config = SupabaseActionGatedStrategyRecommendationQueueDecisionSupportConfig(
         enabled=True,
-        dsn="postgresql://topsecret.example.invalid/postgres",
+        dsn="postgresql://topsecret:postgres@localhost:54322/postgres",
         table_name=DEFAULT_ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_TABLE,
     )
 
@@ -164,6 +161,32 @@ def test_config_is_frozen_and_masks_dsn_in_repr() -> None:
     assert "topsecret" not in rendered
     assert "postgresql://topsecret" not in rendered
     assert "dsn=<redacted>" in rendered
+
+
+@pytest.mark.parametrize(
+    "dsn",
+    [
+        "postgresql://topsecret@example.invalid/postgres",
+        "postgres://db.example.com/postgres",
+        "postgresql://localhost:54322/postgres?hostaddr=127.0.0.1",
+        "host=example.invalid dbname=postgres",
+    ],
+)
+def test_config_rejects_remote_or_unsafe_dsn_without_echoing_secret(
+    dsn: str,
+) -> None:
+    with pytest.raises(ValueError) as exc_info:
+        SupabaseActionGatedStrategyRecommendationQueueDecisionSupportConfig(
+            enabled=False,
+            dsn=dsn,
+            table_name=DEFAULT_ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_TABLE,
+        )
+
+    message = str(exc_info.value)
+    assert ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_DSN_ENV_VAR in message
+    assert "local Postgres/Supabase" in message
+    assert dsn not in message
+    assert "topsecret" not in message
 
 
 def test_disabled_config_repr_shows_absent_dsn_without_secret_shape() -> None:
@@ -248,7 +271,7 @@ def test_direct_config_rejects_non_bool_enabled_flag() -> None:
     with pytest.raises(ValueError, match="enabled must be a bool"):
         SupabaseActionGatedStrategyRecommendationQueueDecisionSupportConfig(
             enabled=1,  # type: ignore[arg-type]
-            dsn="postgresql://example.invalid/postgres",
+            dsn=LOCAL_POSTGRES_DSN,
             table_name=DEFAULT_ACTION_GATED_QUEUE_DECISION_SUPPORT_DB_TABLE,
         )
 

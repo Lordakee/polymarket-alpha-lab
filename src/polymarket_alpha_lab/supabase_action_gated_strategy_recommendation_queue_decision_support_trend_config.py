@@ -7,6 +7,7 @@ from os import environ
 import re
 from typing import Mapping
 
+from polymarket_alpha_lab.supabase_local_dsn import validate_local_postgres_dsn
 
 ACTION_GATED_QUEUE_DECISION_SUPPORT_TREND_DB_ENABLED_ENV_VAR = (
     "POLYMARKET_ALPHA_LAB_ACTION_GATED_QUEUE_DECISION_SUPPORT_TREND_DB_ENABLED"
@@ -61,6 +62,11 @@ class SupabaseActionGatedStrategyRecommendationQueueDecisionSupportTrendConfig:
             "sources_table_name",
             _validate_table_name("sources_table_name", self.sources_table_name),
         )
+        if self.dsn is not None:
+            validate_local_postgres_dsn(
+                self.dsn,
+                env_var_name=ACTION_GATED_QUEUE_DECISION_SUPPORT_TREND_DB_DSN_ENV_VAR,
+            )
         if self.enabled and self.dsn is None:
             raise ValueError(
                 f"{ACTION_GATED_QUEUE_DECISION_SUPPORT_TREND_DB_DSN_ENV_VAR} "

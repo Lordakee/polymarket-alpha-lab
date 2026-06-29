@@ -28,6 +28,7 @@ SOURCES_TABLE_ENV_VAR = (
 )
 DEFAULT_REPORTS_TABLE = "paper_action_gated_queue_decision_support_trend_reports"
 DEFAULT_SOURCES_TABLE = "paper_action_gated_queue_decision_support_trend_sources"
+LOCAL_POSTGRES_DSN = "postgresql://postgres:postgres@localhost:54322/postgres"
 
 
 def _config_module():
@@ -130,7 +131,7 @@ def test_enabled_env_config_accepts_only_strict_values(
         config_module.from_action_gated_strategy_recommendation_queue_decision_support_trend_db_env(
             {
                 ENABLED_ENV_VAR: enabled_value,
-                DSN_ENV_VAR: "postgresql://example.invalid/postgres",
+                DSN_ENV_VAR: LOCAL_POSTGRES_DSN,
             },
         )
     )
@@ -146,7 +147,7 @@ def test_enabled_env_config_rejects_non_strict_values(enabled_value: str) -> Non
         config_module.from_action_gated_strategy_recommendation_queue_decision_support_trend_db_env(
             {
                 ENABLED_ENV_VAR: enabled_value,
-                DSN_ENV_VAR: "postgresql://example.invalid/postgres",
+                DSN_ENV_VAR: LOCAL_POSTGRES_DSN,
             },
         )
 
@@ -155,7 +156,7 @@ def test_enabled_env_config_rejects_non_strict_values(enabled_value: str) -> Non
 
 def test_enabled_env_config_reads_explicit_dsn_and_table_names() -> None:
     config_module = _config_module()
-    dsn = "postgresql://example.invalid/postgres"
+    dsn = LOCAL_POSTGRES_DSN
 
     config = (
         config_module.from_action_gated_strategy_recommendation_queue_decision_support_trend_db_env(
@@ -188,7 +189,7 @@ def test_config_is_frozen_and_masks_dsn_in_repr() -> None:
     config_module = _config_module()
     config = config_module.SupabaseActionGatedStrategyRecommendationQueueDecisionSupportTrendConfig(
         enabled=True,
-        dsn="postgresql://topsecret.example.invalid/postgres",
+        dsn="postgresql://topsecret:postgres@localhost:54322/postgres",
         reports_table_name=DEFAULT_REPORTS_TABLE,
         sources_table_name=DEFAULT_SOURCES_TABLE,
     )
@@ -202,6 +203,35 @@ def test_config_is_frozen_and_masks_dsn_in_repr() -> None:
     assert "dsn=<redacted>" in rendered
     assert DEFAULT_REPORTS_TABLE in rendered
     assert DEFAULT_SOURCES_TABLE in rendered
+
+
+@pytest.mark.parametrize(
+    "dsn",
+    [
+        "postgresql://topsecret@example.invalid/postgres",
+        "postgres://db.example.com/postgres",
+        "postgresql://localhost:54322/postgres?hostaddr=127.0.0.1",
+        "host=example.invalid dbname=postgres",
+    ],
+)
+def test_config_rejects_remote_or_unsafe_dsn_without_echoing_secret(
+    dsn: str,
+) -> None:
+    config_module = _config_module()
+
+    with pytest.raises(ValueError) as exc_info:
+        config_module.SupabaseActionGatedStrategyRecommendationQueueDecisionSupportTrendConfig(
+            enabled=False,
+            dsn=dsn,
+            reports_table_name=DEFAULT_REPORTS_TABLE,
+            sources_table_name=DEFAULT_SOURCES_TABLE,
+        )
+
+    message = str(exc_info.value)
+    assert DSN_ENV_VAR in message
+    assert "local Postgres/Supabase" in message
+    assert dsn not in message
+    assert "topsecret" not in message
 
 
 def test_disabled_config_repr_shows_absent_dsn_without_secret_shape() -> None:
@@ -324,7 +354,7 @@ def test_direct_config_rejects_non_bool_enabled_flag() -> None:
     with pytest.raises(ValueError, match="enabled must be a bool"):
         config_module.SupabaseActionGatedStrategyRecommendationQueueDecisionSupportTrendConfig(
             enabled=1,
-            dsn="postgresql://example.invalid/postgres",
+            dsn=LOCAL_POSTGRES_DSN,
             reports_table_name=DEFAULT_REPORTS_TABLE,
             sources_table_name=DEFAULT_SOURCES_TABLE,
         )
