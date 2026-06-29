@@ -14,6 +14,9 @@ from polymarket_alpha_lab.paper_autonomous_investment_ledger_db_history_health_t
 from polymarket_alpha_lab.paper_autonomous_screening_decision_support_gate_db_history_health import (
     PaperAutonomousScreeningDecisionSupportGateDbHistoryHealthReport,
 )
+from polymarket_alpha_lab.paper_strategy_cycle_report_history_gate import (
+    PaperStrategyCycleReportHistoryGateReport,
+)
 
 
 DEFAULT_PAPER_AUTONOMOUS_READINESS_GATE_CONFIG_VERSION = (
@@ -27,10 +30,17 @@ NEXT_STEP_BY_STATUS = {
 }
 PASS_REASON_CODE = "paper_autonomous_readiness_gate_passed"
 SCREENING_SOURCE_NAME = "screening_decision_support_gate_db_history_health"
+STRATEGY_CYCLE_HISTORY_GATE_SOURCE_NAME = "strategy_cycle_report_history_gate"
 ALLOCATION_SOURCE_NAME = "allocation_proposal_db_history_health_trend_gate"
 INVESTMENT_LEDGER_SOURCE_NAME = "investment_ledger_db_history_health_trend_gate"
+LEGACY_SOURCE_NAMES = (
+    SCREENING_SOURCE_NAME,
+    ALLOCATION_SOURCE_NAME,
+    INVESTMENT_LEDGER_SOURCE_NAME,
+)
 SOURCE_NAMES = (
     SCREENING_SOURCE_NAME,
+    STRATEGY_CYCLE_HISTORY_GATE_SOURCE_NAME,
     ALLOCATION_SOURCE_NAME,
     INVESTMENT_LEDGER_SOURCE_NAME,
 )
@@ -189,6 +199,7 @@ def build_paper_autonomous_readiness_gate_report(
     *,
     config: PaperAutonomousReadinessGateConfig,
     generated_at: datetime,
+    strategy_cycle_history_gate_report: object | None = None,
 ) -> PaperAutonomousReadinessGateReport:
     if type(screening_report) is not PaperAutonomousScreeningDecisionSupportGateDbHistoryHealthReport:
         raise ValueError(
@@ -211,6 +222,15 @@ def build_paper_autonomous_readiness_gate_report(
             "investment_ledger_report must be a "
             "PaperAutonomousInvestmentLedgerDbHistoryHealthTrendGateReport",
         )
+    if (
+        strategy_cycle_history_gate_report is not None
+        and type(strategy_cycle_history_gate_report)
+        is not PaperStrategyCycleReportHistoryGateReport
+    ):
+        raise ValueError(
+            "strategy_cycle_history_gate_report must be a "
+            "PaperStrategyCycleReportHistoryGateReport",
+        )
     if type(config) is not PaperAutonomousReadinessGateConfig:
         raise ValueError("config must be a PaperAutonomousReadinessGateConfig")
 
@@ -219,8 +239,13 @@ def build_paper_autonomous_readiness_gate_report(
     _validate_hard_flags("screening_report", screening_report)
     _validate_hard_flags("allocation_report", allocation_report)
     _validate_hard_flags("investment_ledger_report", investment_ledger_report)
+    if strategy_cycle_history_gate_report is not None:
+        _validate_hard_flags(
+            "strategy_cycle_history_gate_report",
+            strategy_cycle_history_gate_report,
+        )
 
-    source_statuses = (
+    source_statuses = [
         PaperAutonomousReadinessGateSourceStatus(
             source_name=SCREENING_SOURCE_NAME,
             status=screening_report.health_status,
@@ -228,35 +253,51 @@ def build_paper_autonomous_readiness_gate_report(
             generated_at=screening_report.generated_at,
             config_version=screening_report.config_version,
         ),
-        PaperAutonomousReadinessGateSourceStatus(
-            source_name=ALLOCATION_SOURCE_NAME,
-            status=allocation_report.gate_status,
-            recommended_next_step=allocation_report.recommended_next_step,
-            generated_at=allocation_report.generated_at,
-            config_version=allocation_report.config_version,
-        ),
-        PaperAutonomousReadinessGateSourceStatus(
-            source_name=INVESTMENT_LEDGER_SOURCE_NAME,
-            status=investment_ledger_report.gate_status,
-            recommended_next_step=investment_ledger_report.recommended_next_step,
-            generated_at=investment_ledger_report.generated_at,
-            config_version=investment_ledger_report.config_version,
+    ]
+    if strategy_cycle_history_gate_report is not None:
+        source_statuses.append(
+            PaperAutonomousReadinessGateSourceStatus(
+                source_name=STRATEGY_CYCLE_HISTORY_GATE_SOURCE_NAME,
+                status=strategy_cycle_history_gate_report.gate_status,
+                recommended_next_step=(
+                    strategy_cycle_history_gate_report.recommended_next_step
+                ),
+                generated_at=strategy_cycle_history_gate_report.generated_at,
+                config_version=strategy_cycle_history_gate_report.config_version,
+            ),
+        )
+    source_statuses.extend(
+        (
+            PaperAutonomousReadinessGateSourceStatus(
+                source_name=ALLOCATION_SOURCE_NAME,
+                status=allocation_report.gate_status,
+                recommended_next_step=allocation_report.recommended_next_step,
+                generated_at=allocation_report.generated_at,
+                config_version=allocation_report.config_version,
+            ),
+            PaperAutonomousReadinessGateSourceStatus(
+                source_name=INVESTMENT_LEDGER_SOURCE_NAME,
+                status=investment_ledger_report.gate_status,
+                recommended_next_step=investment_ledger_report.recommended_next_step,
+                generated_at=investment_ledger_report.generated_at,
+                config_version=investment_ledger_report.config_version,
+            ),
         ),
     )
-    reason_codes = _readiness_reason_codes(source_statuses)
-    readiness_status = _readiness_status(source_statuses)
+    source_statuses_tuple = tuple(source_statuses)
+    source_config_versions = tuple(
+        (row.source_name, row.config_version) for row in source_statuses_tuple
+    )
+    reason_codes = _readiness_reason_codes(source_statuses_tuple)
+    readiness_status = _readiness_status(source_statuses_tuple)
 
     return PaperAutonomousReadinessGateReport(
         generated_at=generated_at_utc,
         config_version=config.config_version,
         readiness_status=readiness_status,
         recommended_next_step=NEXT_STEP_BY_STATUS[readiness_status],
-        source_statuses=source_statuses,
-        source_config_versions=(
-            (SCREENING_SOURCE_NAME, screening_report.config_version),
-            (ALLOCATION_SOURCE_NAME, allocation_report.config_version),
-            (INVESTMENT_LEDGER_SOURCE_NAME, investment_ledger_report.config_version),
-        ),
+        source_statuses=source_statuses_tuple,
+        source_config_versions=source_config_versions,
         reason_code_counts=_reason_code_counts(reason_codes),
         reason_codes=reason_codes,
     )
@@ -326,7 +367,7 @@ def _normalize_source_statuses(
     for row in rows:
         if type(row) is not PaperAutonomousReadinessGateSourceStatus:
             raise ValueError("source_statuses must contain exact source status rows")
-    if tuple(row.source_name for row in rows) != SOURCE_NAMES:
+    if tuple(row.source_name for row in rows) not in (LEGACY_SOURCE_NAMES, SOURCE_NAMES):
         raise ValueError("source_statuses must contain the canonical source sequence")
     return rows
 
@@ -344,7 +385,10 @@ def _normalize_source_config_versions(
         _require_source_name("source_config_versions", source_name)
         _require_canonical_string("source_config_versions", config_version)
         rows.append((source_name, config_version))
-    if tuple(source_name for source_name, _config_version in rows) != SOURCE_NAMES:
+    if tuple(source_name for source_name, _config_version in rows) not in (
+        LEGACY_SOURCE_NAMES,
+        SOURCE_NAMES,
+    ):
         raise ValueError("source_config_versions must contain the canonical source sequence")
     return tuple(rows)
 

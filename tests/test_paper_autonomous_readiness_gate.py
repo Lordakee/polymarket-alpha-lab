@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 from dataclasses import FrozenInstanceError, replace
 from datetime import UTC, datetime, timezone, timedelta
+from decimal import Decimal
 from importlib import import_module
 from pathlib import Path
 
@@ -19,6 +20,10 @@ from polymarket_alpha_lab.paper_autonomous_investment_ledger_db_history_health_t
 from polymarket_alpha_lab.paper_autonomous_screening_decision_support_gate_db_history_health import (
     PaperAutonomousScreeningDecisionSupportGateDbHistoryHealthReasonCodeCount,
     PaperAutonomousScreeningDecisionSupportGateDbHistoryHealthReport,
+)
+from polymarket_alpha_lab.paper_strategy_cycle_report_history_gate import (
+    PaperStrategyCycleReportHistoryGateReasonCodeCount,
+    PaperStrategyCycleReportHistoryGateReport,
 )
 
 
@@ -216,6 +221,61 @@ def _ledger_report(
     )
 
 
+def _strategy_cycle_history_gate_report(
+    *,
+    gate_status: str = "pass",
+    recommended_next_step: str | None = None,
+    generated_at: datetime = GENERATED_AT,
+    config_version: str = "paper-strategy-cycle-report-history-gate-v0",
+    source_config_version: str = "paper-strategy-cycle-report-history-v0",
+    reason_codes: tuple[str, ...] | None = None,
+    reason_code_counts: tuple[
+        PaperStrategyCycleReportHistoryGateReasonCodeCount,
+        ...,
+    ]
+    | None = None,
+) -> PaperStrategyCycleReportHistoryGateReport:
+    if recommended_next_step is None:
+        recommended_next_step = {
+            "pass": "allow_strategy_cycle_history_gate",
+            "watch": "throttle_strategy_cycle_history_gate",
+            "blocked": "block_strategy_cycle_history_gate",
+        }[gate_status]
+    if reason_codes is None:
+        reason_codes = {
+            "pass": ("paper_strategy_cycle_report_history_gate_passed",),
+            "watch": ("source_strategy_cycle_report_history_watch",),
+            "blocked": ("source_strategy_cycle_report_history_blocked",),
+        }[gate_status]
+    if reason_code_counts is None:
+        reason_code_counts = tuple(
+            PaperStrategyCycleReportHistoryGateReasonCodeCount(
+                reason_code=reason_code,
+                report_count=1,
+            )
+            for reason_code in reason_codes
+        )
+    return PaperStrategyCycleReportHistoryGateReport(
+        generated_at=generated_at,
+        config_version=config_version,
+        source_config_version=source_config_version,
+        source_generated_at=generated_at - timedelta(minutes=20),
+        gate_status=gate_status,
+        recommended_next_step=recommended_next_step,
+        reason_code_counts=reason_code_counts,
+        source_history_status=gate_status,
+        source_report_count=3,
+        latest_source_generated_at=generated_at - timedelta(minutes=20),
+        latest_source_age_seconds=1_200,
+        latest_snapshot_ready_share=Decimal("1"),
+        blocked_market_share=Decimal("0"),
+        latest_snapshot_ready_count=3,
+        latest_considered_count=3,
+        total_blocked_market_count=0,
+        reason_codes=reason_codes,
+    )
+
+
 def _readiness_report(
     *,
     screening_report: (
@@ -227,6 +287,9 @@ def _readiness_report(
     investment_ledger_report: (
         PaperAutonomousInvestmentLedgerDbHistoryHealthTrendGateReport | None
     ) = None,
+    strategy_cycle_history_gate_report: (
+        PaperStrategyCycleReportHistoryGateReport | None
+    ) = None,
     generated_at: datetime = GENERATED_AT,
 ):
     api = _api()
@@ -236,6 +299,7 @@ def _readiness_report(
         investment_ledger_report or _ledger_report(),
         config=api.PaperAutonomousReadinessGateConfig(),
         generated_at=generated_at,
+        strategy_cycle_history_gate_report=strategy_cycle_history_gate_report,
     )
 
 
@@ -325,6 +389,74 @@ def test_readiness_gate_passes_when_all_sources_pass_and_normalizes_time():
     assert report.paper_only is True
     assert report.report_only is True
     assert report.readonly is True
+
+
+def test_readiness_gate_keeps_legacy_three_source_behavior_without_strategy_cycle_gate():
+    report = _readiness_report()
+    assert tuple(row.source_name for row in report.source_statuses) == (
+        "screening_decision_support_gate_db_history_health",
+        "allocation_proposal_db_history_health_trend_gate",
+        "investment_ledger_db_history_health_trend_gate",
+    )
+    assert "strategy_cycle_report_history_gate_pass" not in report.reason_codes
+
+
+def test_readiness_gate_includes_strategy_cycle_history_gate_as_fourth_source():
+    report = _readiness_report(
+        strategy_cycle_history_gate_report=_strategy_cycle_history_gate_report(),
+    )
+    assert tuple(row.source_name for row in report.source_statuses) == (
+        "screening_decision_support_gate_db_history_health",
+        "strategy_cycle_report_history_gate",
+        "allocation_proposal_db_history_health_trend_gate",
+        "investment_ledger_db_history_health_trend_gate",
+    )
+    assert report.reason_codes == (
+        "allocation_proposal_db_history_health_trend_gate_pass",
+        "investment_ledger_db_history_health_trend_gate_pass",
+        "paper_autonomous_readiness_gate_passed",
+        "screening_decision_support_gate_db_history_health_pass",
+        "strategy_cycle_report_history_gate_pass",
+    )
+
+
+def test_readiness_gate_strategy_cycle_watch_throttles_and_blocked_blocks():
+    watch_report = _readiness_report(
+        strategy_cycle_history_gate_report=_strategy_cycle_history_gate_report(
+            gate_status="watch",
+        ),
+    )
+    assert watch_report.readiness_status == "watch"
+    assert "strategy_cycle_report_history_gate_watch" in watch_report.reason_codes
+
+    blocked_report = _readiness_report(
+        strategy_cycle_history_gate_report=_strategy_cycle_history_gate_report(
+            gate_status="blocked",
+        ),
+    )
+    assert blocked_report.readiness_status == "blocked"
+    assert "strategy_cycle_report_history_gate_blocked" in blocked_report.reason_codes
+
+
+def test_readiness_gate_rejects_noncanonical_four_source_constructor_sequence():
+    report = _readiness_report(
+        strategy_cycle_history_gate_report=_strategy_cycle_history_gate_report(),
+    )
+    source_statuses = (
+        report.source_statuses[1],
+        report.source_statuses[0],
+        report.source_statuses[2],
+        report.source_statuses[3],
+    )
+
+    with pytest.raises(ValueError, match="canonical source sequence"):
+        replace(
+            report,
+            source_statuses=source_statuses,
+            source_config_versions=tuple(
+                (row.source_name, row.config_version) for row in source_statuses
+            ),
+        )
 
 
 def test_readiness_gate_watches_when_any_source_watches_without_blockers():
@@ -523,6 +655,15 @@ def test_readiness_gate_rejects_subclassed_and_wrong_source_types():
             object(),
             config=api.PaperAutonomousReadinessGateConfig(),
             generated_at=GENERATED_AT,
+        )
+    with pytest.raises(ValueError, match="strategy_cycle_history_gate_report must be a"):
+        api.build_paper_autonomous_readiness_gate_report(
+            _screening_report(),
+            _allocation_report(),
+            _ledger_report(),
+            config=api.PaperAutonomousReadinessGateConfig(),
+            generated_at=GENERATED_AT,
+            strategy_cycle_history_gate_report=object(),
         )
 
 
