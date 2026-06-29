@@ -245,8 +245,7 @@ def strategy_cycle_exports(exports):
     return tuple(
         name
         for name in exports
-        if name.startswith("PaperStrategyCycle")
-        or name == "run_strategy_cycle"
+        if name in EXPECTED_EXPORTS
     )
 
 
