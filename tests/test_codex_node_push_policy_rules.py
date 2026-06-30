@@ -55,3 +55,15 @@ def test_codex_node_push_policy_continues_after_verified_push_by_default():
     assert normalized.index(
         "after a completed codex node is verified, committed, reviewed, and pushed to github",
     ) < instructions.index("## omo / sisyphus session workflow (opencode only — codex ignores this section)")
+
+
+def test_agent_coordination_defaults_capture_parallel_cap_and_conflict_rule():
+    instructions, normalized = _agents_instructions()
+
+    assert "agent coordination defaults" in instructions
+    assert "20 active subagent threads" in normalized
+    assert "nested subagent depth cap of **3**" in normalized
+    assert "independent, non-conflicting work" in normalized
+    assert "write-scope overlap" in normalized
+    assert "avoid assigning multiple subagents to edit the same files" in normalized
+    assert "split ownership by non-overlapping files or modules" in normalized
