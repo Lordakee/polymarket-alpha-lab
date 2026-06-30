@@ -252,6 +252,7 @@ from polymarket_alpha_lab.supabase_probability_selection_scorer_agreement_config
 )
 from polymarket_alpha_lab.supabase_local_dsn import validate_local_postgres_dsn
 from polymarket_alpha_lab.supabase_paper_probability_selection_summary_history_config import (
+    PAPER_PROBABILITY_SELECTION_SUMMARY_HISTORY_DB_DSN_ENV_VAR,
     from_paper_probability_selection_summary_history_db_env,
 )
 from polymarket_alpha_lab.supabase_autonomous_market_scorer_config import (
@@ -376,6 +377,7 @@ PaperRecommendationReasonTrendDbSink = Callable[..., object]
 PaperProbabilitySelectionSummaryHistoryRunner = Callable[..., object]
 PaperProbabilitySelectionSummaryHistoryDbSink = Callable[..., object]
 PaperProbabilitySelectionSummaryHistoryTrendRunner = Callable[..., object]
+PaperProbabilitySelectionSummaryHistoryTrendGateRunner = Callable[..., object]
 AutonomousMarketScorerHistoryRunner = Callable[..., object]
 ProbabilitySelectionScorerAgreementRunner = Callable[..., object]
 ProbabilitySelectionScorerAgreementDbSink = Callable[..., object]
@@ -975,6 +977,21 @@ def _redacted_paper_probability_selection_summary_history_trend_error(
     return RuntimeError(message)
 
 
+def _redacted_paper_probability_selection_summary_history_trend_gate_error(
+    exc: Exception,
+    *,
+    dsn: str,
+    table_name: str,
+) -> RuntimeError:
+    message = _redact_db_dsn(str(exc), dsn=dsn)
+    message = _redact_db_dsn_host(message, dsn=dsn)
+    message = _redact_db_table_name_and_tail(message, table_name=table_name)
+    message = _redact_paper_research_packet_sensitive_fields(message)
+    if not message.strip():
+        message = exc.__class__.__name__
+    return RuntimeError(message)
+
+
 def _redacted_autonomous_market_scorer_history_error(
     exc: Exception,
     *,
@@ -1486,6 +1503,9 @@ def main(
     paper_probability_selection_summary_history_trend_runner: (
         PaperProbabilitySelectionSummaryHistoryTrendRunner | None
     ) = None,
+    paper_probability_selection_summary_history_trend_gate_runner: (
+        PaperProbabilitySelectionSummaryHistoryTrendGateRunner | None
+    ) = None,
     autonomous_market_scorer_history_runner: (
         AutonomousMarketScorerHistoryRunner | None
     ) = None,
@@ -1794,6 +1814,21 @@ def main(
         allow_abbrev=False,
     )
     paper_probability_selection_summary_history_trend.add_argument(
+        "--limit",
+        type=int,
+        default=25,
+        dest="limit",
+    )
+    paper_probability_selection_summary_history_trend_gate = subparsers.add_parser(
+        "paper-probability-selection-summary-history-trend-gate",
+        allow_abbrev=False,
+        description=(
+            "Build a read-only, report-only gate from local Supabase/Postgres "
+            "probability selection summary history."
+        ),
+        help="read-only report-only probability selection summary history trend gate",
+    )
+    paper_probability_selection_summary_history_trend_gate.add_argument(
         "--limit",
         type=int,
         default=25,
@@ -3519,6 +3554,60 @@ def main(
                 f"paper-probability-selection-summary-history-trend failed: {exc}",
                 file=sys.stderr,
             )
+            return 1
+
+    if args.command == "paper-probability-selection-summary-history-trend-gate":
+        command_name = "paper-probability-selection-summary-history-trend-gate"
+        try:
+            if (
+                isinstance(args.limit, bool)
+                or type(args.limit) is not int
+                or args.limit < 1
+            ):
+                raise ValueError(f"{command_name} limit must be positive")
+            history_db_config = (
+                from_paper_probability_selection_summary_history_db_env()
+            )
+            if not history_db_config.enabled:
+                raise ValueError(
+                    f"{command_name} requires paper probability selection "
+                    "summary history DB to be enabled",
+                )
+            dsn = history_db_config.dsn
+            if dsn is None:
+                raise ValueError(
+                    f"{PAPER_PROBABILITY_SELECTION_SUMMARY_HISTORY_DB_DSN_ENV_VAR} "
+                    "must be set when DB is enabled",
+                )
+            validate_local_postgres_dsn(
+                dsn,
+                env_var_name=(
+                    PAPER_PROBABILITY_SELECTION_SUMMARY_HISTORY_DB_DSN_ENV_VAR
+                ),
+            )
+            try:
+                report = (
+                    _run_paper_probability_selection_summary_history_trend_gate(
+                        dsn=dsn,
+                        table_name=history_db_config.table_name,
+                        limit=args.limit,
+                        runner=(
+                            paper_probability_selection_summary_history_trend_gate_runner
+                        ),
+                    )
+                )
+            except Exception as exc:
+                raise _redacted_paper_probability_selection_summary_history_trend_gate_error(
+                    exc,
+                    dsn=dsn,
+                    table_name=history_db_config.table_name,
+                ) from None
+            _print_paper_probability_selection_summary_history_trend_gate_summary(
+                report,
+            )
+            return 0
+        except Exception as exc:
+            print(f"{command_name} failed: {exc}", file=sys.stderr)
             return 1
 
     if args.command == "autonomous-market-scorer-history":
@@ -6890,6 +6979,93 @@ def _run_paper_probability_selection_summary_history_trend(
         return build_paper_probability_selection_summary_history_trend_report(
             history_reports,
             config=config,
+            generated_at=generated_at,
+        )
+    finally:
+        try:
+            connection.close()
+        except Exception:
+            pass
+
+
+def _run_paper_probability_selection_summary_history_trend_gate(
+    *,
+    dsn: str,
+    table_name: str,
+    limit: int,
+    runner: PaperProbabilitySelectionSummaryHistoryTrendGateRunner | None,
+) -> object:
+    command_name = "paper-probability-selection-summary-history-trend-gate"
+    if isinstance(limit, bool) or type(limit) is not int or limit < 1:
+        raise ValueError(f"{command_name} limit must be positive")
+    generated_at = datetime.now(UTC)
+
+    from polymarket_alpha_lab.paper_probability_selection_summary_history_trend import (
+        PaperProbabilitySelectionSummaryHistoryTrendConfig,
+        build_paper_probability_selection_summary_history_trend_report,
+    )
+    from polymarket_alpha_lab.paper_probability_selection_summary_history_trend_gate import (
+        PaperProbabilitySelectionSummaryHistoryTrendGateConfig,
+        PaperProbabilitySelectionSummaryHistoryTrendGateReport,
+        build_paper_probability_selection_summary_history_trend_gate_report,
+    )
+
+    trend_config = PaperProbabilitySelectionSummaryHistoryTrendConfig()
+    gate_config = PaperProbabilitySelectionSummaryHistoryTrendGateConfig()
+    if runner is not None:
+        report = runner(
+            dsn=dsn,
+            table_name=table_name,
+            limit=limit,
+            trend_config=trend_config,
+            gate_config=gate_config,
+            generated_at=generated_at,
+        )
+        if type(report) is not PaperProbabilitySelectionSummaryHistoryTrendGateReport:
+            raise ValueError(
+                "runner must return exactly "
+                "PaperProbabilitySelectionSummaryHistoryTrendGateReport",
+            )
+        return report
+
+    from polymarket_alpha_lab.paper_probability_selection_summary_history_store import (
+        load_paper_probability_selection_summary_history_reports,
+    )
+
+    try:
+        import psycopg
+    except ModuleNotFoundError as exc:
+        if exc.name != "psycopg":
+            raise
+        raise RuntimeError(
+            "psycopg is required to use the paper probability selection "
+            "summary history trend gate read adapter; install the postgres extra.",
+        ) from exc
+
+    try:
+        connection = psycopg.connect(dsn, autocommit=True)
+    except Exception:
+        raise RuntimeError(
+            "failed to connect to the paper probability selection summary "
+            "history database",
+        ) from None
+    try:
+        loaded_reports = load_paper_probability_selection_summary_history_reports(
+            connection,
+            limit=limit,
+            table_name=table_name,
+        )
+        history_reports = tuple(
+            sorted(loaded_reports, key=lambda report: report.generated_at),
+        )
+        trend_report = build_paper_probability_selection_summary_history_trend_report(
+            history_reports,
+            config=trend_config,
+            generated_at=generated_at,
+        )
+        return build_paper_probability_selection_summary_history_trend_gate_report(
+            trend_report,
+            config=gate_config,
             generated_at=generated_at,
         )
     finally:
@@ -10371,6 +10547,42 @@ def _print_paper_probability_selection_summary_history_trend_summary(
     print(
         "recurring_reason_code_counts: "
         f"{_format_safe_probability_selection_history_reason_code_counts(report.recurring_reason_code_counts)}",
+    )
+
+
+def _print_paper_probability_selection_summary_history_trend_gate_summary(
+    report: object,
+) -> None:
+    print(
+        "paper-probability-selection-summary-history-trend-gate: "
+        f"gate_status={report.gate_status} "
+        f"recommended_next_step={report.recommended_next_step} "
+        f"source_history_count={report.source_history_count} "
+        f"source_trend_status={report.source_trend_status} "
+        f"source_recommended_next_step={report.source_recommended_next_step} "
+        f"source_generated_at={_iso_or_none(report.source_generated_at)} "
+        f"trend_report_age_seconds={report.trend_report_age_seconds} "
+        f"latest_history_status={report.latest_history_status} "
+        f"latest_status_streak={report.latest_status_streak} "
+        f"latest_selected_share={report.latest_selected_share} "
+        f"average_selected_share={report.average_selected_share} "
+        f"selected_share_delta={report.selected_share_delta} "
+        f"stale_history_count={report.stale_history_count} "
+        f"thin_history_count={report.thin_history_count} "
+        "reason_codes="
+        f"{_csv_or_none(_safe_reason_codes_for_cli(report.reason_codes))}",
+    )
+    print(
+        "reason_code_counts: "
+        f"{_format_safe_probability_selection_gate_reason_code_counts(report.reason_code_counts)}",
+    )
+    print(
+        "latest_source_reason_codes: "
+        f"{_csv_or_none(_safe_reason_codes_for_cli(report.latest_source_reason_codes))}",
+    )
+    print(
+        "recurring_source_reason_code_counts: "
+        f"{_format_safe_probability_selection_history_reason_code_counts(report.recurring_source_reason_code_counts)}",
     )
 
 
