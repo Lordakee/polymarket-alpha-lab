@@ -248,6 +248,7 @@ def test_successful_load_connects_autocommit_delegates_closes_without_commit(
             str | None,
             str | None,
             str | None,
+            str | None,
             int | None,
             str,
         ]
@@ -264,6 +265,7 @@ def test_successful_load_connects_autocommit_delegates_closes_without_commit(
         config_version: str | None,
         readiness_status: str | None,
         screening_config_version: str | None,
+        strategy_risk_audit_history_gate_config_version: str | None,
         allocation_config_version: str | None,
         investment_ledger_config_version: str | None,
         limit: int | None,
@@ -275,6 +277,7 @@ def test_successful_load_connects_autocommit_delegates_closes_without_commit(
                 config_version,
                 readiness_status,
                 screening_config_version,
+                strategy_risk_audit_history_gate_config_version,
                 allocation_config_version,
                 investment_ledger_config_version,
                 limit,
@@ -292,6 +295,9 @@ def test_successful_load_connects_autocommit_delegates_closes_without_commit(
         config_version="paper-autonomous-readiness-gate-v0",
         readiness_status="watch",
         screening_config_version="screening-health-v0",
+        strategy_risk_audit_history_gate_config_version=(
+            "strategy-risk-audit-history-gate-v0"
+        ),
         allocation_config_version="allocation-trend-gate-v0",
         investment_ledger_config_version="ledger-trend-gate-v0",
         limit=25,
@@ -305,6 +311,7 @@ def test_successful_load_connects_autocommit_delegates_closes_without_commit(
         config_version,
         readiness_status,
         screening_config_version,
+        strategy_risk_audit_history_gate_config_version,
         allocation_config_version,
         investment_ledger_config_version,
         limit,
@@ -315,6 +322,10 @@ def test_successful_load_connects_autocommit_delegates_closes_without_commit(
     assert config_version == "paper-autonomous-readiness-gate-v0"
     assert readiness_status == "watch"
     assert screening_config_version == "screening-health-v0"
+    assert (
+        strategy_risk_audit_history_gate_config_version
+        == "strategy-risk-audit-history-gate-v0"
+    )
     assert allocation_config_version == "allocation-trend-gate-v0"
     assert investment_ledger_config_version == "ledger-trend-gate-v0"
     assert limit == 25
@@ -404,6 +415,7 @@ def test_read_failure_closes_without_commit_or_rollback(
         config_version: str | None,
         readiness_status: str | None,
         screening_config_version: str | None,
+        strategy_risk_audit_history_gate_config_version: str | None,
         allocation_config_version: str | None,
         investment_ledger_config_version: str | None,
         limit: int | None,

@@ -46,6 +46,7 @@ def load_paper_autonomous_readiness_gate_reports_with_psycopg(
     config_version: str | None = None,
     readiness_status: str | None = None,
     screening_config_version: str | None = None,
+    strategy_risk_audit_history_gate_config_version: str | None = None,
     allocation_config_version: str | None = None,
     investment_ledger_config_version: str | None = None,
     limit: int | None = None,
@@ -58,6 +59,9 @@ def load_paper_autonomous_readiness_gate_reports_with_psycopg(
             config_version=config_version,
             readiness_status=readiness_status,
             screening_config_version=screening_config_version,
+            strategy_risk_audit_history_gate_config_version=(
+                strategy_risk_audit_history_gate_config_version
+            ),
             allocation_config_version=allocation_config_version,
             investment_ledger_config_version=investment_ledger_config_version,
             limit=limit,

@@ -12,6 +12,7 @@ from polymarket_alpha_lab.paper_autonomous_readiness_gate import (
     READINESS_STATUSES,
     SCREENING_SOURCE_NAME,
     STRATEGY_CYCLE_HISTORY_GATE_SOURCE_NAME,
+    STRATEGY_RISK_AUDIT_HISTORY_GATE_SOURCE_NAME,
 )
 from polymarket_alpha_lab.paper_autonomous_readiness_gate_db_row import (
     PaperAutonomousReadinessGateDbRow,
@@ -122,6 +123,7 @@ def load_paper_autonomous_readiness_gate_reports(
     readiness_status: str | None = None,
     screening_config_version: str | None = None,
     strategy_cycle_history_gate_config_version: str | None = None,
+    strategy_risk_audit_history_gate_config_version: str | None = None,
     allocation_config_version: str | None = None,
     investment_ledger_config_version: str | None = None,
     limit: int | None = None,
@@ -138,6 +140,11 @@ def load_paper_autonomous_readiness_gate_reports(
         _require_canonical_string(
             "strategy_cycle_history_gate_config_version",
             strategy_cycle_history_gate_config_version,
+        )
+    if strategy_risk_audit_history_gate_config_version is not None:
+        _require_canonical_string(
+            "strategy_risk_audit_history_gate_config_version",
+            strategy_risk_audit_history_gate_config_version,
         )
     if allocation_config_version is not None:
         _require_canonical_string("allocation_config_version", allocation_config_version)
@@ -167,6 +174,16 @@ def load_paper_autonomous_readiness_gate_reports(
                 [
                     STRATEGY_CYCLE_HISTORY_GATE_SOURCE_NAME,
                     strategy_cycle_history_gate_config_version,
+                ],
+            ],
+        )
+    if strategy_risk_audit_history_gate_config_version is not None:
+        conditions.append("source_config_versions_json @> %s")
+        params.append(
+            [
+                [
+                    STRATEGY_RISK_AUDIT_HISTORY_GATE_SOURCE_NAME,
+                    strategy_risk_audit_history_gate_config_version,
                 ],
             ],
         )

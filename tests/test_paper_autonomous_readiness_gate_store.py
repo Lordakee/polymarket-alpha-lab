@@ -10,6 +10,7 @@ from polymarket_alpha_lab.paper_autonomous_readiness_gate import (
     ALLOCATION_SOURCE_NAME,
     INVESTMENT_LEDGER_SOURCE_NAME,
     SCREENING_SOURCE_NAME,
+    STRATEGY_RISK_AUDIT_HISTORY_GATE_SOURCE_NAME,
 )
 from tests.test_paper_autonomous_readiness_gate_db_row import _report
 
@@ -173,6 +174,10 @@ def test_load_readiness_gate_reports_filters_in_deterministic_order() -> None:
         config_version="paper-autonomous-readiness-gate-test-v0",
         readiness_status="watch",
         screening_config_version="screening-health-v0",
+        strategy_cycle_history_gate_config_version="strategy-cycle-history-gate-v0",
+        strategy_risk_audit_history_gate_config_version=(
+            "strategy-risk-audit-history-gate-v0"
+        ),
         allocation_config_version="allocation-trend-gate-v0",
         investment_ledger_config_version="ledger-trend-gate-v0",
         limit=25,
@@ -206,6 +211,8 @@ def test_load_readiness_gate_reports_filters_in_deterministic_order() -> None:
             AND source_config_versions_json @> %s
             AND source_config_versions_json @> %s
             AND source_config_versions_json @> %s
+            AND source_config_versions_json @> %s
+            AND source_config_versions_json @> %s
         ORDER BY generated_at DESC, inserted_at DESC, report_sha256 DESC
         LIMIT %s
         """,
@@ -214,6 +221,13 @@ def test_load_readiness_gate_reports_filters_in_deterministic_order() -> None:
         "paper-autonomous-readiness-gate-test-v0",
         "watch",
         [[SCREENING_SOURCE_NAME, "screening-health-v0"]],
+        [["strategy_cycle_report_history_gate", "strategy-cycle-history-gate-v0"]],
+        [
+            [
+                STRATEGY_RISK_AUDIT_HISTORY_GATE_SOURCE_NAME,
+                "strategy-risk-audit-history-gate-v0",
+            ],
+        ],
         [[ALLOCATION_SOURCE_NAME, "allocation-trend-gate-v0"]],
         [[INVESTMENT_LEDGER_SOURCE_NAME, "ledger-trend-gate-v0"]],
         25,
@@ -237,6 +251,31 @@ def test_load_readiness_gate_reports_filters_strategy_cycle_history_gate_source(
     assert "source_config_versions_json @> %s" in sql
     assert [
         ["strategy_cycle_report_history_gate", "strategy-cycle-history-gate-v0"],
+    ] in params
+
+
+def test_load_readiness_gate_reports_filters_strategy_risk_audit_history_gate_source() -> None:
+    from polymarket_alpha_lab.paper_autonomous_readiness_gate_store import (
+        load_paper_autonomous_readiness_gate_reports,
+    )
+
+    connection = FakeConnection()
+
+    reports = load_paper_autonomous_readiness_gate_reports(
+        connection,
+        strategy_risk_audit_history_gate_config_version=(
+            "strategy-risk-audit-history-gate-v0"
+        ),
+    )
+
+    assert reports == ()
+    sql, params = connection.cursor_instance.calls[0]
+    assert "source_config_versions_json @> %s" in sql
+    assert [
+        [
+            STRATEGY_RISK_AUDIT_HISTORY_GATE_SOURCE_NAME,
+            "strategy-risk-audit-history-gate-v0",
+        ],
     ] in params
 
 
@@ -364,6 +403,10 @@ def test_load_accepts_simple_lowercase_table_names(table_name: str) -> None:
         (
             {"strategy_cycle_history_gate_config_version": ""},
             "strategy_cycle_history_gate_config_version",
+        ),
+        (
+            {"strategy_risk_audit_history_gate_config_version": ""},
+            "strategy_risk_audit_history_gate_config_version",
         ),
         ({"allocation_config_version": ""}, "allocation_config_version"),
         ({"investment_ledger_config_version": ""}, "investment_ledger_config_version"),
