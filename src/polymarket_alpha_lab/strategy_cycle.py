@@ -139,9 +139,10 @@ class PaperStrategyCycleConfig:
     # Stage 1b/2/3/4 behavior unchanged.
     llm_transport: GLMChatTransport | None = None
     llm_forecast_config: PaperLLMForecastConfig | None = None
-    # Stage 4 (additive/default-off): when both are set, run_strategy_cycle
-    # runs an inline paper-execution pass after screening. Invariant: both
-    # None or both non-None. Default None = Stage 1b/2/3 behavior unchanged.
+    # Stage 4 (additive/default-off): when paper_execution_config is set,
+    # run_strategy_cycle runs an inline paper-execution pass after screening.
+    # Records must flow to either an injected sink or an explicit JSONL journal
+    # path. Default None = Stage 1b/2/3 behavior unchanged.
     paper_execution_config: PaperExecutionConfig | None = None
     paper_trade_journal_path: Path | None = None
     market_search: str | None = None

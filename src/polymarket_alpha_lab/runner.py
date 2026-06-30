@@ -187,10 +187,12 @@ def run_strategy_loop(
     ``on_cycle_error="raise"`` propagates immediately. The returned
     ``RunLoopSummary`` is paper-only/report-only.
 
-    During this transition node, the DB sink intentionally runs after the
-    legacy JSONL append. A DB sink failure can therefore leave the compatibility
-    JSONL row present while the DB row is missing; later DB-primary default work
-    can reverse or remove that asymmetry.
+    Paper trade records are emitted by ``run_strategy_cycle``. When a
+    ``paper_trade_record_sink`` is supplied, the shared cycle core calls it
+    before any optional JSONL compatibility append; sink failures are handled as
+    iteration failures by the policy below. NAV marking remains tied to an
+    explicit ``paper_trade_journal_path`` in this loop until a later DB-backed
+    NAV source migration.
 
     ``cycle_report_sink``, ``cycle_snapshot_source`` / ``cycle_snapshot_sink``,
     ``action_gated_queue_source`` / ``action_gated_queue_sink``,

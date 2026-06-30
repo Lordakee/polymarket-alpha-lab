@@ -590,6 +590,36 @@ def test_paper_trade_record_sink_runs_for_journaled_trade(tmp_path):
     assert PaperTradeJournal.read(journal_path) == (trade_records[0],)
 
 
+def test_paper_trade_record_sink_runs_without_journal_path(tmp_path):
+    market, books = _screening_ready_market_and_books()
+    client = FakeMarketDataClient([market], books)
+    trade_records = []
+    cycle_log = tmp_path / "cycle.jsonl"
+    nav_log = tmp_path / "nav.jsonl"
+    config = cycle_config(
+        paper_execution_config=_paper_exec_config(),
+        paper_trade_journal_path=None,
+    )
+
+    summary = run_strategy_loop(
+        client=client,
+        scan_config=scan_config(tmp_path),
+        cycle_config=config,
+        starting_cash=Decimal("10000"),
+        nav_log_path=nav_log,
+        cycle_report_log_path=cycle_log,
+        paper_trade_record_sink=trade_records.append,
+    )
+
+    assert summary.iterations_completed == 1
+    assert summary.iterations_failed == 0
+    assert summary.nav_marks_skipped == 0
+    assert len(PaperStrategyCycleLog.read(cycle_log)) == 1
+    assert len(trade_records) == 1
+    assert not (tmp_path / "paper-trades.jsonl").exists()
+    assert not nav_log.exists()
+
+
 def test_paper_trade_record_sink_failure_counts_as_iteration_failure(
     tmp_path,
 ):

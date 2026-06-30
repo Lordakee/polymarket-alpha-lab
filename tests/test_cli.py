@@ -519,11 +519,12 @@ def test_strategy_cycle_cli_redacts_dsn_when_paper_trade_db_sink_fails(
     capsys,
 ):
     fake_dsn = "postgresql://paper-trade@localhost/db"
+    table_name = "paper_trade_archive"
     monkeypatch.setenv(PAPER_TRADE_JOURNAL_DB_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(PAPER_TRADE_JOURNAL_DB_DSN_ENV_VAR, fake_dsn)
     monkeypatch.setenv(
         PAPER_TRADE_JOURNAL_DB_TABLE_ENV_VAR,
-        "paper_trade_archive",
+        table_name,
     )
     record = SimpleNamespace(packet_id="packet-1")
 
@@ -533,7 +534,7 @@ def test_strategy_cycle_cli_redacts_dsn_when_paper_trade_db_sink_fails(
         raise AssertionError("unreachable after sink failure")
 
     def broken_paper_trade_record_db_sink(*, dsn, record, table_name):
-        raise RuntimeError(f"could not connect to {dsn}")
+        raise RuntimeError(f"could not connect to {dsn} table={table_name}")
 
     exit_code = main(
         [
@@ -553,7 +554,10 @@ def test_strategy_cycle_cli_redacts_dsn_when_paper_trade_db_sink_fails(
     captured = capsys.readouterr()
     assert fake_dsn not in captured.out
     assert fake_dsn not in captured.err
+    assert table_name not in captured.out
+    assert table_name not in captured.err
     assert "<redacted-dsn>" in captured.err
+    assert "<redacted-table>" in captured.err
     assert not (tmp_path / "paper-trades.jsonl").exists()
 
 
@@ -9981,11 +9985,12 @@ def test_run_cli_redacts_dsn_when_paper_trade_db_sink_failure_is_reported(
     capsys,
 ):
     trade_dsn = "postgresql://paper-trade@localhost/db"
+    table_name = "paper_trade_archive"
     monkeypatch.setenv(PAPER_TRADE_JOURNAL_DB_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(PAPER_TRADE_JOURNAL_DB_DSN_ENV_VAR, trade_dsn)
     monkeypatch.setenv(
         PAPER_TRADE_JOURNAL_DB_TABLE_ENV_VAR,
-        "paper_trade_archive",
+        table_name,
     )
     trade_record = SimpleNamespace(packet_id="packet-1")
 
@@ -10004,7 +10009,7 @@ def test_run_cli_redacts_dsn_when_paper_trade_db_sink_failure_is_reported(
         raise AssertionError("sink should fail")
 
     def broken_paper_trade_record_db_sink(*, dsn, record, table_name):
-        raise RuntimeError(f"could not connect to {dsn}")
+        raise RuntimeError(f"could not connect to {dsn} table={table_name}")
 
     exit_code = main(
         [
@@ -10026,9 +10031,12 @@ def test_run_cli_redacts_dsn_when_paper_trade_db_sink_failure_is_reported(
     captured = capsys.readouterr()
     assert trade_dsn not in captured.out
     assert trade_dsn not in captured.err
-    assert "last_error=RuntimeError: could not connect to <redacted-dsn>" in (
-        captured.out
-    )
+    assert table_name not in captured.out
+    assert table_name not in captured.err
+    assert (
+        "last_error=RuntimeError: could not connect to <redacted-dsn> "
+        "table=<redacted-table>"
+    ) in captured.out
 
 
 def test_run_cli_wires_cycle_report_db_sink_when_env_enabled(

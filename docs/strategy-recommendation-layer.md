@@ -29,7 +29,7 @@ rest of the project.
 ## Current Boundary
 
 The recommendation layer is paper-only, report-only, and readonly. Its job is to
-rank, select, and explain candidates for a paper journal. It may produce
+rank, select, and explain candidates for local paper history. It may produce
 recommendation reports, paper selection decisions, and deterministic
 explanations, but those reports are not order instructions. Selection policy
 output is a paper sizing suggestion only. It is not an exchange order, order
@@ -160,7 +160,13 @@ wallet/account action, or capital-deployment instruction.
 JSONL bundle logs may remain as append-only debug/export artifacts for local
 paper review, regression fixtures, or portability, but DB-backed snapshot
 persistence is the primary normal history surface for cycle-level review and
-trend reporting.
+trend reporting. Paper trade records have a narrower migration surface:
+`paper_trade_journal_records` is an optional local Supabase/Postgres write sink
+for strategy-cycle paper execution when enabled. `PaperTradeJournal` JSONL
+remains the legacy compatibility/export/replay input for not-yet-migrated
+consumers, including NAV marking, outcome tracking, continuous-run NAV source
+handling, cost audit, and observability/trend commands, until those consumers
+receive DB-backed read paths.
 
 ## Cost-Aware Recommendation
 
@@ -341,7 +347,7 @@ The risk budget module should allocate paper notional under local caps:
 - minimum net probability edge
 - zero allocation for blocked, stale, liquidity-failed, or cost-negative rows
 
-Risk budget rows are paper allocations for journal analysis only. They are not
+Risk budget rows are paper allocations for local paper history analysis only. They are not
 order sizes, order tickets, exchange intents, or approval to trade.
 
 The reason-trend module should summarize why recommendations change across
@@ -385,7 +391,7 @@ The risk-budget report command reads supplied local paper queue or allocation
 artifacts, applies local paper caps, builds the readonly risk-budget reducer,
 and prints deterministic paper allocation summaries, allocated versus
 zero-allocation counts, cap pressure, and reason-code counts. Risk-budget
-output is journal analysis only; it is not order sizing, exchange intent, or
+output is local paper history analysis only; it is not order sizing, exchange intent, or
 permission to trade.
 
 The reason-trend command reads the supplied local JSONL strategy recommendation
@@ -436,9 +442,10 @@ cancellation, relayer mutation, or exchange/network mutation.
 
 ## Paper-Only Sizing
 
-Sizing in this layer is a journal suggestion only. It exists to make paper
-history comparable across runs and should never be represented as an order
-instruction. Suggested notional should be capped by local paper policy:
+Sizing in this layer is a paper-history sizing suggestion only. It exists to
+make local paper history comparable across runs and should never be represented
+as an order instruction. Suggested notional should be capped by local paper
+policy:
 
 - per-selection notional cap
 - per-market cap across both sides
@@ -569,7 +576,7 @@ and latest selected score. It does not construct clients, fetch data, execute
 paper trades, append logs, or write artifacts.
 
 Selected rows and selected notional values are paper sizing suggestions for
-journal analysis. They are not executable instructions, exchange orders, live
+local paper history analysis. They are not executable instructions, exchange orders, live
 orders, wallet actions, or private-key-backed actions.
 
 The matching reason/status trend CLI reads the same local JSONL bundle-log

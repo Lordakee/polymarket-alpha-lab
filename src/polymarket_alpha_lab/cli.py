@@ -2772,7 +2772,11 @@ def main(
                             table_name=table_name,
                         )
                     except Exception as exc:
-                        _raise_redacted_db_sink_error(exc, dsn=db_dsn)
+                        _raise_redacted_db_sink_error(
+                            exc,
+                            dsn=db_dsn,
+                            table_name=table_name,
+                        )
 
             if (
                 args.paper_execute
@@ -2845,7 +2849,11 @@ def main(
                             table_name=table_name,
                         )
                     except Exception as exc:
-                        _raise_redacted_db_sink_error(exc, dsn=db_dsn)
+                        _raise_redacted_db_sink_error(
+                            exc,
+                            dsn=db_dsn,
+                            table_name=table_name,
+                        )
 
             nav_runner_kwargs = {
                 "journal_path": args.journal,
@@ -5879,7 +5887,11 @@ def main(
                             table_name=table_name,
                         )
                     except Exception as exc:
-                        _raise_redacted_db_sink_error(exc, dsn=db_dsn)
+                        _raise_redacted_db_sink_error(
+                            exc,
+                            dsn=db_dsn,
+                            table_name=table_name,
+                        )
 
             if paper_nav_db_config.enabled:
                 dsn = paper_nav_db_config.dsn
@@ -6197,7 +6209,9 @@ def _build_default_cycle_config(
     is given realistic Polymarket fee assumptions via
     ``polymarket_default_cost_assumptions`` (2% taker fee + small slippage).
     When ``paper_execute`` is set, the Stage 4 inline paper-execution pass is
-    enabled with the canonical ``PaperExecutionConfig`` and the journal sink.
+    enabled with the canonical ``PaperExecutionConfig``. ``paper_journal`` is
+    passed through only when the caller requests an explicit JSONL compatibility
+    copy; DB-first record sinks are injected by the command branch.
     When ``forecast_provider`` is ``llm`` and ``llm_api_token`` is supplied, a
     caller-supplied ``GLMChatTransport`` is wired alongside the canonical
     ``PaperLLMForecastConfig`` (the token is never read from env/disk here).
