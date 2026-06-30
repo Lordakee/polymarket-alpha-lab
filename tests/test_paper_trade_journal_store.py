@@ -273,7 +273,7 @@ def test_load_paper_trade_records_filters_and_limits_with_params(
             paper_only
         FROM paper_trade_archive
         WHERE condition_id = %s AND token_id = %s
-        ORDER BY decision_timestamp_utc DESC, record_sha256 DESC
+        ORDER BY decision_timestamp_utc DESC, inserted_at DESC, record_sha256 DESC
         LIMIT %s
         """,
     )

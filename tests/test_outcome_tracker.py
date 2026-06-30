@@ -577,6 +577,51 @@ def test_empty_journal_produces_empty_report_with_no_evidence(tmp_path):
     assert report.readonly is True
 
 
+def test_check_outcomes_uses_injected_paper_trade_record_source_without_journal(
+    tmp_path,
+):
+    record = _build_record(
+        condition_id="0xSOURCE",
+        token_id="901",
+        market_slug="m-source",
+        outcome_name="YES",
+        packet_id="pkt-source",
+        fair_value_estimate=Decimal("0.64"),
+    )
+    client = FakeGammaClient([_yes_won_payload("0xSOURCE")])
+
+    report = check_outcomes(
+        client=client,
+        journal_path=tmp_path / "missing-paper-trades.jsonl",
+        config=OutcomeTrackingConfig(),
+        generated_at=GENERATED_AT,
+        paper_trade_record_source=lambda: (record,),
+    )
+
+    assert report.total_markets_checked == 1
+    assert report.resolved_count == 1
+    assert report.pending_count == 0
+    assert report.observations[0].source_packet_id == record.packet_id
+    assert report.observations[0].predicted_probability == Decimal("0.64")
+
+
+def test_check_outcomes_source_failure_is_not_missing_journal_skip(tmp_path):
+    def broken_source():
+        raise FileNotFoundError("paper trade source certificate missing")
+
+    with pytest.raises(
+        FileNotFoundError,
+        match="paper trade source certificate missing",
+    ):
+        check_outcomes(
+            client=FakeGammaClient([]),
+            journal_path=tmp_path / "missing-paper-trades.jsonl",
+            config=OutcomeTrackingConfig(),
+            generated_at=GENERATED_AT,
+            paper_trade_record_source=broken_source,
+        )
+
+
 def test_outcome_tracking_log_round_trips_full_report_with_forecast_evidence(
     tmp_path,
 ):

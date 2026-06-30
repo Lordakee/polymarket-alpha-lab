@@ -11525,13 +11525,21 @@ def _empty_outcome_report() -> OutcomeTrackingReport:
 def test_check_outcomes_cli_invokes_runner_and_prints_summary(tmp_path, capsys):
     calls = []
 
-    def fake_outcome_runner(*, client, journal_path, config, generated_at):
+    def fake_outcome_runner(
+        *,
+        client,
+        journal_path,
+        config,
+        generated_at,
+        paper_trade_record_source=None,
+    ):
         calls.append(
             {
                 "client": client,
                 "journal_path": journal_path,
                 "config": config,
                 "generated_at": generated_at,
+                "paper_trade_record_source": paper_trade_record_source,
             }
         )
         return _empty_outcome_report()
@@ -11555,6 +11563,7 @@ def test_check_outcomes_cli_invokes_runner_and_prints_summary(tmp_path, capsys):
     assert isinstance(call["config"], OutcomeTrackingConfig)
     assert call["config"].config_version == "outcome-tracker-v1"
     assert isinstance(call["generated_at"], datetime)
+    assert call["paper_trade_record_source"] is None
     captured = capsys.readouterr()
     assert "check-outcomes:" in captured.out
     assert "checked=0" in captured.out
@@ -11641,7 +11650,15 @@ def test_check_outcomes_cli_writes_evidence_log_when_resolved(tmp_path):
         forecast_evidence_report=evidence,
     )
 
-    def fake_outcome_runner(*, client, journal_path, config, generated_at):
+    def fake_outcome_runner(
+        *,
+        client,
+        journal_path,
+        config,
+        generated_at,
+        paper_trade_record_source=None,
+    ):
+        assert paper_trade_record_source is None
         return report
 
     evidence_log = tmp_path / "evidence.jsonl"
@@ -11767,6 +11784,201 @@ def test_check_outcomes_cli_wires_outcome_tracking_db_sink_when_enabled(
     assert fake_dsn not in captured.err
 
 
+def test_check_outcomes_cli_wires_paper_trade_db_source_when_env_enabled(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    from tests.test_check_outcomes_paper_trade_source import _record
+
+    trade_dsn = "postgresql://paper-trade@localhost/db"
+    table_name = "paper_trade_archive"
+    monkeypatch.setenv(PAPER_TRADE_JOURNAL_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(PAPER_TRADE_JOURNAL_DB_DSN_ENV_VAR, trade_dsn)
+    monkeypatch.setenv(PAPER_TRADE_JOURNAL_DB_TABLE_ENV_VAR, table_name)
+    newest = _record(
+        packet_id="packet-newest",
+        condition_id="0xnewest",
+        token_id="222",
+        decision_at=datetime(2026, 6, 29, 13, 0, tzinfo=UTC),
+    )
+    older = _record(
+        packet_id="packet-older",
+        condition_id="0xolder",
+        token_id="111",
+        decision_at=datetime(2026, 6, 29, 12, 0, tzinfo=UTC),
+    )
+    loader_calls = []
+    runner_calls = []
+
+    def fake_loader(*, dsn, table_name):
+        loader_calls.append((dsn, table_name))
+        return (newest, older)
+
+    def fake_outcome_runner(
+        *,
+        client,
+        journal_path,
+        config,
+        generated_at,
+        paper_trade_record_source=None,
+    ):
+        assert paper_trade_record_source is not None
+        assert paper_trade_record_source() == (older, newest)
+        runner_calls.append(
+            {
+                "client": client,
+                "journal_path": journal_path,
+                "config": config,
+                "generated_at": generated_at,
+            }
+        )
+        return _empty_outcome_report()
+
+    exit_code = main(
+        [
+            "check-outcomes",
+            "--journal",
+            str(tmp_path / "paper-trades.jsonl"),
+        ],
+        outcome_runner=fake_outcome_runner,
+        paper_trade_record_db_loader=fake_loader,
+        client_factory=lambda: "fake-client",
+    )
+
+    assert exit_code == 0
+    assert loader_calls == [(trade_dsn, table_name)]
+    assert len(runner_calls) == 1
+    captured = capsys.readouterr()
+    assert trade_dsn not in captured.out
+    assert trade_dsn not in captured.err
+    assert table_name not in captured.out
+    assert table_name not in captured.err
+
+
+def test_check_outcomes_cli_db_source_works_with_real_outcome_runner(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    from tests.test_check_outcomes_paper_trade_source import _record
+
+    trade_dsn = "postgresql://paper-trade@localhost/db"
+    table_name = "paper_trade_archive"
+    monkeypatch.setenv(PAPER_TRADE_JOURNAL_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(PAPER_TRADE_JOURNAL_DB_DSN_ENV_VAR, trade_dsn)
+    monkeypatch.setenv(PAPER_TRADE_JOURNAL_DB_TABLE_ENV_VAR, table_name)
+    newest = _record(
+        packet_id="packet-newest",
+        condition_id="0xnewest",
+        token_id="222",
+        decision_at=datetime(2026, 6, 29, 13, 0, tzinfo=UTC),
+    )
+    older = _record(
+        packet_id="packet-older",
+        condition_id="0xolder",
+        token_id="111",
+        decision_at=datetime(2026, 6, 29, 12, 0, tzinfo=UTC),
+    )
+    loader_calls = []
+    client_calls = []
+
+    def fake_loader(*, dsn, table_name):
+        loader_calls.append((dsn, table_name))
+        return (newest, older)
+
+    class FakeClient:
+        def list_markets(self, *, active, closed, limit):
+            client_calls.append({"active": active, "closed": closed, "limit": limit})
+            return [
+                {
+                    "conditionId": "0xolder",
+                    "outcomes": ["Yes", "No"],
+                    "outcomePrices": ["1", "0"],
+                    "closed": True,
+                    "active": False,
+                },
+                {
+                    "conditionId": "0xnewest",
+                    "outcomes": ["Yes", "No"],
+                    "outcomePrices": ["0.5", "0.5"],
+                    "closed": True,
+                    "active": False,
+                },
+            ]
+
+    exit_code = main(
+        [
+            "check-outcomes",
+            "--journal",
+            str(tmp_path / "paper-trades.jsonl"),
+        ],
+        paper_trade_record_db_loader=fake_loader,
+        client_factory=FakeClient,
+    )
+
+    assert exit_code == 0
+    assert loader_calls == [(trade_dsn, table_name)]
+    assert client_calls == [{"active": False, "closed": True, "limit": 500}]
+    captured = capsys.readouterr()
+    assert "check-outcomes:" in captured.out
+    assert "checked=2" in captured.out
+    assert "resolved=1" in captured.out
+    assert "pending=1" in captured.out
+    assert "observations=1" in captured.out
+    assert trade_dsn not in captured.out
+    assert trade_dsn not in captured.err
+    assert table_name not in captured.out
+    assert table_name not in captured.err
+
+
+def test_check_outcomes_cli_redacts_paper_trade_db_source_failure(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    trade_dsn = "postgresql://paper-trade@localhost/db"
+    table_name = "paper_trade_archive"
+    monkeypatch.setenv(PAPER_TRADE_JOURNAL_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(PAPER_TRADE_JOURNAL_DB_DSN_ENV_VAR, trade_dsn)
+    monkeypatch.setenv(PAPER_TRADE_JOURNAL_DB_TABLE_ENV_VAR, table_name)
+
+    def broken_loader(*, dsn, table_name):
+        raise RuntimeError(f"failed reading {dsn} table={table_name}")
+
+    def fake_outcome_runner(
+        *,
+        client,
+        journal_path,
+        config,
+        generated_at,
+        paper_trade_record_source=None,
+    ):
+        assert paper_trade_record_source is not None
+        paper_trade_record_source()
+        return _empty_outcome_report()
+
+    exit_code = main(
+        [
+            "check-outcomes",
+            "--journal",
+            str(tmp_path / "paper-trades.jsonl"),
+        ],
+        outcome_runner=fake_outcome_runner,
+        paper_trade_record_db_loader=broken_loader,
+        client_factory=lambda: "fake-client",
+    )
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert trade_dsn not in captured.out
+    assert trade_dsn not in captured.err
+    assert table_name not in captured.out
+    assert table_name not in captured.err
+    assert "<redacted-dsn>" in captured.err
+    assert "<redacted-table>" in captured.err
+
+
 def test_check_outcomes_cli_returns_one_when_outcome_tracking_db_sink_fails_without_dsn(
     tmp_path,
     monkeypatch,
@@ -11859,7 +12071,15 @@ def test_check_outcomes_cli_skips_evidence_log_when_no_observations(tmp_path):
 
 
 def test_check_outcomes_cli_returns_one_when_runner_fails(tmp_path, capsys):
-    def broken_outcome_runner(*, client, journal_path, config, generated_at):
+    def broken_outcome_runner(
+        *,
+        client,
+        journal_path,
+        config,
+        generated_at,
+        paper_trade_record_source=None,
+    ):
+        assert paper_trade_record_source is None
         raise RuntimeError("outcome failed")
 
     exit_code = main(
@@ -11880,7 +12100,15 @@ def test_check_outcomes_cli_returns_one_when_runner_fails(tmp_path, capsys):
 def test_check_outcomes_cli_uses_default_journal_path(tmp_path):
     calls = []
 
-    def fake_outcome_runner(*, client, journal_path, config, generated_at):
+    def fake_outcome_runner(
+        *,
+        client,
+        journal_path,
+        config,
+        generated_at,
+        paper_trade_record_source=None,
+    ):
+        assert paper_trade_record_source is None
         calls.append(journal_path)
         return _empty_outcome_report()
 

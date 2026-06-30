@@ -125,7 +125,7 @@ def load_paper_trade_records(
             {columns}
         FROM {table_name}
         {where_clause}
-        ORDER BY decision_timestamp_utc DESC, record_sha256 DESC
+        ORDER BY decision_timestamp_utc DESC, inserted_at DESC, record_sha256 DESC
         {limit_clause}
         """
     cursor = connection.cursor()

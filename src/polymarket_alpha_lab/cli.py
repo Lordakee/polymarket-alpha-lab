@@ -23,6 +23,9 @@ from polymarket_alpha_lab.cost_aware_event_strategy import (
 from polymarket_alpha_lab.cost_aware_snapshot_builder import (
     PaperCostAwareSnapshotConfig,
 )
+from polymarket_alpha_lab.check_outcomes_paper_trade_source import (
+    load_check_outcomes_paper_trade_records,
+)
 from polymarket_alpha_lab.forecast_provider import PaperForecastConfig
 from polymarket_alpha_lab.forecast_evidence import PaperForecastEvidenceLog
 from polymarket_alpha_lab.llm_forecast import PaperLLMForecastConfig
@@ -6184,6 +6187,41 @@ def main(
     if args.command == "check-outcomes":
         try:
             outcome_tracking_db_config = from_outcome_tracking_db_env()
+            paper_trade_db_config = from_paper_trade_journal_db_env()
+            check_outcomes_paper_trade_record_source = None
+            if paper_trade_db_config.enabled:
+                dsn = paper_trade_db_config.dsn
+                if dsn is None:
+                    raise ValueError(
+                        "check-outcomes paper trade DB source requires a DB DSN",
+                    )
+
+                def check_outcomes_paper_trade_record_source(
+                    *,
+                    db_dsn: str = dsn,
+                    table_name: str = paper_trade_db_config.table_name,
+                    db_config: object = paper_trade_db_config,
+                    db_journal_path: Path = args.journal,
+                ) -> tuple[object, ...]:
+                    def redacted_loader(*, dsn: str, table_name: str) -> tuple[object, ...]:
+                        try:
+                            return paper_trade_record_db_loader(
+                                dsn=dsn,
+                                table_name=table_name,
+                            )
+                        except Exception as exc:
+                            _raise_redacted_db_read_error(
+                                exc,
+                                dsn=db_dsn,
+                                table_name=table_name,
+                            )
+
+                    return load_check_outcomes_paper_trade_records(
+                        journal_path=db_journal_path,
+                        db_config=db_config,  # type: ignore[arg-type]
+                        db_loader=redacted_loader,
+                    )
+
             report = outcome_runner(
                 client=client_factory(),
                 journal_path=args.journal,
@@ -6191,6 +6229,7 @@ def main(
                     config_version="outcome-tracker-v1",
                 ),
                 generated_at=datetime.now(UTC),
+                paper_trade_record_source=check_outcomes_paper_trade_record_source,
             )
             if (
                 args.evidence_log is not None

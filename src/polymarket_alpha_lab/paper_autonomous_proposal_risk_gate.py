@@ -73,6 +73,14 @@ def _require_quantized_decimal(field_name: str, value: object) -> None:
         raise ValueError(f"{field_name} must be quantized to 0.000001")
 
 
+def _require_nonnegative_quantized_decimal(field_name: str, value: object) -> Decimal:
+    _require_quantized_decimal(field_name, value)
+    assert isinstance(value, Decimal)
+    if value < ZERO:
+        raise ValueError(f"{field_name} must be nonnegative")
+    return _quantize(value)
+
+
 def _quantize(value: Decimal) -> Decimal:
     return Decimal(value).quantize(QUANTUM)
 
@@ -138,7 +146,14 @@ class PaperAutonomousProposalRiskGateReport:
         if self.source_proposal_status not in PROPOSAL_STATUSES:
             raise ValueError("source_proposal_status must be a known proposal status")
         _require_nonnegative_int("source_proposal_count", self.source_proposal_count)
-        object.__setattr__(self, "source_proposal_total_notional", _quantize(self.source_proposal_total_notional))
+        object.__setattr__(
+            self,
+            "source_proposal_total_notional",
+            _require_nonnegative_quantized_decimal(
+                "source_proposal_total_notional",
+                self.source_proposal_total_notional,
+            ),
+        )
         object.__setattr__(self, "blocked_reason_codes", _normalize_reason_codes(self.blocked_reason_codes))
         object.__setattr__(self, "watch_reason_codes", _normalize_reason_codes(self.watch_reason_codes))
         object.__setattr__(self, "reason_codes", _normalize_reason_codes(self.reason_codes))
@@ -242,4 +257,3 @@ def _validate_report_consistency(report: PaperAutonomousProposalRiskGateReport) 
         raise ValueError("pass gate must not have watch reason codes")
     if report.gate_status == "watch" and report.blocked_reason_codes:
         raise ValueError("watch gate must not have blocked reason codes")
-

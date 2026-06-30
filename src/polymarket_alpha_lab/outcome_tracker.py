@@ -252,14 +252,16 @@ def check_outcomes(
     journal_path: Path | str,
     config: OutcomeTrackingConfig,
     generated_at: datetime,
+    paper_trade_record_source: object | None = None,
 ) -> OutcomeTrackingReport:
     """Read paper trades, re-fetch their markets, and build calibration evidence.
 
     Phase 1 (read-only): the only network surface is ``client.list_markets``
-    on the CLOSED Gamma slice. The journal is read via
-    ``PaperTradeJournal.read``. All downstream math is pure Decimal computation
-    building ``PaperForecastEvidenceObservation`` values and (when at least one
-    observation exists) a ``PaperForecastEvidenceReport``.
+    on the CLOSED Gamma slice. Paper trades come from an injected
+    ``paper_trade_record_source`` when supplied, otherwise the journal is read
+    via ``PaperTradeJournal.read``. All downstream math is pure Decimal
+    computation building ``PaperForecastEvidenceObservation`` values and (when
+    at least one observation exists) a ``PaperForecastEvidenceReport``.
 
     Per trade leg:
       1. Look up the raw Gamma payload by ``condition_id``. Missing payload ->
@@ -283,8 +285,16 @@ def check_outcomes(
         raise ValueError("config must be an OutcomeTrackingConfig")
     if not isinstance(generated_at, datetime):
         raise ValueError("generated_at must be a datetime")
+    if paper_trade_record_source is not None and not callable(
+        paper_trade_record_source,
+    ):
+        raise ValueError("paper_trade_record_source must be callable or None")
 
-    records = _read_journal_records(journal_path)
+    records = (
+        _read_source_records(paper_trade_record_source)
+        if paper_trade_record_source is not None
+        else _read_journal_records(journal_path)
+    )
     raw_payloads = _collect_closed_market_payloads(client)
     market_lookup = _build_market_lookup(raw_payloads)
 
@@ -355,6 +365,26 @@ def _read_journal_records(journal_path: Path | str) -> tuple[PaperTradeRecord, .
         return PaperTradeJournal.read(journal_path)
     except FileNotFoundError:
         return ()
+
+
+def _read_source_records(source: object) -> tuple[PaperTradeRecord, ...]:
+    records = source()
+    if isinstance(records, (str, bytes)):
+        raise ValueError(
+            "paper_trade_record_source must return an iterable of PaperTradeRecord values",
+        )
+    try:
+        normalized = tuple(records)  # type: ignore[arg-type]
+    except TypeError as exc:
+        raise ValueError(
+            "paper_trade_record_source must return an iterable of PaperTradeRecord values",
+        ) from exc
+    for record in normalized:
+        if type(record) is not PaperTradeRecord:
+            raise ValueError(
+                "paper_trade_record_source must return only PaperTradeRecord values",
+            )
+    return normalized
 
 
 def _collect_closed_market_payloads(client: OutcomeTrackerClient) -> list[dict[str, Any]]:

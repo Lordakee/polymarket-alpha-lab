@@ -163,16 +163,18 @@ persistence is the primary normal history surface for cycle-level review and
 trend reporting. Paper trade records have a staged, narrower migration surface:
 `paper_trade_journal_records` is an optional local Supabase/Postgres write sink
 for strategy-cycle paper execution when enabled, and the one-shot
-`portfolio-nav` CLI plus continuous-run NAV source handling can use that table
-as a DB-backed paper-trade read source when the paper trade journal DB env is
-enabled. Those source branches recover typed records and restore
-append/chronological order before portfolio replay. Continuous run as a whole
-is not fully DB-backed; only its NAV paper-trade source handling is covered by
-this migration. `PaperTradeJournal` JSONL remains the legacy
+`portfolio-nav` CLI, continuous-run NAV source handling, and `check-outcomes`
+source handling can use that table as a DB-backed paper-trade read source when
+the paper trade journal DB env is enabled. Those source branches recover typed
+records and restore oldest-first deterministic replay order before replay. Continuous run
+as a whole is not fully DB-backed; only its NAV paper-trade source handling is
+covered by this migration. A read-only cost-audit helper can also build a paper
+cost audit from `paper_trade_journal_records`, but the default `cost-audit`
+CLI path still reads JSONL until a separate CLI source-selection migration
+lands. `PaperTradeJournal` JSONL remains the legacy
 compatibility/export/replay input, and it remains the still-current input for
-outcome tracking, history/performance summary, cost audit, strategy audit, and
-observability/trend commands until those consumers receive separate DB-backed
-read paths.
+history/performance summary, strategy audit, and observability/trend commands
+until those consumers receive separate DB-backed read paths.
 
 ## Cost-Aware Recommendation
 
