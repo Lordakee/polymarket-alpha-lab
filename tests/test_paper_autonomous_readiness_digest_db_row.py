@@ -211,6 +211,48 @@ def test_digest_db_row_serializes_payload_and_round_trips() -> None:
     assert codec.paper_autonomous_readiness_digest_from_db_row(row) == report
 
 
+def test_digest_db_row_round_trips_selection_summary_trend_gate_source() -> None:
+    codec = _codec_module()
+    evidence = (
+        _evidence("readiness_gate", "pass", required=True),
+        _evidence("agreement_trend_gate", "pass", required=False),
+        _evidence("selection_summary_trend_gate", "blocked", required=False),
+        _evidence("ledger", "pass", required=False),
+    )
+    reason_codes = (
+        "agreement_trend_gate_pass",
+        "ledger_pass",
+        "readiness_gate_pass",
+        "selection_summary_trend_gate_blocked",
+    )
+    report = _report(
+        digest_status="blocked",
+        evidence=evidence,
+        reason_codes=reason_codes,
+    )
+
+    row = codec.to_db_row(report)
+
+    assert [item["source_name"] for item in row.evidence_json] == [
+        "readiness_gate",
+        "agreement_trend_gate",
+        "selection_summary_trend_gate",
+        "ledger",
+    ]
+    assert row.source_config_versions_json == [
+        ["readiness_gate", "readiness_gate-config-v0"],
+        ["agreement_trend_gate", "agreement_trend_gate-config-v0"],
+        [
+            "selection_summary_trend_gate",
+            "selection_summary_trend_gate-config-v0",
+        ],
+        ["ledger", "ledger-config-v0"],
+    ]
+    assert row.reason_codes_json == list(reason_codes)
+    _assert_no_floats(row.payload_json)
+    assert codec.from_db_row(row) == report
+
+
 @pytest.mark.parametrize("digest_status", ("pass", "watch", "blocked"))
 def test_digest_db_row_round_trips_every_source_of_truth_action(
     digest_status: str,

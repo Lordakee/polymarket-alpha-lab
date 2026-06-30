@@ -21,6 +21,7 @@ SCREENING_SOURCE_NAME = "screening"
 TRANSITION_SOURCE_NAME = "transition"
 ALLOCATION_SOURCE_NAME = "allocation"
 AGREEMENT_TREND_GATE_SOURCE_NAME = "agreement_trend_gate"
+SELECTION_SUMMARY_TREND_GATE_SOURCE_NAME = "selection_summary_trend_gate"
 LEDGER_SOURCE_NAME = "ledger"
 SOURCE_NAMES = (
     READINESS_SOURCE_NAME,
@@ -28,6 +29,7 @@ SOURCE_NAMES = (
     TRANSITION_SOURCE_NAME,
     ALLOCATION_SOURCE_NAME,
     AGREEMENT_TREND_GATE_SOURCE_NAME,
+    SELECTION_SUMMARY_TREND_GATE_SOURCE_NAME,
     LEDGER_SOURCE_NAME,
 )
 OPTIONAL_SOURCE_NAMES = (
@@ -35,6 +37,7 @@ OPTIONAL_SOURCE_NAMES = (
     TRANSITION_SOURCE_NAME,
     ALLOCATION_SOURCE_NAME,
     AGREEMENT_TREND_GATE_SOURCE_NAME,
+    SELECTION_SUMMARY_TREND_GATE_SOURCE_NAME,
     LEDGER_SOURCE_NAME,
 )
 
@@ -198,6 +201,7 @@ def build_paper_autonomous_readiness_digest_report(
     transition_report: object | None = None,
     allocation_report: object | None = None,
     agreement_trend_gate_report: object | None = None,
+    selection_summary_trend_gate_report: object | None = None,
     ledger_report: object | None = None,
     config: PaperAutonomousReadinessDigestConfig,
     generated_at: datetime,
@@ -225,6 +229,11 @@ def build_paper_autonomous_readiness_digest_report(
             AGREEMENT_TREND_GATE_SOURCE_NAME,
             agreement_trend_gate_report,
             "agreement_trend_gate_report",
+        ),
+        (
+            SELECTION_SUMMARY_TREND_GATE_SOURCE_NAME,
+            selection_summary_trend_gate_report,
+            "selection_summary_trend_gate_report",
         ),
         (LEDGER_SOURCE_NAME, ledger_report, "ledger_report"),
     )

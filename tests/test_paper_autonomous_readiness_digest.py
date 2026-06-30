@@ -179,6 +179,16 @@ def test_readiness_digest_composes_optional_evidence_in_canonical_order() -> Non
             recommended_next_step="review_agreement_trend_gate_watch",
             reason_codes=("agreement_trend_gate_watch",),
         ),
+        selection_summary_trend_gate_report=_source_report(
+            status="pass",
+            field_name="gate_status",
+            generated_at=GENERATED_AT - timedelta(minutes=2),
+            config_version="selection-summary-trend-gate-v0",
+            recommended_next_step=(
+                "allow_probability_selection_summary_history_trend_review"
+            ),
+            reason_codes=("selection_summary_trend_gate_passed",),
+        ),
         ledger_report=_source_report(
             status="pass",
             field_name="gate_status",
@@ -201,6 +211,7 @@ def test_readiness_digest_composes_optional_evidence_in_canonical_order() -> Non
         "transition",
         "allocation",
         "agreement_trend_gate",
+        "selection_summary_trend_gate",
         "ledger",
     )
     assert tuple(row.status for row in report.evidence) == (
@@ -210,6 +221,7 @@ def test_readiness_digest_composes_optional_evidence_in_canonical_order() -> Non
         "watch",
         "watch",
         "pass",
+        "pass",
     )
     assert report.source_config_versions == (
         ("readiness_gate", "readiness-gate-v0"),
@@ -217,6 +229,7 @@ def test_readiness_digest_composes_optional_evidence_in_canonical_order() -> Non
         ("transition", "transition-v0"),
         ("allocation", "allocation-gate-v0"),
         ("agreement_trend_gate", "agreement-trend-gate-v0"),
+        ("selection_summary_trend_gate", "selection-summary-trend-gate-v0"),
         ("ledger", "ledger-gate-v0"),
     )
     assert report.reason_codes == (
@@ -225,6 +238,7 @@ def test_readiness_digest_composes_optional_evidence_in_canonical_order() -> Non
         "ledger_pass",
         "readiness_gate_watch",
         "screening_pass",
+        "selection_summary_trend_gate_pass",
         "transition_blocked",
     )
     assert report.reason_code_counts == (
@@ -236,8 +250,47 @@ def test_readiness_digest_composes_optional_evidence_in_canonical_order() -> Non
         api.PaperAutonomousReadinessDigestReasonCodeCount("ledger_pass", 1),
         api.PaperAutonomousReadinessDigestReasonCodeCount("readiness_gate_watch", 1),
         api.PaperAutonomousReadinessDigestReasonCodeCount("screening_pass", 1),
+        api.PaperAutonomousReadinessDigestReasonCodeCount(
+            "selection_summary_trend_gate_pass",
+            1,
+        ),
         api.PaperAutonomousReadinessDigestReasonCodeCount("transition_blocked", 1),
     )
+
+
+def test_readiness_digest_accepts_selection_summary_trend_gate_evidence() -> None:
+    api = _api()
+
+    report = api.build_paper_autonomous_readiness_digest_report(
+        _readiness_report(),
+        agreement_trend_gate_report=_source_report(
+            status="pass",
+            field_name="gate_status",
+            config_version="agreement-trend-gate-v0",
+            reason_codes=("agreement_trend_gate_passed",),
+        ),
+        selection_summary_trend_gate_report=_source_report(
+            status="blocked",
+            field_name="gate_status",
+            config_version="selection-summary-trend-gate-v0",
+            recommended_next_step=(
+                "block_probability_selection_summary_history_trend_review"
+            ),
+            reason_codes=(
+                "deteriorating_paper_probability_selection_summary_history_trend",
+            ),
+        ),
+        config=api.PaperAutonomousReadinessDigestConfig(),
+        generated_at=GENERATED_AT,
+    )
+
+    assert report.digest_status == "blocked"
+    assert tuple(row.source_name for row in report.evidence) == (
+        "readiness_gate",
+        "agreement_trend_gate",
+        "selection_summary_trend_gate",
+    )
+    assert "selection_summary_trend_gate_blocked" in report.reason_codes
 
 
 def test_readiness_digest_watches_when_any_evidence_watches_without_blockers() -> None:
