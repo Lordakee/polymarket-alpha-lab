@@ -4,7 +4,7 @@
 
 **Goal:** Add the first local Supabase/Postgres-backed paper trade read source by migrating one-shot `portfolio-nav` CLI input from legacy JSONL to DB when the paper trade journal DB is enabled.
 
-**Execution status:** Implemented in commit `3450d4f`. This node migrates only the one-shot `portfolio-nav` CLI paper-trade source read to local Supabase/Postgres when the paper trade journal DB env is enabled. It does not migrate continuous-run NAV source reads, outcome tracking, history/performance summary, cost audit, strategy audit, or observability trend consumers.
+**Execution status:** Implemented in commit `b03fe72`. This node migrates only the one-shot `portfolio-nav` CLI paper-trade source read to local Supabase/Postgres when the paper trade journal DB env is enabled. It does not migrate continuous-run NAV source reads, outcome tracking, history/performance summary, cost audit, strategy audit, or observability trend consumers.
 
 **Architecture:** Keep the NAV domain module independent of psycopg and environment reads. Reuse the existing record-based NAV composition seam, then let `cli.py` choose between legacy JSONL and the existing paper trade journal DB loader. DB rows are loaded newest-first by the existing store, so the CLI reverses them into append/chronological order before NAV replay.
 
