@@ -14,6 +14,10 @@ NEW_MIGRATION = (
     MIGRATIONS_DIR
     / "20260629000002_paper_autonomous_readiness_gate_strategy_cycle_source.sql"
 )
+STRATEGY_RISK_SOURCE_MIGRATION = (
+    MIGRATIONS_DIR
+    / "20260629000003_paper_autonomous_readiness_gate_strategy_risk_source.sql"
+)
 DEFAULT_TABLE = "paper_autonomous_readiness_gate_reports"
 
 
@@ -28,6 +32,11 @@ def _migration_path() -> Path:
 
 def _migration_text() -> str:
     return _migration_path().read_text(encoding="utf-8").lower()
+
+
+def _strategy_risk_source_migration_text() -> str:
+    assert STRATEGY_RISK_SOURCE_MIGRATION.exists()
+    return STRATEGY_RISK_SOURCE_MIGRATION.read_text(encoding="utf-8").lower()
 
 
 def _compact(sql: str) -> str:
@@ -102,6 +111,80 @@ def test_readiness_gate_strategy_cycle_source_migration_avoids_forbidden_surface
         r"\border\s+signing\b",
         r"\border\s+submission\b",
         r"\blive\s+trading\b",
+    )
+
+    for pattern in forbidden_patterns:
+        assert not re.search(pattern, text), pattern
+
+
+def test_readiness_gate_strategy_risk_source_migration_uses_expected_sequence() -> None:
+    migration_paths = sorted(MIGRATIONS_DIR.glob("*.sql"))
+    names = [migration_path.name for migration_path in migration_paths]
+    versions = [name.split("_", 1)[0] for name in names]
+
+    assert STRATEGY_RISK_SOURCE_MIGRATION.exists()
+    assert STRATEGY_RISK_SOURCE_MIGRATION.name.startswith("20260629000003_")
+    assert NEW_MIGRATION.name in names
+    assert names[names.index(NEW_MIGRATION.name) + 1] == STRATEGY_RISK_SOURCE_MIGRATION.name
+    assert Counter(versions)["20260629000003"] == 1
+
+
+def test_readiness_gate_strategy_risk_source_migration_relaxes_source_lengths() -> None:
+    sql = _strategy_risk_source_migration_text()
+    compact_sql = _compact(sql)
+
+    assert "jsonb_array_length(source_statuses_json) in (3, 4)" in sql
+    assert "jsonb_array_length(source_config_versions_json) in (3, 4)" in sql
+    assert (
+        "alter table public.paper_autonomous_readiness_gate_reports "
+        "add constraint pargr_source_statuses_length_check "
+        "check (jsonb_array_length(source_statuses_json) in (3, 4, 5));"
+    ) in compact_sql
+    assert (
+        "alter table public.paper_autonomous_readiness_gate_reports "
+        "add constraint pargr_source_config_versions_length_check "
+        "check (jsonb_array_length(source_config_versions_json) in (3, 4, 5));"
+    ) in compact_sql
+    assert "check (jsonb_array_length(source_statuses_json) in (3, 4));" not in compact_sql
+    assert "check (jsonb_array_length(source_config_versions_json) in (3, 4));" not in compact_sql
+
+
+def test_readiness_gate_strategy_risk_source_migration_adds_five_source_sort_index() -> None:
+    sql = _compact_index_sql(_strategy_risk_source_migration_text())
+
+    assert (
+        "create index if not exists pargr_five_source_status_sort_idx "
+        "on public.paper_autonomous_readiness_gate_reports "
+        "((source_statuses_json #>> '{0,status}'), "
+        "(source_statuses_json #>> '{1,status}'), "
+        "(source_statuses_json #>> '{2,status}'), "
+        "(source_statuses_json #>> '{3,status}'), "
+        "(source_statuses_json #>> '{4,status}'), "
+        "generated_at desc, inserted_at desc, report_sha256 desc);"
+    ) in sql
+
+
+def test_readiness_gate_strategy_risk_source_migration_avoids_forbidden_surfaces() -> None:
+    text = _strategy_risk_source_migration_text()
+    forbidden_patterns = (
+        r"\bcreate\s+(?:or\s+replace\s+)?function\b",
+        r"\btrigger\b",
+        r"\brow\s+level\s+security\b",
+        r"\benable\s+row\s+level\s+security\b",
+        r"\bpolicy\b",
+        r"\bforeign\s+key\b",
+        r"\breferences\b",
+        r"\bsqlite\b",
+        r"\bredis\b",
+        r"\bmongo\b",
+        r"\bsqlalchemy\b",
+        r"\bhosted\s+db\b",
+        r"\bexternal\s+db\b",
+        r"\blive\b",
+        r"\bauth\b",
+        r"\bwallet\b",
+        r"\bkeys?\b",
+        r"\border\b",
     )
 
     for pattern in forbidden_patterns:
