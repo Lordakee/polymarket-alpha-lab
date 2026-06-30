@@ -13,6 +13,7 @@ from polymarket_alpha_lab.paper_autonomous_readiness_gate import (
     INVESTMENT_LEDGER_SOURCE_NAME,
     SCREENING_SOURCE_NAME,
     STRATEGY_CYCLE_HISTORY_GATE_SOURCE_NAME,
+    STRATEGY_RISK_AUDIT_HISTORY_GATE_SOURCE_NAME,
     PaperAutonomousReadinessGateReasonCodeCount,
     PaperAutonomousReadinessGateReport,
     PaperAutonomousReadinessGateSourceStatus,
@@ -123,6 +124,62 @@ def _four_source_report() -> PaperAutonomousReadinessGateReport:
             "investment_ledger_db_history_health_trend_gate_pass",
             "screening_decision_support_gate_db_history_health_pass",
             "strategy_cycle_report_history_gate_pass",
+        ),
+    )
+
+
+def _strategy_risk_source_report() -> PaperAutonomousReadinessGateReport:
+    return _report(
+        source_statuses=(
+            _source_status(SCREENING_SOURCE_NAME, "pass", "screening-health-v0"),
+            _source_status(ALLOCATION_SOURCE_NAME, "watch", "allocation-trend-gate-v0"),
+            _source_status(
+                INVESTMENT_LEDGER_SOURCE_NAME,
+                "pass",
+                "ledger-trend-gate-v0",
+            ),
+            _source_status(
+                STRATEGY_RISK_AUDIT_HISTORY_GATE_SOURCE_NAME,
+                "pass",
+                "strategy-risk-audit-history-gate-v0",
+            ),
+        ),
+        reason_codes=(
+            "allocation_proposal_db_history_health_trend_gate_watch",
+            "investment_ledger_db_history_health_trend_gate_pass",
+            "screening_decision_support_gate_db_history_health_pass",
+            "strategy_risk_audit_history_gate_pass",
+        ),
+    )
+
+
+def _five_source_report() -> PaperAutonomousReadinessGateReport:
+    return _report(
+        source_statuses=(
+            _source_status(SCREENING_SOURCE_NAME, "pass", "screening-health-v0"),
+            _source_status(
+                STRATEGY_CYCLE_HISTORY_GATE_SOURCE_NAME,
+                "pass",
+                "strategy-cycle-history-gate-v0",
+            ),
+            _source_status(ALLOCATION_SOURCE_NAME, "watch", "allocation-trend-gate-v0"),
+            _source_status(
+                INVESTMENT_LEDGER_SOURCE_NAME,
+                "pass",
+                "ledger-trend-gate-v0",
+            ),
+            _source_status(
+                STRATEGY_RISK_AUDIT_HISTORY_GATE_SOURCE_NAME,
+                "pass",
+                "strategy-risk-audit-history-gate-v0",
+            ),
+        ),
+        reason_codes=(
+            "allocation_proposal_db_history_health_trend_gate_watch",
+            "investment_ledger_db_history_health_trend_gate_pass",
+            "screening_decision_support_gate_db_history_health_pass",
+            "strategy_cycle_report_history_gate_pass",
+            "strategy_risk_audit_history_gate_pass",
         ),
     )
 
@@ -262,6 +319,43 @@ def test_readiness_gate_db_row_serializes_four_source_payload_and_round_trips() 
         ["strategy_cycle_report_history_gate", "strategy-cycle-history-gate-v0"],
         [ALLOCATION_SOURCE_NAME, "allocation-trend-gate-v0"],
         [INVESTMENT_LEDGER_SOURCE_NAME, "ledger-trend-gate-v0"],
+    ]
+    assert codec.from_db_row(row) == report
+
+
+def test_readiness_gate_db_row_serializes_strategy_risk_source_payload_and_round_trips() -> None:
+    codec = _codec_module()
+    report = _strategy_risk_source_report()
+
+    row = codec.to_db_row(report)
+
+    assert row.source_config_versions_json == [
+        [SCREENING_SOURCE_NAME, "screening-health-v0"],
+        [ALLOCATION_SOURCE_NAME, "allocation-trend-gate-v0"],
+        [INVESTMENT_LEDGER_SOURCE_NAME, "ledger-trend-gate-v0"],
+        [
+            STRATEGY_RISK_AUDIT_HISTORY_GATE_SOURCE_NAME,
+            "strategy-risk-audit-history-gate-v0",
+        ],
+    ]
+    assert codec.from_db_row(row) == report
+
+
+def test_readiness_gate_db_row_serializes_five_source_payload_and_round_trips() -> None:
+    codec = _codec_module()
+    report = _five_source_report()
+
+    row = codec.to_db_row(report)
+
+    assert row.source_config_versions_json == [
+        [SCREENING_SOURCE_NAME, "screening-health-v0"],
+        [STRATEGY_CYCLE_HISTORY_GATE_SOURCE_NAME, "strategy-cycle-history-gate-v0"],
+        [ALLOCATION_SOURCE_NAME, "allocation-trend-gate-v0"],
+        [INVESTMENT_LEDGER_SOURCE_NAME, "ledger-trend-gate-v0"],
+        [
+            STRATEGY_RISK_AUDIT_HISTORY_GATE_SOURCE_NAME,
+            "strategy-risk-audit-history-gate-v0",
+        ],
     ]
     assert codec.from_db_row(row) == report
 
