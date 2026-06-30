@@ -77,6 +77,24 @@ def _seven_gate_blocked_audit_report(
     )
 
 
+def _seven_gate_ready_audit_report(
+    generated_at: datetime,
+) -> PaperStrategyRiskAuditReport:
+    return PaperStrategyRiskAuditReport(
+        generated_at=generated_at,
+        config_version="strategy-risk-audit-v0",
+        status="audit_ready",
+        gate_count=7,
+        pass_count=7,
+        fail_count=0,
+        incomplete_count=0,
+        gate_results=tuple(
+            PaperStrategyRiskAuditGateResult(gate_name, "pass", "m")
+            for gate_name in ALL_GATE_NAMES_WITH_SETTLEMENT_NAV_RISK
+        ),
+    )
+
+
 def _config() -> PaperStrategyRiskAuditHistoryConfig:
     return PaperStrategyRiskAuditHistoryConfig(
         config_version="strategy-audit-history-v0",
@@ -276,6 +294,18 @@ def test_strategy_audit_history_validates_latest_counts_against_latest_report_ga
 
     with pytest.raises(ValueError):
         replace(history, latest_fail_count=6)
+
+
+def test_strategy_audit_history_validates_all_pass_optional_latest_gate_count() -> None:
+    history = _history_report(
+        _seven_gate_ready_audit_report(
+            datetime(2026, 6, 17, 12, 0, tzinfo=UTC),
+        ),
+    )
+
+    assert history.latest_pass_count == 7
+    with pytest.raises(ValueError):
+        replace(history, latest_pass_count=6)
 
 
 def test_strategy_audit_history_rejects_invalid_inputs():

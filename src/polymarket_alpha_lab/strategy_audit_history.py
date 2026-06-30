@@ -397,7 +397,9 @@ def _validate_report_consistency(report: PaperStrategyRiskAuditHistoryReport) ->
         )
         if latest_gate_count not in LATEST_GATE_COUNTS:
             raise ValueError("latest gate counts must cover a known audit gate set")
-        if _has_optional_latest_gate_name(report) and latest_gate_count != len(GATE_NAMES):
+        if _latest_requires_optional_gate_count(report) and latest_gate_count != len(
+            GATE_NAMES,
+        ):
             raise ValueError("latest gate counts must cover optional audit gates")
         if len(report.latest_failed_gate_names) != report.latest_fail_count:
             raise ValueError("latest_failed_gate_names must match latest_fail_count")
@@ -496,14 +498,27 @@ def _validate_gate_status_summary_counts(
             )
 
 
-def _has_optional_latest_gate_name(
+def _latest_requires_optional_gate_count(
     report: PaperStrategyRiskAuditHistoryReport,
 ) -> bool:
-    return any(
+    if any(
         gate_name in OPTIONAL_GATE_NAMES
         for gate_name in (
             report.latest_failed_gate_names + report.latest_incomplete_gate_names
         )
+    ):
+        return True
+    optional_gate_counts = {
+        row.gate_name: 0
+        for row in report.gate_status_summaries
+        if row.gate_name in OPTIONAL_GATE_NAMES
+    }
+    for row in report.gate_status_summaries:
+        if row.gate_name in optional_gate_counts:
+            optional_gate_counts[row.gate_name] += row.audit_count
+    return any(
+        count == report.audit_report_count
+        for count in optional_gate_counts.values()
     )
 
 
