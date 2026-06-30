@@ -159,6 +159,7 @@ def run_strategy_loop(
     action_gated_queue_source: object | None = None,
     action_gated_queue_sink: object | None = None,
     paper_trade_record_sink: object | None = None,
+    paper_trade_record_source: object | None = None,
     nav_snapshot_sink: object | None = None,
     execution_pipeline_source: object | None = None,
     execution_pipeline_sink: object | None = None,
@@ -190,13 +191,14 @@ def run_strategy_loop(
     Paper trade records are emitted by ``run_strategy_cycle``. When a
     ``paper_trade_record_sink`` is supplied, the shared cycle core calls it
     before any optional JSONL compatibility append; sink failures are handled as
-    iteration failures by the policy below. NAV marking remains tied to an
-    explicit ``paper_trade_journal_path`` in this loop until a later DB-backed
-    NAV source migration.
+    iteration failures by the policy below. When ``paper_trade_record_source`` is
+    supplied, NAV marking uses those in-memory records before falling back to the
+    legacy ``paper_trade_journal_path`` compatibility reader.
 
     ``cycle_report_sink``, ``cycle_snapshot_source`` / ``cycle_snapshot_sink``,
     ``action_gated_queue_source`` / ``action_gated_queue_sink``,
-    ``paper_trade_record_sink``, ``nav_snapshot_sink``,
+    ``paper_trade_record_sink``, ``paper_trade_record_source``,
+    ``nav_snapshot_sink``,
     ``execution_pipeline_source`` / ``execution_pipeline_sink``, and
     ``execution_reconciliation_source`` / ``execution_reconciliation_sink``
     are optional injected persistence hooks. Sink failures are treated like any
@@ -219,6 +221,7 @@ def run_strategy_loop(
         action_gated_queue_source=action_gated_queue_source,
         action_gated_queue_sink=action_gated_queue_sink,
         paper_trade_record_sink=paper_trade_record_sink,
+        paper_trade_record_source=paper_trade_record_source,
         nav_snapshot_sink=nav_snapshot_sink,
         execution_pipeline_source=execution_pipeline_source,
         execution_pipeline_sink=execution_pipeline_sink,
@@ -311,6 +314,7 @@ def run_strategy_loop(
                 starting_cash=starting_cash,
                 nav_log_path=nav_log_path,
                 marked_at=iteration_at,
+                paper_trade_record_source=paper_trade_record_source,
                 nav_snapshot_sink=nav_snapshot_sink,
             )
             iterations_completed += 1
@@ -349,9 +353,10 @@ def _mark_nav_or_skip(
     starting_cash: Decimal,
     nav_log_path: Path | str | None,
     marked_at: datetime,
+    paper_trade_record_source: object | None = None,
     nav_snapshot_sink: object | None = None,
 ) -> int:
-    """Run the NAV mark when the journal exists; otherwise return skip count.
+    """Run the NAV mark when records are configured; otherwise return skip count.
 
     Returns ``1`` when the NAV mark was skipped (journal absent or the journal
     read raised ``FileNotFoundError``), ``0`` when the mark ran. A ``None``
@@ -359,6 +364,18 @@ def _mark_nav_or_skip(
     journal to read, so NAV marking is simply not configured for this cycle, not
     a skip.
     """
+    if paper_trade_record_source is not None:
+        records = tuple(paper_trade_record_source())
+        _mark_paper_portfolio_nav_from_records(
+            records,
+            starting_cash=starting_cash,
+            client=client,
+            marked_at=marked_at,
+            nav_log_path=nav_log_path,
+            nav_snapshot_sink=nav_snapshot_sink,  # type: ignore[arg-type]
+        )
+        return 0
+
     journal_path = cycle_config.paper_trade_journal_path
     if journal_path is None:
         return 0
@@ -401,6 +418,7 @@ def _validate_loop_params(
     action_gated_queue_source: object,
     action_gated_queue_sink: object,
     paper_trade_record_sink: object,
+    paper_trade_record_source: object,
     nav_snapshot_sink: object,
     execution_pipeline_source: object,
     execution_pipeline_sink: object,
@@ -456,6 +474,8 @@ def _validate_loop_params(
         raise ValueError("action_gated_queue_sink must be callable or None")
     if paper_trade_record_sink is not None and not callable(paper_trade_record_sink):
         raise ValueError("paper_trade_record_sink must be callable or None")
+    if paper_trade_record_source is not None and not callable(paper_trade_record_source):
+        raise ValueError("paper_trade_record_source must be callable or None")
     if nav_snapshot_sink is not None and not callable(nav_snapshot_sink):
         raise ValueError("nav_snapshot_sink must be callable or None")
     if execution_pipeline_source is not None and not callable(execution_pipeline_source):

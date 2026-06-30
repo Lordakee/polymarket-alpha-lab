@@ -32,6 +32,7 @@ from polymarket_alpha_lab.forecast_provider import PaperForecastConfig
 from polymarket_alpha_lab.journal import PaperTradeJournal
 from polymarket_alpha_lab.paper_execution import PaperExecutionConfig
 from polymarket_alpha_lab.pipeline import MarketScanConfig
+from polymarket_alpha_lab.positions import PaperNavLog
 from polymarket_alpha_lab.project_screening import PaperProjectScreeningConfig
 from polymarket_alpha_lab.runner import RunLoopSummary, run_strategy_loop
 from polymarket_alpha_lab.strategy_cycle import PaperStrategyCycleLog
@@ -618,6 +619,161 @@ def test_paper_trade_record_sink_runs_without_journal_path(tmp_path):
     assert len(trade_records) == 1
     assert not (tmp_path / "paper-trades.jsonl").exists()
     assert not nav_log.exists()
+
+
+def test_paper_trade_record_source_marks_nav_without_journal_path(tmp_path):
+    market, books = _screening_ready_market_and_books()
+    client = FakeMarketDataClient([market], books)
+    trade_records = []
+    nav_snapshots = []
+    nav_log = tmp_path / "nav.jsonl"
+    config = cycle_config(
+        paper_execution_config=_paper_exec_config(),
+        paper_trade_journal_path=None,
+    )
+
+    summary = run_strategy_loop(
+        client=client,
+        scan_config=scan_config(tmp_path),
+        cycle_config=config,
+        starting_cash=Decimal("10000"),
+        nav_log_path=nav_log,
+        cycle_report_log_path=tmp_path / "cycle.jsonl",
+        paper_trade_record_sink=trade_records.append,
+        paper_trade_record_source=lambda: tuple(trade_records),
+        nav_snapshot_sink=nav_snapshots.append,
+    )
+
+    assert summary.iterations_completed == 1
+    assert summary.iterations_failed == 0
+    assert summary.nav_marks_skipped == 0
+    assert len(trade_records) == 1
+    assert not (tmp_path / "paper-trades.jsonl").exists()
+    assert len(nav_snapshots) == 1
+    assert nav_snapshots[0].paper_only is True
+    assert len(nav_snapshots[0].marks) == 1
+    assert PaperNavLog.read(nav_log) == tuple(nav_snapshots)
+
+
+def test_paper_trade_record_source_takes_precedence_over_missing_journal(tmp_path):
+    non_binary = raw_market(
+        condition_id="0xcondNonBinary",
+        slug="market-non-binary",
+        question="Will a multi-outcome resolve?",
+        token_ids=("alpha-token", "beta-token", "gamma-token"),
+        outcomes=("Alpha", "Beta", "Gamma"),
+    )
+    client = FakeMarketDataClient([non_binary], {})
+    nav_snapshots = []
+    nav_log = tmp_path / "nav.jsonl"
+    missing_journal_path = tmp_path / "missing-paper-trades.jsonl"
+    config = cycle_config(
+        paper_execution_config=_paper_exec_config(),
+        paper_trade_journal_path=missing_journal_path,
+    )
+
+    summary = run_strategy_loop(
+        client=client,
+        scan_config=scan_config(tmp_path),
+        cycle_config=config,
+        starting_cash=Decimal("10000"),
+        nav_log_path=nav_log,
+        cycle_report_log_path=tmp_path / "cycle.jsonl",
+        paper_trade_record_source=lambda: (),
+        nav_snapshot_sink=nav_snapshots.append,
+    )
+
+    assert summary.iterations_completed == 1
+    assert summary.iterations_failed == 0
+    assert summary.nav_marks_skipped == 0
+    assert not missing_journal_path.exists()
+    assert len(nav_snapshots) == 1
+    assert len(nav_snapshots[0].marks) == 0
+    assert PaperNavLog.read(nav_log) == tuple(nav_snapshots)
+
+
+def test_empty_paper_trade_record_source_marks_cash_only_nav(tmp_path):
+    market, books = _screening_ready_market_and_books()
+    client = FakeMarketDataClient([market], books)
+    nav_log = tmp_path / "nav.jsonl"
+    nav_snapshots = []
+    book_fetch_count_at_source = []
+
+    def empty_source():
+        book_fetch_count_at_source.append(len(client.get_order_book_calls))
+        return ()
+
+    summary = run_strategy_loop(
+        client=client,
+        scan_config=scan_config(tmp_path),
+        cycle_config=cycle_config(),
+        starting_cash=Decimal("10000"),
+        nav_log_path=nav_log,
+        cycle_report_log_path=tmp_path / "cycle.jsonl",
+        paper_trade_record_source=empty_source,
+        nav_snapshot_sink=nav_snapshots.append,
+    )
+
+    assert summary.iterations_completed == 1
+    assert summary.iterations_failed == 0
+    assert summary.nav_marks_skipped == 0
+    assert book_fetch_count_at_source == [len(client.get_order_book_calls)]
+    assert len(nav_snapshots) == 1
+    assert len(nav_snapshots[0].marks) == 0
+    assert nav_snapshots[0].exit_nav == Decimal("10000")
+    assert PaperNavLog.read(nav_log) == tuple(nav_snapshots)
+
+
+def test_paper_trade_record_source_failure_counts_as_iteration_failure(tmp_path):
+    market, books = _screening_ready_market_and_books()
+
+    def broken_source():
+        raise RuntimeError("paper trade source unavailable")
+
+    summary = run_strategy_loop(
+        client=FakeMarketDataClient([market], books),
+        scan_config=scan_config(tmp_path),
+        cycle_config=cycle_config(),
+        starting_cash=Decimal("10000"),
+        nav_log_path=tmp_path / "nav.jsonl",
+        cycle_report_log_path=tmp_path / "cycle.jsonl",
+        paper_trade_record_source=broken_source,
+        on_cycle_error="log_and_continue",
+    )
+
+    assert summary.iterations_completed == 0
+    assert summary.iterations_failed == 1
+    assert summary.nav_marks_skipped == 0
+    assert summary.last_error == "RuntimeError: paper trade source unavailable"
+    assert not (tmp_path / "nav.jsonl").exists()
+
+
+def test_paper_trade_record_source_file_not_found_counts_as_iteration_failure(
+    tmp_path,
+):
+    market, books = _screening_ready_market_and_books()
+
+    def broken_source():
+        raise FileNotFoundError("paper trade source certificate missing")
+
+    summary = run_strategy_loop(
+        client=FakeMarketDataClient([market], books),
+        scan_config=scan_config(tmp_path),
+        cycle_config=cycle_config(),
+        starting_cash=Decimal("10000"),
+        nav_log_path=tmp_path / "nav.jsonl",
+        cycle_report_log_path=tmp_path / "cycle.jsonl",
+        paper_trade_record_source=broken_source,
+        on_cycle_error="log_and_continue",
+    )
+
+    assert summary.iterations_completed == 0
+    assert summary.iterations_failed == 1
+    assert summary.nav_marks_skipped == 0
+    assert summary.last_error == (
+        "FileNotFoundError: paper trade source certificate missing"
+    )
+    assert not (tmp_path / "nav.jsonl").exists()
 
 
 def test_paper_trade_record_sink_failure_counts_as_iteration_failure(
@@ -1368,6 +1524,10 @@ def test_execution_reconciliation_sink_failure_counts_as_iteration_failure(tmp_p
         (
             {"paper_trade_record_sink": object()},
             "paper_trade_record_sink must be callable or None",
+        ),
+        (
+            {"paper_trade_record_source": object()},
+            "paper_trade_record_source must be callable or None",
         ),
         (
             {"nav_snapshot_sink": object()},

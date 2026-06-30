@@ -5827,6 +5827,7 @@ def main(
             run_action_gated_queue_source = None
             run_action_gated_queue_sink = None
             run_paper_trade_record_sink = None
+            run_paper_trade_record_source = None
             run_nav_snapshot_sink = None
             if paper_strategy_cycle_report_db_config.enabled:
                 dsn = paper_strategy_cycle_report_db_config.dsn
@@ -5936,6 +5937,24 @@ def main(
                             table_name=table_name,
                         )
 
+                def run_paper_trade_record_source(
+                    *,
+                    db_dsn: str = dsn,
+                    table_name: str = paper_trade_db_config.table_name,
+                ) -> tuple[object, ...]:
+                    try:
+                        loaded_records = paper_trade_record_db_loader(
+                            dsn=db_dsn,
+                            table_name=table_name,
+                        )
+                    except Exception as exc:
+                        _raise_redacted_db_read_error(
+                            exc,
+                            dsn=db_dsn,
+                            table_name=table_name,
+                        )
+                    return tuple(reversed(loaded_records))
+
             if paper_nav_db_config.enabled:
                 dsn = paper_nav_db_config.dsn
                 if dsn is None:
@@ -6008,6 +6027,7 @@ def main(
                 "cycle_snapshot_source": run_cycle_snapshot_source,
                 "cycle_snapshot_sink": run_cycle_snapshot_sink,
                 "paper_trade_record_sink": run_paper_trade_record_sink,
+                "paper_trade_record_source": run_paper_trade_record_source,
                 "nav_snapshot_sink": run_nav_snapshot_sink,
             }
             execution_pipeline_db_config = from_paper_execution_pipeline_db_env()

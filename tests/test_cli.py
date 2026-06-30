@@ -7307,7 +7307,9 @@ def test_run_cli_builds_loop_call_single_shot(tmp_path, capsys):
                          cycle_snapshot_source=None, cycle_snapshot_sink=None,
                          action_gated_queue_source=None,
                          action_gated_queue_sink=None,
-                         paper_trade_record_sink=None, nav_snapshot_sink=None):
+                         paper_trade_record_sink=None,
+                         paper_trade_record_source=None,
+                         nav_snapshot_sink=None):
         calls.append(
             {
                 "client": client,
@@ -7325,6 +7327,7 @@ def test_run_cli_builds_loop_call_single_shot(tmp_path, capsys):
                 "action_gated_queue_source": action_gated_queue_source,
                 "action_gated_queue_sink": action_gated_queue_sink,
                 "paper_trade_record_sink": paper_trade_record_sink,
+                "paper_trade_record_source": paper_trade_record_source,
                 "nav_snapshot_sink": nav_snapshot_sink,
             }
         )
@@ -7378,6 +7381,7 @@ def test_run_cli_builds_loop_call_single_shot(tmp_path, capsys):
     assert call["action_gated_queue_source"] is None
     assert call["action_gated_queue_sink"] is None
     assert call["paper_trade_record_sink"] is None
+    assert call["paper_trade_record_source"] is None
     assert call["nav_snapshot_sink"] is None
 
     captured = capsys.readouterr()
@@ -7396,7 +7400,9 @@ def test_run_cli_maps_positive_repeat_interval_to_interval_mode(tmp_path):
                          cycle_snapshot_source=None, cycle_snapshot_sink=None,
                          action_gated_queue_source=None,
                          action_gated_queue_sink=None,
-                         paper_trade_record_sink=None, nav_snapshot_sink=None):
+                         paper_trade_record_sink=None,
+                         paper_trade_record_source=None,
+                         nav_snapshot_sink=None):
         calls.append(
             {
                 "repeat_mode": repeat_mode,
@@ -7408,6 +7414,7 @@ def test_run_cli_maps_positive_repeat_interval_to_interval_mode(tmp_path):
                 "action_gated_queue_source": action_gated_queue_source,
                 "action_gated_queue_sink": action_gated_queue_sink,
                 "paper_trade_record_sink": paper_trade_record_sink,
+                "paper_trade_record_source": paper_trade_record_source,
                 "nav_snapshot_sink": nav_snapshot_sink,
             }
         )
@@ -7443,6 +7450,7 @@ def test_run_cli_maps_positive_repeat_interval_to_interval_mode(tmp_path):
             "action_gated_queue_source": None,
             "action_gated_queue_sink": None,
             "paper_trade_record_sink": None,
+            "paper_trade_record_source": None,
             "nav_snapshot_sink": None,
         },
     ]
@@ -7458,8 +7466,11 @@ def test_run_cli_paper_execute_flag_enables_inline_paper_pass(tmp_path):
                          cycle_snapshot_source=None, cycle_snapshot_sink=None,
                          action_gated_queue_source=None,
                          action_gated_queue_sink=None,
-                         paper_trade_record_sink=None, nav_snapshot_sink=None):
+                         paper_trade_record_sink=None,
+                         paper_trade_record_source=None,
+                         nav_snapshot_sink=None):
         assert cycle_report_sink is None
+        assert paper_trade_record_source is None
         calls.append(cycle_config)
         return _empty_run_summary()
 
@@ -7646,6 +7657,142 @@ def test_run_cli_wires_paper_trade_and_nav_db_sinks_when_env_enabled(
     assert trade_dsn not in captured.err
     assert nav_dsn not in captured.out
     assert nav_dsn not in captured.err
+
+
+def test_run_cli_wires_paper_trade_db_source_when_env_enabled(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    trade_dsn = "postgresql://paper-trade@localhost/db"
+    table_name = "paper_trade_archive"
+    monkeypatch.setenv(PAPER_TRADE_JOURNAL_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(PAPER_TRADE_JOURNAL_DB_DSN_ENV_VAR, trade_dsn)
+    monkeypatch.setenv(PAPER_TRADE_JOURNAL_DB_TABLE_ENV_VAR, table_name)
+    newest = SimpleNamespace(label="newest")
+    older = SimpleNamespace(label="older")
+    loader_calls = []
+    loop_calls = []
+
+    def fake_loader(*, dsn, table_name):
+        loader_calls.append((dsn, table_name))
+        return (newest, older)
+
+    def fake_loop_runner(**kwargs):
+        loop_calls.append(kwargs)
+        source = kwargs["paper_trade_record_source"]
+        assert source is not None
+        assert source() == (older, newest)
+        return _empty_run_summary()
+
+    exit_code = main(
+        [
+            "run",
+            "--paper-execute",
+            "--archive-root",
+            str(tmp_path / "raw"),
+            "--starting-cash",
+            "10000",
+            "--cycle-log",
+            str(tmp_path / "cycle.jsonl"),
+        ],
+        loop_runner=fake_loop_runner,
+        paper_trade_record_db_loader=fake_loader,
+        client_factory=lambda: "fake-client",
+    )
+
+    assert exit_code == 0
+    assert loader_calls == [(trade_dsn, table_name)]
+    assert len(loop_calls) == 1
+    captured = capsys.readouterr()
+    assert trade_dsn not in captured.out
+    assert trade_dsn not in captured.err
+    assert table_name not in captured.out
+    assert table_name not in captured.err
+
+
+def test_run_cli_redacts_dsn_and_table_when_paper_trade_db_source_fails(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    trade_dsn = "postgresql://paper-trade@localhost/db"
+    table_name = "paper_trade_archive"
+    monkeypatch.setenv(PAPER_TRADE_JOURNAL_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(PAPER_TRADE_JOURNAL_DB_DSN_ENV_VAR, trade_dsn)
+    monkeypatch.setenv(PAPER_TRADE_JOURNAL_DB_TABLE_ENV_VAR, table_name)
+
+    def broken_loader(*, dsn, table_name):
+        raise RuntimeError(f"failed reading {dsn} table={table_name}")
+
+    def fake_loop_runner(**kwargs):
+        kwargs["paper_trade_record_source"]()
+        return _empty_run_summary()
+
+    exit_code = main(
+        [
+            "run",
+            "--paper-execute",
+            "--archive-root",
+            str(tmp_path / "raw"),
+            "--starting-cash",
+            "10000",
+            "--cycle-log",
+            str(tmp_path / "cycle.jsonl"),
+        ],
+        loop_runner=fake_loop_runner,
+        paper_trade_record_db_loader=broken_loader,
+        client_factory=lambda: "fake-client",
+    )
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert trade_dsn not in captured.out
+    assert trade_dsn not in captured.err
+    assert table_name not in captured.out
+    assert table_name not in captured.err
+    assert "<redacted-dsn>" in captured.err
+    assert "<redacted-table>" in captured.err
+
+
+def test_run_cli_requires_valid_paper_trade_db_source_config_before_client_work(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    monkeypatch.setenv(PAPER_TRADE_JOURNAL_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(
+        PAPER_TRADE_JOURNAL_DB_DSN_ENV_VAR,
+        "postgresql://paper-trade@localhost/db",
+    )
+    monkeypatch.setenv(PAPER_TRADE_JOURNAL_DB_TABLE_ENV_VAR, "Bad-Table")
+
+    def forbidden_client_factory():
+        raise AssertionError("client should not be constructed")
+
+    def forbidden_loop_runner(**kwargs):
+        raise AssertionError("loop runner should not run")
+
+    exit_code = main(
+        [
+            "run",
+            "--paper-execute",
+            "--archive-root",
+            str(tmp_path / "raw"),
+            "--starting-cash",
+            "10000",
+            "--cycle-log",
+            str(tmp_path / "cycle.jsonl"),
+        ],
+        loop_runner=forbidden_loop_runner,
+        client_factory=forbidden_client_factory,
+    )
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert "client should not be constructed" not in captured.err
+    assert "loop runner should not run" not in captured.err
+    assert PAPER_TRADE_JOURNAL_DB_TABLE_ENV_VAR in captured.err
 
 
 def test_run_cli_wires_action_gated_queue_db_sink_when_env_enabled(
@@ -10609,6 +10756,7 @@ def test_run_cli_default_loop_persists_paper_trade_and_nav_db_sinks_from_real_cy
     order_book_calls = []
     trade_sink_calls = []
     nav_sink_calls = []
+    db_trade_records = []
 
     class FakeMarketDataClient:
         def list_markets(self, *, active, closed, limit, search=None):
@@ -10638,7 +10786,13 @@ def test_run_cli_default_loop_persists_paper_trade_and_nav_db_sinks_from_real_cy
             if paper_journal_path.exists()
             else []
         )
+        db_trade_records.append(record)
         trade_sink_calls.append((dsn, record, table_name, len(journal_lines)))
+
+    def fake_trade_loader(*, dsn, table_name):
+        assert dsn == trade_dsn
+        assert table_name == "paper_trade_archive"
+        return tuple(reversed(db_trade_records))
 
     def fake_nav_sink(*, dsn, snapshot, table_name):
         nav_lines = nav_log.read_text(encoding="utf-8").splitlines()
@@ -10666,6 +10820,7 @@ def test_run_cli_default_loop_persists_paper_trade_and_nav_db_sinks_from_real_cy
         ],
         client_factory=lambda: fake_client,
         paper_trade_record_db_sink=fake_trade_sink,
+        paper_trade_record_db_loader=fake_trade_loader,
         paper_nav_snapshot_db_sink=fake_nav_sink,
     )
 
@@ -10733,8 +10888,11 @@ def test_run_cli_returns_one_when_loop_runner_fails(tmp_path, capsys):
                            cycle_snapshot_source=None, cycle_snapshot_sink=None,
                            action_gated_queue_source=None,
                            action_gated_queue_sink=None,
-                           paper_trade_record_sink=None, nav_snapshot_sink=None):
+                           paper_trade_record_sink=None,
+                           paper_trade_record_source=None,
+                           nav_snapshot_sink=None):
         assert cycle_report_sink is None
+        assert paper_trade_record_source is None
         raise RuntimeError("loop failed")
 
     exit_code = main(
@@ -10764,8 +10922,11 @@ def test_run_cli_prints_last_error_when_iterations_failed(tmp_path, capsys):
                             cycle_snapshot_source=None, cycle_snapshot_sink=None,
                             action_gated_queue_source=None,
                             action_gated_queue_sink=None,
-                            paper_trade_record_sink=None, nav_snapshot_sink=None):
+                            paper_trade_record_sink=None,
+                            paper_trade_record_source=None,
+                            nav_snapshot_sink=None):
         assert cycle_report_sink is None
+        assert paper_trade_record_source is None
         return RunLoopSummary(
             iterations_completed=2,
             iterations_failed=1,

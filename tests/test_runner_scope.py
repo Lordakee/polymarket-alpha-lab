@@ -215,6 +215,12 @@ FORBIDDEN_DYNAMIC_IMPORT_CALLS = {
 FORBIDDEN_SOURCE_STRING_TOKENS = (
     "polymarket_alpha_lab.api",
     "py_clob_client",
+    "psycopg",
+    "postgres",
+    "supabase",
+    "POLYMARKET_ALPHA_LAB",
+    "from_paper_trade_journal_db_env",
+    "paper_trade_record_db",
     "eth_account",
     "private_key",
     "auth",
@@ -471,9 +477,13 @@ def test_runner_public_loop_api_allows_cycle_report_sink_without_db_imports():
     summary_fields = run_loop_summary_field_names(tree)
 
     assert "cycle_report_sink" in keyword_names
+    assert "paper_trade_record_source" in keyword_names
     assert "cycle_reports_persisted" in summary_fields
     assert not any("db" in module_name for module_name in imported_modules(tree))
     assert not any("psycopg" in module_name for module_name in imported_modules(tree))
+    assert not any("postgres" in module_name for module_name in imported_modules(tree))
+    assert not any("supabase" in module_name for module_name in imported_modules(tree))
+    assert not any("env" in module_name for module_name in imported_modules(tree))
 
 
 def test_runner_does_not_define_forbidden_live_or_advice_surface_names():
