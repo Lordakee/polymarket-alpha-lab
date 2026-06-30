@@ -53,7 +53,10 @@ from polymarket_alpha_lab.paper_execution import PaperExecutionConfig
 from polymarket_alpha_lab.paper_nav_snapshot_psycopg import (
     insert_paper_nav_snapshot_with_psycopg,
 )
-from polymarket_alpha_lab.paper_portfolio_nav import mark_paper_portfolio_nav
+from polymarket_alpha_lab.paper_portfolio_nav import (
+    _mark_paper_portfolio_nav_from_records,
+    mark_paper_portfolio_nav,
+)
 from polymarket_alpha_lab.paper_research_packet import (
     DEFAULT_PAPER_RESEARCH_PACKET_CONFIG_VERSION,
     DEFAULT_PAPER_RESEARCH_PACKET_MAX_PACKET_ROWS,
@@ -79,6 +82,7 @@ from polymarket_alpha_lab.paper_research_packet_operator_flow import (
 )
 from polymarket_alpha_lab.paper_trade_journal_psycopg import (
     insert_paper_trade_record_with_psycopg,
+    load_paper_trade_records_with_psycopg,
 )
 from polymarket_alpha_lab.paper_trade_cost_audit import (
     PaperTradeCostAuditConfig,
@@ -283,11 +287,13 @@ Runner = Callable[..., object]
 CycleRunner = Callable[..., PaperStrategyCycleReport]
 ClientFactory = Callable[[], Any]
 NavRunner = Callable[..., PaperNavSnapshot]
+NavRecordsRunner = Callable[..., PaperNavSnapshot]
 HistoryRunner = Callable[..., PerformanceSummary]
 LoopRunner = Callable[..., RunLoopSummary]
 OutcomeRunner = Callable[..., OutcomeTrackingReport]
 OutcomeTrackingDbSink = Callable[..., object]
 PaperTradeRecordDbSink = Callable[..., object]
+PaperTradeRecordDbLoader = Callable[..., tuple[Any, ...]]
 PaperNavSnapshotDbSink = Callable[..., object]
 PaperTradeCostAuditDbSink = Callable[..., object]
 StrategyRiskAuditDbSink = Callable[..., object]
@@ -1195,8 +1201,15 @@ def _raise_redacted_db_sink_error(
     raise RuntimeError(message) from None
 
 
-def _raise_redacted_db_read_error(exc: Exception, *, dsn: str) -> None:
+def _raise_redacted_db_read_error(
+    exc: Exception,
+    *,
+    dsn: str,
+    table_name: str | None = None,
+) -> None:
     message = _redact_db_dsn(str(exc), dsn=dsn)
+    if table_name:
+        message = _redact_db_table_name(message, table_name=table_name)
     if not message.strip():
         message = exc.__class__.__name__
     raise RuntimeError(message) from None
@@ -1317,6 +1330,7 @@ def main(
     runner: Runner = run_market_scan,
     cycle_runner: CycleRunner = run_strategy_cycle,
     nav_runner: NavRunner = mark_paper_portfolio_nav,
+    nav_records_runner: NavRecordsRunner = _mark_paper_portfolio_nav_from_records,
     client_factory: ClientFactory = PolymarketPublicClient,
     history_runner: HistoryRunner | None = None,
     nav_risk_runner: NavRiskRunner | None = None,
@@ -1327,6 +1341,9 @@ def main(
     ),
     paper_trade_record_db_sink: PaperTradeRecordDbSink = (
         insert_paper_trade_record_with_psycopg
+    ),
+    paper_trade_record_db_loader: PaperTradeRecordDbLoader = (
+        load_paper_trade_records_with_psycopg
     ),
     paper_strategy_cycle_report_db_sink: PaperStrategyCycleReportDbSink = (
         insert_paper_strategy_cycle_report_with_psycopg
@@ -2827,6 +2844,7 @@ def main(
 
     if args.command == "portfolio-nav":
         try:
+            paper_trade_db_config = from_paper_trade_journal_db_env()
             paper_nav_db_config = from_paper_nav_snapshot_db_env()
             portfolio_nav_snapshot_sink = None
             if paper_nav_db_config.enabled:
@@ -2856,15 +2874,40 @@ def main(
                         )
 
             nav_runner_kwargs = {
-                "journal_path": args.journal,
                 "starting_cash": args.starting_cash,
-                "client": client_factory(),
                 "marked_at": datetime.now(UTC),
                 "nav_log_path": args.nav_log,
             }
             if portfolio_nav_snapshot_sink is not None:
                 nav_runner_kwargs["nav_snapshot_sink"] = portfolio_nav_snapshot_sink
-            snapshot = nav_runner(**nav_runner_kwargs)
+            if paper_trade_db_config.enabled:
+                dsn = paper_trade_db_config.dsn
+                if dsn is None:
+                    raise ValueError(
+                        "paper trade DB source requires a DB DSN",
+                    )
+                try:
+                    loaded_records = paper_trade_record_db_loader(
+                        dsn=dsn,
+                        table_name=paper_trade_db_config.table_name,
+                    )
+                except Exception as exc:
+                    _raise_redacted_db_read_error(
+                        exc,
+                        dsn=dsn,
+                        table_name=paper_trade_db_config.table_name,
+                    )
+                snapshot = nav_records_runner(
+                    records=tuple(reversed(loaded_records)),
+                    client=client_factory(),
+                    **nav_runner_kwargs,
+                )
+            else:
+                snapshot = nav_runner(
+                    journal_path=args.journal,
+                    client=client_factory(),
+                    **nav_runner_kwargs,
+                )
             _print_portfolio_nav_summary(snapshot)
             return 0
         except Exception as exc:

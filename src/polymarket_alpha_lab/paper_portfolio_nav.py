@@ -1,6 +1,6 @@
 """Paper portfolio NAV v0 orchestrator (Stage 5).
 
-Reads a paper-trade journal, builds the paper portfolio, fetches the current
+Reads paper-trade records, builds the paper portfolio, fetches the current
 order book for every held token, and marks NAV -- closing the "did I make
 money?" loop. The only net-new logic here is the composition: every downstream
 primitive (``PaperTradeJournal.read``, ``build_paper_portfolio``,
@@ -10,10 +10,11 @@ Protocol-only (Q5-style): this module does NOT import ``api``. It depends on a
 local ``MarketNavClient`` Protocol whose only method is ``get_order_book``;
 ``cli.py`` constructs the concrete ``PolymarketPublicClient`` and injects it.
 
-Phase 1 boundary: read local JSONL + read-only ``get_order_book`` fetch + pure
-local NAV computation. No live orders, auth, wallets, private keys, credentials,
-account/position/exchange-state reads, or exchange writes. The output
-``PaperNavSnapshot`` is paper-only (``paper_only is True`` is hard-enforced).
+Phase 1 boundary: read local paper trade records + read-only ``get_order_book``
+fetch + pure local NAV computation. No live orders, auth, wallets, private keys,
+credentials, account/position/exchange-state reads, or exchange writes. The
+output ``PaperNavSnapshot`` is paper-only (``paper_only is True`` is
+hard-enforced).
 """
 
 from __future__ import annotations

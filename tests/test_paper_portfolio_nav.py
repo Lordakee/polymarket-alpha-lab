@@ -17,7 +17,10 @@ import pytest
 
 from polymarket_alpha_lab.journal import PaperTradeJournal, PaperTradeRecord
 from polymarket_alpha_lab.paper import PaperFill
-from polymarket_alpha_lab.paper_portfolio_nav import mark_paper_portfolio_nav
+from polymarket_alpha_lab.paper_portfolio_nav import (
+    _mark_paper_portfolio_nav_from_records,
+    mark_paper_portfolio_nav,
+)
 from polymarket_alpha_lab.pipeline import ScoredCandidate
 from polymarket_alpha_lab.research import build_research_packet
 
@@ -157,6 +160,38 @@ def test_marks_single_position_with_one_live_fetch(tmp_path):
     assert snapshot.total_cost_basis == Decimal("51.400")
     assert snapshot.unrealized_exit_pnl == Decimal("-1.800")
     assert snapshot.marks[0].mark_status == "fully_executable"
+
+
+def test_marks_supplied_trade_records_without_jsonl():
+    record = _buy_record(token_id="111", condition_id="0xabc")
+    client = FakeNavClient({"111": _book_payload("111")})
+
+    snapshot = _mark_paper_portfolio_nav_from_records(
+        (record,),
+        starting_cash=Decimal("10000"),
+        client=client,
+        marked_at=MARKED_AT,
+    )
+
+    assert client.fetched == ["111"]
+    assert len(snapshot.marks) == 1
+    assert snapshot.exit_nav == Decimal("9998.200")
+    assert snapshot.marks[0].token_id == "111"
+
+
+def test_supplied_trade_records_validate_before_fetch():
+    invalid_record = object()
+    client = FakeNavClient({"111": _book_payload("111")})
+
+    with pytest.raises(ValueError, match="record must be a PaperTradeRecord"):
+        _mark_paper_portfolio_nav_from_records(
+            (invalid_record,),
+            starting_cash=Decimal("10000"),
+            client=client,
+            marked_at=MARKED_AT,
+        )
+
+    assert client.fetched == []
 
 
 def test_fans_out_one_fetch_per_held_token(tmp_path):

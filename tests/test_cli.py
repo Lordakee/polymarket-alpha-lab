@@ -1740,6 +1740,123 @@ def test_portfolio_nav_cli_wires_nav_snapshot_db_sink_when_enabled(
     assert fake_dsn not in captured.err
 
 
+def test_portfolio_nav_cli_uses_paper_trade_db_source_when_enabled(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    fake_dsn = "postgresql://paper-trade@localhost/db"
+    table_name = "paper_trade_archive"
+    monkeypatch.setenv(PAPER_TRADE_JOURNAL_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(PAPER_TRADE_JOURNAL_DB_DSN_ENV_VAR, fake_dsn)
+    monkeypatch.setenv(PAPER_TRADE_JOURNAL_DB_TABLE_ENV_VAR, table_name)
+    newest = SimpleNamespace(label="newest")
+    older = SimpleNamespace(label="older")
+    load_calls = []
+    record_runner_calls = []
+
+    def forbidden_nav_runner(**kwargs):
+        raise AssertionError("legacy JSONL NAV runner should not run")
+
+    def fake_loader(*, dsn, table_name):
+        load_calls.append((dsn, table_name))
+        return (newest, older)
+
+    def fake_nav_records_runner(
+        *,
+        records,
+        starting_cash,
+        client,
+        marked_at,
+        nav_log_path,
+        nav_snapshot_sink=None,
+    ):
+        record_runner_calls.append(
+            {
+                "records": records,
+                "starting_cash": starting_cash,
+                "client": client,
+                "marked_at": marked_at,
+                "nav_log_path": nav_log_path,
+                "nav_snapshot_sink": nav_snapshot_sink,
+            },
+        )
+        return _empty_nav_snapshot()
+
+    nav_log_path = tmp_path / "nav.jsonl"
+    exit_code = main(
+        [
+            "portfolio-nav",
+            "--journal",
+            str(tmp_path / "legacy-paper-trades.jsonl"),
+            "--starting-cash",
+            "10000",
+            "--nav-log",
+            str(nav_log_path),
+        ],
+        nav_runner=forbidden_nav_runner,
+        nav_records_runner=fake_nav_records_runner,
+        paper_trade_record_db_loader=fake_loader,
+        client_factory=lambda: "fake-client",
+    )
+
+    assert exit_code == 0
+    assert load_calls == [(fake_dsn, table_name)]
+    assert len(record_runner_calls) == 1
+    call = record_runner_calls[0]
+    assert call["records"] == (older, newest)
+    assert call["starting_cash"] == Decimal("10000")
+    assert call["client"] == "fake-client"
+    assert call["nav_log_path"] == nav_log_path
+    assert call["nav_snapshot_sink"] is None
+    assert isinstance(call["marked_at"], datetime)
+    captured = capsys.readouterr()
+    assert fake_dsn not in captured.out
+    assert fake_dsn not in captured.err
+    assert table_name not in captured.out
+    assert table_name not in captured.err
+
+
+def test_portfolio_nav_cli_redacts_dsn_and_table_when_paper_trade_db_source_fails(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    fake_dsn = "postgresql://paper-trade@localhost/db"
+    table_name = "paper_trade_archive"
+    monkeypatch.setenv(PAPER_TRADE_JOURNAL_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(PAPER_TRADE_JOURNAL_DB_DSN_ENV_VAR, fake_dsn)
+    monkeypatch.setenv(PAPER_TRADE_JOURNAL_DB_TABLE_ENV_VAR, table_name)
+
+    def broken_loader(*, dsn, table_name):
+        raise RuntimeError(f"could not read {dsn} table={table_name}")
+
+    def forbidden_client_factory():
+        raise AssertionError("client should not be constructed")
+
+    exit_code = main(
+        [
+            "portfolio-nav",
+            "--journal",
+            str(tmp_path / "legacy-paper-trades.jsonl"),
+            "--starting-cash",
+            "10000",
+        ],
+        paper_trade_record_db_loader=broken_loader,
+        client_factory=forbidden_client_factory,
+    )
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert fake_dsn not in captured.out
+    assert fake_dsn not in captured.err
+    assert table_name not in captured.out
+    assert table_name not in captured.err
+    assert "<redacted-dsn>" in captured.err
+    assert "<redacted-table>" in captured.err
+    assert "client should not be constructed" not in captured.err
+
+
 def test_portfolio_nav_cli_redacts_dsn_when_nav_snapshot_db_sink_fails(
     tmp_path,
     monkeypatch,
