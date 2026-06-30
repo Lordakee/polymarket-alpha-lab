@@ -316,6 +316,40 @@ Boundary: no live trading, no auth, no wallet handling, no account reads, no
 private-key handling, no order construction/signing/submission/cancellation, no
 DSN/table flags, and no exchange mutation.
 
+Paper Probability Selection Summary History Trend Gate:
+
+```bash
+.venv/bin/polymarket-alpha-lab paper-probability-selection-summary-history-trend-gate --limit 25
+```
+
+The command is env-only, read-only, paper-only/report-only/readonly, and uses
+the existing local Supabase/Postgres probability selection summary history DB
+configuration:
+`POLYMARKET_ALPHA_LAB_PAPER_PROBABILITY_SELECTION_SUMMARY_HISTORY_DB_*`. It
+accepts only `--limit`; it does not accept persist, DSN, table, file, wallet,
+auth, order, live, execution, account, private-key, or fast-mode flags.
+
+It reads persisted history reports newest-first from the local DB, reduces them
+chronologically into the existing probability selection summary history trend,
+then converts that trend into a pure gate report with `pass`, `watch`, or
+`blocked` status. Stable selection trends pass. Insufficient, stale, or
+deteriorating trends block. Repeated watch streaks, thin source history,
+recurring source reasons, and aged trend evidence watch unless a blocking
+condition is present.
+
+The gate CLI writes nothing and adds no durable table. Output is aggregate-only:
+gate status, recommended next step, source history count, trend status,
+latest-history status/streak, selected-share metrics, stale/thin counts, and
+sanitized reason-code summaries. It must not print source rows, payloads,
+report hashes, DB internals, market slugs, questions, condition ids, wallets,
+accounts, auth material, private keys, or order-like data.
+
+The pure gate report can be supplied as optional
+`selection_summary_trend_gate` evidence to the paper autonomous readiness digest
+reducer. That evidence remains paper observability only: it is not permission to
+trade, not financial advice, not investment ranking, not an order instruction,
+not execution authorization, and not an approval workflow.
+
 Probability Selection Scorer Agreement:
 
 ```bash
@@ -772,7 +806,10 @@ Boundary:
 
 The readback builds a compact digest from the latest readiness-gate report plus
 optional `agreement_trend_gate` evidence when that local evidence is available
-through the readback path. It prints digest status, recommended review action,
+through the readback path. The pure digest reducer also accepts optional
+`selection_summary_trend_gate` evidence in canonical source order after
+`agreement_trend_gate` and before `ledger` when a caller supplies an already
+built local report. It prints digest status, recommended review action,
 evidence statuses, and sanitized reason-code counts. With `--persist`, it also
 prints `persisted=True` for a new digest row or `persisted=False` for an
 idempotent duplicate insert after the current digest summary.

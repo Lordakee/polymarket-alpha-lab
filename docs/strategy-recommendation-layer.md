@@ -144,6 +144,19 @@ show latest snapshot reason codes from the same snapshot used for latest status,
 but it must not become an approval workflow, execution workflow, account review,
 or capital-deployment workflow.
 
+Probability selection summary history trend gating is another readonly
+observability layer over persisted local Supabase/Postgres evidence. The
+`paper-probability-selection-summary-history-trend-gate` command reads only
+persisted probability selection summary history reports, builds the existing
+history trend in chronological order, and converts that trend into a
+paper-only/report-only/readonly `pass`, `watch`, or `blocked` gate report. The
+gate is designed to catch deteriorating, stale, insufficient, thin, or recurring
+selection-quality evidence before downstream automation treats a selection batch
+as healthy. Its output may be supplied to the paper autonomous readiness digest
+as optional `selection_summary_trend_gate` evidence, but it is still an
+operator-review signal only and never a live execution approval, order intent,
+wallet/account action, or capital-deployment instruction.
+
 JSONL bundle logs may remain as append-only debug/export artifacts for local
 paper review, regression fixtures, or portability, but DB-backed snapshot
 persistence is the primary normal history surface for cycle-level review and
