@@ -618,7 +618,7 @@ def test_paper_trade_record_sink_failure_counts_as_iteration_failure(
     assert summary.iterations_completed == 0
     assert summary.iterations_failed == 1
     assert summary.last_error == "RuntimeError: trade db unavailable"
-    assert len(PaperTradeJournal.read(journal_path)) == 1
+    assert not journal_path.exists()
 
 
 def test_nav_snapshot_sink_runs_after_successful_nav_mark(tmp_path):

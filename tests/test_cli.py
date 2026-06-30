@@ -426,6 +426,7 @@ def test_strategy_cycle_cli_wires_paper_trade_db_sink_when_enabled(
     sink_calls = []
 
     def fake_cycle_runner(*, client, scan_config, cycle_config, paper_trade_record_sink):
+        assert cycle_config.paper_trade_journal_path is None
         assert paper_trade_record_sink is not None
         paper_trade_record_sink(record)
         return PaperStrategyCycleReport(
@@ -446,8 +447,6 @@ def test_strategy_cycle_cli_wires_paper_trade_db_sink_when_enabled(
         [
             "strategy-cycle",
             "--paper-execute",
-            "--paper-journal",
-            str(tmp_path / "paper-trades.jsonl"),
             "--archive-root",
             str(tmp_path / "raw"),
             "--output",
@@ -469,6 +468,49 @@ def test_strategy_cycle_cli_wires_paper_trade_db_sink_when_enabled(
     captured = capsys.readouterr()
     assert fake_dsn not in captured.out
     assert fake_dsn not in captured.err
+    assert not (tmp_path / "paper-trades.jsonl").exists()
+
+
+def test_strategy_cycle_cli_paper_execute_db_enabled_omits_default_jsonl_journal(
+    tmp_path,
+    monkeypatch,
+):
+    fake_dsn = "postgresql://paper-trade@localhost/db"
+    monkeypatch.setenv(PAPER_TRADE_JOURNAL_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(PAPER_TRADE_JOURNAL_DB_DSN_ENV_VAR, fake_dsn)
+    calls = []
+
+    def fake_cycle_runner(
+        *,
+        client,
+        scan_config,
+        cycle_config,
+        paper_trade_record_sink,
+    ):
+        calls.append((cycle_config, paper_trade_record_sink))
+        return _empty_strategy_cycle_report()
+
+    exit_code = main(
+        [
+            "strategy-cycle",
+            "--paper-execute",
+            "--archive-root",
+            str(tmp_path / "raw"),
+            "--output",
+            str(tmp_path / "strategy-cycle.jsonl"),
+        ],
+        cycle_runner=fake_cycle_runner,
+        paper_trade_record_db_sink=lambda **kwargs: None,
+        client_factory=lambda: "fake-client",
+    )
+
+    assert exit_code == 0
+    assert len(calls) == 1
+    cycle_config, paper_trade_record_sink = calls[0]
+    assert cycle_config.paper_execution_config is not None
+    assert cycle_config.paper_trade_journal_path is None
+    assert paper_trade_record_sink is not None
+    assert not (tmp_path / "paper-trades.jsonl").exists()
 
 
 def test_strategy_cycle_cli_redacts_dsn_when_paper_trade_db_sink_fails(
@@ -486,6 +528,7 @@ def test_strategy_cycle_cli_redacts_dsn_when_paper_trade_db_sink_fails(
     record = SimpleNamespace(packet_id="packet-1")
 
     def fake_cycle_runner(*, client, scan_config, cycle_config, paper_trade_record_sink):
+        assert cycle_config.paper_trade_journal_path is None
         paper_trade_record_sink(record)
         raise AssertionError("unreachable after sink failure")
 
@@ -496,8 +539,6 @@ def test_strategy_cycle_cli_redacts_dsn_when_paper_trade_db_sink_fails(
         [
             "strategy-cycle",
             "--paper-execute",
-            "--paper-journal",
-            str(tmp_path / "paper-trades.jsonl"),
             "--archive-root",
             str(tmp_path / "raw"),
             "--output",
@@ -513,6 +554,37 @@ def test_strategy_cycle_cli_redacts_dsn_when_paper_trade_db_sink_fails(
     assert fake_dsn not in captured.out
     assert fake_dsn not in captured.err
     assert "<redacted-dsn>" in captured.err
+    assert not (tmp_path / "paper-trades.jsonl").exists()
+
+
+def test_strategy_cycle_cli_paper_execute_requires_db_sink_or_explicit_journal(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    monkeypatch.delenv(PAPER_TRADE_JOURNAL_DB_ENABLED_ENV_VAR, raising=False)
+    monkeypatch.delenv(PAPER_TRADE_JOURNAL_DB_DSN_ENV_VAR, raising=False)
+
+    def forbidden_cycle_runner(**kwargs):
+        raise AssertionError("cycle runner should not run")
+
+    exit_code = main(
+        [
+            "strategy-cycle",
+            "--paper-execute",
+            "--archive-root",
+            str(tmp_path / "raw"),
+            "--output",
+            str(tmp_path / "strategy-cycle.jsonl"),
+        ],
+        cycle_runner=forbidden_cycle_runner,
+        client_factory=lambda: "fake-client",
+    )
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert "paper trade DB persistence or --paper-journal is required" in captured.err
+    assert "cycle runner should not run" not in captured.err
 
 
 def test_strategy_cycle_cli_wires_cycle_report_db_sink_when_enabled(
@@ -10436,7 +10508,11 @@ def test_run_cli_default_loop_persists_paper_trade_and_nav_db_sinks_from_real_cy
     nav_log = tmp_path / "nav.jsonl"
 
     def fake_trade_sink(*, dsn, record, table_name):
-        journal_lines = paper_journal_path.read_text(encoding="utf-8").splitlines()
+        journal_lines = (
+            paper_journal_path.read_text(encoding="utf-8").splitlines()
+            if paper_journal_path.exists()
+            else []
+        )
         trade_sink_calls.append((dsn, record, table_name, len(journal_lines)))
 
     def fake_nav_sink(*, dsn, snapshot, table_name):
@@ -10489,13 +10565,13 @@ def test_run_cli_default_loop_persists_paper_trade_and_nav_db_sinks_from_real_cy
             trade_dsn,
             local_trade,
             "paper_trade_archive",
-            1,
+            0,
         ),
     ]
     _, trade_record, _, journal_line_count_at_sink = trade_sink_calls[0]
     assert isinstance(trade_record, PaperTradeRecord)
     assert paper_trade_record_to_db_row(trade_record).paper_only is True
-    assert journal_line_count_at_sink == 1
+    assert journal_line_count_at_sink == 0
 
     local_nav_snapshots = PaperNavLog.read(nav_log)
     assert len(local_nav_snapshots) == 1

@@ -1031,6 +1031,36 @@ def test_strategy_cycle_paper_trade_record_sink_receives_appended_record(
     assert PaperTradeJournal.read(journal_path) == (sink_records[0],)
 
 
+def test_strategy_cycle_paper_trade_record_sink_does_not_require_jsonl_journal(
+    tmp_path,
+):
+    market, books = _screening_ready_market_and_books()
+    client = FakeMarketDataClient([market], books)
+    journal_path = tmp_path / "paper-trades.jsonl"
+    config = cycle_config(
+        paper_execution_config=PaperExecutionConfig(
+            config_version="paper-execution-v1",
+        ),
+        paper_trade_journal_path=None,
+    )
+    sink_records = []
+
+    report = run_strategy_cycle(
+        client=client,
+        scan_config=scan_config(tmp_path),
+        cycle_config=config,
+        generated_at=GENERATED_AT,
+        paper_trade_record_sink=sink_records.append,
+    )
+
+    assert report.screening_report is not None
+    assert report.screening_report.ready_count == 1
+    assert len(sink_records) == 1
+    assert sink_records[0].market_slug == "market-paper"
+    assert sink_records[0].outcome_name == "NO"
+    assert not journal_path.exists()
+
+
 def test_strategy_cycle_rejects_invalid_paper_trade_record_sink_before_client_work(
     tmp_path,
 ):
@@ -1049,7 +1079,7 @@ def test_strategy_cycle_rejects_invalid_paper_trade_record_sink_before_client_wo
     assert client.get_order_book_calls == []
 
 
-def test_strategy_cycle_paper_trade_record_sink_failure_propagates_after_append(
+def test_strategy_cycle_paper_trade_record_sink_failure_leaves_no_jsonl_record(
     tmp_path,
 ):
     market, books = _screening_ready_market_and_books()
@@ -1080,7 +1110,29 @@ def test_strategy_cycle_paper_trade_record_sink_failure_propagates_after_append(
         )
 
     assert len(sink_records) == 1
-    assert PaperTradeJournal.read(journal_path) == (sink_records[0],)
+    assert not journal_path.exists()
+
+
+def test_strategy_cycle_paper_execution_requires_sink_without_journal_path(tmp_path):
+    market, books = _screening_ready_market_and_books()
+    client = FakeMarketDataClient([market], books)
+    config = cycle_config(
+        paper_execution_config=PaperExecutionConfig(
+            config_version="paper-execution-v1",
+        ),
+        paper_trade_journal_path=None,
+    )
+
+    with pytest.raises(ValueError, match="paper_trade_record_sink is required"):
+        run_strategy_cycle(
+            client=client,
+            scan_config=scan_config(tmp_path),
+            cycle_config=config,
+            generated_at=GENERATED_AT,
+        )
+
+    assert client.list_markets_calls == []
+    assert client.get_order_book_calls == []
 
 
 def test_strategy_cycle_no_paper_execution_when_config_is_none(tmp_path):
@@ -1103,22 +1155,28 @@ def test_strategy_cycle_no_paper_execution_when_config_is_none(tmp_path):
     assert not journal_path.exists()
 
 
+def test_strategy_cycle_config_accepts_paper_execution_without_journal_path():
+    execution_config = PaperExecutionConfig(
+        config_version="paper-execution-v1",
+    )
+
+    config = cycle_config(
+        paper_execution_config=execution_config,
+        paper_trade_journal_path=None,
+    )
+
+    assert config.paper_execution_config is execution_config
+    assert config.paper_trade_journal_path is None
+
+
 @pytest.mark.parametrize(
     ("overrides", "message"),
     (
         (
             {
-                "paper_execution_config": PaperExecutionConfig(
-                    config_version="paper-execution-v1",
-                ),
-            },
-            "paper_execution_config and paper_trade_journal_path must both",
-        ),
-        (
-            {
                 "paper_trade_journal_path": Path("paper-trades.jsonl"),
             },
-            "paper_execution_config and paper_trade_journal_path must both",
+            "paper_trade_journal_path requires paper_execution_config",
         ),
         (
             {

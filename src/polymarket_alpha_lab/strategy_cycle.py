@@ -223,15 +223,6 @@ class PaperStrategyCycleConfig:
                 "llm_transport and llm_forecast_config are required when "
                 "forecast_provider == 'llm'",
             )
-        # Stage 4 invariant: paper_execution_config and paper_trade_journal_path
-        # must both be set or both be None (the inline pass needs both).
-        if (self.paper_execution_config is None) != (
-            self.paper_trade_journal_path is None
-        ):
-            raise ValueError(
-                "paper_execution_config and paper_trade_journal_path must both "
-                "be set or both be None",
-            )
         if self.paper_execution_config is not None and not isinstance(
             self.paper_execution_config,
             PaperExecutionConfig,
@@ -239,11 +230,16 @@ class PaperStrategyCycleConfig:
             raise ValueError(
                 "paper_execution_config must be a PaperExecutionConfig",
             )
-        if self.paper_trade_journal_path is not None and not isinstance(
-            self.paper_trade_journal_path,
-            Path,
-        ):
-            raise ValueError("paper_trade_journal_path must be a Path")
+        if self.paper_trade_journal_path is not None:
+            if self.paper_execution_config is None:
+                raise ValueError(
+                    "paper_trade_journal_path requires paper_execution_config",
+                )
+            if not isinstance(
+                self.paper_trade_journal_path,
+                Path,
+            ):
+                raise ValueError("paper_trade_journal_path must be a Path")
 
 
 @dataclass(frozen=True)
@@ -401,6 +397,14 @@ def run_strategy_cycle(
         raise ValueError("generated_at must be a datetime or None")
     if paper_trade_record_sink is not None and not callable(paper_trade_record_sink):
         raise ValueError("paper_trade_record_sink must be callable or None")
+    if (
+        cycle_config.paper_execution_config is not None
+        and cycle_config.paper_trade_journal_path is None
+        and paper_trade_record_sink is None
+    ):
+        raise ValueError(
+            "paper_trade_record_sink is required when paper execution has no journal path",
+        )
 
     if generated_at is not None:
         timestamp = _as_utc(generated_at)
@@ -634,16 +638,17 @@ def run_strategy_cycle(
 
     # 4b. Inline paper-execution pass (Stage 4, additive/default-off). Turn
     #     each screening_ready candidate into an auditable PaperTradeRecord
-    #     against the in-memory book captured during the cycle, then journal
-    #     it. Per-candidate try/except isolation: one bad paper execution must
-    #     never abort the cycle (mirrors per-market isolation). Default-off:
-    #     when paper_execution_config is None this block is skipped entirely.
-    if (
-        cycle_config.paper_execution_config is not None
-        and cycle_config.paper_trade_journal_path is not None
-        and screening is not None
-    ):
-        journal = PaperTradeJournal(cycle_config.paper_trade_journal_path)
+    #     against the in-memory book captured during the cycle, then persist it.
+    #     Per-candidate try/except isolation applies to paper execution itself;
+    #     sink failures propagate so DB-first persistence cannot silently fall
+    #     back to a durable JSONL compatibility record. Default-off: when
+    #     paper_execution_config is None this block is skipped entirely.
+    if cycle_config.paper_execution_config is not None and screening is not None:
+        journal = (
+            PaperTradeJournal(cycle_config.paper_trade_journal_path)
+            if cycle_config.paper_trade_journal_path is not None
+            else None
+        )
         paper_pass_config = cycle_config.paper_execution_config
         for candidate in screening.candidates:
             if candidate.screening_status != "screening_ready":
@@ -679,9 +684,10 @@ def run_strategy_cycle(
             except Exception:
                 continue
             if paper_result.record is not None:
-                journal.append(paper_result.record)
                 if paper_trade_record_sink is not None:
                     paper_trade_record_sink(paper_result.record)
+                if journal is not None:
+                    journal.append(paper_result.record)
 
     # 5. Assemble + validate invariants in __post_init__.
     return PaperStrategyCycleReport(

@@ -1571,7 +1571,7 @@ def main(
     cycle.add_argument(
         "--paper-journal",
         type=Path,
-        default=Path("artifacts/paper-trades.jsonl"),
+        default=None,
         dest="paper_journal",
     )
 
@@ -2773,6 +2773,16 @@ def main(
                         )
                     except Exception as exc:
                         _raise_redacted_db_sink_error(exc, dsn=db_dsn)
+
+            if (
+                args.paper_execute
+                and not paper_trade_db_config.enabled
+                and args.paper_journal is None
+            ):
+                raise ValueError(
+                    "paper trade DB persistence or --paper-journal is required "
+                    "for --paper-execute",
+                )
 
             scan_config = MarketScanConfig(
                 limit=args.limit,
@@ -6220,15 +6230,12 @@ def _build_default_cycle_config(
         )
     if not paper_execute:
         return base
-    journal_path = paper_journal if paper_journal is not None else Path(
-        "artifacts/paper-trades.jsonl",
-    )
     return replace(
         base,
         paper_execution_config=PaperExecutionConfig(
             config_version="paper-execution-v1",
         ),
-        paper_trade_journal_path=journal_path,
+        paper_trade_journal_path=paper_journal,
     )
 
 
