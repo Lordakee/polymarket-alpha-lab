@@ -706,6 +706,7 @@ def test_public_exports_include_all_team_forecast_psycopg_wrappers(
     adapter_module: types.ModuleType,
 ) -> None:
     assert set(adapter_module.__all__) == {
+        "insert_team_market_route_with_psycopg",
         "insert_team_forecast_with_psycopg",
         "load_team_forecasts_with_psycopg",
         "insert_team_forecast_evidence_with_psycopg",

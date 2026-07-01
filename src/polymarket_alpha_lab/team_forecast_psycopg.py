@@ -15,15 +15,19 @@ from polymarket_alpha_lab.team_forecast_db_row import TeamForecastDbRow
 from polymarket_alpha_lab.team_forecast_db_row import TeamForecastEvidenceDbRow
 from polymarket_alpha_lab.team_forecast_db_row import TeamForecastOutcome
 from polymarket_alpha_lab.team_forecast_db_row import TeamForecastOutcomeDbRow
+from polymarket_alpha_lab.team_forecast_db_row import TeamMarketRouteDbRow
 from polymarket_alpha_lab.team_forecast_db_row import team_forecast_evidence_to_db_row
 from polymarket_alpha_lab.team_forecast_db_row import team_forecast_outcome_to_db_row
 from polymarket_alpha_lab.team_forecast_db_row import team_forecast_to_db_row
+from polymarket_alpha_lab.team_forecast_db_row import team_route_to_db_row
 from polymarket_alpha_lab.team_forecast_packet import TeamForecastEvidencePacket
 from polymarket_alpha_lab.team_forecast_packet import TeamForecastPacket
+from polymarket_alpha_lab.team_market_router import TeamMarketRouteReport
 
 
 try:
     from polymarket_alpha_lab.team_forecast_store import (
+        insert_team_market_route,
         insert_team_forecast,
         insert_team_forecast_evidence,
         insert_team_forecast_outcome,
@@ -34,6 +38,14 @@ try:
 except ModuleNotFoundError as exc:
     if exc.name != "polymarket_alpha_lab.team_forecast_store":
         raise
+
+    def insert_team_market_route(
+        connection: Any,
+        row: TeamMarketRouteDbRow,
+        *,
+        table_name: str,
+    ) -> TeamMarketRouteDbRow:
+        raise RuntimeError("team forecast store module is required")
 
     def insert_team_forecast(
         connection: Any,
@@ -92,6 +104,23 @@ except ModuleNotFoundError as exc:
 
 
 _T = TypeVar("_T")
+
+
+def insert_team_market_route_with_psycopg(
+    dsn: str,
+    report: TeamMarketRouteReport,
+    *,
+    table_name: str,
+) -> TeamMarketRouteDbRow:
+    row = team_route_to_db_row(report)
+    return _with_owned_connection(
+        dsn,
+        lambda connection: insert_team_market_route(
+            connection,
+            row,
+            table_name=table_name,
+        ),
+    )
 
 
 def insert_team_forecast_with_psycopg(
@@ -323,6 +352,7 @@ def _adapt_json_params(params: tuple[Any, ...], jsonb_adapter: type[Any]) -> tup
 
 
 __all__ = (
+    "insert_team_market_route_with_psycopg",
     "insert_team_forecast_evidence_with_psycopg",
     "insert_team_forecast_outcome_with_psycopg",
     "insert_team_forecast_with_psycopg",
