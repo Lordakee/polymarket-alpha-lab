@@ -76,6 +76,27 @@ from polymarket_alpha_lab.strategy_risk_audit import (
     PaperStrategyRiskAuditReport,
     build_paper_strategy_risk_audit_report,
 )
+from polymarket_alpha_lab.team_taxonomy import TeamProfile, build_default_team_profiles
+from polymarket_alpha_lab.team_market_router import (
+    TeamMarketRouteConfig,
+    TeamMarketRouteInput,
+    TeamMarketRouteReport,
+    build_team_market_route_report,
+)
+from polymarket_alpha_lab.team_forecast_packet import (
+    TeamForecastEvidencePacket,
+    TeamForecastPacket,
+    team_forecast_to_side_edge_input,
+)
+from polymarket_alpha_lab.team_performance_summary import (
+    TeamPerformanceSummaryReport,
+    build_team_performance_summary_report,
+)
+from polymarket_alpha_lab.crypto_btc_team import (
+    CryptoBtcEvidenceInput,
+    CryptoBtcTeamConfig,
+    build_crypto_btc_team_forecast,
+)
 from polymarket_alpha_lab.project_screening import (
     PaperProjectScreeningCandidate,
     PaperProjectScreeningConfig,
@@ -794,6 +815,44 @@ def test_strategy_risk_audit_public_api_exports():
         lab.build_paper_strategy_risk_audit_report
         is build_paper_strategy_risk_audit_report
     )
+
+
+def test_team_public_api_exports():
+    expected_exports = {
+        "CryptoBtcEvidenceInput",
+        "CryptoBtcTeamConfig",
+        "TeamForecastEvidencePacket",
+        "TeamForecastPacket",
+        "TeamMarketRouteConfig",
+        "TeamMarketRouteInput",
+        "TeamMarketRouteReport",
+        "TeamPerformanceSummaryReport",
+        "TeamProfile",
+        "build_crypto_btc_team_forecast",
+        "build_default_team_profiles",
+        "build_team_market_route_report",
+        "build_team_performance_summary_report",
+        "team_forecast_to_side_edge_input",
+    }
+
+    assert expected_exports <= set(lab.__all__)
+    assert lab.CryptoBtcEvidenceInput is CryptoBtcEvidenceInput
+    assert lab.CryptoBtcTeamConfig is CryptoBtcTeamConfig
+    assert lab.TeamForecastEvidencePacket is TeamForecastEvidencePacket
+    assert lab.TeamForecastPacket is TeamForecastPacket
+    assert lab.TeamMarketRouteConfig is TeamMarketRouteConfig
+    assert lab.TeamMarketRouteInput is TeamMarketRouteInput
+    assert lab.TeamMarketRouteReport is TeamMarketRouteReport
+    assert lab.TeamPerformanceSummaryReport is TeamPerformanceSummaryReport
+    assert lab.TeamProfile is TeamProfile
+    assert lab.build_crypto_btc_team_forecast is build_crypto_btc_team_forecast
+    assert lab.build_default_team_profiles is build_default_team_profiles
+    assert lab.build_team_market_route_report is build_team_market_route_report
+    assert (
+        lab.build_team_performance_summary_report
+        is build_team_performance_summary_report
+    )
+    assert lab.team_forecast_to_side_edge_input is team_forecast_to_side_edge_input
 
 
 def test_paper_execution_public_api_exports():

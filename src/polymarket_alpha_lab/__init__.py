@@ -83,6 +83,27 @@ from polymarket_alpha_lab.strategy_risk_audit import (
     PaperStrategyRiskAuditReport,
     build_paper_strategy_risk_audit_report,
 )
+from polymarket_alpha_lab.team_taxonomy import TeamProfile, build_default_team_profiles
+from polymarket_alpha_lab.team_market_router import (
+    TeamMarketRouteConfig,
+    TeamMarketRouteInput,
+    TeamMarketRouteReport,
+    build_team_market_route_report,
+)
+from polymarket_alpha_lab.team_forecast_packet import (
+    TeamForecastEvidencePacket,
+    TeamForecastPacket,
+    team_forecast_to_side_edge_input,
+)
+from polymarket_alpha_lab.team_performance_summary import (
+    TeamPerformanceSummaryReport,
+    build_team_performance_summary_report,
+)
+from polymarket_alpha_lab.crypto_btc_team import (
+    CryptoBtcEvidenceInput,
+    CryptoBtcTeamConfig,
+    build_crypto_btc_team_forecast,
+)
 from polymarket_alpha_lab.domain import (
     MarketScore,
     MarketSnapshot,
@@ -502,6 +523,8 @@ __all__ = [
     "PaperStrategyRiskAuditConfig",
     "PaperStrategyRiskAuditGateResult",
     "PaperStrategyRiskAuditReport",
+    "CryptoBtcEvidenceInput",
+    "CryptoBtcTeamConfig",
     "PaperAnalyticsLog",
     "PaperAnalyticsReport",
     "PaperBookImbalanceForecastConfig",
@@ -565,6 +588,13 @@ __all__ = [
     "RiskGateConfig",
     "RiskGateDecision",
     "RiskGateReason",
+    "TeamForecastEvidencePacket",
+    "TeamForecastPacket",
+    "TeamMarketRouteConfig",
+    "TeamMarketRouteInput",
+    "TeamMarketRouteReport",
+    "TeamPerformanceSummaryReport",
+    "TeamProfile",
     "TradeProposalEvidenceComparisonConfig",
     "TradeProposalEvidenceComparisonFindingRow",
     "TradeProposalEvidenceComparisonGateResult",
@@ -700,6 +730,10 @@ __all__ = [
     "build_paper_trade_cost_audit_report",
     "check_outcomes",
     "build_paper_strategy_risk_audit_report",
+    "build_crypto_btc_team_forecast",
+    "build_default_team_profiles",
+    "build_team_market_route_report",
+    "build_team_performance_summary_report",
     "build_trade_proposal_evidence_comparison_history_batch_health_report",
     "build_trade_proposal_evidence_comparison_history_batch_health_trend_report",
     "build_trade_proposal_evidence_comparison_history_batch_health_trend_batch_report",
@@ -728,4 +762,5 @@ __all__ = [
     "mark_paper_portfolio_nav",
     "run_strategy_cycle",
     "simulate_order_book_fill",
+    "team_forecast_to_side_edge_input",
 ]
