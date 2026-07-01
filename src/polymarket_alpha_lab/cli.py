@@ -30,7 +30,7 @@ from polymarket_alpha_lab.forecast_provider import PaperForecastConfig
 from polymarket_alpha_lab.forecast_evidence import PaperForecastEvidenceLog
 from polymarket_alpha_lab.llm_forecast import PaperLLMForecastConfig
 from polymarket_alpha_lab.llm_research_transport import GLMChatTransport
-from polymarket_alpha_lab.journal import PaperTradeJournal
+from polymarket_alpha_lab.journal import PaperTradeJournal, PaperTradeRecord
 from polymarket_alpha_lab.local_observability_trends import (
     LocalObservabilityTrendsConfig,
     LocalObservabilityTrendsReport,
@@ -2963,6 +2963,27 @@ def main(
     if args.command == "cost-audit":
         try:
             cost_audit_report_sink = None
+            paper_trade_source_records = None
+            paper_trade_db_config = from_paper_trade_journal_db_env()
+            if paper_trade_db_config.enabled:
+                paper_trade_dsn = paper_trade_db_config.dsn
+                if paper_trade_dsn is None:
+                    raise ValueError("cost-audit paper trade DB source requires a DB DSN")
+                try:
+                    paper_trade_source_records = tuple(
+                        reversed(
+                            paper_trade_record_db_loader(
+                                dsn=paper_trade_dsn,
+                                table_name=paper_trade_db_config.table_name,
+                            ),
+                        ),
+                    )
+                except Exception as exc:
+                    _raise_redacted_db_read_error(
+                        exc,
+                        dsn=paper_trade_dsn,
+                        table_name=paper_trade_db_config.table_name,
+                    )
             if args.persist:
                 paper_trade_cost_audit_db_config = from_paper_trade_cost_audit_db_env()
                 if not paper_trade_cost_audit_db_config.enabled:
@@ -2995,6 +3016,7 @@ def main(
             report = _run_cost_audit(
                 trade_log=args.trade_log,
                 runner=cost_audit_runner,
+                trade_records=paper_trade_source_records,
             )
             if cost_audit_report_sink is not None:
                 cost_audit_report_sink(report)
@@ -8127,10 +8149,11 @@ def _run_cost_audit(
     *,
     trade_log: Path,
     runner: CostAuditRunner | None,
+    trade_records: tuple[PaperTradeRecord, ...] | None = None,
 ) -> PaperTradeCostAuditReport:
     """Read typed paper trades and build the paper-only cost audit report."""
 
-    trade_records = PaperTradeJournal.read(trade_log)
+    trade_records = PaperTradeJournal.read(trade_log) if trade_records is None else trade_records
     config = PaperTradeCostAuditConfig(config_version="paper-trade-cost-audit-v0")
     generated_at = datetime.now(UTC)
     if runner is not None:

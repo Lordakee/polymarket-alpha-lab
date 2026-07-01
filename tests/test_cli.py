@@ -7237,6 +7237,105 @@ def test_cost_audit_cli_reads_trade_log_and_prints_summary_without_client(
     assert "negative_cost_adjusted_edge=0" in captured.out
 
 
+def test_cost_audit_cli_wires_paper_trade_db_source_when_env_enabled(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    from tests.test_check_outcomes_paper_trade_source import _record
+
+    trade_dsn = "postgresql://paper-trade@localhost/db"
+    table_name = "paper_trade_archive"
+    monkeypatch.setenv(PAPER_TRADE_JOURNAL_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(PAPER_TRADE_JOURNAL_DB_DSN_ENV_VAR, trade_dsn)
+    monkeypatch.setenv(PAPER_TRADE_JOURNAL_DB_TABLE_ENV_VAR, table_name)
+    newest = _record(
+        packet_id="packet-newest",
+        condition_id="0xnewest",
+        token_id="222",
+        decision_at=datetime(2026, 6, 29, 13, 0, tzinfo=UTC),
+    )
+    older = _record(
+        packet_id="packet-older",
+        condition_id="0xolder",
+        token_id="111",
+        decision_at=datetime(2026, 6, 29, 12, 0, tzinfo=UTC),
+    )
+    loader_calls = []
+    runner_calls = []
+
+    def fake_loader(*, dsn, table_name):
+        loader_calls.append((dsn, table_name))
+        return (newest, older)
+
+    def fake_cost_audit_runner(*, trade_records, config, generated_at):
+        runner_calls.append(
+            {
+                "trade_records": trade_records,
+                "config": config,
+                "generated_at": generated_at,
+            },
+        )
+        return _empty_cost_audit_report()
+
+    exit_code = main(
+        [
+            "cost-audit",
+            "--trade-log",
+            str(tmp_path / "missing-paper-trades.jsonl"),
+        ],
+        cost_audit_runner=fake_cost_audit_runner,
+        paper_trade_record_db_loader=fake_loader,
+        client_factory=lambda: "fake-client",
+    )
+
+    assert exit_code == 0
+    assert loader_calls == [(trade_dsn, table_name)]
+    assert len(runner_calls) == 1
+    assert runner_calls[0]["trade_records"] == (older, newest)
+    assert isinstance(runner_calls[0]["config"], PaperTradeCostAuditConfig)
+    captured = capsys.readouterr()
+    assert "cost-audit:" in captured.out
+    assert trade_dsn not in captured.out
+    assert trade_dsn not in captured.err
+    assert table_name not in captured.out
+    assert table_name not in captured.err
+
+
+def test_cost_audit_cli_redacts_paper_trade_db_source_failure(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    trade_dsn = "postgresql://paper-trade@localhost/db"
+    table_name = "paper_trade_archive"
+    monkeypatch.setenv(PAPER_TRADE_JOURNAL_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(PAPER_TRADE_JOURNAL_DB_DSN_ENV_VAR, trade_dsn)
+    monkeypatch.setenv(PAPER_TRADE_JOURNAL_DB_TABLE_ENV_VAR, table_name)
+
+    def broken_loader(*, dsn, table_name):
+        raise RuntimeError(f"failed reading {dsn} table={table_name}")
+
+    exit_code = main(
+        [
+            "cost-audit",
+            "--trade-log",
+            str(tmp_path / "missing-paper-trades.jsonl"),
+        ],
+        cost_audit_runner=lambda **_: _empty_cost_audit_report(),
+        paper_trade_record_db_loader=broken_loader,
+    )
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert trade_dsn not in captured.out
+    assert trade_dsn not in captured.err
+    assert table_name not in captured.out
+    assert table_name not in captured.err
+    assert "<redacted-dsn>" in captured.err
+    assert "<redacted-table>" in captured.err
+
+
 def test_cost_audit_cli_returns_one_when_runner_fails(tmp_path, capsys):
     def broken_cost_audit_runner(*, trade_records, config, generated_at):
         raise RuntimeError("cost audit failed")

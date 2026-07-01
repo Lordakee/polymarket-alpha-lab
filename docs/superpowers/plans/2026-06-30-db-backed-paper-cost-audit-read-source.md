@@ -443,152 +443,42 @@ Expected: PASS for all selected tests.
 ## Task 2: CLI Integration Handoff
 
 **Files:**
-- Deferred shared file: `src/polymarket_alpha_lab/cli.py`
-- Deferred shared tests: `tests/test_cli.py`, `tests/test_cli_cost_audit_persistence.py`, `tests/test_cli_cost_audit_db_trend.py`
+- Modified shared file: `src/polymarket_alpha_lab/cli.py`
+- Modified shared tests: `tests/test_cli.py`
 
 **Interfaces:**
 - Consumes:
-  - `load_paper_trade_journal_db_cost_audit_report(...) -> PaperTradeCostAuditReport`
+  - Existing `from_paper_trade_journal_db_env() -> SupabasePaperTradeJournalConfig`
+  - Existing `paper_trade_record_db_loader(dsn=..., table_name=...) -> tuple[PaperTradeRecord, ...]`
   - Existing `PaperTradeJournal.read(path) -> tuple[PaperTradeRecord, ...]`
-  - Existing local DSN validation from `SupabasePaperTradeJournalConfig` or a new read-source config with the same `validate_local_postgres_dsn` boundary.
 - Produces:
-  - A mutually exclusive read-source selection that uses DB records only when explicitly requested and otherwise continues reading JSONL.
+  - Env-driven read-source selection: DB records are used only when the local paper trade journal DB env is enabled; otherwise JSONL compatibility remains unchanged.
+  - New DB rows are reversed from newest-first store order into oldest-first deterministic replay order before cost-audit aggregation.
+  - DB read failures fail closed through the existing DSN/table redaction helper, with no JSONL fallback and no new DSN CLI flags.
 
-- [ ] **Step 1: Confirm CLI file ownership**
+- [x] **Step 1: Confirm CLI file ownership**
 
 Run:
 
 ```bash
-git status --short src/polymarket_alpha_lab/cli.py tests/test_cli.py tests/test_cli_cost_audit_persistence.py tests/test_cli_cost_audit_db_trend.py
+git status --short src/polymarket_alpha_lab/cli.py tests/test_cli.py
 ```
 
-Expected before editing: either no output for those files, or an explicit handoff from the worker who owns the dirty changes.
+Expected before editing: only this cost-audit WIP owns these two files.
 
-- [ ] **Step 2: Add tests for explicit DB source selection**
+- [x] **Step 2: Add tests for env-driven DB source selection**
 
-In the CLI test file owned by the implementer, add a test with this shape:
+Add focused CLI tests that enable `POLYMARKET_ALPHA_LAB_PAPER_TRADE_JOURNAL_DB_ENABLED=true`, set a local DSN and custom table name, inject a fake `paper_trade_record_db_loader`, assert the loader receives the DSN/table, assert the runner receives typed records in oldest-first replay order, and assert stdout/stderr do not leak DSN or table values.
 
-```python
-def test_cost_audit_cli_db_read_source_uses_local_paper_trade_journal_without_jsonl(
-    monkeypatch,
-    tmp_path,
-    capsys,
-):
-    dsn = "postgresql://paper-journal:secret@localhost:54322/db"
-    monkeypatch.setenv("POLYMARKET_ALPHA_LAB_PAPER_TRADE_JOURNAL_DB_ENABLED", "true")
-    monkeypatch.setenv("POLYMARKET_ALPHA_LAB_PAPER_TRADE_JOURNAL_DB_DSN", dsn)
-    monkeypatch.setenv(
-        "POLYMARKET_ALPHA_LAB_PAPER_TRADE_JOURNAL_DB_TABLE",
-        "paper_trade_journal_archive",
-    )
-    jsonl_path = tmp_path / "paper-trades.jsonl"
-    read_calls = []
-    db_source_calls = []
+- [x] **Step 3: Preserve JSONL fallback and redact DB failures**
 
-    def forbidden_jsonl_read(path):
-        read_calls.append(path)
-        raise AssertionError("JSONL read must not run for explicit DB source")
+Keep the existing JSONL `cost-audit` coverage for the disabled-env branch. Add a companion failure test where the injected DB loader raises an exception containing the DSN/table and assert the CLI returns `1` while printing only `<redacted-dsn>` and `<redacted-table>`.
 
-    def fake_db_source(**kwargs):
-        db_source_calls.append(kwargs)
-        return PaperTradeCostAuditReport(
-            generated_at=datetime(2026, 6, 17, 10, 0, tzinfo=UTC),
-            config_version="paper-trade-cost-audit-v0",
-            trade_count=0,
-            total_filled_size=Decimal("0"),
-            total_requested_size=Decimal("0"),
-            fill_rate=None,
-            mean_theoretical_edge=None,
-            mean_cost_adjusted_edge=None,
-            mean_edge_cost_drag=None,
-            total_edge_cost_drag=None,
-            mean_research_slippage=None,
-            mean_fill_slippage=None,
-            partial_fill_count=0,
-            negative_cost_adjusted_edge_count=0,
-            largest_single_trade_cost_drag=None,
-        )
+- [x] **Step 4: Wire CLI only after the tests fail for the expected missing option/dependency reason**
 
-    exit_code = main(
-        [
-            "cost-audit",
-            "--trade-log",
-            str(jsonl_path),
-            "--read-source",
-            "db",
-        ],
-        paper_trade_journal_reader=forbidden_jsonl_read,
-        paper_trade_cost_audit_db_read_source=fake_db_source,
-        client_factory=lambda: (_ for _ in ()).throw(
-            AssertionError("client should not be constructed"),
-        ),
-    )
+Wire `cost-audit` to the existing env-driven paper trade journal DB config. The JSONL branch keeps the current `PaperTradeJournal.read(trade_log)` path when the paper trade journal DB env is disabled. The DB branch validates the journal DB config with the local-only DSN boundary, calls the existing paper trade DB loader, reverses newest-first rows into oldest-first deterministic replay order, redacts DSN/table read failures, and adds no file writes or DSN CLI flags.
 
-    assert exit_code == 0
-    assert read_calls == []
-    assert len(db_source_calls) == 1
-    assert db_source_calls[0]["dsn"] == dsn
-    assert db_source_calls[0]["table_name"] == "paper_trade_journal_archive"
-    captured = capsys.readouterr()
-    assert dsn not in captured.out
-    assert dsn not in captured.err
-```
-
-- [ ] **Step 3: Preserve JSONL fallback with an explicit regression**
-
-Add a companion test:
-
-```python
-def test_cost_audit_cli_keeps_jsonl_fallback_when_db_source_not_requested(
-    monkeypatch,
-    tmp_path,
-    capsys,
-):
-    monkeypatch.setenv(
-        "POLYMARKET_ALPHA_LAB_PAPER_TRADE_JOURNAL_DB_ENABLED",
-        "not-a-bool",
-    )
-    trade_log = tmp_path / "paper-trades.jsonl"
-    trade_log.write_text("", encoding="utf-8")
-    db_source_calls = []
-
-    exit_code = main(
-        [
-            "cost-audit",
-            "--trade-log",
-            str(trade_log),
-        ],
-        cost_audit_runner=lambda **kwargs: PaperTradeCostAuditReport(
-            generated_at=datetime(2026, 6, 17, 10, 0, tzinfo=UTC),
-            config_version="paper-trade-cost-audit-v0",
-            trade_count=0,
-            total_filled_size=Decimal("0"),
-            total_requested_size=Decimal("0"),
-            fill_rate=None,
-            mean_theoretical_edge=None,
-            mean_cost_adjusted_edge=None,
-            mean_edge_cost_drag=None,
-            total_edge_cost_drag=None,
-            mean_research_slippage=None,
-            mean_fill_slippage=None,
-            partial_fill_count=0,
-            negative_cost_adjusted_edge_count=0,
-            largest_single_trade_cost_drag=None,
-        ),
-        paper_trade_cost_audit_db_read_source=lambda **kwargs: db_source_calls.append(kwargs),
-    )
-
-    assert exit_code == 0
-    assert db_source_calls == []
-    captured = capsys.readouterr()
-    assert "cost-audit:" in captured.out
-```
-
-- [ ] **Step 4: Wire CLI only after the tests fail for the expected missing option/dependency reason**
-
-Add a `--read-source {jsonl,db}` option or equivalent explicit source selector to the cost-audit command. The JSONL branch must keep the current `PaperTradeJournal.read(trade_log)` path. The DB branch must validate the journal DB config with the local-only DSN boundary and call the new helper through a psycopg-owned connection adapter, without adding any file writes.
-
-- [ ] **Step 5: Run CLI and scope tests**
+- [x] **Step 5: Run CLI and scope tests**
 
 Run:
 
@@ -600,6 +490,6 @@ Expected: PASS for the owned CLI tests and the new helper tests, with no DSN lea
 
 ## Self-Review
 
-- Spec coverage: Task 1 covers the pure DB read source, Decimal-only paper records, read-only behavior, and no live/auth/wallet/order mutation imports. Task 2 covers explicit integration while preserving JSONL fallback/export/replay.
+- Spec coverage: Task 1 covers the pure DB read source, Decimal-only paper records, read-only behavior, and no live/auth/wallet/order mutation imports. Task 2 covers env-driven CLI integration while preserving JSONL fallback/export/replay when the local paper trade journal DB env is disabled.
 - Placeholder scan: This plan names concrete files, commands, signatures, and expected test results. It avoids unspecified future work inside implemented tasks.
 - Type consistency: `load_paper_trade_journal_db_cost_audit_report` uses `datetime`, `str`, `Any`, optional string filters, optional positive integer limit, and returns `PaperTradeCostAuditReport`, matching existing cost-audit and journal-store interfaces.
