@@ -11,6 +11,10 @@ from polymarket_alpha_lab.paper_trade_cost_audit_store import (
     insert_paper_trade_cost_audit_report,
     load_paper_trade_cost_audit_reports,
 )
+from polymarket_alpha_lab.supabase_local_dsn import validate_local_postgres_dsn
+from polymarket_alpha_lab.supabase_paper_trade_cost_audit_config import (
+    PAPER_TRADE_COST_AUDIT_DB_DSN_ENV_VAR,
+)
 
 
 _T = TypeVar("_T")
@@ -51,6 +55,10 @@ def load_paper_trade_cost_audit_reports_with_psycopg(
 
 
 def _with_owned_connection(dsn: str, operation: Callable[[Any], _T]) -> _T:
+    validate_local_postgres_dsn(
+        dsn,
+        env_var_name=PAPER_TRADE_COST_AUDIT_DB_DSN_ENV_VAR,
+    )
     jsonb_adapter = _jsonb_adapter()
     connection = _PsycopgJsonConnection(_connect(dsn), jsonb_adapter)
     try:

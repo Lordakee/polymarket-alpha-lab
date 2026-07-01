@@ -6,6 +6,9 @@ from typing import Any
 import pytest
 
 
+LOCAL_DSN = "postgresql://postgres:postgres@localhost:54322/postgres"
+
+
 TRANSACTIONAL_MODULES = (
     "polymarket_alpha_lab.action_gated_strategy_recommendation_queue_decision_support_psycopg",
     "polymarket_alpha_lab.action_gated_strategy_recommendation_queue_decision_support_trend_psycopg",
@@ -100,7 +103,7 @@ def test_transactional_psycopg_adapter_cleanup_does_not_mask_store_exception(
         raise ValueError("store failed without dsn")
 
     with pytest.raises(ValueError) as exc_info:
-        module._with_owned_connection("postgresql://user:secret@example.invalid/db", fail_operation)
+        module._with_owned_connection(LOCAL_DSN, fail_operation)
 
     assert str(exc_info.value) == "store failed without dsn"
     assert connection.commit_count == 0
@@ -119,7 +122,7 @@ def test_transactional_psycopg_adapter_cleanup_does_not_mask_commit_exception(
 
     with pytest.raises(RuntimeError) as exc_info:
         module._with_owned_connection(
-            "postgresql://user:secret@example.invalid/db",
+            LOCAL_DSN,
             lambda connection_arg: "ok",
         )
 
@@ -139,7 +142,7 @@ def test_transactional_psycopg_adapter_close_failure_does_not_replace_success(
     _install_owned_connection_dependencies(monkeypatch, module, connection)
 
     result = module._with_owned_connection(
-        "postgresql://user:secret@example.invalid/db",
+        LOCAL_DSN,
         lambda connection_arg: "ok",
     )
 
@@ -162,7 +165,7 @@ def test_read_only_psycopg_adapter_close_does_not_mask_operation_exception(
         raise ValueError("read failed without dsn")
 
     with pytest.raises(ValueError) as exc_info:
-        module._with_owned_connection("postgresql://user:secret@example.invalid/db", fail_operation)
+        module._with_owned_connection(LOCAL_DSN, fail_operation)
 
     assert str(exc_info.value) == "read failed without dsn"
     assert connection.close_count == 1
@@ -178,7 +181,7 @@ def test_read_only_psycopg_adapter_close_failure_does_not_replace_success(
     _install_owned_connection_dependencies(monkeypatch, module, connection)
 
     result = module._with_owned_connection(
-        "postgresql://user:secret@example.invalid/db",
+        LOCAL_DSN,
         lambda connection_arg: "ok",
     )
 

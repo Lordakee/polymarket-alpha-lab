@@ -9,7 +9,8 @@ from typing import Any
 import pytest
 
 
-SECRET_DSN = "postgresql://fake.example.invalid/db"
+LOCAL_DSN = "postgresql://postgres:postgres@localhost:54322/postgres"
+REMOTE_SECRET_DSN = "postgresql://sensitive-token@fake.example.invalid/db"
 
 
 @dataclass(frozen=True)
@@ -115,13 +116,13 @@ def test_insert_opens_psycopg_connection_delegates_commits_and_closes(
     )
 
     inserted = adapter_module.insert_paper_trade_cost_audit_report_with_psycopg(
-        SECRET_DSN,
+        LOCAL_DSN,
         report,
         table_name="paper_trade_cost_audit_archive",
     )
 
     assert inserted == row
-    assert connect_calls == [SECRET_DSN]
+    assert connect_calls == [LOCAL_DSN]
     store_connection, store_report, store_table_name = store_calls[0]
     assert store_connection is not connection
     assert store_connection.connection is connection
@@ -163,14 +164,14 @@ def test_load_opens_psycopg_connection_delegates_query_options_commits_and_close
     )
 
     loaded = adapter_module.load_paper_trade_cost_audit_reports_with_psycopg(
-        SECRET_DSN,
+        LOCAL_DSN,
         config_version="paper-trade-cost-audit-db-v0",
         limit=10,
         table_name="paper_trade_cost_audit_archive",
     )
 
     assert loaded == (report,)
-    assert connect_calls == [SECRET_DSN]
+    assert connect_calls == [LOCAL_DSN]
     store_connection, config_version, limit, table_name = store_calls[0]
     assert store_connection is not connection
     assert store_connection.connection is connection
@@ -217,11 +218,11 @@ def test_insert_adapts_json_values_for_psycopg_without_wrapping_scalars(
     )
 
     adapter_module.insert_paper_trade_cost_audit_report_with_psycopg(
-        SECRET_DSN,
+        LOCAL_DSN,
         FakeReport(config_version="paper-trade-cost-audit-db-v0"),
     )
 
-    assert connect_calls == [SECRET_DSN]
+    assert connect_calls == [LOCAL_DSN]
     assert connection.cursor_count == 1
     assert connection.cursor_instance.close_count == 1
     _, params = connection.cursor_instance.calls[0]
@@ -254,7 +255,7 @@ def test_insert_rolls_back_closes_and_reraises_store_exception(
 
     with pytest.raises(ValueError, match="store failed without dsn"):
         adapter_module.insert_paper_trade_cost_audit_report_with_psycopg(
-            SECRET_DSN,
+            LOCAL_DSN,
             FakeReport(config_version="paper-trade-cost-audit-db-v0"),
         )
 
@@ -287,7 +288,7 @@ def test_load_rolls_back_closes_and_reraises_commit_exception(
     )
 
     with pytest.raises(RuntimeError, match="commit failed without dsn"):
-        adapter_module.load_paper_trade_cost_audit_reports_with_psycopg(SECRET_DSN)
+        adapter_module.load_paper_trade_cost_audit_reports_with_psycopg(LOCAL_DSN)
 
     assert connection.commit_count == 1
     assert connection.rollback_count == 1
@@ -304,12 +305,62 @@ def test_connect_failure_raises_clean_error_without_dsn(
     _install_fake_psycopg(monkeypatch, connect=fail_connect)
 
     with pytest.raises(RuntimeError) as exc_info:
-        adapter_module.load_paper_trade_cost_audit_reports_with_psycopg(SECRET_DSN)
+        adapter_module.load_paper_trade_cost_audit_reports_with_psycopg(LOCAL_DSN)
 
     assert "failed to connect" in str(exc_info.value)
     assert "postgresql://" not in str(exc_info.value)
     assert "secret" not in str(exc_info.value)
     assert "example.invalid" not in str(exc_info.value)
+
+
+def test_remote_dsn_is_rejected_before_connect_without_echoing_secret(
+    monkeypatch: pytest.MonkeyPatch,
+    adapter_module: types.ModuleType,
+) -> None:
+    connect_calls: list[str] = []
+    _install_fake_psycopg(
+        monkeypatch,
+        connect=lambda dsn: connect_calls.append(dsn) or FakeConnection(),
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        adapter_module.load_paper_trade_cost_audit_reports_with_psycopg(
+            REMOTE_SECRET_DSN,
+        )
+
+    assert connect_calls == []
+    message = str(exc_info.value)
+    assert "local Postgres/Supabase" in message
+    assert REMOTE_SECRET_DSN not in message
+    assert "sensitive-token" not in message
+    assert "fake.example.invalid" not in message
+
+
+def test_remote_dsn_is_rejected_before_importing_psycopg(
+    monkeypatch: pytest.MonkeyPatch,
+    adapter_module: types.ModuleType,
+) -> None:
+    monkeypatch.delitem(sys.modules, "psycopg", raising=False)
+
+    class MissingPsycopgFinder:
+        def find_spec(self, fullname: str, path: Any = None, target: Any = None) -> None:
+            if fullname == "psycopg":
+                raise ModuleNotFoundError("No module named 'psycopg'", name="psycopg")
+            return None
+
+    finder = MissingPsycopgFinder()
+    monkeypatch.setattr(sys, "meta_path", [finder, *sys.meta_path])
+
+    with pytest.raises(ValueError) as exc_info:
+        adapter_module.load_paper_trade_cost_audit_reports_with_psycopg(
+            REMOTE_SECRET_DSN,
+        )
+
+    message = str(exc_info.value)
+    assert "local Postgres/Supabase" in message
+    assert REMOTE_SECRET_DSN not in message
+    assert "sensitive-token" not in message
+    assert "fake.example.invalid" not in message
 
 
 def test_missing_psycopg_raises_clean_error_without_import_time_dependency(
@@ -328,7 +379,7 @@ def test_missing_psycopg_raises_clean_error_without_import_time_dependency(
     monkeypatch.setattr(sys, "meta_path", [finder, *sys.meta_path])
 
     with pytest.raises(RuntimeError) as exc_info:
-        adapter_module.load_paper_trade_cost_audit_reports_with_psycopg(SECRET_DSN)
+        adapter_module.load_paper_trade_cost_audit_reports_with_psycopg(LOCAL_DSN)
 
     assert "psycopg is required" in str(exc_info.value)
     assert "postgresql://" not in str(exc_info.value)

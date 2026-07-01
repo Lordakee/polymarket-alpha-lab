@@ -47,6 +47,7 @@ ALLOWED_IMPORT_MODULES_BY_FILE = {
     / "paper_trade_cost_audit_psycopg.py": {
         "psycopg",
         "psycopg.types.json",
+        "polymarket_alpha_lab.supabase_paper_trade_cost_audit_config",
     },
 }
 FORBIDDEN_IMPORT_PREFIXES = {
