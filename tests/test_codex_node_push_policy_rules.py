@@ -31,11 +31,14 @@ def test_codex_node_push_policy_preserves_verified_push_gate():
     assert "python compile verification passes" in normalized
     assert "codegraph is synced" in normalized
     assert "secret scan finds no leaked credentials or tokens" in normalized
-    assert "post-node external review gate passes through local opencode" in normalized
+    assert "post-node external review gate passes through claude code" in normalized
+    assert "claude-opus-4-8" in normalized
+    assert "thinking level `max`" in normalized
+    assert "opencode" not in normalized.split("## omo / sisyphus session workflow", 1)[0]
     _assert_phrases_appear_in_order(
         normalized,
         (
-            "the configured post-node external review gate passes through local opencode",
+            "the configured post-node external review gate passes through claude code",
             "do not push half-finished work",
         ),
     )
@@ -54,7 +57,7 @@ def test_codex_node_push_policy_continues_after_verified_push_by_default():
     assert "user explicitly asks to stop or pause" in normalized
     assert normalized.index(
         "after a completed codex node is verified, committed, reviewed, and pushed to github",
-    ) < instructions.index("## omo / sisyphus session workflow (opencode only — codex ignores this section)")
+    ) < normalized.index("## omo / sisyphus session workflow (historical)")
 
 
 def test_agent_coordination_defaults_capture_parallel_cap_and_conflict_rule():
