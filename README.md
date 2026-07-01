@@ -20,6 +20,8 @@ See [docs/team-agent-framework.md](docs/team-agent-framework.md) for the Phase 1
 
 For team diagnostics over those persisted rows, see [docs/team-diagnostics-readonly.md](docs/team-diagnostics-readonly.md). Diagnostics are a local Supabase/Postgres read-only Phase 1 paper/report-only path; live trading, auth, wallet, account, order, and exchange mutation surfaces remain forbidden.
 
+Team diagnostics snapshot history is also a Phase 1 paper-only/report-only/readonly local Supabase/Postgres surface. The `team_diagnostics_snapshots` table is internal report persistence for generated diagnostics snapshots only, configured with `POLYMARKET_ALPHA_LAB_TEAM_DIAGNOSTICS_SNAPSHOT_DB_ENABLED`, `POLYMARKET_ALPHA_LAB_TEAM_DIAGNOSTICS_SNAPSHOT_DB_DSN`, and `POLYMARKET_ALPHA_LAB_TEAM_DIAGNOSTICS_SNAPSHOT_DB_TABLE`; it is not live trading, auth, wallet, account, order, or exchange mutation infrastructure.
+
 ## Project Iron Rules
 
 - Persistent project data must use only the local Supabase/Postgres instance on this host. Do not add SQLite, Redis, Mongo, SQLAlchemy, hosted database assumptions, generic database abstraction layers, or file-backed database substitutes as durable persistence.

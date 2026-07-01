@@ -20,9 +20,9 @@ Do not add or route any of the following through diagnostics:
 - No order cancellation.
 - No order replacement.
 - No exchange mutation.
-- No database mutation from the diagnostics command path.
+- No database mutation from the baseline diagnostics read path.
 
-The only allowed inputs are already-persisted local database rows plus command-line filters such as team id and limit. The only allowed output is a local report, terminal summary, or future read-only artifact generated from those rows.
+The only allowed inputs are already-persisted local database rows plus command-line filters such as team id and limit. The baseline diagnostics command output is a local report or terminal summary. Snapshot persistence is allowed only for the planned internal report persistence path, and only as paper-only/report-only/readonly rows in local Supabase/Postgres.
 
 ## Data Source
 
@@ -37,6 +37,24 @@ Diagnostics read from these Team Forecast tables:
 - `team_forecast_outcomes`: resolved forecast outcomes, errors, Brier score, paper PnL fields, cost-adjusted return, and dispute flags.
 
 Diagnostics should treat rows with `paper_only`, `report_only`, and `readonly` markers as the canonical Phase 1 record shape. A diagnostics report should surface missing or unexpected markers as data-quality findings, not as a reason to repair rows in place.
+
+## Snapshot Persistence
+
+`team_diagnostics_snapshots` is the planned local Supabase/Postgres table for compact diagnostics snapshot history. It is internal report persistence, not a live strategy, not an exchange integration, and not a path for changing Team Forecast source rows.
+
+The table stores one generated snapshot per `report_sha256`, with generated/filter fields (`generated_at`, `team_id`, `market_slug`, `forecast_id`), source counts, compact diagnostics fields for memory, calibration, event template performance, source reliability, evidence quality, `reason_codes_json`, the canonical `payload_json`, hard Phase 1 flags, and `inserted_at`.
+
+The snapshot DB env surface is separate from the Team Forecast read-source env surface:
+
+- `POLYMARKET_ALPHA_LAB_TEAM_DIAGNOSTICS_SNAPSHOT_DB_ENABLED`
+- `POLYMARKET_ALPHA_LAB_TEAM_DIAGNOSTICS_SNAPSHOT_DB_DSN`
+- `POLYMARKET_ALPHA_LAB_TEAM_DIAGNOSTICS_SNAPSHOT_DB_TABLE`
+
+Default table name:
+
+- `POLYMARKET_ALPHA_LAB_TEAM_DIAGNOSTICS_SNAPSHOT_DB_TABLE` -> `team_diagnostics_snapshots`
+
+`POLYMARKET_ALPHA_LAB_TEAM_DIAGNOSTICS_SNAPSHOT_DB_DSN` must point to the same local Supabase/Postgres class of database accepted by `validate_local_postgres_dsn`. Keep the DSN in operator-managed environment injection; do not commit it and do not print it in reports or error output.
 
 ## What Diagnostics Evaluate
 
@@ -72,7 +90,9 @@ Evidence quality:
 
 ## Environment Surface
 
-The Team Forecast database env surface is owned by `supabase_team_forecast_config`. Diagnostics must use this same boundary and must not define a second durable-data configuration surface.
+The Team Forecast database env surface is owned by `supabase_team_forecast_config`. Baseline diagnostics reads must use this same boundary and must not define a second read-source configuration surface.
+
+For diagnostics input reads, use the Team Forecast database env surface owned by `supabase_team_forecast_config`. For optional diagnostics snapshot history, use only the snapshot env surface listed above and keep it local Supabase/Postgres.
 
 Public env var names:
 

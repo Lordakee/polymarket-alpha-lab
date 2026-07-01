@@ -143,6 +143,11 @@ from polymarket_alpha_lab.supabase_team_forecast_config import (
     TEAM_PROFILE_DB_TABLE_ENV_VAR,
     TEAM_ROUTE_DB_TABLE_ENV_VAR,
 )
+from polymarket_alpha_lab.supabase_team_diagnostics_snapshot_config import (
+    TEAM_DIAGNOSTICS_SNAPSHOT_DB_DSN_ENV_VAR,
+    TEAM_DIAGNOSTICS_SNAPSHOT_DB_ENABLED_ENV_VAR,
+    TEAM_DIAGNOSTICS_SNAPSHOT_DB_TABLE_ENV_VAR,
+)
 
 
 ENV_EXAMPLE_PATH = Path(".env.example")
@@ -488,6 +493,9 @@ def test_env_example_documents_supported_db_variable_names_only() -> None:
         f"{TEAM_FORECAST_DB_TABLE_ENV_VAR}=",
         f"{TEAM_FORECAST_EVIDENCE_DB_TABLE_ENV_VAR}=",
         f"{TEAM_FORECAST_OUTCOME_DB_TABLE_ENV_VAR}=",
+        f"{TEAM_DIAGNOSTICS_SNAPSHOT_DB_ENABLED_ENV_VAR}=",
+        f"{TEAM_DIAGNOSTICS_SNAPSHOT_DB_DSN_ENV_VAR}=",
+        f"{TEAM_DIAGNOSTICS_SNAPSHOT_DB_TABLE_ENV_VAR}=",
     ]
 
     assert CYCLE_SNAPSHOT_DB_ENABLED_ENV_VAR in text
@@ -588,6 +596,9 @@ def test_env_example_documents_supported_db_variable_names_only() -> None:
     assert TEAM_FORECAST_DB_TABLE_ENV_VAR in text
     assert TEAM_FORECAST_EVIDENCE_DB_TABLE_ENV_VAR in text
     assert TEAM_FORECAST_OUTCOME_DB_TABLE_ENV_VAR in text
+    assert TEAM_DIAGNOSTICS_SNAPSHOT_DB_ENABLED_ENV_VAR in text
+    assert TEAM_DIAGNOSTICS_SNAPSHOT_DB_DSN_ENV_VAR in text
+    assert TEAM_DIAGNOSTICS_SNAPSHOT_DB_TABLE_ENV_VAR in text
     assert lines == expected_lines
     assert all(line.endswith("=") for line in lines)
     assert "POLYMARKET_ALPHA_DATABASE_URL" not in text

@@ -6,6 +6,7 @@ import re
 
 DOC_PATH = Path("docs/team-diagnostics-readonly.md")
 README_PATH = Path("README.md")
+ENV_EXAMPLE_PATH = Path(".env.example")
 TEAM_AGENT_FRAMEWORK_PATH = Path("docs/team-agent-framework.md")
 TEAM_FORECAST_RUNBOOK_PATH = Path("docs/team-forecast-supabase-runbook.md")
 
@@ -25,6 +26,12 @@ EXPECTED_TABLES = (
     "team_forecasts",
     "team_forecast_evidence",
     "team_forecast_outcomes",
+)
+
+SNAPSHOT_ENV_VARS = (
+    "POLYMARKET_ALPHA_LAB_TEAM_DIAGNOSTICS_SNAPSHOT_DB_ENABLED",
+    "POLYMARKET_ALPHA_LAB_TEAM_DIAGNOSTICS_SNAPSHOT_DB_DSN",
+    "POLYMARKET_ALPHA_LAB_TEAM_DIAGNOSTICS_SNAPSHOT_DB_TABLE",
 )
 
 
@@ -147,3 +154,30 @@ def test_existing_team_docs_index_readonly_team_diagnostics_runbook() -> None:
         assert "read-only" in lower_text or "readonly" in lower_text
         assert "paper" in lower_text
         assert "report" in lower_text
+
+
+def test_team_diagnostics_docs_cover_snapshot_persistence_surface() -> None:
+    for path in (DOC_PATH, README_PATH):
+        assert path.exists(), f"{path} must exist"
+        text = path.read_text(encoding="utf-8")
+        lower_text = text.lower()
+
+        assert "team_diagnostics_snapshots" in text
+        assert "internal report persistence" in lower_text
+        assert "local Supabase/Postgres" in text
+        assert "Phase 1" in text
+        assert "paper-only/report-only/readonly" in text
+        for env_var in SNAPSHOT_ENV_VARS:
+            assert env_var in text
+
+
+def test_env_example_lists_team_diagnostics_snapshot_env_surface() -> None:
+    assert ENV_EXAMPLE_PATH.exists(), f"{ENV_EXAMPLE_PATH} must exist"
+    text = ENV_EXAMPLE_PATH.read_text(encoding="utf-8")
+    lines = tuple(text.splitlines())
+
+    for env_var in SNAPSHOT_ENV_VARS:
+        assert any(line.startswith(f"{env_var}=") for line in lines)
+
+    assert "POLYMARKET_ALPHA_LAB_TEAM_DIAGNOSTICS_SNAPSHOT_DB_TABLE=" in lines
+    assert "postgresql://" not in text

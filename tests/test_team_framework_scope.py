@@ -9,7 +9,12 @@ from polymarket_alpha_lab.team_paper_guard import json_ready_no_floats
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TEAM_MODULE_ROOT = REPO_ROOT / "src" / "polymarket_alpha_lab"
 
-PSYCOPG_MODULE_NAME = "team_forecast_psycopg.py"
+PSYCOPG_MODULE_NAMES = frozenset(
+    (
+        "team_forecast_psycopg.py",
+        "team_diagnostics_snapshot_psycopg.py",
+    ),
+)
 PAPER_GUARD_MODULE_NAME = "team_paper_guard.py"
 ADDITIONAL_STATIC_TEAM_MODULE_NAMES = (
     "supabase_team_forecast_config.py",
@@ -216,13 +221,13 @@ def test_team_modules_do_not_import_live_trading_auth_or_order_surfaces():
     assert not failures
 
 
-def test_only_team_forecast_psycopg_imports_psycopg():
+def test_only_team_forecast_and_diagnostics_snapshot_psycopg_import_psycopg():
     failures = []
     for path in _team_module_paths():
         tree = _parse_module(path)
         for module_name in _imported_modules(tree):
             if module_name == "psycopg" or module_name.startswith("psycopg."):
-                if path.name != PSYCOPG_MODULE_NAME:
+                if path.name not in PSYCOPG_MODULE_NAMES:
                     failures.append(f"{path.name}: {module_name}")
 
     assert not failures

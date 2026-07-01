@@ -402,6 +402,8 @@ ProbabilitySelectionScorerAgreementTrendGateRunner = Callable[..., object]
 TeamDiagnosticsRowsLoader = Callable[..., object]
 TeamDiagnosticsBundleBuilder = Callable[..., object]
 TeamDiagnosticsFormatter = Callable[[object], str]
+TeamDiagnosticsSnapshotBuilder = Callable[..., object]
+TeamDiagnosticsSnapshotDbSink = Callable[..., object]
 MAX_PAPER_AUTONOMOUS_READINESS_DIGEST_READ_LIMIT = 500
 _MISSING = object()
 STRATEGY_CYCLE_HISTORY_GATE_DB_DSN_ENV_VAR = (
@@ -435,6 +437,13 @@ class _PaperAutonomousScreeningDecisionSupportGateConfig:
     paper_only: bool = True
     report_only: bool = True
     readonly: bool = True
+
+
+@dataclass(frozen=True)
+class _TeamDiagnosticsBundleRun:
+    request: object
+    rows: object
+    bundle: object
 
 
 def _redact_db_dsn(text: str, *, dsn: str) -> str:
@@ -1238,6 +1247,35 @@ def _run_team_diagnostics(
     bundle_builder: TeamDiagnosticsBundleBuilder | None,
     stdout_formatter: TeamDiagnosticsFormatter | None,
 ) -> str:
+    artifacts = _build_team_diagnostics_bundle_from_db(
+        team_id=team_id,
+        market_slug=market_slug,
+        forecast_id=forecast_id,
+        limit=limit,
+        rows_loader=rows_loader,
+        bundle_builder=bundle_builder,
+    )
+    from polymarket_alpha_lab.team_diagnostics_cli_format import (
+        format_team_diagnostics_cli_stdout,
+    )
+
+    formatter = (
+        format_team_diagnostics_cli_stdout
+        if stdout_formatter is None
+        else stdout_formatter
+    )
+    return formatter(artifacts.bundle)
+
+
+def _build_team_diagnostics_bundle_from_db(
+    *,
+    team_id: str | None,
+    market_slug: str | None,
+    forecast_id: str | None,
+    limit: int,
+    rows_loader: TeamDiagnosticsRowsLoader | None,
+    bundle_builder: TeamDiagnosticsBundleBuilder | None,
+) -> _TeamDiagnosticsBundleRun:
     from polymarket_alpha_lab.team_cli_wiring import (
         TeamDiagnosticsCliLoaders,
         TeamDiagnosticsCliRequest,
@@ -1246,9 +1284,6 @@ def _run_team_diagnostics(
     from polymarket_alpha_lab.team_diagnostics_bundle import (
         TeamDiagnosticsBundleConfig,
         build_team_diagnostics_bundle_report,
-    )
-    from polymarket_alpha_lab.team_diagnostics_cli_format import (
-        format_team_diagnostics_cli_stdout,
     )
     from polymarket_alpha_lab.team_diagnostics_db_source import (
         TeamDiagnosticsDbSourceRequest,
@@ -1314,12 +1349,212 @@ def _run_team_diagnostics(
         ),
         bundle_builder=build_bundle,
     )
-    formatter = (
-        format_team_diagnostics_cli_stdout
-        if stdout_formatter is None
-        else stdout_formatter
+    return _TeamDiagnosticsBundleRun(
+        request=cli_request,
+        rows=rows,
+        bundle=cli_result.bundle,
     )
-    return formatter(cli_result.bundle)
+
+
+def _run_team_diagnostics_snapshot(
+    *,
+    team_id: str | None,
+    market_slug: str | None,
+    forecast_id: str | None,
+    limit: int,
+    rows_loader: TeamDiagnosticsRowsLoader | None,
+    bundle_builder: TeamDiagnosticsBundleBuilder | None,
+    snapshot_builder: TeamDiagnosticsSnapshotBuilder | None,
+    snapshot_db_sink: TeamDiagnosticsSnapshotDbSink | None,
+) -> str:
+    if isinstance(limit, bool) or type(limit) is not int or limit <= 0:
+        raise ValueError("team-diagnostics-snapshot limit must be positive")
+
+    from polymarket_alpha_lab.supabase_team_diagnostics_snapshot_config import (
+        from_team_diagnostics_snapshot_db_env,
+    )
+
+    snapshot_db_config = from_team_diagnostics_snapshot_db_env()
+    if not snapshot_db_config.enabled:
+        raise ValueError(
+            "team-diagnostics-snapshot requires team diagnostics snapshot DB "
+            "to be enabled; team diagnostics snapshot DB is disabled",
+        )
+    if snapshot_db_config.dsn is None:
+        raise ValueError(
+            "team-diagnostics-snapshot requires a team diagnostics snapshot DB DSN",
+        )
+
+    artifacts = _build_team_diagnostics_bundle_from_db(
+        team_id=team_id,
+        market_slug=market_slug,
+        forecast_id=forecast_id,
+        limit=limit,
+        rows_loader=rows_loader,
+        bundle_builder=bundle_builder,
+    )
+    snapshot = _build_team_diagnostics_snapshot(
+        artifacts.bundle,
+        team_id=team_id,
+        market_slug=market_slug,
+        forecast_id=forecast_id,
+        snapshot_builder=snapshot_builder,
+    )
+    _require_hard_flags_if_present("team diagnostics snapshot", snapshot)
+
+    if snapshot_db_sink is None:
+        from polymarket_alpha_lab.team_diagnostics_snapshot_psycopg import (
+            insert_team_diagnostics_snapshot_report_from_env,
+        )
+
+        resolved_sink = insert_team_diagnostics_snapshot_report_from_env
+    else:
+        resolved_sink = snapshot_db_sink
+
+    try:
+        insert_result = resolved_sink(snapshot)
+    except Exception as exc:
+        _raise_redacted_team_diagnostics_snapshot_db_write_error(
+            exc,
+            db_config=snapshot_db_config,
+        )
+    return _format_team_diagnostics_snapshot_stdout(snapshot, insert_result)
+
+
+def _build_team_diagnostics_snapshot(
+    bundle: object,
+    *,
+    team_id: str | None,
+    market_slug: str | None,
+    forecast_id: str | None,
+    snapshot_builder: TeamDiagnosticsSnapshotBuilder | None,
+) -> object:
+    from polymarket_alpha_lab.team_diagnostics_snapshot import (
+        TeamDiagnosticsSnapshotConfig,
+        build_team_diagnostics_snapshot_report,
+    )
+
+    config = TeamDiagnosticsSnapshotConfig()
+    if snapshot_builder is None:
+        return build_team_diagnostics_snapshot_report(
+            bundle,
+            config=config,
+            team_id=team_id,
+            market_slug=market_slug,
+            forecast_id=forecast_id,
+        )
+    return snapshot_builder(
+        bundle,
+        config=config,
+        team_id=team_id,
+        market_slug=market_slug,
+        forecast_id=forecast_id,
+    )
+
+
+def _format_team_diagnostics_snapshot_stdout(
+    snapshot: object,
+    insert_result: object,
+) -> str:
+    fields = ["team-diagnostics-snapshot:"]
+    report_hash = _team_diagnostics_snapshot_report_hash(insert_result)
+    if report_hash is not None:
+        fields.append(f"report_sha256={report_hash}")
+    inserted = _team_diagnostics_snapshot_inserted(insert_result)
+    if inserted is not None:
+        fields.append(f"inserted={inserted}")
+    fields.extend(
+        (
+            f"status={_team_diagnostics_snapshot_status(snapshot)}",
+            "forecast_count="
+            + _object_value(snapshot, "forecast_count", "forecast_row_count", default="0"),
+            "evidence_count="
+            + _object_value(snapshot, "evidence_count", "evidence_row_count", default="0"),
+            "outcome_count="
+            + _object_value(snapshot, "outcome_count", "outcome_row_count", default="0"),
+            "memory_eligible_count="
+            + _object_value(
+                snapshot,
+                "memory_eligible_count",
+                "memory_eligible_reference_count",
+                default="0",
+            ),
+            "calibration_status="
+            + _object_value(snapshot, "calibration_status", default="unknown"),
+            "event_template_status="
+            + _object_value(snapshot, "event_template_status", default="unknown"),
+            "evidence_quality_status="
+            + _object_value(snapshot, "evidence_quality_status", default="unknown"),
+            "paper_only=" + _object_value(snapshot, "paper_only", default=True),
+            "report_only=" + _object_value(snapshot, "report_only", default=True),
+            "readonly=" + _object_value(snapshot, "readonly", default=True),
+        ),
+    )
+    return " ".join(fields) + "\n"
+
+
+def _team_diagnostics_snapshot_report_hash(insert_result: object) -> str | None:
+    for candidate in (
+        insert_result,
+        _object_raw_value(insert_result, "row", default=None),
+        _object_raw_value(insert_result, "db_row", default=None),
+    ):
+        if candidate is None:
+            continue
+        value = _object_raw_value(
+            candidate,
+            "report_sha256",
+            "report_hash",
+            "payload_sha256",
+            "sha256",
+            default=None,
+        )
+        if type(value) is str and value:
+            return value
+    return None
+
+
+def _team_diagnostics_snapshot_inserted(insert_result: object) -> bool | None:
+    value = _object_raw_value(insert_result, "inserted", default=None)
+    if type(value) is bool:
+        return value
+    return None
+
+
+def _team_diagnostics_snapshot_status(snapshot: object) -> str:
+    return _object_value(
+        snapshot,
+        "status",
+        "evidence_quality_status",
+        "calibration_status",
+        default="unknown",
+    )
+
+
+def _object_value(object_value: object, *names: str, default: object) -> str:
+    return str(_object_raw_value(object_value, *names, default=default))
+
+
+def _object_raw_value(object_value: object, *names: str, default: object) -> object:
+    if object_value is None:
+        return default
+    if isinstance(object_value, dict):
+        for name in names:
+            if name in object_value:
+                return object_value[name]
+        return default
+    for name in names:
+        if hasattr(object_value, name):
+            value = getattr(object_value, name)
+            if value is not None:
+                return value
+    return default
+
+
+def _require_hard_flags_if_present(label: str, value: object) -> None:
+    for field_name in ("paper_only", "report_only", "readonly"):
+        if hasattr(value, field_name) and getattr(value, field_name) is not True:
+            raise ValueError(f"{field_name} must be True for {label}")
 
 
 def _raise_redacted_team_diagnostics_db_read_error(
@@ -1340,6 +1575,25 @@ def _raise_redacted_team_diagnostics_db_read_error(
         table_name = getattr(db_config, field_name, None)
         if table_name:
             message = _redact_db_table_name_and_tail(message, table_name=table_name)
+    message = _redact_paper_research_packet_sensitive_fields(message)
+    if not message.strip():
+        message = exc.__class__.__name__
+    raise RuntimeError(message) from None
+
+
+def _raise_redacted_team_diagnostics_snapshot_db_write_error(
+    exc: Exception,
+    *,
+    db_config: Any,
+) -> NoReturn:
+    message = str(exc)
+    dsn = getattr(db_config, "dsn", None)
+    if dsn is not None:
+        message = _redact_db_dsn(message, dsn=dsn)
+        message = _redact_db_dsn_host(message, dsn=dsn)
+    table_name = getattr(db_config, "table_name", None)
+    if table_name:
+        message = _redact_db_table_name_and_tail(message, table_name=table_name)
     message = _redact_paper_research_packet_sensitive_fields(message)
     if not message.strip():
         message = exc.__class__.__name__
@@ -1696,6 +1950,8 @@ def main(
     team_diagnostics_rows_loader: TeamDiagnosticsRowsLoader | None = None,
     team_diagnostics_bundle_builder: TeamDiagnosticsBundleBuilder | None = None,
     team_diagnostics_stdout_formatter: TeamDiagnosticsFormatter | None = None,
+    team_diagnostics_snapshot_builder: TeamDiagnosticsSnapshotBuilder | None = None,
+    team_diagnostics_snapshot_db_sink: TeamDiagnosticsSnapshotDbSink | None = None,
 ) -> int:
     parser = argparse.ArgumentParser(prog="polymarket-alpha-lab")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -2079,6 +2335,35 @@ def main(
     team_diagnostics.add_argument("--market-slug", default=None, dest="market_slug")
     team_diagnostics.add_argument("--forecast-id", default=None, dest="forecast_id")
     team_diagnostics.add_argument("--limit", type=int, default=100, dest="limit")
+    team_diagnostics_snapshot = subparsers.add_parser(
+        "team-diagnostics-snapshot",
+        allow_abbrev=False,
+        description=(
+            "Build and persist a read-only, report-only diagnostics snapshot "
+            "from local Supabase/Postgres team forecast rows."
+        ),
+        help=(
+            "read-only report-only team diagnostics snapshot from local "
+            "Supabase/Postgres"
+        ),
+    )
+    team_diagnostics_snapshot.add_argument("--team-id", default=None, dest="team_id")
+    team_diagnostics_snapshot.add_argument(
+        "--market-slug",
+        default=None,
+        dest="market_slug",
+    )
+    team_diagnostics_snapshot.add_argument(
+        "--forecast-id",
+        default=None,
+        dest="forecast_id",
+    )
+    team_diagnostics_snapshot.add_argument(
+        "--limit",
+        type=int,
+        default=100,
+        dest="limit",
+    )
 
     strategy_evidence = subparsers.add_parser("strategy-evidence")
     strategy_evidence.add_argument(
@@ -3031,6 +3316,24 @@ def main(
             return 0
         except Exception as exc:
             print(f"team-diagnostics failed: {exc}", file=sys.stderr)
+            return 1
+
+    if args.command == "team-diagnostics-snapshot":
+        try:
+            stdout = _run_team_diagnostics_snapshot(
+                team_id=args.team_id,
+                market_slug=args.market_slug,
+                forecast_id=args.forecast_id,
+                limit=args.limit,
+                rows_loader=team_diagnostics_rows_loader,
+                bundle_builder=team_diagnostics_bundle_builder,
+                snapshot_builder=team_diagnostics_snapshot_builder,
+                snapshot_db_sink=team_diagnostics_snapshot_db_sink,
+            )
+            print(stdout, end="")
+            return 0
+        except Exception as exc:
+            print(f"team-diagnostics-snapshot failed: {exc}", file=sys.stderr)
             return 1
 
     if args.command == "portfolio-nav":
