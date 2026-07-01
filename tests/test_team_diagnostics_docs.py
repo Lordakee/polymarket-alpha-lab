@@ -34,6 +34,17 @@ SNAPSHOT_ENV_VARS = (
     "POLYMARKET_ALPHA_LAB_TEAM_DIAGNOSTICS_SNAPSHOT_DB_TABLE",
 )
 
+EXPECTED_TEAM_MEMORY_READINESS_DIGEST_SAMPLE_LINE = (
+    "team-memory-readiness-digest: digest_status=pass "
+    "recommended_next_step=allow_team_memory_readiness_use "
+    "team_count=1 pass_count=1 watch_count=0 blocked_count=0 "
+    "source_statuses=crypto_btc:pass:1200:12/3 "
+    "source_config_versions=crypto_btc:team-diagnostics-snapshot-history-v0 "
+    "reason_code_counts=team_memory_readiness_digest_passed:1 "
+    "reason_codes=team_memory_readiness_digest_passed "
+    "paper_only=True report_only=True readonly=True"
+)
+
 
 def _doc_text() -> str:
     assert DOC_PATH.exists(), f"{DOC_PATH} must exist"
@@ -47,6 +58,16 @@ def _section_between(text: str, start: str, end: str | None) -> str:
         assert end in section
         section = section.split(end, 1)[0]
     return section
+
+
+def _single_fenced_text_line_after(section: str, marker: str) -> str:
+    assert marker in section
+    tail = section.split(marker, 1)[1]
+    match = re.search(r"```text\n(?P<body>.*?)\n```", tail, flags=re.DOTALL)
+    assert match is not None
+    lines = tuple(line for line in match.group("body").splitlines() if line)
+    assert len(lines) == 1
+    return lines[0]
 
 
 def test_team_diagnostics_readonly_doc_covers_purpose_and_phase_1_boundary() -> None:
@@ -303,6 +324,96 @@ def test_team_diagnostics_docs_cover_snapshot_history_readback_surface() -> None
         for flag in forbidden_cli_flags:
             assert flag not in history_section
             assert flag not in gate_section
+
+
+def test_team_diagnostics_docs_cover_team_memory_readiness_digest_surface() -> None:
+    expected_digest_output_fields = (
+        "digest_status=",
+        "recommended_next_step=",
+        "team_count=",
+        "pass_count=",
+        "watch_count=",
+        "blocked_count=",
+        "source_statuses=crypto_btc:pass:1200:12/3",
+        "source_config_versions=crypto_btc:team-diagnostics-snapshot-history-v0",
+        "reason_code_counts=team_memory_readiness_digest_passed:1",
+        "reason_codes=",
+        "paper_only=True",
+        "report_only=True",
+        "readonly=True",
+    )
+    required_digest_fragments = (
+        "team-memory-readiness-digest",
+        "Phase 1 read-only/report-only/paper-only local Supabase/Postgres readback",
+        "per-team digest sources backed by diagnostics snapshot history gate results",
+        "TeamMemoryReadinessDigestSource",
+        "pass/watch/blocked digest",
+        "digest status `pass`",
+        "digest status `watch`",
+        "digest status `blocked`",
+        "allow_team_memory_readiness_use",
+        "throttle_team_memory_readiness_use",
+        "block_team_memory_readiness_use",
+        "team_memory_readiness_digest_empty_sources",
+    )
+    forbidden_cli_flags = (
+        "--dsn",
+        "--db-dsn",
+        "--table",
+        "--db-table",
+        "--snapshot-dsn",
+        "--snapshot-table",
+        "--persist",
+        "--live",
+        "--auth",
+        "--wallet",
+        "--order",
+        "--private-key",
+        "--account",
+    )
+
+    for path in (DOC_PATH, README_PATH):
+        assert path.exists(), f"{path} must exist"
+        text = path.read_text(encoding="utf-8")
+        lower_text = text.lower()
+        if path == DOC_PATH:
+            digest_section = _section_between(
+                text,
+                "## Team Memory Readiness Digest",
+                "## What Diagnostics Evaluate",
+            )
+            digest_sample_line = _single_fenced_text_line_after(
+                digest_section,
+                "Sample digest output fields:",
+            )
+            assert (
+                digest_sample_line
+                == EXPECTED_TEAM_MEMORY_READINESS_DIGEST_SAMPLE_LINE
+            )
+        else:
+            digest_section = _section_between(
+                text,
+                "Summarize team readiness for long-term team-memory",
+                "## Project Iron Rules",
+            )
+
+        assert "polymarket-alpha-lab team-memory-readiness-digest" in digest_section
+        assert "local Supabase/Postgres readback" in digest_section
+        assert (
+            "per-team digest sources backed by diagnostics snapshot history gate results"
+            in digest_section
+        )
+        assert "team_diagnostics_snapshots" in digest_section
+        assert "no live trading" in lower_text
+        assert "no order path" in lower_text
+        for fragment in required_digest_fragments:
+            assert fragment in digest_section
+        for env_var in SNAPSHOT_ENV_VARS:
+            assert env_var in digest_section
+        for field in expected_digest_output_fields:
+            assert field in digest_section
+        for flag in forbidden_cli_flags:
+            assert flag not in digest_section
 
 
 def test_env_example_lists_team_diagnostics_snapshot_env_surface() -> None:

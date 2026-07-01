@@ -406,6 +406,7 @@ TeamDiagnosticsSnapshotBuilder = Callable[..., object]
 TeamDiagnosticsSnapshotDbSink = Callable[..., object]
 TeamDiagnosticsSnapshotHistoryRunner = Callable[..., object]
 TeamDiagnosticsSnapshotHistoryGateRunner = Callable[..., object]
+TeamMemoryReadinessDigestRunner = Callable[..., object]
 MAX_PAPER_AUTONOMOUS_READINESS_DIGEST_READ_LIMIT = 500
 _MISSING = object()
 STRATEGY_CYCLE_HISTORY_GATE_DB_DSN_ENV_VAR = (
@@ -525,7 +526,7 @@ def _redact_paper_research_packet_sensitive_fields(text: str) -> str:
     )
     message = _redact_keyed_sensitive_fields(
         message,
-        field_names=("market_slug", "marketSlug"),
+        field_names=("market_slug", "marketSlug", "raw_filter"),
         replacement="<redacted-market-slug>",
     )
     message = _redact_keyed_sensitive_fields(
@@ -1639,6 +1640,151 @@ def _run_team_diagnostics_snapshot_history_gate(
         )
 
 
+def _run_team_memory_readiness_digest(
+    *,
+    team_ids: list[str] | tuple[str, ...] | None,
+    config_version: str | None,
+    limit: int,
+    runner: TeamMemoryReadinessDigestRunner | None,
+) -> str:
+    if isinstance(limit, bool) or type(limit) is not int or limit <= 0:
+        raise ValueError("team-memory-readiness-digest limit must be positive")
+
+    from polymarket_alpha_lab.supabase_team_diagnostics_snapshot_config import (
+        from_team_diagnostics_snapshot_db_env,
+    )
+
+    snapshot_db_config = from_team_diagnostics_snapshot_db_env()
+    if not snapshot_db_config.enabled:
+        raise ValueError(
+            "team-memory-readiness-digest requires team diagnostics snapshot DB "
+            "to be enabled; team diagnostics snapshot DB is disabled",
+        )
+    dsn = snapshot_db_config.dsn
+    if dsn is None:
+        raise ValueError(
+            "team-memory-readiness-digest requires a team diagnostics snapshot DB DSN",
+        )
+
+    from polymarket_alpha_lab.team_diagnostics_snapshot_history import (
+        TeamDiagnosticsSnapshotHistoryConfig,
+        build_team_diagnostics_snapshot_history_report,
+    )
+    from polymarket_alpha_lab.team_diagnostics_snapshot_history_gate import (
+        TeamDiagnosticsSnapshotHistoryGateConfig,
+        build_team_diagnostics_snapshot_history_gate_report,
+    )
+    from polymarket_alpha_lab.team_memory_readiness_digest import (
+        TeamMemoryReadinessDigestConfig,
+        build_team_memory_readiness_digest_report,
+    )
+    from polymarket_alpha_lab.team_memory_readiness_digest_cli_format import (
+        format_team_memory_readiness_digest_cli_stdout,
+    )
+    from polymarket_alpha_lab.team_taxonomy import TEAM_IDS
+
+    selected_team_ids = tuple(TEAM_IDS if team_ids is None else team_ids)
+    generated_at = datetime.now(UTC)
+    history_config = TeamDiagnosticsSnapshotHistoryConfig()
+    gate_config = TeamDiagnosticsSnapshotHistoryGateConfig()
+    digest_config = TeamMemoryReadinessDigestConfig()
+    try:
+        if runner is not None:
+            report = runner(
+                dsn=dsn,
+                table_name=snapshot_db_config.table_name,
+                team_ids=selected_team_ids,
+                config_version=config_version,
+                limit=limit,
+                history_config=history_config,
+                gate_config=gate_config,
+                digest_config=digest_config,
+                generated_at=generated_at,
+            )
+        else:
+            from polymarket_alpha_lab.team_diagnostics_snapshot_history_db_source import (
+                load_team_diagnostics_snapshot_history_report,
+            )
+            from polymarket_alpha_lab.team_diagnostics_snapshot_history_gate_db_source import (
+                load_team_diagnostics_snapshot_history_gate_report,
+            )
+            from polymarket_alpha_lab.team_diagnostics_snapshot_psycopg import (
+                load_team_diagnostics_snapshot_reports_from_env,
+            )
+            from polymarket_alpha_lab.team_memory_readiness_digest_db_source import (
+                load_team_memory_readiness_digest_report,
+            )
+
+            def history_loader(
+                *,
+                config: TeamDiagnosticsSnapshotHistoryConfig | None = None,
+                history_config: TeamDiagnosticsSnapshotHistoryConfig | None = None,
+                generated_at: datetime,
+                team_id: str | None = None,
+                market_slug: str | None = None,
+                forecast_id: str | None = None,
+                config_version: str | None = None,
+                limit: int | None = None,
+            ) -> object:
+                selected_history_config = (
+                    history_config if history_config is not None else config
+                )
+                if selected_history_config is None:
+                    raise ValueError("history_config must be provided")
+                return load_team_diagnostics_snapshot_history_report(
+                    load_snapshots=load_team_diagnostics_snapshot_reports_from_env,
+                    history_builder=build_team_diagnostics_snapshot_history_report,
+                    config=selected_history_config,
+                    generated_at=generated_at,
+                    team_id=team_id,
+                    market_slug=market_slug,
+                    forecast_id=forecast_id,
+                    config_version=config_version,
+                    limit=limit,
+                )
+
+            def gate_loader(
+                *,
+                team_id: str,
+                history_config: TeamDiagnosticsSnapshotHistoryConfig,
+                gate_config: TeamDiagnosticsSnapshotHistoryGateConfig,
+                generated_at: datetime,
+                config_version: str | None = None,
+                limit: int | None = None,
+            ) -> object:
+                return load_team_diagnostics_snapshot_history_gate_report(
+                    history_loader=history_loader,
+                    gate_builder=build_team_diagnostics_snapshot_history_gate_report,
+                    history_config=history_config,
+                    gate_config=gate_config,
+                    generated_at=generated_at,
+                    team_id=team_id,
+                    market_slug=None,
+                    forecast_id=None,
+                    config_version=config_version,
+                    limit=limit,
+                )
+
+            report = load_team_memory_readiness_digest_report(
+                team_ids=selected_team_ids,
+                gate_loader=gate_loader,
+                digest_builder=build_team_memory_readiness_digest_report,
+                digest_config=digest_config,
+                history_config=history_config,
+                gate_config=gate_config,
+                generated_at=generated_at,
+                config_version=config_version,
+                limit=limit,
+            )
+        _require_hard_flags("team memory readiness digest", report)
+        return format_team_memory_readiness_digest_cli_stdout(report)
+    except Exception as exc:
+        _raise_redacted_team_diagnostics_snapshot_db_read_error(
+            exc,
+            db_config=snapshot_db_config,
+        )
+
+
 def _build_team_diagnostics_snapshot(
     bundle: object,
     *,
@@ -2207,6 +2353,9 @@ def main(
     team_diagnostics_snapshot_history_gate_runner: (
         TeamDiagnosticsSnapshotHistoryGateRunner | None
     ) = None,
+    team_memory_readiness_digest_runner: (
+        TeamMemoryReadinessDigestRunner | None
+    ) = None,
 ) -> int:
     parser = argparse.ArgumentParser(prog="polymarket-alpha-lab")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -2690,6 +2839,35 @@ def main(
         dest="config_version",
     )
     team_diagnostics_snapshot_history_gate.add_argument(
+        "--limit",
+        type=int,
+        default=100,
+        dest="limit",
+    )
+    team_memory_readiness_digest = subparsers.add_parser(
+        "team-memory-readiness-digest",
+        allow_abbrev=False,
+        description=(
+            "Build a read-only, report-only team memory readiness digest from "
+            "local Supabase/Postgres team diagnostics snapshot history gates."
+        ),
+        help=(
+            "read-only report-only team memory readiness digest from local "
+            "Supabase/Postgres"
+        ),
+    )
+    team_memory_readiness_digest.add_argument(
+        "--team-id",
+        action="append",
+        default=None,
+        dest="team_ids",
+    )
+    team_memory_readiness_digest.add_argument(
+        "--config-version",
+        default=None,
+        dest="config_version",
+    )
+    team_memory_readiness_digest.add_argument(
         "--limit",
         type=int,
         default=100,
@@ -3698,6 +3876,23 @@ def main(
         except Exception as exc:
             print(
                 f"team-diagnostics-snapshot-history-gate failed: {exc}",
+                file=sys.stderr,
+            )
+            return 1
+
+    if args.command == "team-memory-readiness-digest":
+        try:
+            stdout = _run_team_memory_readiness_digest(
+                team_ids=args.team_ids,
+                config_version=args.config_version,
+                limit=args.limit,
+                runner=team_memory_readiness_digest_runner,
+            )
+            print(stdout, end="")
+            return 0
+        except Exception as exc:
+            print(
+                f"team-memory-readiness-digest failed: {exc}",
                 file=sys.stderr,
             )
             return 1

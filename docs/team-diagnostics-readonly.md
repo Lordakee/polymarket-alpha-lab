@@ -98,6 +98,38 @@ Sample gate output fields:
 team-diagnostics-snapshot-history-gate: gate_status=pass recommended_next_step=allow_team_diagnostics_snapshot_history_memory_use source_config_version=team-diagnostics-snapshot-history-v0 source_generated_at=2026-07-01T09:45:15+00:00 source_snapshot_count=12 source_required_snapshot_count=3 source_status=observed source_span_seconds=4515 source_status_counts=pass:7,watch:5 source_reason_codes=none latest_snapshot_age_seconds=1200 reason_code_counts=team_diagnostics_snapshot_history_gate_passed:1 evidence_quality_average_delta=0.125 memory_eligible_delta=4 settled_calibration_delta=3 duplicate_latest_generated_at=False reason_codes=team_diagnostics_snapshot_history_gate_passed paper_only=True report_only=True readonly=True
 ```
 
+## Team Memory Readiness Digest
+
+Summarize team readiness for long-term team-memory with the env-driven command:
+
+```bash
+polymarket-alpha-lab team-memory-readiness-digest --team-id crypto_btc --limit 100
+```
+
+This command is a Phase 1 read-only/report-only/paper-only local Supabase/Postgres readback that builds per-team digest sources backed by diagnostics snapshot history gate results. It reads `team_diagnostics_snapshots` only through the existing snapshot env surface:
+
+- `POLYMARKET_ALPHA_LAB_TEAM_DIAGNOSTICS_SNAPSHOT_DB_ENABLED`
+- `POLYMARKET_ALPHA_LAB_TEAM_DIAGNOSTICS_SNAPSHOT_DB_DSN`
+- `POLYMARKET_ALPHA_LAB_TEAM_DIAGNOSTICS_SNAPSHOT_DB_TABLE`
+
+The digest wraps one diagnostics snapshot history gate result per selected team as a `TeamMemoryReadinessDigestSource` and composes those sources into a pass/watch/blocked digest for whether downstream paper-only research can use long-term team-memory. Configuration stays in environment variables; there are no DSN/table CLI flags.
+
+Digest status semantics:
+
+- digest status `pass`: every selected team's source gate is `pass`; the recommended next step is `allow_team_memory_readiness_use`.
+- digest status `watch`: no selected team is blocked, but at least one selected team's source gate is `watch`; the recommended next step is `throttle_team_memory_readiness_use`.
+- digest status `blocked`: at least one selected team's source gate is `blocked`, or no sources are available; the recommended next step is `block_team_memory_readiness_use`.
+
+Empty source sets are blocked with `team_memory_readiness_digest_empty_sources`. Passing sources emit `team_memory_readiness_digest_passed`; watched sources emit `team_memory_readiness_digest_watch_sources_present`; blocked sources emit `team_memory_readiness_digest_blocked_sources_present`.
+
+The digest remains local evidence only, with no live trading, no order path, no exchange mutation, no ranking, no recommendations, no trade instructions, no financial advice, no strategy-weight tuning, and no position sizing.
+
+Sample digest output fields:
+
+```text
+team-memory-readiness-digest: digest_status=pass recommended_next_step=allow_team_memory_readiness_use team_count=1 pass_count=1 watch_count=0 blocked_count=0 source_statuses=crypto_btc:pass:1200:12/3 source_config_versions=crypto_btc:team-diagnostics-snapshot-history-v0 reason_code_counts=team_memory_readiness_digest_passed:1 reason_codes=team_memory_readiness_digest_passed paper_only=True report_only=True readonly=True
+```
+
 ## What Diagnostics Evaluate
 
 Team memory:
