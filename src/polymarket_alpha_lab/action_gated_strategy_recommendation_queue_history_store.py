@@ -99,10 +99,14 @@ def insert_paper_action_gated_strategy_recommendation_queue_history_report(
         row.readonly,
     )
     cursor = connection.cursor()
+    operation_error: BaseException | None = None
     try:
         cursor.execute(sql, params)
+    except BaseException as exc:
+        operation_error = exc
+        raise
     finally:
-        cursor.close()
+        _close_cursor(cursor, operation_error)
     return row
 
 
@@ -141,11 +145,15 @@ def load_paper_action_gated_strategy_recommendation_queue_history_reports(
         {limit_clause}
         """
     cursor = connection.cursor()
+    operation_error: BaseException | None = None
     try:
         cursor.execute(sql, tuple(params))
         records = cursor.fetchall()
+    except BaseException as exc:
+        operation_error = exc
+        raise
     finally:
-        cursor.close()
+        _close_cursor(cursor, operation_error)
     rows = tuple(_db_row_from_record(record) for record in records)
     return tuple(
         paper_action_gated_strategy_recommendation_queue_history_report_from_db_row(
@@ -153,6 +161,16 @@ def load_paper_action_gated_strategy_recommendation_queue_history_reports(
         )
         for row in rows
     )
+
+
+def _close_cursor(cursor: Any, operation_error: BaseException | None) -> None:
+    if operation_error is None:
+        cursor.close()
+        return
+    try:
+        cursor.close()
+    except BaseException:
+        pass
 
 
 def _db_row_from_record(

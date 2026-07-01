@@ -78,31 +78,64 @@ class FakeTrendDbRows:
 
 
 class FakeCursor:
-    def __init__(self, rows: tuple[Any, ...] = ()) -> None:
+    def __init__(
+        self,
+        rows: tuple[Any, ...] = (),
+        *,
+        execute_errors: tuple[BaseException | None, ...] = (),
+        fetchall_error: BaseException | None = None,
+        close_error: BaseException | None = None,
+    ) -> None:
         self.rows = rows
         self.calls: list[tuple[str, tuple[Any, ...]]] = []
         self.closed = False
+        self.execute_errors = execute_errors
+        self.fetchall_error = fetchall_error
+        self.close_error = close_error
 
     def execute(self, sql: str, params: tuple[Any, ...] = ()) -> None:
+        call_index = len(self.calls)
         self.calls.append((sql, params))
+        if call_index < len(self.execute_errors):
+            error = self.execute_errors[call_index]
+            if error is not None:
+                raise error
 
     def fetchall(self) -> tuple[Any, ...]:
+        if self.fetchall_error is not None:
+            raise self.fetchall_error
         return self.rows
 
     def close(self) -> None:
         self.closed = True
+        if self.close_error is not None:
+            raise self.close_error
 
 
 class FakeConnection:
-    def __init__(self, cursor_rows: tuple[tuple[Any, ...], ...] = ()) -> None:
+    def __init__(
+        self,
+        cursor_rows: tuple[tuple[Any, ...], ...] = (),
+        *,
+        cursors: tuple[FakeCursor, ...] = (),
+    ) -> None:
         self.cursor_rows = cursor_rows
+        self.provided_cursors = cursors
         self.cursors: list[FakeCursor] = []
         self.commit_count = 0
         self.rollback_count = 0
 
     def cursor(self) -> FakeCursor:
-        rows = self.cursor_rows[len(self.cursors)] if len(self.cursors) < len(self.cursor_rows) else ()
-        cursor = FakeCursor(rows)
+        cursor_index = len(self.cursors)
+        if cursor_index < len(self.provided_cursors):
+            cursor = self.provided_cursors[cursor_index]
+        else:
+            rows = (
+                self.cursor_rows[cursor_index]
+                if cursor_index < len(self.cursor_rows)
+                else ()
+            )
+            cursor = FakeCursor(rows)
         self.cursors.append(cursor)
         return cursor
 
@@ -424,6 +457,47 @@ def test_insert_trend_db_rows_uses_parameterized_report_then_source_inserts(
         True,
         True,
     )
+
+
+def test_insert_keeps_source_execute_error_when_cursor_close_also_fails(
+    store_module: types.ModuleType,
+) -> None:
+    execute_error = RuntimeError("source insert failed")
+    close_error = RuntimeError("close failed")
+    cursor = FakeCursor(
+        execute_errors=(None, execute_error),
+        close_error=close_error,
+    )
+    connection = FakeConnection(cursors=(cursor,))
+
+    with pytest.raises(RuntimeError, match="source insert failed") as exc_info:
+        store_module.insert_paper_action_gated_strategy_recommendation_queue_decision_support_trend_db_rows(
+            connection,
+            _trend_report(),
+            _snapshot_pairs(),
+        )
+
+    assert exc_info.value is execute_error
+    assert len(cursor.calls) == 2
+    assert cursor.closed is True
+
+
+def test_load_propagates_report_cursor_close_error_after_successful_query(
+    store_module: types.ModuleType,
+) -> None:
+    close_error = RuntimeError("close failed")
+    cursor = FakeCursor(close_error=close_error)
+    connection = FakeConnection(cursors=(cursor,))
+
+    with pytest.raises(RuntimeError, match="close failed") as exc_info:
+        store_module.load_paper_action_gated_strategy_recommendation_queue_decision_support_trend_db_rows(
+            connection,
+        )
+
+    assert exc_info.value is close_error
+    assert cursor.calls
+    assert cursor.closed is True
+    assert connection.cursor_count == 1
 
 
 def test_insert_accepts_schema_prefixed_table_names(

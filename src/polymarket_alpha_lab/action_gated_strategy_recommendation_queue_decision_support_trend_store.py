@@ -156,12 +156,16 @@ def insert_paper_action_gated_strategy_recommendation_queue_decision_support_tre
         ON CONFLICT (trend_sha256, trend_ordinal) DO NOTHING
         """
     cursor = connection.cursor()
+    operation_error: BaseException | None = None
     try:
         cursor.execute(report_sql, _report_params(db_rows.trend_row))
         for source_row in db_rows.source_rows:
             cursor.execute(source_sql, _source_params(source_row))
+    except BaseException as exc:
+        operation_error = exc
+        raise
     finally:
-        cursor.close()
+        _close_cursor(cursor, operation_error)
     return db_rows
 
 
@@ -257,11 +261,15 @@ def _load_report_rows(
         {limit_clause}
         """
     cursor = connection.cursor()
+    operation_error: BaseException | None = None
     try:
         cursor.execute(sql, tuple(params))
         records = cursor.fetchall()
+    except BaseException as exc:
+        operation_error = exc
+        raise
     finally:
-        cursor.close()
+        _close_cursor(cursor, operation_error)
     return tuple(_report_row_from_record(record) for record in records)
 
 
@@ -281,12 +289,26 @@ def _load_source_rows(
         ORDER BY trend_sha256 ASC, trend_ordinal ASC
         """
     cursor = connection.cursor()
+    operation_error: BaseException | None = None
     try:
         cursor.execute(sql, trend_sha256s)
         records = cursor.fetchall()
+    except BaseException as exc:
+        operation_error = exc
+        raise
     finally:
-        cursor.close()
+        _close_cursor(cursor, operation_error)
     return tuple(_source_row_from_record(record) for record in records)
+
+
+def _close_cursor(cursor: Any, operation_error: BaseException | None) -> None:
+    if operation_error is None:
+        cursor.close()
+        return
+    try:
+        cursor.close()
+    except BaseException:
+        pass
 
 
 def _report_params(

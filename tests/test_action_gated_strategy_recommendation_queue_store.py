@@ -52,24 +52,45 @@ class FakeActionGatedQueueDbRow:
 
 
 class FakeCursor:
-    def __init__(self, rows: tuple[Any, ...] = ()) -> None:
+    def __init__(
+        self,
+        rows: tuple[Any, ...] = (),
+        *,
+        execute_error: BaseException | None = None,
+        fetchall_error: BaseException | None = None,
+        close_error: BaseException | None = None,
+    ) -> None:
         self.rows = rows
         self.calls: list[tuple[str, tuple[Any, ...]]] = []
         self.closed = False
+        self.execute_error = execute_error
+        self.fetchall_error = fetchall_error
+        self.close_error = close_error
 
     def execute(self, sql: str, params: tuple[Any, ...] = ()) -> None:
         self.calls.append((sql, params))
+        if self.execute_error is not None:
+            raise self.execute_error
 
     def fetchall(self) -> tuple[Any, ...]:
+        if self.fetchall_error is not None:
+            raise self.fetchall_error
         return self.rows
 
     def close(self) -> None:
         self.closed = True
+        if self.close_error is not None:
+            raise self.close_error
 
 
 class FakeConnection:
-    def __init__(self, rows: tuple[Any, ...] = ()) -> None:
-        self.cursor_instance = FakeCursor(rows)
+    def __init__(
+        self,
+        rows: tuple[Any, ...] = (),
+        *,
+        cursor: FakeCursor | None = None,
+    ) -> None:
+        self.cursor_instance = cursor if cursor is not None else FakeCursor(rows)
         self.cursor_count = 0
         self.commit_count = 0
         self.rollback_count = 0
@@ -107,6 +128,16 @@ def _real_watch_report() -> PaperActionGatedStrategyRecommendationQueueReport:
         watch_count=0,
         blocked_count=0,
         total_ready_notional=Decimal("0.000000"),
+    )
+
+
+def _fake_queue_report() -> FakeActionGatedQueueReport:
+    return FakeActionGatedQueueReport(
+        generated_at=datetime(2026, 6, 20, 12, 30, tzinfo=UTC),
+        config_version="action-gated-queue-v0",
+        source_config_version="cycle-action-gate-v0",
+        action_status="research_ready",
+        recommended_next_step="review_candidate_research_queue",
     )
 
 
@@ -179,13 +210,7 @@ def test_insert_action_gated_queue_report_uses_parameterized_insert(
     store_module: types.ModuleType,
 ) -> None:
     connection = FakeConnection()
-    report = FakeActionGatedQueueReport(
-        generated_at=datetime(2026, 6, 20, 12, 30, tzinfo=UTC),
-        config_version="action-gated-queue-v0",
-        source_config_version="cycle-action-gate-v0",
-        action_status="research_ready",
-        recommended_next_step="review_candidate_research_queue",
-    )
+    report = _fake_queue_report()
 
     inserted = (
         store_module.insert_paper_action_gated_strategy_recommendation_queue_report(
@@ -267,6 +292,41 @@ def test_insert_action_gated_queue_report_uses_parameterized_insert(
         True,
         True,
     )
+
+
+def test_insert_keeps_execute_error_when_cursor_close_also_fails(
+    store_module: types.ModuleType,
+) -> None:
+    execute_error = RuntimeError("execute failed")
+    close_error = RuntimeError("close failed")
+    cursor = FakeCursor(execute_error=execute_error, close_error=close_error)
+    connection = FakeConnection(cursor=cursor)
+
+    with pytest.raises(RuntimeError, match="execute failed") as exc_info:
+        store_module.insert_paper_action_gated_strategy_recommendation_queue_report(
+            connection,
+            _fake_queue_report(),
+        )
+
+    assert exc_info.value is execute_error
+    assert cursor.closed is True
+
+
+def test_load_propagates_cursor_close_error_after_successful_query(
+    store_module: types.ModuleType,
+) -> None:
+    close_error = RuntimeError("close failed")
+    cursor = FakeCursor(close_error=close_error)
+    connection = FakeConnection(cursor=cursor)
+
+    with pytest.raises(RuntimeError, match="close failed") as exc_info:
+        store_module.load_paper_action_gated_strategy_recommendation_queue_reports(
+            connection,
+        )
+
+    assert exc_info.value is close_error
+    assert cursor.calls
+    assert cursor.closed is True
 
 
 @pytest.mark.parametrize(

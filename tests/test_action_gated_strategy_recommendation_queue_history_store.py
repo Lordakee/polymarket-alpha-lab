@@ -43,24 +43,45 @@ class FakeActionGatedQueueHistoryDbRow:
 
 
 class FakeCursor:
-    def __init__(self, rows: tuple[Any, ...] = ()) -> None:
+    def __init__(
+        self,
+        rows: tuple[Any, ...] = (),
+        *,
+        execute_error: BaseException | None = None,
+        fetchall_error: BaseException | None = None,
+        close_error: BaseException | None = None,
+    ) -> None:
         self.rows = rows
         self.calls: list[tuple[str, tuple[Any, ...]]] = []
         self.closed = False
+        self.execute_error = execute_error
+        self.fetchall_error = fetchall_error
+        self.close_error = close_error
 
     def execute(self, sql: str, params: tuple[Any, ...] = ()) -> None:
         self.calls.append((sql, params))
+        if self.execute_error is not None:
+            raise self.execute_error
 
     def fetchall(self) -> tuple[Any, ...]:
+        if self.fetchall_error is not None:
+            raise self.fetchall_error
         return self.rows
 
     def close(self) -> None:
         self.closed = True
+        if self.close_error is not None:
+            raise self.close_error
 
 
 class FakeConnection:
-    def __init__(self, rows: tuple[Any, ...] = ()) -> None:
-        self.cursor_instance = FakeCursor(rows)
+    def __init__(
+        self,
+        rows: tuple[Any, ...] = (),
+        *,
+        cursor: FakeCursor | None = None,
+    ) -> None:
+        self.cursor_instance = cursor if cursor is not None else FakeCursor(rows)
         self.cursor_count = 0
         self.commit_count = 0
         self.rollback_count = 0
@@ -244,6 +265,41 @@ def test_insert_action_gated_queue_history_report_uses_parameterized_insert(
         True,
         True,
     )
+
+
+def test_insert_propagates_cursor_close_error_after_successful_insert(
+    store_module: types.ModuleType,
+) -> None:
+    close_error = RuntimeError("close failed")
+    cursor = FakeCursor(close_error=close_error)
+    connection = FakeConnection(cursor=cursor)
+
+    with pytest.raises(RuntimeError, match="close failed") as exc_info:
+        store_module.insert_paper_action_gated_strategy_recommendation_queue_history_report(
+            connection,
+            _history_report(),
+        )
+
+    assert exc_info.value is close_error
+    assert cursor.calls
+    assert cursor.closed is True
+
+
+def test_load_keeps_fetchall_error_when_cursor_close_also_fails(
+    store_module: types.ModuleType,
+) -> None:
+    fetchall_error = RuntimeError("fetchall failed")
+    close_error = RuntimeError("close failed")
+    cursor = FakeCursor(fetchall_error=fetchall_error, close_error=close_error)
+    connection = FakeConnection(cursor=cursor)
+
+    with pytest.raises(RuntimeError, match="fetchall failed") as exc_info:
+        store_module.load_paper_action_gated_strategy_recommendation_queue_history_reports(
+            connection,
+        )
+
+    assert exc_info.value is fetchall_error
+    assert cursor.closed is True
 
 
 @pytest.mark.parametrize(
