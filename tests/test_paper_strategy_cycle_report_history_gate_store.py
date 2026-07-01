@@ -77,25 +77,46 @@ class FakeDbRow:
 
 
 class FakeCursor:
-    def __init__(self, rows: tuple[Any, ...] = (), rowcount: int = 1) -> None:
+    def __init__(
+        self,
+        rows: tuple[Any, ...] = (),
+        rowcount: int = 1,
+        *,
+        execute_error: BaseException | None = None,
+        close_error: BaseException | None = None,
+    ) -> None:
         self.rows = rows
         self.rowcount = rowcount
+        self.execute_error = execute_error
+        self.close_error = close_error
         self.calls: list[tuple[str, tuple[Any, ...]]] = []
         self.closed = False
 
     def execute(self, sql: str, params: tuple[Any, ...] = ()) -> None:
         self.calls.append((sql, params))
+        if self.execute_error is not None:
+            raise self.execute_error
 
     def fetchall(self) -> tuple[Any, ...]:
         return self.rows
 
     def close(self) -> None:
         self.closed = True
+        if self.close_error is not None:
+            raise self.close_error
 
 
 class FakeConnection:
-    def __init__(self, rows: tuple[Any, ...] = (), rowcount: int = 1) -> None:
-        self.cursor_instance = FakeCursor(rows, rowcount)
+    def __init__(
+        self,
+        rows: tuple[Any, ...] = (),
+        rowcount: int = 1,
+        *,
+        cursor: FakeCursor | None = None,
+    ) -> None:
+        self.cursor_instance = (
+            FakeCursor(rows, rowcount) if cursor is None else cursor
+        )
         self.cursor_count = 0
         self.commit_count = 0
         self.rollback_count = 0
@@ -293,6 +314,51 @@ def test_insert_history_gate_report_rejects_unexpected_rowcount(
             FakeConnection(rowcount=2),
             FakeReport(gate_status="watch"),
         )
+
+
+@pytest.mark.parametrize("operation", ["insert", "load"])
+def test_cursor_close_exception_after_success_propagates(
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+) -> None:
+    store = _import_store(monkeypatch)
+    close_error = RuntimeError("cursor close failed")
+    cursor = FakeCursor(rows=(_row(),), close_error=close_error)
+    connection = FakeConnection(cursor=cursor)
+
+    with pytest.raises(RuntimeError, match="cursor close failed") as excinfo:
+        if operation == "insert":
+            store.insert_paper_strategy_cycle_report_history_gate_report(
+                connection,
+                FakeReport(gate_status="watch"),
+            )
+        else:
+            store.load_paper_strategy_cycle_report_history_gate_reports(connection)
+
+    assert excinfo.value is close_error
+    assert cursor.closed is True
+
+
+def test_operation_exception_wins_when_cursor_close_also_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _import_store(monkeypatch)
+    operation_error = RuntimeError("execute failed")
+    close_error = RuntimeError("cursor close failed")
+    cursor = FakeCursor(
+        execute_error=operation_error,
+        close_error=close_error,
+    )
+    connection = FakeConnection(cursor=cursor)
+
+    with pytest.raises(RuntimeError, match="execute failed") as excinfo:
+        store.insert_paper_strategy_cycle_report_history_gate_report(
+            connection,
+            FakeReport(gate_status="watch"),
+        )
+
+    assert excinfo.value is operation_error
+    assert cursor.closed is True
 
 
 def test_load_history_gate_reports_filters_in_deterministic_order(

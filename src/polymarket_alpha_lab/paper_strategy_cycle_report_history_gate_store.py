@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import importlib
 import re
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable, TypeVar
 
 if TYPE_CHECKING:
     from polymarket_alpha_lab.paper_strategy_cycle_report_history_gate import (
@@ -31,6 +31,7 @@ _GATE_STATUSES = frozenset(("pass", "watch", "blocked"))
 DEFAULT_PAPER_STRATEGY_CYCLE_REPORT_HISTORY_GATE_REPORTS_TABLE = (
     "paper_strategy_cycle_report_history_gate_reports"
 )
+_T = TypeVar("_T")
 _SELECT_COLUMNS = (
     "report_sha256",
     "generated_at",
@@ -102,16 +103,15 @@ def insert_paper_strategy_cycle_report_history_gate_report_with_result(
         """
     params = tuple(getattr(row, column) for column in _SELECT_COLUMNS)
     cursor = connection.cursor()
-    try:
+
+    def _execute_insert() -> int:
         cursor.execute(sql, params)
         rowcount = cursor.rowcount
-    finally:
-        try:
-            cursor.close()
-        except Exception:
-            pass
-    if rowcount not in (0, 1):
-        raise ValueError("insert rowcount must be 0 or 1")
+        if rowcount not in (0, 1):
+            raise ValueError("insert rowcount must be 0 or 1")
+        return rowcount
+
+    rowcount = _with_cursor_cleanup(cursor, _execute_insert)
     return PaperStrategyCycleReportHistoryGateInsertResult(
         row=row,
         inserted=rowcount == 1,
@@ -174,16 +174,30 @@ def load_paper_strategy_cycle_report_history_gate_reports(
         {limit_clause}
         """
     cursor = connection.cursor()
-    try:
+
+    def _fetch_records() -> Any:
         cursor.execute(sql, tuple(params))
-        records = cursor.fetchall()
-    finally:
-        try:
-            cursor.close()
-        except Exception:
-            pass
+        return cursor.fetchall()
+
+    records = _with_cursor_cleanup(cursor, _fetch_records)
     rows = tuple(_db_row_from_record(record) for record in records)
     return tuple(_report_from_db_row(row) for row in rows)
+
+
+def _with_cursor_cleanup(cursor: Any, operation: Callable[[], _T]) -> _T:
+    operation_succeeded = False
+    try:
+        result = operation()
+        operation_succeeded = True
+        return result
+    finally:
+        if operation_succeeded:
+            cursor.close()
+        else:
+            try:
+                cursor.close()
+            except Exception:
+                pass
 
 
 def _db_row_module() -> Any:
