@@ -188,12 +188,12 @@ def run_strategy_loop(
     ``on_cycle_error="raise"`` propagates immediately. The returned
     ``RunLoopSummary`` is paper-only/report-only.
 
-    Paper trade records are emitted by ``run_strategy_cycle``. When a
-    ``paper_trade_record_sink`` is supplied, the shared cycle core calls it
-    before any optional JSONL compatibility append; sink failures are handled as
-    iteration failures by the policy below. When ``paper_trade_record_source`` is
-    supplied, NAV marking uses those in-memory records before falling back to the
-    legacy ``paper_trade_journal_path`` compatibility reader.
+    Paper trade records are emitted by ``run_strategy_cycle`` through the
+    required ``paper_trade_record_sink`` whenever paper execution is enabled;
+    sink failures are handled as iteration failures by the policy below. When
+    ``paper_trade_record_source`` is supplied, NAV marking uses those records
+    before falling back to the legacy ``paper_trade_journal_path`` compatibility
+    reader.
 
     ``cycle_report_sink``, ``cycle_snapshot_source`` / ``cycle_snapshot_sink``,
     ``action_gated_queue_source`` / ``action_gated_queue_sink``,

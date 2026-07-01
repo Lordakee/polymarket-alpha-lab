@@ -68,11 +68,6 @@ from polymarket_alpha_lab.forecast_provider import (
     PaperForecastConfig,
     build_paper_naive_forecast,
 )
-# Stage 4 (additive/default-off): inline paper-execution pass journals a
-# PaperTradeRecord per screening_ready candidate. ``journal`` is now a permitted
-# dependency because journaling paper trades IS the cycle's new Stage 4 job
-# (scope contract evolved; was forbidden under Stage 1b read-only boundary).
-from polymarket_alpha_lab.journal import PaperTradeJournal
 from polymarket_alpha_lab.json_recovery import from_jsonable
 from polymarket_alpha_lab.normalize import normalize_gamma_market, normalize_order_book
 from polymarket_alpha_lab.paper_execution import (
@@ -141,8 +136,9 @@ class PaperStrategyCycleConfig:
     llm_forecast_config: PaperLLMForecastConfig | None = None
     # Stage 4 (additive/default-off): when paper_execution_config is set,
     # run_strategy_cycle runs an inline paper-execution pass after screening.
-    # Records must flow to either an injected sink or an explicit JSONL journal
-    # path. Default None = Stage 1b/2/3 behavior unchanged.
+    # Records must flow to an injected durable DB sink. The journal path remains
+    # a legacy read/export setting for downstream compatibility; it is not a
+    # valid paper-execution write sink.
     paper_execution_config: PaperExecutionConfig | None = None
     paper_trade_journal_path: Path | None = None
     market_search: str | None = None
@@ -400,11 +396,10 @@ def run_strategy_cycle(
         raise ValueError("paper_trade_record_sink must be callable or None")
     if (
         cycle_config.paper_execution_config is not None
-        and cycle_config.paper_trade_journal_path is None
         and paper_trade_record_sink is None
     ):
         raise ValueError(
-            "paper_trade_record_sink is required when paper execution has no journal path",
+            "paper_trade_record_sink is required when paper execution is enabled",
         )
 
     if generated_at is not None:
@@ -639,17 +634,15 @@ def run_strategy_cycle(
 
     # 4b. Inline paper-execution pass (Stage 4, additive/default-off). Turn
     #     each screening_ready candidate into an auditable PaperTradeRecord
-    #     against the in-memory book captured during the cycle, then persist it.
-    #     Per-candidate try/except isolation applies to paper execution itself;
-    #     sink failures propagate so DB-first persistence cannot silently fall
-    #     back to a durable JSONL compatibility record. Default-off: when
-    #     paper_execution_config is None this block is skipped entirely.
+    #     against the in-memory book captured during the cycle, then persist it
+    #     through the required injected DB sink. Per-candidate try/except
+    #     isolation applies to paper execution itself; sink failures propagate.
+    #     Default-off: when paper_execution_config is None this block is skipped.
     if cycle_config.paper_execution_config is not None and screening is not None:
-        journal = (
-            PaperTradeJournal(cycle_config.paper_trade_journal_path)
-            if cycle_config.paper_trade_journal_path is not None
-            else None
-        )
+        if paper_trade_record_sink is None:
+            raise ValueError(
+                "paper_trade_record_sink is required when paper execution is enabled",
+            )
         paper_pass_config = cycle_config.paper_execution_config
         for candidate in screening.candidates:
             if candidate.screening_status != "screening_ready":
@@ -685,10 +678,7 @@ def run_strategy_cycle(
             except Exception:
                 continue
             if paper_result.record is not None:
-                if paper_trade_record_sink is not None:
-                    paper_trade_record_sink(paper_result.record)
-                if journal is not None:
-                    journal.append(paper_result.record)
+                paper_trade_record_sink(paper_result.record)
 
     # 5. Assemble + validate invariants in __post_init__.
     return PaperStrategyCycleReport(

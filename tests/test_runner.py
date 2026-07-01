@@ -29,7 +29,6 @@ from polymarket_alpha_lab.cost_aware_snapshot_builder import (
     PaperCostAwareSnapshotConfig,
 )
 from polymarket_alpha_lab.forecast_provider import PaperForecastConfig
-from polymarket_alpha_lab.journal import PaperTradeJournal
 from polymarket_alpha_lab.paper_execution import PaperExecutionConfig
 from polymarket_alpha_lab.pipeline import MarketScanConfig
 from polymarket_alpha_lab.positions import PaperNavLog
@@ -312,9 +311,10 @@ def test_single_shot_runs_one_cycle_and_logs_report_without_sleep(tmp_path):
     journal_path = tmp_path / "paper-trades.jsonl"
     cycle_log = tmp_path / "cycle.jsonl"
     nav_log = tmp_path / "nav.jsonl"
+    trade_records = []
     config = cycle_config(
         paper_execution_config=_paper_exec_config(),
-        paper_trade_journal_path=journal_path,
+        paper_trade_journal_path=None,
     )
 
     with patch("polymarket_alpha_lab.runner.time.sleep") as sleep_mock:
@@ -325,6 +325,8 @@ def test_single_shot_runs_one_cycle_and_logs_report_without_sleep(tmp_path):
             starting_cash=Decimal("10000"),
             nav_log_path=nav_log,
             cycle_report_log_path=cycle_log,
+            paper_trade_record_sink=trade_records.append,
+            paper_trade_record_source=lambda: tuple(trade_records),
         )
 
     # Single-shot: exactly one cycle ran, no inter-iteration sleep.
@@ -342,8 +344,10 @@ def test_single_shot_runs_one_cycle_and_logs_report_without_sleep(tmp_path):
     assert len(reports) == 1
     assert reports[0].scan_market_count == 1
     assert reports[0].snapshot_ready_count == 1
-    # Paper execution journaled one trade, so the NAV mark ran and was logged.
-    assert journal_path.exists()
+    # Paper execution emitted one DB-sink-style record, so NAV marked from the
+    # injected source without creating a JSONL trade journal.
+    assert len(trade_records) == 1
+    assert not journal_path.exists()
     assert nav_log.exists()
     assert len(nav_log.read_text(encoding="utf-8").splitlines()) == 1
 
@@ -443,9 +447,10 @@ def test_error_isolation_continues_after_a_failed_iteration_then_succeeds(tmp_pa
 
     journal_path = tmp_path / "paper-trades.jsonl"
     cycle_log = tmp_path / "cycle.jsonl"
+    trade_records = []
     config = cycle_config(
         paper_execution_config=_paper_exec_config(),
-        paper_trade_journal_path=journal_path,
+        paper_trade_journal_path=None,
     )
 
     with patch("polymarket_alpha_lab.runner.time.sleep"):
@@ -460,6 +465,7 @@ def test_error_isolation_continues_after_a_failed_iteration_then_succeeds(tmp_pa
             interval_seconds=0,
             max_iterations=2,
             on_cycle_error="log_and_continue",
+            paper_trade_record_sink=trade_records.append,
         )
 
     assert summary.iterations_completed == 1
@@ -467,6 +473,8 @@ def test_error_isolation_continues_after_a_failed_iteration_then_succeeds(tmp_pa
     assert summary.last_error == "RuntimeError: transient outage"
     # The successful iteration appended exactly one report.
     assert len(PaperStrategyCycleLog.read(cycle_log)) == 1
+    assert len(trade_records) == 1
+    assert not journal_path.exists()
 
 
 def test_on_cycle_error_raise_propagates_without_summary(tmp_path):
@@ -520,6 +528,7 @@ def test_first_run_skips_nav_mark_when_journal_does_not_exist(tmp_path):
         starting_cash=Decimal("10000"),
         nav_log_path=nav_log,
         cycle_report_log_path=cycle_log,
+        paper_trade_record_sink=lambda record: None,
     )
 
     # The cycle completed (one report logged) but produced no paper trade, so
@@ -533,14 +542,15 @@ def test_first_run_skips_nav_mark_when_journal_does_not_exist(tmp_path):
     assert not nav_log.exists()
 
 
-def test_nav_mark_runs_when_journal_exists_after_paper_trade(tmp_path):
+def test_nav_mark_runs_from_paper_trade_record_source_after_paper_trade(tmp_path):
     market, books = _screening_ready_market_and_books()
     client = FakeMarketDataClient([market], books)
     journal_path = tmp_path / "paper-trades.jsonl"
     nav_log = tmp_path / "nav.jsonl"
+    trade_records = []
     config = cycle_config(
         paper_execution_config=_paper_exec_config(),
-        paper_trade_journal_path=journal_path,
+        paper_trade_journal_path=None,
     )
 
     summary = run_strategy_loop(
@@ -550,12 +560,15 @@ def test_nav_mark_runs_when_journal_exists_after_paper_trade(tmp_path):
         starting_cash=Decimal("10000"),
         nav_log_path=nav_log,
         cycle_report_log_path=tmp_path / "cycle.jsonl",
+        paper_trade_record_sink=trade_records.append,
+        paper_trade_record_source=lambda: tuple(trade_records),
     )
 
-    # The screening_ready candidate journaled a buy; the journal now exists, so
-    # the NAV mark ran and was appended to the nav log (skip count zero).
+    # The screening_ready candidate emitted a buy record through the sink; NAV
+    # uses the injected source instead of a JSONL journal.
     assert summary.nav_marks_skipped == 0
-    assert journal_path.exists()
+    assert len(trade_records) == 1
+    assert not journal_path.exists()
     assert nav_log.exists()
     nav_lines = nav_log.read_text(encoding="utf-8").splitlines()
     assert len(nav_lines) == 1
@@ -565,14 +578,14 @@ def test_nav_mark_runs_when_journal_exists_after_paper_trade(tmp_path):
     assert Decimal(snapshot["starting_cash"]) == Decimal("10000")
 
 
-def test_paper_trade_record_sink_runs_for_journaled_trade(tmp_path):
+def test_paper_trade_record_sink_runs_without_implicit_jsonl_trade(tmp_path):
     market, books = _screening_ready_market_and_books()
     client = FakeMarketDataClient([market], books)
     journal_path = tmp_path / "paper-trades.jsonl"
     trade_records = []
     config = cycle_config(
         paper_execution_config=_paper_exec_config(),
-        paper_trade_journal_path=journal_path,
+        paper_trade_journal_path=None,
     )
 
     summary = run_strategy_loop(
@@ -588,7 +601,7 @@ def test_paper_trade_record_sink_runs_for_journaled_trade(tmp_path):
     assert summary.iterations_completed == 1
     assert summary.iterations_failed == 0
     assert len(trade_records) == 1
-    assert PaperTradeJournal.read(journal_path) == (trade_records[0],)
+    assert not journal_path.exists()
 
 
 def test_paper_trade_record_sink_runs_without_journal_path(tmp_path):
@@ -679,6 +692,7 @@ def test_paper_trade_record_source_takes_precedence_over_missing_journal(tmp_pat
         starting_cash=Decimal("10000"),
         nav_log_path=nav_log,
         cycle_report_log_path=tmp_path / "cycle.jsonl",
+        paper_trade_record_sink=lambda record: None,
         paper_trade_record_source=lambda: (),
         nav_snapshot_sink=nav_snapshots.append,
     )
@@ -813,9 +827,10 @@ def test_nav_snapshot_sink_runs_after_successful_nav_mark(tmp_path):
     journal_path = tmp_path / "paper-trades.jsonl"
     nav_log = tmp_path / "nav.jsonl"
     nav_snapshots = []
+    trade_records = []
     config = cycle_config(
         paper_execution_config=_paper_exec_config(),
-        paper_trade_journal_path=journal_path,
+        paper_trade_journal_path=None,
     )
 
     summary = run_strategy_loop(
@@ -825,12 +840,16 @@ def test_nav_snapshot_sink_runs_after_successful_nav_mark(tmp_path):
         starting_cash=Decimal("10000"),
         nav_log_path=nav_log,
         cycle_report_log_path=tmp_path / "cycle.jsonl",
+        paper_trade_record_sink=trade_records.append,
+        paper_trade_record_source=lambda: tuple(trade_records),
         nav_snapshot_sink=nav_snapshots.append,
     )
 
     assert summary.iterations_completed == 1
     assert summary.iterations_failed == 0
     assert summary.nav_marks_skipped == 0
+    assert len(trade_records) == 1
+    assert not journal_path.exists()
     assert len(nav_snapshots) == 1
     assert nav_snapshots[0].paper_only is True
     assert len(nav_log.read_text(encoding="utf-8").splitlines()) == 1
@@ -858,6 +877,7 @@ def test_nav_snapshot_sink_is_not_called_when_nav_mark_is_skipped(tmp_path):
         starting_cash=Decimal("10000"),
         nav_log_path=tmp_path / "nav.jsonl",
         cycle_report_log_path=tmp_path / "cycle.jsonl",
+        paper_trade_record_sink=lambda record: None,
         nav_snapshot_sink=nav_snapshots.append,
     )
 
@@ -872,9 +892,10 @@ def test_nav_snapshot_sink_failure_counts_as_iteration_failure_not_nav_skip(tmp_
     client = FakeMarketDataClient([market], books)
     journal_path = tmp_path / "paper-trades.jsonl"
     nav_log = tmp_path / "nav.jsonl"
+    trade_records = []
     config = cycle_config(
         paper_execution_config=_paper_exec_config(),
-        paper_trade_journal_path=journal_path,
+        paper_trade_journal_path=None,
     )
 
     def broken_nav_sink(snapshot):
@@ -887,6 +908,8 @@ def test_nav_snapshot_sink_failure_counts_as_iteration_failure_not_nav_skip(tmp_
         starting_cash=Decimal("10000"),
         nav_log_path=nav_log,
         cycle_report_log_path=tmp_path / "cycle.jsonl",
+        paper_trade_record_sink=trade_records.append,
+        paper_trade_record_source=lambda: tuple(trade_records),
         nav_snapshot_sink=broken_nav_sink,
         on_cycle_error="log_and_continue",
     )
@@ -895,6 +918,8 @@ def test_nav_snapshot_sink_failure_counts_as_iteration_failure_not_nav_skip(tmp_
     assert summary.iterations_failed == 1
     assert summary.nav_marks_skipped == 0
     assert summary.last_error == "RuntimeError: nav db unavailable"
+    assert len(trade_records) == 1
+    assert not journal_path.exists()
     assert len(nav_log.read_text(encoding="utf-8").splitlines()) == 1
 
 
@@ -905,9 +930,10 @@ def test_nav_snapshot_sink_file_not_found_counts_as_iteration_failure_not_nav_sk
     client = FakeMarketDataClient([market], books)
     journal_path = tmp_path / "paper-trades.jsonl"
     nav_log = tmp_path / "nav.jsonl"
+    trade_records = []
     config = cycle_config(
         paper_execution_config=_paper_exec_config(),
-        paper_trade_journal_path=journal_path,
+        paper_trade_journal_path=None,
     )
 
     def broken_nav_sink(snapshot):
@@ -920,6 +946,8 @@ def test_nav_snapshot_sink_file_not_found_counts_as_iteration_failure_not_nav_sk
         starting_cash=Decimal("10000"),
         nav_log_path=nav_log,
         cycle_report_log_path=tmp_path / "cycle.jsonl",
+        paper_trade_record_sink=trade_records.append,
+        paper_trade_record_source=lambda: tuple(trade_records),
         nav_snapshot_sink=broken_nav_sink,
         on_cycle_error="log_and_continue",
     )
@@ -928,6 +956,8 @@ def test_nav_snapshot_sink_file_not_found_counts_as_iteration_failure_not_nav_sk
     assert summary.iterations_failed == 1
     assert summary.nav_marks_skipped == 0
     assert summary.last_error == "FileNotFoundError: nav db certificate file missing"
+    assert len(trade_records) == 1
+    assert not journal_path.exists()
     assert len(nav_log.read_text(encoding="utf-8").splitlines()) == 1
 
 

@@ -23,7 +23,7 @@ from polymarket_alpha_lab.forecast_evidence import (
     PaperForecastEvidenceReport,
     build_paper_forecast_evidence_report,
 )
-from polymarket_alpha_lab.journal import PaperTradeJournal, PaperTradeRecord
+from polymarket_alpha_lab.journal import PaperTradeRecord
 from polymarket_alpha_lab.outcome_tracker import (
     OutcomeTrackingConfig,
     OutcomeTrackingLog,
@@ -361,7 +361,13 @@ def test_strategy_cycle_cli_returns_one_when_cycle_runner_fails(tmp_path):
     assert exit_code == 1
 
 
-def test_strategy_cycle_cli_paper_execute_flag_enables_inline_paper_pass(tmp_path):
+def test_strategy_cycle_cli_paper_execute_flag_enables_inline_paper_pass(
+    tmp_path,
+    monkeypatch,
+):
+    fake_dsn = "postgresql://paper-trade@localhost/db"
+    monkeypatch.setenv(PAPER_TRADE_JOURNAL_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(PAPER_TRADE_JOURNAL_DB_DSN_ENV_VAR, fake_dsn)
     calls = []
 
     def fake_client_factory():
@@ -374,7 +380,7 @@ def test_strategy_cycle_cli_paper_execute_flag_enables_inline_paper_pass(tmp_pat
         cycle_config,
         paper_trade_record_sink=None,
     ):
-        calls.append(cycle_config)
+        calls.append((cycle_config, paper_trade_record_sink))
         return PaperStrategyCycleReport(
             generated_at=datetime.now(UTC),
             config_version="strategy-cycle-v1",
@@ -392,23 +398,24 @@ def test_strategy_cycle_cli_paper_execute_flag_enables_inline_paper_pass(tmp_pat
         [
             "strategy-cycle",
             "--paper-execute",
-            "--paper-journal",
-            str(journal_path),
             "--archive-root",
             str(tmp_path / "raw"),
             "--output",
             str(tmp_path / "strategy-cycle.jsonl"),
         ],
         cycle_runner=fake_cycle_runner,
+        paper_trade_record_db_sink=lambda **kwargs: None,
         client_factory=fake_client_factory,
     )
 
     assert exit_code == 0
     assert len(calls) == 1
-    cycle_config = calls[0]
+    cycle_config, paper_trade_record_sink = calls[0]
     assert cycle_config.paper_execution_config is not None
     assert cycle_config.paper_execution_config.config_version == "paper-execution-v1"
-    assert cycle_config.paper_trade_journal_path == journal_path
+    assert cycle_config.paper_trade_journal_path is None
+    assert paper_trade_record_sink is not None
+    assert not journal_path.exists()
 
 
 def test_strategy_cycle_cli_wires_paper_trade_db_sink_when_enabled(
@@ -562,7 +569,7 @@ def test_strategy_cycle_cli_redacts_dsn_when_paper_trade_db_sink_fails(
     assert not (tmp_path / "paper-trades.jsonl").exists()
 
 
-def test_strategy_cycle_cli_paper_execute_requires_db_sink_or_explicit_journal(
+def test_strategy_cycle_cli_paper_execute_requires_db_sink_even_with_explicit_journal(
     tmp_path,
     monkeypatch,
     capsys,
@@ -577,6 +584,8 @@ def test_strategy_cycle_cli_paper_execute_requires_db_sink_or_explicit_journal(
         [
             "strategy-cycle",
             "--paper-execute",
+            "--paper-journal",
+            str(tmp_path / "paper-trades.jsonl"),
             "--archive-root",
             str(tmp_path / "raw"),
             "--output",
@@ -588,8 +597,47 @@ def test_strategy_cycle_cli_paper_execute_requires_db_sink_or_explicit_journal(
 
     assert exit_code == 1
     captured = capsys.readouterr()
-    assert "paper trade DB persistence or --paper-journal is required" in captured.err
+    assert "paper trade journal DB persistence is required" in captured.err
+    assert PAPER_TRADE_JOURNAL_DB_ENABLED_ENV_VAR in captured.err
     assert "cycle runner should not run" not in captured.err
+
+
+def test_strategy_cycle_cli_paper_execute_rejects_explicit_journal_when_db_enabled(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    monkeypatch.setenv(PAPER_TRADE_JOURNAL_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(
+        PAPER_TRADE_JOURNAL_DB_DSN_ENV_VAR,
+        "postgresql://paper-trade@localhost/db",
+    )
+    journal_path = tmp_path / "paper-trades.jsonl"
+
+    def forbidden_cycle_runner(**kwargs):
+        raise AssertionError("cycle runner should not run")
+
+    exit_code = main(
+        [
+            "strategy-cycle",
+            "--paper-execute",
+            "--paper-journal",
+            str(journal_path),
+            "--archive-root",
+            str(tmp_path / "raw"),
+            "--output",
+            str(tmp_path / "strategy-cycle.jsonl"),
+        ],
+        cycle_runner=forbidden_cycle_runner,
+        paper_trade_record_db_sink=lambda **kwargs: None,
+        client_factory=lambda: "fake-client",
+    )
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert "--paper-journal is not supported for --paper-execute" in captured.err
+    assert "cycle runner should not run" not in captured.err
+    assert not journal_path.exists()
 
 
 def test_strategy_cycle_cli_requires_cycle_report_db_or_explicit_export(
@@ -7613,7 +7661,13 @@ def test_run_cli_maps_positive_repeat_interval_to_interval_mode(tmp_path):
     ]
 
 
-def test_run_cli_paper_execute_flag_enables_inline_paper_pass(tmp_path):
+def test_run_cli_paper_execute_flag_enables_inline_paper_pass(
+    tmp_path,
+    monkeypatch,
+):
+    fake_dsn = "postgresql://paper-trade@localhost/db"
+    monkeypatch.setenv(PAPER_TRADE_JOURNAL_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(PAPER_TRADE_JOURNAL_DB_DSN_ENV_VAR, fake_dsn)
     calls = []
 
     def fake_loop_runner(*, client, scan_config, cycle_config, starting_cash,
@@ -7627,11 +7681,82 @@ def test_run_cli_paper_execute_flag_enables_inline_paper_pass(tmp_path):
                          paper_trade_record_source=None,
                          nav_snapshot_sink=None):
         assert cycle_report_sink is None
-        assert paper_trade_record_source is None
-        calls.append(cycle_config)
+        assert paper_trade_record_source is not None
+        calls.append((cycle_config, paper_trade_record_sink))
         return _empty_run_summary()
 
     journal_path = tmp_path / "paper-trades.jsonl"
+
+    exit_code = main(
+        [
+            "run",
+            "--paper-execute",
+            "--archive-root",
+            str(tmp_path / "raw"),
+            "--starting-cash",
+            "10000",
+            "--cycle-log",
+            str(tmp_path / "cycle.jsonl"),
+        ],
+        loop_runner=fake_loop_runner,
+        paper_trade_record_db_sink=lambda **kwargs: None,
+        paper_trade_record_db_loader=lambda **kwargs: (),
+        client_factory=lambda: "fake-client",
+    )
+
+    assert exit_code == 0
+    assert len(calls) == 1
+    cycle_config, paper_trade_record_sink = calls[0]
+    assert cycle_config.paper_execution_config is not None
+    assert cycle_config.paper_execution_config.config_version == "paper-execution-v1"
+    assert cycle_config.paper_trade_journal_path is None
+    assert paper_trade_record_sink is not None
+    assert not journal_path.exists()
+
+
+def test_run_cli_paper_execute_requires_paper_trade_db(tmp_path, monkeypatch, capsys):
+    monkeypatch.delenv(PAPER_TRADE_JOURNAL_DB_ENABLED_ENV_VAR, raising=False)
+    monkeypatch.delenv(PAPER_TRADE_JOURNAL_DB_DSN_ENV_VAR, raising=False)
+
+    def forbidden_loop_runner(**kwargs):
+        raise AssertionError("loop runner should not run")
+
+    exit_code = main(
+        [
+            "run",
+            "--paper-execute",
+            "--archive-root",
+            str(tmp_path / "raw"),
+            "--starting-cash",
+            "10000",
+            "--cycle-log",
+            str(tmp_path / "cycle.jsonl"),
+        ],
+        loop_runner=forbidden_loop_runner,
+        client_factory=lambda: "fake-client",
+    )
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert "paper trade journal DB persistence is required" in captured.err
+    assert PAPER_TRADE_JOURNAL_DB_ENABLED_ENV_VAR in captured.err
+    assert "loop runner should not run" not in captured.err
+
+
+def test_run_cli_paper_execute_rejects_explicit_journal_when_db_enabled(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    monkeypatch.setenv(PAPER_TRADE_JOURNAL_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(
+        PAPER_TRADE_JOURNAL_DB_DSN_ENV_VAR,
+        "postgresql://paper-trade@localhost/db",
+    )
+    journal_path = tmp_path / "paper-trades.jsonl"
+
+    def forbidden_loop_runner(**kwargs):
+        raise AssertionError("loop runner should not run")
 
     exit_code = main(
         [
@@ -7646,16 +7771,17 @@ def test_run_cli_paper_execute_flag_enables_inline_paper_pass(tmp_path):
             "--cycle-log",
             str(tmp_path / "cycle.jsonl"),
         ],
-        loop_runner=fake_loop_runner,
+        loop_runner=forbidden_loop_runner,
+        paper_trade_record_db_sink=lambda **kwargs: None,
+        paper_trade_record_db_loader=lambda **kwargs: (),
         client_factory=lambda: "fake-client",
     )
 
-    assert exit_code == 0
-    assert len(calls) == 1
-    cycle_config = calls[0]
-    assert cycle_config.paper_execution_config is not None
-    assert cycle_config.paper_execution_config.config_version == "paper-execution-v1"
-    assert cycle_config.paper_trade_journal_path == journal_path
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert "--paper-journal is not supported for --paper-execute" in captured.err
+    assert "loop runner should not run" not in captured.err
+    assert not journal_path.exists()
 
 
 def test_run_cli_requires_cycle_report_db_or_explicit_cycle_log(
@@ -11022,15 +11148,15 @@ def test_run_cli_default_loop_persists_paper_trade_and_nav_db_sinks_from_real_cy
     ]
     assert order_book_calls[:2] == [yes_token_id, no_token_id]
 
-    local_trades = PaperTradeJournal.read(paper_journal_path)
-    assert len(local_trades) == 1
-    local_trade = local_trades[0]
-    assert isinstance(local_trade, PaperTradeRecord)
-    assert paper_trade_record_to_db_row(local_trade).paper_only is True
+    assert not paper_journal_path.exists()
+    assert len(db_trade_records) == 1
+    db_trade_record = db_trade_records[0]
+    assert isinstance(db_trade_record, PaperTradeRecord)
+    assert paper_trade_record_to_db_row(db_trade_record).paper_only is True
     assert trade_sink_calls == [
         (
             trade_dsn,
-            local_trade,
+            db_trade_record,
             "paper_trade_archive",
             0,
         ),
@@ -11532,6 +11658,54 @@ def test_run_cli_json_config_enables_strategy_audit_preflight(tmp_path):
     assert audit_calls[0]["trade_log"] == paper_journal
     assert audit_calls[0]["nav_log"] == nav_log
     assert audit_calls[0]["outcome_log"] == outcome_log
+
+
+def test_run_cli_json_config_rejects_paper_execute_with_paper_journal(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    monkeypatch.setenv(PAPER_TRADE_JOURNAL_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(
+        PAPER_TRADE_JOURNAL_DB_DSN_ENV_VAR,
+        "postgresql://paper-trade@localhost/db",
+    )
+    journal_path = tmp_path / "paper-trades.jsonl"
+    config_path = tmp_path / "strategy.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "paper_journal": str(journal_path),
+                "cycle_log": str(tmp_path / "cycles.jsonl"),
+                "starting_cash": "10000",
+            },
+        ),
+        encoding="utf-8",
+    )
+
+    def forbidden_loop_runner(**kwargs):
+        raise AssertionError("loop runner should not run")
+
+    exit_code = main(
+        [
+            "run",
+            "--config",
+            str(config_path),
+            "--paper-execute",
+            "--archive-root",
+            str(tmp_path / "raw"),
+        ],
+        loop_runner=forbidden_loop_runner,
+        paper_trade_record_db_sink=lambda **kwargs: None,
+        paper_trade_record_db_loader=lambda **kwargs: (),
+        client_factory=lambda: "fake-client",
+    )
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert "--paper-journal is not supported for --paper-execute" in captured.err
+    assert "loop runner should not run" not in captured.err
+    assert not journal_path.exists()
 
 
 def test_run_cli_json_config_sets_strategy_audit_log_path(tmp_path):

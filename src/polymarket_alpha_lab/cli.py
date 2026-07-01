@@ -244,6 +244,9 @@ from polymarket_alpha_lab.supabase_paper_trade_cost_audit_config import (
     from_paper_trade_cost_audit_db_env,
 )
 from polymarket_alpha_lab.supabase_paper_trade_journal_config import (
+    PAPER_TRADE_JOURNAL_DB_DSN_ENV_VAR,
+    PAPER_TRADE_JOURNAL_DB_ENABLED_ENV_VAR,
+    SupabasePaperTradeJournalConfig,
     from_paper_trade_journal_db_env,
 )
 from polymarket_alpha_lab.supabase_paper_strategy_cycle_report_config import (
@@ -1276,6 +1279,30 @@ def _cli_decimal(value: str) -> Decimal:
     return decimal
 
 
+def _require_paper_trade_journal_db_for_paper_execute(
+    *,
+    paper_execute: bool,
+    paper_journal: Path | None,
+    paper_trade_db_config: SupabasePaperTradeJournalConfig,
+) -> None:
+    if not paper_execute:
+        return
+    if paper_trade_db_config.enabled is not True:
+        raise ValueError(
+            "paper trade journal DB persistence is required for "
+            f"--paper-execute; set {PAPER_TRADE_JOURNAL_DB_ENABLED_ENV_VAR}=true "
+            f"and {PAPER_TRADE_JOURNAL_DB_DSN_ENV_VAR} to a local "
+            "Supabase/Postgres DSN",
+        )
+    if paper_trade_db_config.dsn is None:
+        raise ValueError("paper trade journal DB persistence requires a DB DSN")
+    if paper_journal is not None:
+        raise ValueError(
+            "--paper-journal is not supported for --paper-execute; "
+            "use the local paper trade journal DB",
+        )
+
+
 def _apply_json_config(args: argparse.Namespace) -> None:
     """Override argparse defaults from a JSON config file (--config flag).
 
@@ -1583,7 +1610,9 @@ def main(
         dest="llm_api_token",
     )
     # Stage 4 (default-off): --paper-execute turns on the inline paper-execution
-    # pass inside run_strategy_cycle; --paper-journal selects the JSONL sink.
+    # pass inside run_strategy_cycle. Writes require the local paper trade journal
+    # DB env; --paper-journal remains a legacy read/export argument for other
+    # commands and is not a paper-execution write sink.
     cycle.add_argument(
         "--paper-execute",
         action="store_true",
@@ -2658,7 +2687,7 @@ def main(
     run_loop.add_argument(
         "--paper-journal",
         type=Path,
-        default=Path("artifacts/paper-trades.jsonl"),
+        default=None,
         dest="paper_journal",
     )
     run_loop.add_argument(
@@ -2799,15 +2828,11 @@ def main(
                             table_name=table_name,
                         )
 
-            if (
-                args.paper_execute
-                and not paper_trade_db_config.enabled
-                and args.paper_journal is None
-            ):
-                raise ValueError(
-                    "paper trade DB persistence or --paper-journal is required "
-                    "for --paper-execute",
-                )
+            _require_paper_trade_journal_db_for_paper_execute(
+                paper_execute=args.paper_execute,
+                paper_journal=args.paper_journal,
+                paper_trade_db_config=paper_trade_db_config,
+            )
             if strategy_cycle_report_sink is None and args.output is None:
                 raise ValueError(
                     "paper strategy cycle report DB persistence or --output is required",
@@ -2823,7 +2848,7 @@ def main(
                 max_markets_per_cycle=args.max_markets,
                 prefilter_by_score=args.prefilter,
                 paper_execute=args.paper_execute,
-                paper_journal=args.paper_journal,
+                paper_journal=None,
                 forecast_provider=args.forecast_provider,
                 llm_api_token=args.llm_api_token,
             )
@@ -6011,6 +6036,11 @@ def main(
                 raise ValueError(
                     "paper strategy cycle report DB persistence or --cycle-log is required",
                 )
+            _require_paper_trade_journal_db_for_paper_execute(
+                paper_execute=args.paper_execute,
+                paper_journal=args.paper_journal,
+                paper_trade_db_config=paper_trade_db_config,
+            )
             scan_config = MarketScanConfig(
                 limit=args.limit,
                 archive_root=args.archive_root,
@@ -6021,7 +6051,7 @@ def main(
                 max_markets_per_cycle=args.max_markets,
                 prefilter_by_score=args.prefilter,
                 paper_execute=args.paper_execute,
-                paper_journal=args.paper_journal,
+                paper_journal=None,
                 forecast_provider=args.forecast_provider,
                 llm_api_token=args.llm_api_token,
             )
@@ -6343,9 +6373,10 @@ def _build_default_cycle_config(
     is given realistic Polymarket fee assumptions via
     ``polymarket_default_cost_assumptions`` (2% taker fee + small slippage).
     When ``paper_execute`` is set, the Stage 4 inline paper-execution pass is
-    enabled with the canonical ``PaperExecutionConfig``. ``paper_journal`` is
-    passed through only when the caller requests an explicit JSONL compatibility
-    copy; DB-first record sinks are injected by the command branch.
+    enabled with the canonical ``PaperExecutionConfig``. CLI paper execution
+    callers pass ``paper_journal=None`` and inject the local DB record sink at
+    the command boundary; JSONL journals are legacy read/export inputs, not
+    paper-execution write sinks.
     When ``forecast_provider`` is ``llm`` and ``llm_api_token`` is supplied, a
     caller-supplied ``GLMChatTransport`` is wired alongside the canonical
     ``PaperLLMForecastConfig`` (the token is never read from env/disk here).

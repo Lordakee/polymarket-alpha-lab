@@ -6,7 +6,6 @@
   "scan_limit": 20,
   "prefilter_by_score": false,
   "paper_execute": true,
-  "paper_journal": "artifacts/paper-trades.jsonl",
   "nav_log": "artifacts/nav.jsonl",
   "cycle_log": "artifacts/cycles.jsonl",
   "outcome_log": "artifacts/outcomes.jsonl",

@@ -16,7 +16,6 @@ from polymarket_alpha_lab.cost_aware_event_strategy import (
 )
 from polymarket_alpha_lab.cost_aware_snapshot_builder import PaperCostAwareSnapshotConfig
 from polymarket_alpha_lab.forecast_provider import PaperForecastConfig
-from polymarket_alpha_lab.journal import PaperTradeJournal
 from polymarket_alpha_lab.llm_forecast import PaperLLMForecastConfig
 from polymarket_alpha_lab.llm_research_transport import (
     GLMChatTransport,
@@ -954,7 +953,7 @@ def _screening_ready_market_and_books():
     return market, books
 
 
-def test_strategy_cycle_executes_paper_trades_inline_when_configured(tmp_path):
+def test_strategy_cycle_executes_paper_trades_inline_when_sink_configured(tmp_path):
     market, books = _screening_ready_market_and_books()
     client = FakeMarketDataClient([market], books)
     journal_path = tmp_path / "paper-trades.jsonl"
@@ -962,10 +961,17 @@ def test_strategy_cycle_executes_paper_trades_inline_when_configured(tmp_path):
         paper_execution_config=PaperExecutionConfig(
             config_version="paper-execution-v1",
         ),
-        paper_trade_journal_path=journal_path,
+        paper_trade_journal_path=None,
     )
+    sink_records = []
 
-    report = run_cycle(client, tmp_path, config=config)
+    report = run_strategy_cycle(
+        client=client,
+        scan_config=scan_config(tmp_path),
+        cycle_config=config,
+        generated_at=GENERATED_AT,
+        paper_trade_record_sink=sink_records.append,
+    )
 
     # Sanity: the candidate really is screening_ready (the gate for execution).
     assert report.snapshot_ready_count == 1
@@ -978,57 +984,18 @@ def test_strategy_cycle_executes_paper_trades_inline_when_configured(tmp_path):
     assert len(ready) == 1
     assert ready[0].scoring_side == "no"
 
-    # Stage 4 acceptance: the inline pass journaled exactly one paper trade
-    # for the screening_ready candidate (NO side, marker strategy_type).
-    assert journal_path.exists()
-    lines = journal_path.read_text(encoding="utf-8").splitlines()
-    assert len(lines) == 1
-    record = json.loads(lines[0])
-    assert record["market_slug"] == "market-paper"
-    assert record["outcome_name"] == "NO"
-    assert record["strategy_type"] == "book_imbalance_screening_paper"
-    assert record["order_side"] == "buy"
-    # PaperTradeRecord is paper-only by construction (decimal-string fills,
-    # marker strategy_type, sizing_limiter + planned_exit_rule populated).
-    assert record["sizing_limiter"] == "screening_book_depth"
-    assert record["planned_exit_rule"] == "hold_to_resolution"
-
-
-def test_strategy_cycle_paper_trade_record_sink_receives_appended_record(
-    tmp_path,
-    monkeypatch,
-):
-    market, books = _screening_ready_market_and_books()
-    client = FakeMarketDataClient([market], books)
-    journal_path = tmp_path / "paper-trades.jsonl"
-    config = cycle_config(
-        paper_execution_config=PaperExecutionConfig(
-            config_version="paper-execution-v1",
-        ),
-        paper_trade_journal_path=journal_path,
-    )
-    appended_records = []
-    sink_records = []
-    original_append = PaperTradeJournal.append
-
-    def recording_append(self, record):
-        appended_records.append(record)
-        original_append(self, record)
-
-    monkeypatch.setattr(PaperTradeJournal, "append", recording_append)
-
-    run_strategy_cycle(
-        client=client,
-        scan_config=scan_config(tmp_path),
-        cycle_config=config,
-        generated_at=GENERATED_AT,
-        paper_trade_record_sink=sink_records.append,
-    )
-
-    assert len(appended_records) == 1
-    assert sink_records == appended_records
-    assert sink_records[0] is appended_records[0]
-    assert PaperTradeJournal.read(journal_path) == (sink_records[0],)
+    # Stage 4 acceptance: the inline pass emits exactly one paper trade
+    # for the screening_ready candidate (NO side, marker strategy_type) through
+    # the required durable sink. It does not implicitly create JSONL.
+    assert len(sink_records) == 1
+    record = sink_records[0]
+    assert record.market_slug == "market-paper"
+    assert record.outcome_name == "NO"
+    assert record.strategy_type == "book_imbalance_screening_paper"
+    assert record.order_side == "buy"
+    assert record.sizing_limiter == "screening_book_depth"
+    assert record.planned_exit_rule == "hold_to_resolution"
+    assert not journal_path.exists()
 
 
 def test_strategy_cycle_paper_trade_record_sink_does_not_require_jsonl_journal(
@@ -1079,7 +1046,7 @@ def test_strategy_cycle_rejects_invalid_paper_trade_record_sink_before_client_wo
     assert client.get_order_book_calls == []
 
 
-def test_strategy_cycle_paper_trade_record_sink_failure_leaves_no_jsonl_record(
+def test_strategy_cycle_paper_trade_record_sink_failure_propagates_before_report(
     tmp_path,
 ):
     market, books = _screening_ready_market_and_books()
@@ -1089,7 +1056,7 @@ def test_strategy_cycle_paper_trade_record_sink_failure_leaves_no_jsonl_record(
         paper_execution_config=PaperExecutionConfig(
             config_version="paper-execution-v1",
         ),
-        paper_trade_journal_path=journal_path,
+        paper_trade_journal_path=None,
     )
     sink_records = []
 
@@ -1133,6 +1100,30 @@ def test_strategy_cycle_paper_execution_requires_sink_without_journal_path(tmp_p
 
     assert client.list_markets_calls == []
     assert client.get_order_book_calls == []
+
+
+def test_strategy_cycle_paper_execution_requires_sink_even_with_journal_path(tmp_path):
+    market, books = _screening_ready_market_and_books()
+    client = FakeMarketDataClient([market], books)
+    journal_path = tmp_path / "paper-trades.jsonl"
+    config = cycle_config(
+        paper_execution_config=PaperExecutionConfig(
+            config_version="paper-execution-v1",
+        ),
+        paper_trade_journal_path=journal_path,
+    )
+
+    with pytest.raises(ValueError, match="paper_trade_record_sink is required"):
+        run_strategy_cycle(
+            client=client,
+            scan_config=scan_config(tmp_path),
+            cycle_config=config,
+            generated_at=GENERATED_AT,
+        )
+
+    assert client.list_markets_calls == []
+    assert client.get_order_book_calls == []
+    assert not journal_path.exists()
 
 
 def test_strategy_cycle_no_paper_execution_when_config_is_none(tmp_path):

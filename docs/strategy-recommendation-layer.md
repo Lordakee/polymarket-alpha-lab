@@ -172,8 +172,8 @@ JSONL bundle logs may remain as append-only debug/export artifacts for local
 paper review, regression fixtures, or portability, but DB-backed snapshot
 persistence is the primary normal history surface for cycle-level review and
 trend reporting. Paper trade records have a staged, narrower migration surface:
-`paper_trade_journal_records` is an optional local Supabase/Postgres write sink
-for strategy-cycle paper execution when enabled, and the one-shot
+`paper_trade_journal_records` is the required local Supabase/Postgres write sink
+for strategy-cycle paper execution, and the one-shot
 `portfolio-nav` CLI, continuous-run NAV source handling, `check-outcomes`
 source handling, and `cost-audit` source handling can use that table as a
 DB-backed paper-trade read source when the paper trade journal DB env is
