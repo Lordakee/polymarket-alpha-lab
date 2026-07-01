@@ -157,6 +157,15 @@ as optional `selection_summary_trend_gate` evidence, but it is still an
 operator-review signal only and never a live execution approval, order intent,
 wallet/account action, or capital-deployment instruction.
 
+Paper research packet quality history also has a pure Python trend/gate layer:
+`build_paper_research_packet_quality_history_trend_report(...)` reduces
+caller-supplied quality-history reports, and
+`build_paper_research_packet_quality_history_trend_gate_report(...)` converts
+that trend into paper-only/report-only/readonly `pass`, `watch`, or `blocked`
+evidence. It is an operator-quality signal only; it does not read env, access
+the database, fetch network data, tune strategy behavior, rank investments, or
+approve execution.
+
 JSONL bundle logs may remain as append-only debug/export artifacts for local
 paper review, regression fixtures, or portability, but DB-backed snapshot
 persistence is the primary normal history surface for cycle-level review and

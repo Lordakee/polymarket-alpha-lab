@@ -288,6 +288,19 @@ from polymarket_alpha_lab.paper_trade_cost_audit import (
     PaperTradeCostAuditReport,
     build_paper_trade_cost_audit_report,
 )
+from polymarket_alpha_lab.paper_research_packet_quality_history_trend import (
+    PaperResearchPacketQualityHistoryTrendConfig,
+    PaperResearchPacketQualityHistoryTrendRecurringReasonCodeRow,
+    PaperResearchPacketQualityHistoryTrendReport,
+    PaperResearchPacketQualityHistoryTrendStatusRow,
+    build_paper_research_packet_quality_history_trend_report,
+)
+from polymarket_alpha_lab.paper_research_packet_quality_history_trend_gate import (
+    PaperResearchPacketQualityHistoryTrendGateConfig,
+    PaperResearchPacketQualityHistoryTrendGateReasonCodeCount,
+    PaperResearchPacketQualityHistoryTrendGateReport,
+    build_paper_research_packet_quality_history_trend_gate_report,
+)
 from polymarket_alpha_lab.paper_research_packet_operator_flow_db_history_gate import (
     PaperResearchPacketOperatorFlowDbHistoryGateConfig,
     PaperResearchPacketOperatorFlowDbHistoryGateReasonCodeCount,
@@ -530,6 +543,13 @@ __all__ = [
     "PaperResearchPacketOperatorFlowDbHistoryGateConfig",
     "PaperResearchPacketOperatorFlowDbHistoryGateReasonCodeCount",
     "PaperResearchPacketOperatorFlowDbHistoryGateReport",
+    "PaperResearchPacketQualityHistoryTrendConfig",
+    "PaperResearchPacketQualityHistoryTrendRecurringReasonCodeRow",
+    "PaperResearchPacketQualityHistoryTrendReport",
+    "PaperResearchPacketQualityHistoryTrendStatusRow",
+    "PaperResearchPacketQualityHistoryTrendGateConfig",
+    "PaperResearchPacketQualityHistoryTrendGateReasonCodeCount",
+    "PaperResearchPacketQualityHistoryTrendGateReport",
     "PaperTradeCostAuditConfig",
     "PaperTradeCostAuditReport",
     "PerformanceSummary",
@@ -675,6 +695,8 @@ __all__ = [
     "build_paper_manual_review_queue",
     "build_paper_nav_risk_metrics_report",
     "build_paper_research_packet_operator_flow_db_history_gate_report",
+    "build_paper_research_packet_quality_history_trend_report",
+    "build_paper_research_packet_quality_history_trend_gate_report",
     "build_paper_trade_cost_audit_report",
     "check_outcomes",
     "build_paper_strategy_risk_audit_report",

@@ -276,6 +276,19 @@ from polymarket_alpha_lab.paper_trade_cost_audit import (
     PaperTradeCostAuditReport,
     build_paper_trade_cost_audit_report,
 )
+from polymarket_alpha_lab.paper_research_packet_quality_history_trend import (
+    PaperResearchPacketQualityHistoryTrendConfig,
+    PaperResearchPacketQualityHistoryTrendRecurringReasonCodeRow,
+    PaperResearchPacketQualityHistoryTrendReport,
+    PaperResearchPacketQualityHistoryTrendStatusRow,
+    build_paper_research_packet_quality_history_trend_report,
+)
+from polymarket_alpha_lab.paper_research_packet_quality_history_trend_gate import (
+    PaperResearchPacketQualityHistoryTrendGateConfig,
+    PaperResearchPacketQualityHistoryTrendGateReasonCodeCount,
+    PaperResearchPacketQualityHistoryTrendGateReport,
+    build_paper_research_packet_quality_history_trend_gate_report,
+)
 from polymarket_alpha_lab.paper_research_packet_operator_flow_db_history_gate import (
     PaperResearchPacketOperatorFlowDbHistoryGateConfig,
     PaperResearchPacketOperatorFlowDbHistoryGateReasonCodeCount,
@@ -836,6 +849,64 @@ def test_paper_trade_cost_audit_public_api_exports():
     assert (
         lab.build_paper_trade_cost_audit_report
         is build_paper_trade_cost_audit_report
+    )
+
+
+def test_paper_research_packet_quality_history_trend_public_api_exports():
+    expected_exports = {
+        "PaperResearchPacketQualityHistoryTrendConfig",
+        "PaperResearchPacketQualityHistoryTrendRecurringReasonCodeRow",
+        "PaperResearchPacketQualityHistoryTrendReport",
+        "PaperResearchPacketQualityHistoryTrendStatusRow",
+        "build_paper_research_packet_quality_history_trend_report",
+        "PaperResearchPacketQualityHistoryTrendGateConfig",
+        "PaperResearchPacketQualityHistoryTrendGateReasonCodeCount",
+        "PaperResearchPacketQualityHistoryTrendGateReport",
+        "build_paper_research_packet_quality_history_trend_gate_report",
+    }
+    forbidden_exports = {
+        "DEFAULT_PAPER_RESEARCH_PACKET_QUALITY_HISTORY_TREND_CONFIG_VERSION",
+        "DEFAULT_PAPER_RESEARCH_PACKET_QUALITY_HISTORY_TREND_GATE_CONFIG_VERSION",
+        "NEXT_STEP_BY_STATUS",
+    }
+
+    assert expected_exports <= set(lab.__all__)
+    assert not (forbidden_exports & set(lab.__all__))
+    assert (
+        lab.PaperResearchPacketQualityHistoryTrendConfig
+        is PaperResearchPacketQualityHistoryTrendConfig
+    )
+    assert (
+        lab.PaperResearchPacketQualityHistoryTrendRecurringReasonCodeRow
+        is PaperResearchPacketQualityHistoryTrendRecurringReasonCodeRow
+    )
+    assert (
+        lab.PaperResearchPacketQualityHistoryTrendReport
+        is PaperResearchPacketQualityHistoryTrendReport
+    )
+    assert (
+        lab.PaperResearchPacketQualityHistoryTrendStatusRow
+        is PaperResearchPacketQualityHistoryTrendStatusRow
+    )
+    assert (
+        lab.build_paper_research_packet_quality_history_trend_report
+        is build_paper_research_packet_quality_history_trend_report
+    )
+    assert (
+        lab.PaperResearchPacketQualityHistoryTrendGateConfig
+        is PaperResearchPacketQualityHistoryTrendGateConfig
+    )
+    assert (
+        lab.PaperResearchPacketQualityHistoryTrendGateReasonCodeCount
+        is PaperResearchPacketQualityHistoryTrendGateReasonCodeCount
+    )
+    assert (
+        lab.PaperResearchPacketQualityHistoryTrendGateReport
+        is PaperResearchPacketQualityHistoryTrendGateReport
+    )
+    assert (
+        lab.build_paper_research_packet_quality_history_trend_gate_report
+        is build_paper_research_packet_quality_history_trend_gate_report
     )
 
 
