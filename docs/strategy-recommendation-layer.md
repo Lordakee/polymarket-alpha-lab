@@ -139,6 +139,23 @@ evidence and operator-review aids only; they are not package-root exports, live
 approvals, order intents, account reads, wallet/private-key access, signing, or
 exchange mutations.
 
+The team research assignment report is the downstream Phase 1 operations
+handoff from the candidate research queue into specialist-team research work.
+It joins the existing queue, team market routes, and team memory readiness
+digest by market slug and team id, preserves queue order, and records which
+specialist team owns each research row. Long-term memory use is gated per team
+with `allow`, `throttle`, or `block`, based on memory readiness. This report is
+assignment infrastructure only: it must not use investment-ranking,
+recommendation-score, suggested-notional, selected-notional, or position-sizing
+fields to decide assignment status, and it must not create trade
+recommendations, trade instructions, strategy-weight tuning, live execution
+signals, account reads, wallet key-material access, signing, orders, or exchange
+mutation. When any assignment input is read from durable storage, that input
+must come from existing env-driven local Supabase/Postgres sources only; do not
+add JSONL, SQLite, Redis, Mongo, SQLAlchemy, hosted DB, or generic durable-store
+substitutes for persisted assignment inputs. See
+[Team Research Assignment Report](team-research-assignment.md).
+
 DB-backed trend reporting remains separate readonly observability over
 persisted cycle state. It can summarize blocker/watch movement across stored
 snapshots, aggregate reason-code counts across persisted snapshot history, and
@@ -700,6 +717,9 @@ The recommendation-layer work is expected to use module-level reducers named:
   loading of already-persisted action-gated queue reports
 - `action_gated_strategy_recommendation_queue_risk` for paper-only
   ready-notional and candidate-count risk pressure summaries
+- `team_research_assignment` for the Phase 1 read-only operations report that
+  assigns candidate research queue rows to specialist teams and gates
+  long-term memory use with `allow`, `throttle`, or `block`
 
 Those modules should preserve the existing reducer style: frozen dataclasses,
 validated paper/report/readonly flags, deterministic ordering, Decimal-only
