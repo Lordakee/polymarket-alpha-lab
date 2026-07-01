@@ -34,6 +34,12 @@ class FakeTeamMarketRouteDbRow:
 
 
 @dataclass(frozen=True)
+class FakeTeamMarketRouteReport:
+    team_id: str
+    payload_json: dict[str, Any]
+
+
+@dataclass(frozen=True)
 class FakeTeamForecastDbRow:
     payload_sha256: str
     generated_at: datetime
@@ -147,6 +153,43 @@ def normalize_sql(value: str) -> str:
     return " ".join(value.split())
 
 
+ROUTE_COLUMNS = (
+    "payload_sha256",
+    "generated_at",
+    "team_id",
+    "market_slug",
+    "config_version",
+    "condition_id",
+    "category_id",
+    "event_template",
+    "routing_confidence",
+    "payload_json",
+    "paper_only",
+    "report_only",
+    "readonly",
+)
+
+
+def route_row(**overrides: Any) -> FakeTeamMarketRouteDbRow:
+    values = {
+        "payload_sha256": "a" * 64,
+        "generated_at": GENERATED_AT,
+        "team_id": "crypto_btc",
+        "market_slug": "bitcoin-above-120k",
+        "config_version": "team-router-v0",
+        "condition_id": "condition-btc",
+        "category_id": "finance.crypto.btc",
+        "event_template": "btc_hit_price",
+        "routing_confidence": Decimal("0.900000"),
+        "payload_json": {"kind": "route", "extra_recovery_field": "kept"},
+        "paper_only": True,
+        "report_only": True,
+        "readonly": True,
+    }
+    values.update(overrides)
+    return FakeTeamMarketRouteDbRow(**values)
+
+
 def forecast_row(**overrides: Any) -> FakeTeamForecastDbRow:
     values = {
         "payload_sha256": "b" * 64,
@@ -222,6 +265,9 @@ def outcome_row(**overrides: Any) -> FakeTeamForecastOutcomeDbRow:
 def store_module(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
     companion = types.ModuleType("polymarket_alpha_lab.team_forecast_db_row")
 
+    def team_route_from_db_row(row: FakeTeamMarketRouteDbRow) -> FakeTeamMarketRouteReport:
+        return FakeTeamMarketRouteReport(row.team_id, {"converted": row.payload_json})
+
     def team_forecast_from_db_row(row: FakeTeamForecastDbRow) -> FakeTeamForecastPacket:
         return FakeTeamForecastPacket(row.forecast_id, {"converted": row.payload_json})
 
@@ -239,6 +285,7 @@ def store_module(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
     companion.TeamForecastDbRow = FakeTeamForecastDbRow
     companion.TeamForecastEvidenceDbRow = FakeTeamForecastEvidenceDbRow
     companion.TeamForecastOutcomeDbRow = FakeTeamForecastOutcomeDbRow
+    companion.team_route_from_db_row = team_route_from_db_row
     companion.team_forecast_from_db_row = team_forecast_from_db_row
     companion.team_forecast_evidence_from_db_row = team_forecast_evidence_from_db_row
     companion.team_forecast_outcome_from_db_row = team_forecast_outcome_from_db_row
@@ -249,6 +296,103 @@ def store_module(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
     )
     sys.modules.pop("polymarket_alpha_lab.team_forecast_store", None)
     return importlib.import_module("polymarket_alpha_lab.team_forecast_store")
+
+
+def test_load_team_market_route_rows_returns_db_rows_with_filters_order_and_limit(
+    store_module: types.ModuleType,
+) -> None:
+    row = route_row()
+    connection = FakeConnection((row,))
+
+    loaded = store_module.load_team_market_route_rows(
+        connection,
+        team_id="crypto_btc",
+        market_slug="bitcoin-above-120k",
+        limit=5,
+        table_name="research.team_market_routes",
+    )
+
+    assert loaded == (row,)
+    assert loaded[0].routing_confidence == Decimal("0.900000")
+    assert loaded[0].payload_json == {"kind": "route", "extra_recovery_field": "kept"}
+    assert connection.commit_count == 0
+    assert connection.cursor_instance.closed is True
+    sql, params = connection.cursor_instance.calls[0]
+    assert normalize_sql(sql) == normalize_sql(
+        """
+        SELECT
+            payload_sha256,
+            generated_at,
+            team_id,
+            market_slug,
+            config_version,
+            condition_id,
+            category_id,
+            event_template,
+            routing_confidence,
+            payload_json,
+            paper_only,
+            report_only,
+            readonly
+        FROM research.team_market_routes
+        WHERE team_id = %s AND market_slug = %s
+        ORDER BY generated_at DESC, inserted_at DESC, payload_sha256 DESC
+        LIMIT %s
+        """,
+    )
+    assert params == ("crypto_btc", "bitcoin-above-120k", 5)
+
+
+def test_load_team_market_route_rows_accepts_mapping_and_positional_rows(
+    store_module: types.ModuleType,
+) -> None:
+    mapping_values = {
+        **route_row(payload_sha256="e" * 64).__dict__,
+        "payload_json": {"kind": "route-mapping", "extra_recovery_field": "kept"},
+    }
+    tuple_values = {
+        **route_row(payload_sha256="f" * 64).__dict__,
+        "event_template": "btc_weekly_price",
+        "payload_json": {"kind": "route-tuple", "extra_recovery_field": "kept"},
+    }
+
+    loaded_mapping = store_module.load_team_market_route_rows(
+        FakeConnection((mapping_values,)),
+        table_name="team_market_routes",
+    )
+    loaded_tuple = store_module.load_team_market_route_rows(
+        FakeConnection((tuple(tuple_values[column] for column in ROUTE_COLUMNS),)),
+        table_name="team_market_routes",
+    )
+
+    assert loaded_mapping == (
+        FakeTeamMarketRouteDbRow(
+            payload_sha256="e" * 64,
+            generated_at=GENERATED_AT,
+            team_id="crypto_btc",
+            market_slug="bitcoin-above-120k",
+            config_version="team-router-v0",
+            condition_id="condition-btc",
+            category_id="finance.crypto.btc",
+            event_template="btc_hit_price",
+            routing_confidence=Decimal("0.900000"),
+            payload_json={"kind": "route-mapping", "extra_recovery_field": "kept"},
+        ),
+    )
+    assert loaded_tuple == (
+        FakeTeamMarketRouteDbRow(
+            payload_sha256="f" * 64,
+            generated_at=GENERATED_AT,
+            team_id="crypto_btc",
+            market_slug="bitcoin-above-120k",
+            config_version="team-router-v0",
+            condition_id="condition-btc",
+            category_id="finance.crypto.btc",
+            event_template="btc_weekly_price",
+            routing_confidence=Decimal("0.900000"),
+            payload_json={"kind": "route-tuple", "extra_recovery_field": "kept"},
+        ),
+    )
 
 
 def test_load_team_forecast_rows_returns_db_rows_with_filters_order_and_limit(
@@ -361,10 +505,22 @@ def test_existing_packet_loaders_delegate_through_raw_row_loaders(
     store_module: types.ModuleType,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    route = route_row()
     forecast = forecast_row()
     evidence = evidence_row()
     outcome = outcome_row()
     calls: list[tuple[str, object, str | None, str | None, int | None, str]] = []
+
+    def fake_route_rows(
+        connection_arg: object,
+        *,
+        team_id: str | None,
+        market_slug: str | None,
+        limit: int | None,
+        table_name: str,
+    ) -> tuple[FakeTeamMarketRouteDbRow, ...]:
+        calls.append(("route", connection_arg, team_id, market_slug, limit, table_name))
+        return (route,)
 
     def fake_forecast_rows(
         connection_arg: object,
@@ -409,6 +565,7 @@ def test_existing_packet_loaders_delegate_through_raw_row_loaders(
         calls.append(("outcome", connection_arg, team_id, market_slug, limit, table_name))
         return (outcome,)
 
+    monkeypatch.setattr(store_module, "load_team_market_route_rows", fake_route_rows)
     monkeypatch.setattr(store_module, "load_team_forecast_rows", fake_forecast_rows)
     monkeypatch.setattr(
         store_module,
@@ -419,6 +576,18 @@ def test_existing_packet_loaders_delegate_through_raw_row_loaders(
 
     connection = FakeConnection(())
 
+    assert store_module.load_team_market_routes(
+        connection,
+        team_id="crypto_btc",
+        market_slug="bitcoin-above-120k",
+        limit=6,
+        table_name="team_market_routes",
+    ) == (
+        FakeTeamMarketRouteReport(
+            "crypto_btc",
+            {"converted": {"kind": "route", "extra_recovery_field": "kept"}},
+        ),
+    )
     assert store_module.load_team_forecasts(
         connection,
         team_id="crypto_btc",
@@ -457,6 +626,7 @@ def test_existing_packet_loaders_delegate_through_raw_row_loaders(
         ),
     )
     assert calls == [
+        ("route", connection, "crypto_btc", "bitcoin-above-120k", 6, "team_market_routes"),
         ("forecast", connection, "crypto_btc", "bitcoin-above-120k", 5, "team_forecasts"),
         (
             "evidence:forecast-btc-1",

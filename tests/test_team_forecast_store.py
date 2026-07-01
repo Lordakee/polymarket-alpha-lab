@@ -38,6 +38,13 @@ class FakeTeamForecastOutcome:
 
 
 @dataclass(frozen=True)
+class FakeTeamMarketRouteReport:
+    team_id: str
+    market_slug: str
+    category_id: str
+
+
+@dataclass(frozen=True)
 class FakeTeamMarketRouteDbRow:
     payload_sha256: str
     generated_at: datetime
@@ -304,6 +311,15 @@ def store_module(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
             market_slug=row.market_slug,
         )
 
+    def team_route_from_db_row(
+        row: FakeTeamMarketRouteDbRow,
+    ) -> FakeTeamMarketRouteReport:
+        return FakeTeamMarketRouteReport(
+            team_id=row.team_id,
+            market_slug=row.market_slug,
+            category_id=row.category_id,
+        )
+
     companion.TeamMarketRouteDbRow = FakeTeamMarketRouteDbRow
     companion.TeamForecastDbRow = FakeTeamForecastDbRow
     companion.TeamForecastEvidenceDbRow = FakeTeamForecastEvidenceDbRow
@@ -311,6 +327,7 @@ def store_module(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
     companion.team_forecast_from_db_row = team_forecast_from_db_row
     companion.team_forecast_evidence_from_db_row = team_forecast_evidence_from_db_row
     companion.team_forecast_outcome_from_db_row = team_forecast_outcome_from_db_row
+    companion.team_route_from_db_row = team_route_from_db_row
     monkeypatch.setitem(
         sys.modules,
         "polymarket_alpha_lab.team_forecast_db_row",
@@ -641,6 +658,73 @@ def test_insert_propagates_cursor_close_error_after_successful_execute(
     assert connection.cursor_instance.calls
 
 
+def test_load_team_market_routes_filters_limits_newest_first_and_restores_reports(
+    store_module: types.ModuleType,
+) -> None:
+    connection = FakeConnection(rows=(route_row(),))
+
+    routes = store_module.load_team_market_routes(
+        connection,
+        team_id="crypto_btc",
+        market_slug="bitcoin-above-120k",
+        limit=25,
+        table_name="research.team_market_routes",
+    )
+
+    assert routes == (
+        FakeTeamMarketRouteReport(
+            team_id="crypto_btc",
+            market_slug="bitcoin-above-120k",
+            category_id="finance.crypto.btc",
+        ),
+    )
+    assert connection.commit_count == 0
+    assert connection.cursor_instance.closed is True
+    sql, params = connection.cursor_instance.calls[0]
+    assert normalize_sql(sql) == normalize_sql(
+        """
+        SELECT
+            payload_sha256,
+            generated_at,
+            team_id,
+            market_slug,
+            config_version,
+            condition_id,
+            category_id,
+            event_template,
+            routing_confidence,
+            payload_json,
+            paper_only,
+            report_only,
+            readonly
+        FROM research.team_market_routes
+        WHERE team_id = %s AND market_slug = %s
+        ORDER BY generated_at DESC, inserted_at DESC, payload_sha256 DESC
+        LIMIT %s
+        """,
+    )
+    assert params == ("crypto_btc", "bitcoin-above-120k", 25)
+
+
+def test_public_exports_include_all_team_forecast_store_helpers(
+    store_module: types.ModuleType,
+) -> None:
+    assert set(store_module.__all__) == {
+        "insert_team_market_route",
+        "insert_team_forecast",
+        "insert_team_forecast_evidence",
+        "insert_team_forecast_outcome",
+        "load_team_market_routes",
+        "load_team_market_route_rows",
+        "load_team_forecasts",
+        "load_team_forecast_rows",
+        "load_team_forecast_evidence",
+        "load_team_forecast_evidence_rows",
+        "load_team_forecast_outcomes",
+        "load_team_forecast_outcome_rows",
+    }
+
+
 def test_load_team_forecasts_filters_limits_newest_first_and_restores_packets(
     store_module: types.ModuleType,
 ) -> None:
@@ -922,6 +1006,35 @@ def test_load_propagates_cursor_close_error_after_successful_query(
     assert exc_info.value is close_error
     assert connection.cursor_instance.close_count == 1
     assert connection.cursor_instance.calls
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    (
+        ({"table_name": "schema.too.many.parts"}, "table_name"),
+        ({"table_name": "_team_market_routes"}, "table_name"),
+        ({"table_name": "team_market_routes_"}, "table_name"),
+        ({"team_id": ""}, "team_id"),
+        ({"team_id": " crypto_btc"}, "team_id"),
+        ({"market_slug": ""}, "market_slug"),
+        ({"market_slug": " bitcoin-above-120k"}, "market_slug"),
+        ({"limit": 0}, "limit"),
+        ({"limit": True}, "limit"),
+    ),
+)
+def test_load_team_market_routes_rejects_invalid_query_inputs_without_executing_sql(
+    store_module: types.ModuleType,
+    kwargs: dict[str, Any],
+    message: str,
+) -> None:
+    connection = FakeConnection()
+    kwargs.setdefault("table_name", "team_market_routes")
+
+    with pytest.raises(ValueError, match=message):
+        store_module.load_team_market_routes(connection, **kwargs)
+
+    assert connection.cursor_count == 0
+    assert connection.cursor_instance.calls == []
 
 
 @pytest.mark.parametrize(

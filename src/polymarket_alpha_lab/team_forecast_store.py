@@ -13,12 +13,14 @@ from polymarket_alpha_lab.team_forecast_db_row import (
     team_forecast_evidence_from_db_row,
     team_forecast_from_db_row,
     team_forecast_outcome_from_db_row,
+    team_route_from_db_row,
 )
 
 if TYPE_CHECKING:
     from polymarket_alpha_lab.team_forecast_db_row import TeamForecastOutcome
     from polymarket_alpha_lab.team_forecast_packet import TeamForecastEvidencePacket
     from polymarket_alpha_lab.team_forecast_packet import TeamForecastPacket
+    from polymarket_alpha_lab.team_market_router import TeamMarketRouteReport
 
 
 __all__ = (
@@ -26,6 +28,8 @@ __all__ = (
     "insert_team_forecast",
     "insert_team_forecast_evidence",
     "insert_team_forecast_outcome",
+    "load_team_market_routes",
+    "load_team_market_route_rows",
     "load_team_forecast_evidence",
     "load_team_forecast_evidence_rows",
     "load_team_forecast_outcome_rows",
@@ -165,6 +169,55 @@ def insert_team_forecast_outcome(
     sql = _insert_sql(table_name, _OUTCOME_COLUMNS, "outcome_id")
     _execute_insert(connection, sql, _params_from_row(row, _OUTCOME_COLUMNS))
     return row
+
+
+def load_team_market_routes(
+    connection: Any,
+    *,
+    team_id: str | None = None,
+    market_slug: str | None = None,
+    limit: int | None = None,
+    table_name: str = _DEFAULT_ROUTE_TABLE_NAME,
+) -> tuple[TeamMarketRouteReport, ...]:
+    rows = load_team_market_route_rows(
+        connection,
+        team_id=team_id,
+        market_slug=market_slug,
+        limit=limit,
+        table_name=table_name,
+    )
+    return tuple(team_route_from_db_row(row) for row in rows)
+
+
+def load_team_market_route_rows(
+    connection: Any,
+    *,
+    team_id: str | None = None,
+    market_slug: str | None = None,
+    limit: int | None = None,
+    table_name: str = _DEFAULT_ROUTE_TABLE_NAME,
+) -> tuple[TeamMarketRouteDbRow, ...]:
+    table_name = _validate_table_name(table_name)
+    where_clause, params = _filter_params(
+        team_id=team_id,
+        market_slug=market_slug,
+        limit=limit,
+    )
+    limit_clause = _limit_clause(limit)
+    columns = ",\n            ".join(_ROUTE_COLUMNS)
+    sql = f"""
+        SELECT
+            {columns}
+        FROM {table_name}
+        {where_clause}
+        ORDER BY generated_at DESC, inserted_at DESC, payload_sha256 DESC
+        {limit_clause}
+        """
+    records = _execute_load(connection, sql, tuple(params))
+    return tuple(
+        _db_row_from_record(record, TeamMarketRouteDbRow, _ROUTE_COLUMNS)
+        for record in records
+    )
 
 
 def load_team_forecasts(

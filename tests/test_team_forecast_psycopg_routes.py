@@ -166,6 +166,109 @@ def test_insert_team_market_route_opens_psycopg_converts_delegates_commits_and_c
     assert connection.close_count == 1
 
 
+def test_load_team_market_routes_opens_psycopg_connection_delegates_query_options_commits_and_closes(
+    monkeypatch: pytest.MonkeyPatch,
+    adapter_module: types.ModuleType,
+) -> None:
+    connection = FakeConnection()
+    route = FakeRouteReport(market_slug="bitcoin-above-120k")
+    connect_calls: list[str] = []
+    store_calls: list[tuple[Any, str | None, str | None, int | None, str]] = []
+
+    _install_fake_psycopg(
+        monkeypatch,
+        connect=lambda dsn: connect_calls.append(dsn) or connection,
+    )
+
+    def fake_load(
+        connection_arg: Any,
+        *,
+        team_id: str | None,
+        market_slug: str | None,
+        limit: int | None,
+        table_name: str,
+    ) -> tuple[FakeRouteReport, ...]:
+        store_calls.append((connection_arg, team_id, market_slug, limit, table_name))
+        return (route,)
+
+    monkeypatch.setattr(adapter_module, "load_team_market_routes", fake_load, raising=False)
+
+    loaded = adapter_module.load_team_market_routes_with_psycopg(
+        LOCAL_DSN,
+        team_id="crypto_btc",
+        market_slug="bitcoin-above-120k",
+        limit=10,
+        table_name="team_market_routes_archive",
+    )
+
+    assert loaded == (route,)
+    assert connect_calls == [LOCAL_DSN]
+    store_connection, team_id, market_slug, limit, table_name = store_calls[0]
+    assert store_connection is not connection
+    assert store_connection.connection is connection
+    assert team_id == "crypto_btc"
+    assert market_slug == "bitcoin-above-120k"
+    assert limit == 10
+    assert table_name == "team_market_routes_archive"
+    assert connection.commit_count == 1
+    assert connection.rollback_count == 0
+    assert connection.close_count == 1
+
+
+def test_load_team_market_route_rows_opens_psycopg_connection_delegates_query_options_commits_and_closes(
+    monkeypatch: pytest.MonkeyPatch,
+    adapter_module: types.ModuleType,
+) -> None:
+    connection = FakeConnection()
+    row = route_row()
+    connect_calls: list[str] = []
+    store_calls: list[tuple[Any, str | None, str | None, int | None, str]] = []
+
+    _install_fake_psycopg(
+        monkeypatch,
+        connect=lambda dsn: connect_calls.append(dsn) or connection,
+    )
+
+    def fake_load(
+        connection_arg: Any,
+        *,
+        team_id: str | None,
+        market_slug: str | None,
+        limit: int | None,
+        table_name: str,
+    ) -> tuple[FakeRouteDbRow, ...]:
+        store_calls.append((connection_arg, team_id, market_slug, limit, table_name))
+        return (row,)
+
+    monkeypatch.setattr(
+        adapter_module,
+        "load_team_market_route_rows",
+        fake_load,
+        raising=False,
+    )
+
+    loaded = adapter_module.load_team_market_route_rows_with_psycopg(
+        LOCAL_DSN,
+        team_id="crypto_btc",
+        market_slug="bitcoin-above-120k",
+        limit=10,
+        table_name="team_market_routes_archive",
+    )
+
+    assert loaded == (row,)
+    assert connect_calls == [LOCAL_DSN]
+    store_connection, team_id, market_slug, limit, table_name = store_calls[0]
+    assert store_connection is not connection
+    assert store_connection.connection is connection
+    assert team_id == "crypto_btc"
+    assert market_slug == "bitcoin-above-120k"
+    assert limit == 10
+    assert table_name == "team_market_routes_archive"
+    assert connection.commit_count == 1
+    assert connection.rollback_count == 0
+    assert connection.close_count == 1
+
+
 def test_insert_team_market_route_real_store_path_delegates_psycopg_cursor_rowcount(
     monkeypatch: pytest.MonkeyPatch,
     adapter_module: types.ModuleType,
@@ -231,10 +334,14 @@ def test_insert_team_market_route_remote_dsn_is_rejected_before_connect_without_
 def test_public_exports_include_team_market_route_psycopg_wrapper(
     adapter_module: types.ModuleType,
 ) -> None:
-    assert "insert_team_market_route_with_psycopg" in adapter_module.__all__
+    assert {
+        "insert_team_market_route_with_psycopg",
+        "load_team_market_routes_with_psycopg",
+        "load_team_market_route_rows_with_psycopg",
+    } <= set(adapter_module.__all__)
 
 
-def test_missing_store_module_route_public_wrapper_raises_clean_runtime_error(
+def test_missing_store_module_route_public_wrappers_raise_clean_runtime_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setitem(sys.modules, "polymarket_alpha_lab.team_forecast_store", None)
@@ -249,9 +356,22 @@ def test_missing_store_module_route_public_wrapper_raises_clean_runtime_error(
         raising=False,
     )
 
-    with pytest.raises(RuntimeError, match="team forecast store module is required"):
-        module.insert_team_market_route_with_psycopg(
+    calls = (
+        lambda: module.insert_team_market_route_with_psycopg(
             LOCAL_DSN,
             FakeRouteReport(market_slug="bitcoin-above-120k"),
             table_name="team_market_routes",
-        )
+        ),
+        lambda: module.load_team_market_routes_with_psycopg(
+            LOCAL_DSN,
+            table_name="team_market_routes",
+        ),
+        lambda: module.load_team_market_route_rows_with_psycopg(
+            LOCAL_DSN,
+            table_name="team_market_routes",
+        ),
+    )
+
+    for call in calls:
+        with pytest.raises(RuntimeError, match="team forecast store module is required"):
+            call()

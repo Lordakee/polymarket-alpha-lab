@@ -1,6 +1,8 @@
 # Team Research Assignment DB-Source Gap
 
-Status: Task 3 is not feasible as a DB-source or CLI node yet.
+Status: the low-level `team_market_routes` readback prerequisite is available
+via store and psycopg helpers once the route-readback node lands, but the
+team research assignment DB-source and CLI remain deferred.
 
 ## What Still Works
 
@@ -27,10 +29,11 @@ Two of the three required DB-source inputs already have local read paths:
 
 These cover the queue and memory-readiness sides of the reducer join.
 
-## Missing Input
+## Route Readback Prerequisite
 
-The missing input is local Supabase/Postgres route readback for
-`team_market_routes`.
+The low-level local Supabase/Postgres route readback prerequisite for
+`team_market_routes` is available through store and psycopg helpers once the
+route-readback node lands:
 
 The repository already has the route persistence foundation:
 
@@ -38,28 +41,30 @@ The repository already has the route persistence foundation:
   `team_route_to_db_row` codec in `team_forecast_db_row.py`
 - route insertion through `team_forecast_store.py`
 - psycopg route insertion through `team_forecast_psycopg.py`
+- DB-API route readback through `load_team_market_routes` and
+  `load_team_market_route_rows`
+- psycopg route readback through `load_team_market_routes_with_psycopg` and
+  `load_team_market_route_rows_with_psycopg`
 - route table configuration in `supabase_team_forecast_config.py`
 - the `team_market_routes` table documented in
   `docs/team-forecast-supabase-runbook.md`
 
-What does not exist yet is a readonly loader that reads rows from
-`team_market_routes` and materializes `TeamMarketRouteReport` values through
-`TeamMarketRouteDbRow` and `team_route_from_db_row`. There is also no durable
-readback path for specialist route metadata that would let this assignment node
-reconstruct corrected team routing from the database boundary.
+This resolves the route-row readback prerequisite at the helper layer only. It
+does not add a user-facing team research assignment DB-source composer or CLI in
+this node.
 
 ## Required Future Node
 
 Before enabling a team-research-assignment DB-source composer or CLI path, a
-future node should add env-scoped local Supabase/Postgres route readback for
-`team_market_routes`.
+future node should compose the existing queue loader, route readback helpers,
+and memory-readiness loader into an explicit assignment DB-source.
 
-That route node should:
+That assignment DB-source node should:
 
 - read only from local Supabase/Postgres using the existing team forecast DB
   config surface;
-- hydrate `TeamMarketRouteDbRow` records from database rows;
-- recover `TeamMarketRouteReport` values with `team_route_from_db_row`;
+- consume hydrated `TeamMarketRouteDbRow` records and restored
+  `TeamMarketRouteReport` values from the route readback helpers;
 - preserve route payload metadata, including corrected team routing when
   present;
 - stay readonly and avoid connection, table, or DSN flags on the assignment

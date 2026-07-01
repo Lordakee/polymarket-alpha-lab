@@ -35,6 +35,8 @@ try:
         load_team_forecast_evidence_rows,
         load_team_forecast_outcomes,
         load_team_forecast_outcome_rows,
+        load_team_market_route_rows,
+        load_team_market_routes,
         load_team_forecast_rows,
         load_team_forecasts,
     )
@@ -136,6 +138,26 @@ except ModuleNotFoundError as exc:
     ) -> tuple[Any, ...]:
         raise RuntimeError("team forecast store module is required")
 
+    def load_team_market_routes(
+        connection: Any,
+        *,
+        team_id: str | None = None,
+        market_slug: str | None = None,
+        limit: int | None = None,
+        table_name: str,
+    ) -> tuple[Any, ...]:
+        raise RuntimeError("team forecast store module is required")
+
+    def load_team_market_route_rows(
+        connection: Any,
+        *,
+        team_id: str | None = None,
+        market_slug: str | None = None,
+        limit: int | None = None,
+        table_name: str,
+    ) -> tuple[Any, ...]:
+        raise RuntimeError("team forecast store module is required")
+
 
 _T = TypeVar("_T")
 
@@ -152,6 +174,46 @@ def insert_team_market_route_with_psycopg(
         lambda connection: insert_team_market_route(
             connection,
             row,
+            table_name=table_name,
+        ),
+    )
+
+
+def load_team_market_routes_with_psycopg(
+    dsn: str,
+    *,
+    team_id: str | None = None,
+    market_slug: str | None = None,
+    limit: int | None = None,
+    table_name: str,
+) -> tuple[TeamMarketRouteReport, ...]:
+    return _with_owned_connection(
+        dsn,
+        lambda connection: load_team_market_routes(
+            connection,
+            team_id=team_id,
+            market_slug=market_slug,
+            limit=limit,
+            table_name=table_name,
+        ),
+    )
+
+
+def load_team_market_route_rows_with_psycopg(
+    dsn: str,
+    *,
+    team_id: str | None = None,
+    market_slug: str | None = None,
+    limit: int | None = None,
+    table_name: str,
+) -> tuple[TeamMarketRouteDbRow, ...]:
+    return _with_owned_connection(
+        dsn,
+        lambda connection: load_team_market_route_rows(
+            connection,
+            team_id=team_id,
+            market_slug=market_slug,
+            limit=limit,
             table_name=table_name,
         ),
     )
@@ -449,6 +511,8 @@ def _adapt_json_params(params: tuple[Any, ...], jsonb_adapter: type[Any]) -> tup
 
 __all__ = (
     "insert_team_market_route_with_psycopg",
+    "load_team_market_route_rows_with_psycopg",
+    "load_team_market_routes_with_psycopg",
     "insert_team_forecast_evidence_with_psycopg",
     "insert_team_forecast_outcome_with_psycopg",
     "insert_team_forecast_with_psycopg",

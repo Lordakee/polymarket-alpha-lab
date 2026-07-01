@@ -985,6 +985,19 @@ def test_team_public_api_exports():
     assert lab.team_forecast_to_side_edge_input is team_forecast_to_side_edge_input
 
 
+def test_team_market_route_readback_helpers_are_not_top_level_public_api():
+    forbidden_exports = {
+        "load_team_market_routes",
+        "load_team_market_route_rows",
+        "load_team_market_routes_with_psycopg",
+        "load_team_market_route_rows_with_psycopg",
+    }
+
+    assert not (forbidden_exports & set(lab.__all__))
+    for name in forbidden_exports:
+        assert not hasattr(lab, name)
+
+
 def test_paper_execution_public_api_exports():
     expected_exports = {
         "PaperExecutionConfig",
