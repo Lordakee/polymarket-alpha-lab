@@ -55,24 +55,41 @@ class FakeStrategyCandidateResearchQueueDbRow:
 
 
 class FakeCursor:
-    def __init__(self, rows: tuple[Any, ...] = ()) -> None:
+    def __init__(
+        self,
+        rows: tuple[Any, ...] = (),
+        *,
+        execute_error: BaseException | None = None,
+        close_error: Exception | None = None,
+    ) -> None:
         self.rows = rows
+        self.execute_error = execute_error
+        self.close_error = close_error
         self.calls: list[tuple[str, tuple[Any, ...]]] = []
         self.closed = False
 
     def execute(self, sql: str, params: tuple[Any, ...] = ()) -> None:
         self.calls.append((sql, params))
+        if self.execute_error is not None:
+            raise self.execute_error
 
     def fetchall(self) -> tuple[Any, ...]:
         return self.rows
 
     def close(self) -> None:
         self.closed = True
+        if self.close_error is not None:
+            raise self.close_error
 
 
 class FakeConnection:
-    def __init__(self, rows: tuple[Any, ...] = ()) -> None:
-        self.cursor_instance = FakeCursor(rows)
+    def __init__(
+        self,
+        rows: tuple[Any, ...] = (),
+        *,
+        cursor: FakeCursor | None = None,
+    ) -> None:
+        self.cursor_instance = cursor if cursor is not None else FakeCursor(rows)
         self.cursor_count = 0
         self.commit_count = 0
         self.rollback_count = 0
@@ -362,6 +379,41 @@ def test_insert_strategy_candidate_research_queue_report_uses_codec_and_paramete
     )
 
 
+def test_insert_preserves_execute_error_when_cursor_close_also_fails(
+    store_fixture: StoreFixture,
+) -> None:
+    execute_error = RuntimeError("execute failed")
+    close_error = RuntimeError("close failed")
+    cursor = FakeCursor(execute_error=execute_error, close_error=close_error)
+    connection = FakeConnection(cursor=cursor)
+
+    with pytest.raises(RuntimeError, match="execute failed") as exc_info:
+        store_fixture.module.insert_paper_strategy_candidate_research_queue_report(
+            connection,
+            _watch_report(),
+        )
+
+    assert exc_info.value is execute_error
+    assert cursor.closed is True
+
+
+def test_insert_propagates_cursor_close_error_after_successful_execute(
+    store_fixture: StoreFixture,
+) -> None:
+    close_error = RuntimeError("close failed")
+    cursor = FakeCursor(close_error=close_error)
+    connection = FakeConnection(cursor=cursor)
+
+    with pytest.raises(RuntimeError, match="close failed") as exc_info:
+        store_fixture.module.insert_paper_strategy_candidate_research_queue_report(
+            connection,
+            _watch_report(),
+        )
+
+    assert exc_info.value is close_error
+    assert cursor.calls
+
+
 @pytest.mark.parametrize(
     "table_name",
     [
@@ -479,6 +531,40 @@ def test_load_strategy_candidate_research_queue_reports_filters_and_limits_with_
         "watch",
         25,
     )
+
+
+def test_load_preserves_execute_error_when_cursor_close_also_fails(
+    store_fixture: StoreFixture,
+) -> None:
+    execute_error = RuntimeError("execute failed")
+    close_error = RuntimeError("close failed")
+    cursor = FakeCursor(execute_error=execute_error, close_error=close_error)
+    connection = FakeConnection(cursor=cursor)
+
+    with pytest.raises(RuntimeError, match="execute failed") as exc_info:
+        store_fixture.module.load_paper_strategy_candidate_research_queue_reports(
+            connection,
+        )
+
+    assert exc_info.value is execute_error
+    assert cursor.closed is True
+
+
+def test_load_propagates_cursor_close_error_after_successful_fetch(
+    store_fixture: StoreFixture,
+) -> None:
+    close_error = RuntimeError("close failed")
+    row = _db_row(_watch_report())
+    cursor = FakeCursor(rows=(row,), close_error=close_error)
+    connection = FakeConnection(cursor=cursor)
+
+    with pytest.raises(RuntimeError, match="close failed") as exc_info:
+        store_fixture.module.load_paper_strategy_candidate_research_queue_reports(
+            connection,
+        )
+
+    assert exc_info.value is close_error
+    assert cursor.calls
 
 
 def test_load_strategy_candidate_research_queue_reports_filters_by_research_status_only(

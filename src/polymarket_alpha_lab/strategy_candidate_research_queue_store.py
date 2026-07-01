@@ -130,8 +130,10 @@ def insert_paper_strategy_candidate_research_queue_report(
     cursor = connection.cursor()
     try:
         cursor.execute(sql, params)
-    finally:
-        cursor.close()
+    except BaseException:
+        _close_cursor_after_operation_error(cursor)
+        raise
+    cursor.close()
     return row
 
 
@@ -185,8 +187,10 @@ def load_paper_strategy_candidate_research_queue_reports(
     try:
         cursor.execute(sql, tuple(params))
         records = cursor.fetchall()
-    finally:
-        cursor.close()
+    except BaseException:
+        _close_cursor_after_operation_error(cursor)
+        raise
+    cursor.close()
     rows = tuple(_db_row_from_record(record) for record in records)
     return tuple(
         paper_strategy_candidate_research_queue_report_from_db_row(row)
@@ -436,3 +440,10 @@ def _require_positive_int(field_name: str, value: object) -> None:
         raise ValueError(f"{field_name} must be an int")
     if value <= 0:
         raise ValueError(f"{field_name} must be positive")
+
+
+def _close_cursor_after_operation_error(cursor: Any) -> None:
+    try:
+        cursor.close()
+    except Exception:
+        pass
