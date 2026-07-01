@@ -15,7 +15,7 @@ from polymarket_alpha_lab.team_paper_guard import (
     reject_unsafe_surface_fields,
     require_paper_only_flags,
 )
-from polymarket_alpha_lab.team_taxonomy import require_category_id, require_team_id
+from polymarket_alpha_lab.team_taxonomy import require_team_category_pair, require_team_id
 
 
 QUANTUM = Decimal("0.000001")
@@ -115,12 +115,14 @@ class TeamForecastPacket:
             "prompt_version",
         ):
             _require_canonical_string(field_name, getattr(self, field_name))
-        object.__setattr__(self, "team_id", require_team_id("team_id", self.team_id))
-        object.__setattr__(
-            self,
+        team_id, category_id = require_team_category_pair(
+            "team_id",
+            self.team_id,
             "category_id",
-            require_category_id("category_id", self.category_id),
+            self.category_id,
         )
+        object.__setattr__(self, "team_id", team_id)
+        object.__setattr__(self, "category_id", category_id)
         if self.selected_side not in SIDES:
             raise ValueError("selected_side must be yes or no")
         for field_name in (
@@ -175,6 +177,9 @@ class TeamForecastCostInterfaceInput:
     max_executable_shares: Decimal
     market_context_fresh: bool
     settlement_context_fresh: bool
+    paper_only: bool = True
+    report_only: bool = True
+    readonly: bool = True
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -201,6 +206,7 @@ class TeamForecastCostInterfaceInput:
             )
         _require_bool("market_context_fresh", self.market_context_fresh)
         _require_bool("settlement_context_fresh", self.settlement_context_fresh)
+        require_paper_only_flags("team forecast cost interface input", self)
 
 
 def team_forecast_to_side_edge_input(
@@ -213,6 +219,7 @@ def team_forecast_to_side_edge_input(
     if type(cost_input) is not TeamForecastCostInterfaceInput:
         raise ValueError("cost_input must be a TeamForecastCostInterfaceInput")
     require_paper_only_flags("team forecast packet", forecast)
+    require_paper_only_flags("team forecast cost interface input", cost_input)
 
     return PaperProbabilitySideEdgeInput(
         market_slug=forecast.market_slug,

@@ -8,6 +8,7 @@ import pytest
 
 from polymarket_alpha_lab.team_performance_summary import (
     TeamPerformanceSummaryConfig,
+    TeamPerformanceRouteCorrection,
     build_team_performance_summary_report,
 )
 
@@ -200,6 +201,83 @@ def test_outcome_idempotency_uses_unique_forecast_id_not_outcome_id():
     assert row.paper_pnl == Decimal("1.000000")
 
 
+def test_route_correction_to_another_team_excludes_original_team_metrics():
+    forecasts = (
+        ForecastStub(
+            forecast_id="forecast-btc-correct",
+            team_id="crypto_btc",
+            market_slug="bitcoin-above-120k",
+            category_id="finance.crypto.btc",
+            selected_side="yes",
+            forecast_probability=Decimal("0.800000"),
+        ),
+        ForecastStub(
+            forecast_id="forecast-btc-misrouted",
+            team_id="crypto_btc",
+            market_slug="ethereum-above-8k",
+            category_id="finance.crypto.btc",
+            selected_side="yes",
+            forecast_probability=Decimal("0.900000"),
+        ),
+    )
+    outcomes = (
+        OutcomeStub(
+            outcome_id="outcome-btc-correct",
+            forecast_id="forecast-btc-correct",
+            team_id="crypto_btc",
+            market_slug="bitcoin-above-120k",
+            actual_outcome="yes",
+            resolved_at=GENERATED_AT,
+            paper_pnl=Decimal("1.000000"),
+            cost_adjusted_return=Decimal("0.100000"),
+            directionally_correct=True,
+            profitable_after_cost=True,
+        ),
+        OutcomeStub(
+            outcome_id="outcome-btc-misrouted",
+            forecast_id="forecast-btc-misrouted",
+            team_id="crypto_btc",
+            market_slug="ethereum-above-8k",
+            actual_outcome="no",
+            resolved_at=GENERATED_AT,
+            paper_pnl=Decimal("-1.000000"),
+            cost_adjusted_return=Decimal("-0.100000"),
+            directionally_correct=False,
+            profitable_after_cost=False,
+        ),
+    )
+    route_corrections = (
+        TeamPerformanceRouteCorrection(
+            forecast_id="forecast-btc-misrouted",
+            original_team_id="crypto_btc",
+            corrected_team_id="crypto_eth",
+            correction_timestamp=GENERATED_AT,
+            reason_codes=("manual_route_correction",),
+        ),
+    )
+
+    report = build_team_performance_summary_report(
+        forecasts,
+        outcomes,
+        config=TeamPerformanceSummaryConfig(min_trust_sample_count=1),
+        generated_at=GENERATED_AT,
+        route_corrections=route_corrections,
+    )
+
+    row = report.rows[0]
+    assert row.team_id == "crypto_btc"
+    assert row.forecast_count == 1
+    assert row.settled_count == 1
+    assert row.average_brier_score == Decimal("0.040000")
+    assert row.hit_rate == Decimal("1.000000")
+    assert row.team_trust_score == Decimal("1.200000")
+    assert row.excluded_corrected_route_count == 1
+    assert "corrected_route_excluded" in row.reason_codes
+    assert "manual_route_correction" in row.reason_codes
+    assert report.forecast_count == 1
+    assert report.excluded_corrected_route_count == 1
+
+
 def test_thresholds_clear_to_non_neutral_trust_and_allocation_scores():
     forecasts = tuple(
         ForecastStub(
@@ -340,3 +418,18 @@ def test_float_metrics_and_false_safety_flags_raise():
             generated_at=GENERATED_AT,
         )
 
+    mismatched_forecast = ForecastStub(
+        forecast_id="forecast-btc-1",
+        team_id="crypto_btc",
+        market_slug="bitcoin-above-120k",
+        category_id="finance.crypto.eth",
+        selected_side="yes",
+        forecast_probability=Decimal("0.800000"),
+    )
+    with pytest.raises(ValueError, match="category_id must match team_id"):
+        build_team_performance_summary_report(
+            (mismatched_forecast,),
+            (),
+            config=TeamPerformanceSummaryConfig(),
+            generated_at=GENERATED_AT,
+        )

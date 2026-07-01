@@ -75,6 +75,17 @@ def _payload_copy(row: object) -> dict[str, Any]:
     return json.loads(json.dumps(getattr(row, "payload_json"), allow_nan=False))
 
 
+def _set_payload_path(
+    payload_json: dict[str, Any],
+    path: tuple[str | int, ...],
+    value: Any,
+) -> None:
+    target: Any = payload_json
+    for key in path[:-1]:
+        target = target[key]
+    target[path[-1]] = value
+
+
 def _row_with_payload(row: object, payload_json: dict[str, Any], **overrides: Any):
     kwargs = _row_values(row)
     kwargs.update(
@@ -361,6 +372,41 @@ def test_db_rows_reject_false_safety_flags(row_factory, flag_name: str) -> None:
     "row_factory",
     (_route_row, _forecast_row, _evidence_row, _outcome_row),
 )
+@pytest.mark.parametrize("flag_name", ("paper_only", "report_only", "readonly"))
+def test_db_rows_reject_missing_top_level_safety_flags(
+    row_factory,
+    flag_name: str,
+) -> None:
+    row = row_factory()
+    payload_json = _payload_copy(row)
+    del payload_json[flag_name]
+
+    with pytest.raises(ValueError, match=flag_name):
+        _row_with_payload(row, payload_json)
+
+
+@pytest.mark.parametrize(
+    ("row_factory", "nested_key"),
+    ((_evidence_row, "evidence"), (_outcome_row, "outcome")),
+)
+@pytest.mark.parametrize("flag_name", ("paper_only", "report_only", "readonly"))
+def test_nested_payloads_reject_missing_safety_flags(
+    row_factory,
+    nested_key: str,
+    flag_name: str,
+) -> None:
+    row = row_factory()
+    payload_json = _payload_copy(row)
+    del payload_json[nested_key][flag_name]
+
+    with pytest.raises(ValueError, match=flag_name):
+        _row_with_payload(row, payload_json)
+
+
+@pytest.mark.parametrize(
+    "row_factory",
+    (_route_row, _forecast_row, _evidence_row, _outcome_row),
+)
 def test_db_rows_reject_unsafe_payload_fields(row_factory) -> None:
     row = row_factory()
     payload_json = _payload_copy(row)
@@ -383,6 +429,57 @@ def test_db_rows_reject_payload_floats_and_materialized_mismatches() -> None:
 
     with pytest.raises(ValueError, match="market_slug must match payload_json"):
         _row_with_payload(row, mismatched_payload)
+
+
+@pytest.mark.parametrize(
+    ("row_factory", "from_db_row", "payload_path", "noncanonical_value"),
+    (
+        (
+            _route_row,
+            team_route_from_db_row,
+            ("rows", 0, "routing_confidence"),
+            "0.9000004",
+        ),
+        (
+            _forecast_row,
+            team_forecast_from_db_row,
+            ("forecast_probability",),
+            "0.6200004",
+        ),
+        (
+            _evidence_row,
+            team_forecast_evidence_from_db_row,
+            ("evidence", "weight"),
+            "0.4200004",
+        ),
+        (
+            _outcome_row,
+            team_forecast_outcome_from_db_row,
+            ("outcome", "forecast_error"),
+            "0.3800004",
+        ),
+    ),
+)
+def test_db_rows_reject_noncanonical_decimal_payload_strings_even_when_hash_matches(
+    row_factory,
+    from_db_row,
+    payload_path: tuple[str | int, ...],
+    noncanonical_value: str,
+) -> None:
+    row = row_factory()
+    payload_json = _payload_copy(row)
+    _set_payload_path(payload_json, payload_path, noncanonical_value)
+
+    with pytest.raises(ValueError, match="canonical"):
+        _row_with_payload(row, payload_json)
+
+    bypassed_row = _bypassed_row(
+        row,
+        payload_sha256=_payload_sha256(payload_json),
+        payload_json=payload_json,
+    )
+    with pytest.raises(ValueError, match="canonical"):
+        from_db_row(bypassed_row)
 
 
 def test_from_db_row_rejects_constructor_bypassed_malformed_row() -> None:

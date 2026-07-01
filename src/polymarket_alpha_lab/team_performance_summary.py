@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from decimal import Context, Decimal, localcontext
 from typing import Any
 
-from polymarket_alpha_lab.team_taxonomy import require_category_id, require_team_id
+from polymarket_alpha_lab.team_taxonomy import require_team_category_pair, require_team_id
 
 
 QUANTUM = Decimal("0.000001")
@@ -26,6 +26,7 @@ TRUST_SAMPLE_READY = "trust_sample_ready"
 INSUFFICIENT_ALLOCATION_SAMPLE = "insufficient_allocation_sample"
 ALLOCATION_SAMPLE_READY = "allocation_sample_ready"
 NO_SETTLED_FORECASTS = "no_settled_forecasts"
+CORRECTED_ROUTE_EXCLUDED = "corrected_route_excluded"
 
 
 @dataclass(frozen=True)
@@ -73,6 +74,42 @@ class TeamPerformanceSummaryConfig:
 
 
 @dataclass(frozen=True)
+class TeamPerformanceRouteCorrection:
+    forecast_id: str
+    original_team_id: str
+    corrected_team_id: str
+    correction_timestamp: datetime
+    reason_codes: tuple[str, ...]
+    paper_only: bool = True
+    report_only: bool = True
+    readonly: bool = True
+
+    def __post_init__(self) -> None:
+        _require_canonical_string("forecast_id", self.forecast_id)
+        object.__setattr__(
+            self,
+            "original_team_id",
+            require_team_id("original_team_id", self.original_team_id),
+        )
+        object.__setattr__(
+            self,
+            "corrected_team_id",
+            require_team_id("corrected_team_id", self.corrected_team_id),
+        )
+        object.__setattr__(
+            self,
+            "correction_timestamp",
+            _as_utc("correction_timestamp", self.correction_timestamp),
+        )
+        object.__setattr__(
+            self,
+            "reason_codes",
+            _normalize_reason_codes(self.reason_codes),
+        )
+        _require_safety_flags("TeamPerformanceRouteCorrection", self)
+
+
+@dataclass(frozen=True)
 class TeamPerformanceSummaryRow:
     team_id: str
     category_id: str
@@ -87,22 +124,26 @@ class TeamPerformanceSummaryRow:
     team_trust_score: Decimal
     allocation_trust_score: Decimal
     reason_codes: tuple[str, ...]
+    excluded_corrected_route_count: int = 0
     paper_only: bool = True
     report_only: bool = True
     readonly: bool = True
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "team_id", require_team_id("team_id", self.team_id))
-        object.__setattr__(
-            self,
+        team_id, category_id = require_team_category_pair(
+            "team_id",
+            self.team_id,
             "category_id",
-            require_category_id("category_id", self.category_id),
+            self.category_id,
         )
+        object.__setattr__(self, "team_id", team_id)
+        object.__setattr__(self, "category_id", category_id)
         for field_name in (
             "forecast_count",
             "settled_count",
             "directionally_correct_count",
             "profitable_after_cost_count",
+            "excluded_corrected_route_count",
         ):
             _require_nonnegative_int(field_name, getattr(self, field_name))
         if self.settled_count > self.forecast_count:
@@ -151,6 +192,7 @@ class TeamPerformanceSummaryReport:
     forecast_count: int
     settled_count: int
     rows: tuple[TeamPerformanceSummaryRow, ...]
+    excluded_corrected_route_count: int = 0
     paper_only: bool = True
     report_only: bool = True
     readonly: bool = True
@@ -164,11 +206,19 @@ class TeamPerformanceSummaryReport:
         _require_canonical_string("config_version", self.config_version)
         _require_nonnegative_int("forecast_count", self.forecast_count)
         _require_nonnegative_int("settled_count", self.settled_count)
+        _require_nonnegative_int(
+            "excluded_corrected_route_count",
+            self.excluded_corrected_route_count,
+        )
         object.__setattr__(self, "rows", _normalize_rows(self.rows))
         if self.forecast_count != sum(row.forecast_count for row in self.rows):
             raise ValueError("forecast_count must match rows")
         if self.settled_count != sum(row.settled_count for row in self.rows):
             raise ValueError("settled_count must match rows")
+        if self.excluded_corrected_route_count != sum(
+            row.excluded_corrected_route_count for row in self.rows
+        ):
+            raise ValueError("excluded_corrected_route_count must match rows")
         _require_safety_flags("TeamPerformanceSummaryReport", self)
 
 
@@ -178,6 +228,7 @@ def build_team_performance_summary_report(
     *,
     config: TeamPerformanceSummaryConfig,
     generated_at: datetime,
+    route_corrections: object = (),
 ) -> TeamPerformanceSummaryReport:
     """Build a neutral paper-only summary over supplied team forecasts."""
 
@@ -186,31 +237,56 @@ def build_team_performance_summary_report(
 
     forecast_items = _normalize_forecasts(forecasts)
     outcome_items = _normalize_outcomes(outcomes)
+    route_correction_items = _normalize_route_corrections(route_corrections)
     latest_outcomes = _latest_outcomes_by_forecast_id(outcome_items)
+    route_corrections_by_forecast_id = _route_corrections_by_forecast_id(
+        route_correction_items,
+    )
 
     grouped_forecasts: dict[tuple[str, str], list[_ForecastInput]] = {}
+    excluded_counts: dict[tuple[str, str], int] = {}
+    excluded_reason_codes: dict[tuple[str, str], list[str]] = {}
     for forecast in forecast_items:
-        grouped_forecasts.setdefault((forecast.team_id, forecast.category_id), []).append(
-            forecast,
-        )
+        correction = route_corrections_by_forecast_id.get(forecast.forecast_id)
+        key = (forecast.team_id, forecast.category_id)
+        if correction is not None:
+            _require_route_correction_matches_forecast(forecast, correction)
+            if correction.corrected_team_id != forecast.team_id:
+                excluded_counts[key] = excluded_counts.get(key, 0) + 1
+                excluded_reason_codes.setdefault(key, []).extend(
+                    (CORRECTED_ROUTE_EXCLUDED, *correction.reason_codes),
+                )
+                continue
+        grouped_forecasts.setdefault(key, []).append(forecast)
 
+    row_keys = sorted(set(grouped_forecasts) | set(excluded_counts))
     rows = tuple(
         _build_row(
             team_id=team_id,
             category_id=category_id,
-            forecasts=tuple(grouped_forecasts[(team_id, category_id)]),
+            forecasts=tuple(grouped_forecasts.get((team_id, category_id), ())),
             latest_outcomes=latest_outcomes,
             config=config,
+            excluded_corrected_route_count=excluded_counts.get(
+                (team_id, category_id),
+                0,
+            ),
+            route_exclusion_reason_codes=tuple(
+                excluded_reason_codes.get((team_id, category_id), ()),
+            ),
         )
-        for team_id, category_id in sorted(grouped_forecasts)
+        for team_id, category_id in row_keys
     )
 
     return TeamPerformanceSummaryReport(
         generated_at=generated_at,
         config_version=config.config_version,
-        forecast_count=len(forecast_items),
+        forecast_count=sum(row.forecast_count for row in rows),
         settled_count=sum(row.settled_count for row in rows),
         rows=rows,
+        excluded_corrected_route_count=sum(
+            row.excluded_corrected_route_count for row in rows
+        ),
     )
 
 
@@ -238,15 +314,28 @@ class _OutcomeInput:
     profitable_after_cost: bool | None
 
 
+@dataclass(frozen=True)
+class _RouteCorrectionInput:
+    forecast_id: str
+    original_team_id: str
+    corrected_team_id: str
+    correction_timestamp: datetime
+    reason_codes: tuple[str, ...]
+
+
 def _normalize_forecasts(forecasts: object) -> tuple[_ForecastInput, ...]:
     items = _tuple_from_iterable("forecasts", forecasts)
     normalized: list[_ForecastInput] = []
     for item in items:
         _require_safety_flags("forecast", item)
         forecast_id = _required_canonical_attr(item, "forecast_id")
-        team_id = require_team_id("team_id", _required_attr(item, "team_id"))
         market_slug = _required_canonical_attr(item, "market_slug")
-        category_id = require_category_id("category_id", _required_attr(item, "category_id"))
+        team_id, category_id = require_team_category_pair(
+            "team_id",
+            _required_attr(item, "team_id"),
+            "category_id",
+            _required_attr(item, "category_id"),
+        )
         selected_side = _required_attr(item, "selected_side")
         if selected_side not in SIDES:
             raise ValueError("selected_side must be yes or no")
@@ -260,6 +349,36 @@ def _normalize_forecasts(forecasts: object) -> tuple[_ForecastInput, ...]:
                 forecast_probability=_normalize_probability_decimal(
                     "forecast_probability",
                     _required_attr(item, "forecast_probability"),
+                ),
+            ),
+        )
+    return tuple(normalized)
+
+
+def _normalize_route_corrections(
+    route_corrections: object,
+) -> tuple[_RouteCorrectionInput, ...]:
+    items = _tuple_from_iterable("route_corrections", route_corrections)
+    normalized: list[_RouteCorrectionInput] = []
+    for item in items:
+        _require_safety_flags("route correction", item)
+        normalized.append(
+            _RouteCorrectionInput(
+                forecast_id=_required_canonical_attr(item, "forecast_id"),
+                original_team_id=require_team_id(
+                    "original_team_id",
+                    _required_attr(item, "original_team_id"),
+                ),
+                corrected_team_id=require_team_id(
+                    "corrected_team_id",
+                    _required_attr(item, "corrected_team_id"),
+                ),
+                correction_timestamp=_as_utc(
+                    "correction_timestamp",
+                    _required_attr(item, "correction_timestamp"),
+                ),
+                reason_codes=_normalize_reason_codes(
+                    _required_attr(item, "reason_codes"),
                 ),
             ),
         )
@@ -314,6 +433,25 @@ def _latest_outcomes_by_forecast_id(
     return latest
 
 
+def _route_corrections_by_forecast_id(
+    route_corrections: tuple[_RouteCorrectionInput, ...],
+) -> dict[str, _RouteCorrectionInput]:
+    by_forecast_id: dict[str, _RouteCorrectionInput] = {}
+    for correction in route_corrections:
+        if correction.forecast_id in by_forecast_id:
+            raise ValueError("route_corrections must not contain duplicate forecast_id values")
+        by_forecast_id[correction.forecast_id] = correction
+    return by_forecast_id
+
+
+def _require_route_correction_matches_forecast(
+    forecast: _ForecastInput,
+    correction: _RouteCorrectionInput,
+) -> None:
+    if correction.original_team_id != forecast.team_id:
+        raise ValueError("route correction original_team_id must match forecast team_id")
+
+
 def _build_row(
     *,
     team_id: str,
@@ -321,6 +459,8 @@ def _build_row(
     forecasts: tuple[_ForecastInput, ...],
     latest_outcomes: dict[str, _OutcomeInput],
     config: TeamPerformanceSummaryConfig,
+    excluded_corrected_route_count: int = 0,
+    route_exclusion_reason_codes: tuple[str, ...] = (),
 ) -> TeamPerformanceSummaryRow:
     settled_pairs = tuple(
         (forecast, latest_outcomes[forecast.forecast_id])
@@ -364,7 +504,13 @@ def _build_row(
             hit_rate=_ratio_or_zero(directionally_correct_count, settled_count),
             config=config,
         ),
-        reason_codes=_reason_codes(settled_count, config),
+        reason_codes=_reason_codes(
+            settled_count,
+            config,
+            excluded_corrected_route_count=excluded_corrected_route_count,
+            route_exclusion_reason_codes=route_exclusion_reason_codes,
+        ),
+        excluded_corrected_route_count=excluded_corrected_route_count,
     )
 
 
@@ -454,6 +600,9 @@ def _interpolate_multiplier(
 def _reason_codes(
     settled_count: int,
     config: TeamPerformanceSummaryConfig,
+    *,
+    excluded_corrected_route_count: int = 0,
+    route_exclusion_reason_codes: tuple[str, ...] = (),
 ) -> tuple[str, ...]:
     reason_codes: list[str] = []
     if settled_count == 0:
@@ -466,6 +615,9 @@ def _reason_codes(
         reason_codes.append(INSUFFICIENT_ALLOCATION_SAMPLE)
     else:
         reason_codes.append(ALLOCATION_SAMPLE_READY)
+    if excluded_corrected_route_count > 0:
+        reason_codes.append(CORRECTED_ROUTE_EXCLUDED)
+        reason_codes.extend(route_exclusion_reason_codes)
     return tuple(reason_codes)
 
 
@@ -615,5 +767,6 @@ __all__ = (
     "TeamPerformanceSummaryConfig",
     "TeamPerformanceSummaryReport",
     "TeamPerformanceSummaryRow",
+    "TeamPerformanceRouteCorrection",
     "build_team_performance_summary_report",
 )

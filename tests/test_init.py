@@ -84,6 +84,7 @@ from polymarket_alpha_lab.team_market_router import (
     build_team_market_route_report,
 )
 from polymarket_alpha_lab.team_forecast_packet import (
+    TeamForecastCostInterfaceInput,
     TeamForecastEvidencePacket,
     TeamForecastPacket,
     team_forecast_to_side_edge_input,
@@ -96,6 +97,9 @@ from polymarket_alpha_lab.crypto_btc_team import (
     CryptoBtcEvidenceInput,
     CryptoBtcTeamConfig,
     build_crypto_btc_team_forecast,
+)
+from polymarket_alpha_lab.supabase_team_forecast_config import (
+    SupabaseTeamForecastConfig,
 )
 from polymarket_alpha_lab.project_screening import (
     PaperProjectScreeningCandidate,
@@ -821,6 +825,8 @@ def test_team_public_api_exports():
     expected_exports = {
         "CryptoBtcEvidenceInput",
         "CryptoBtcTeamConfig",
+        "SupabaseTeamForecastConfig",
+        "TeamForecastCostInterfaceInput",
         "TeamForecastEvidencePacket",
         "TeamForecastPacket",
         "TeamMarketRouteConfig",
@@ -838,6 +844,8 @@ def test_team_public_api_exports():
     assert expected_exports <= set(lab.__all__)
     assert lab.CryptoBtcEvidenceInput is CryptoBtcEvidenceInput
     assert lab.CryptoBtcTeamConfig is CryptoBtcTeamConfig
+    assert lab.SupabaseTeamForecastConfig is SupabaseTeamForecastConfig
+    assert lab.TeamForecastCostInterfaceInput is TeamForecastCostInterfaceInput
     assert lab.TeamForecastEvidencePacket is TeamForecastEvidencePacket
     assert lab.TeamForecastPacket is TeamForecastPacket
     assert lab.TeamMarketRouteConfig is TeamMarketRouteConfig

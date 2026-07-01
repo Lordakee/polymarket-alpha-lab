@@ -31,6 +31,8 @@ TEAM_CATEGORIES = (
     "sports.other",
 )
 
+TEAM_ID_TO_PRIMARY_CATEGORY = dict(zip(TEAM_IDS, TEAM_CATEGORIES, strict=True))
+
 
 @dataclass(frozen=True)
 class TeamProfile:
@@ -45,11 +47,10 @@ class TeamProfile:
     def __post_init__(self) -> None:
         object.__setattr__(self, "team_id", require_team_id("team_id", self.team_id))
         _require_canonical_string("display_name", self.display_name)
-        object.__setattr__(
-            self,
-            "primary_categories",
-            _normalize_categories(self.primary_categories),
-        )
+        categories = _normalize_categories(self.primary_categories)
+        for category_id in categories:
+            require_team_category_pair("team_id", self.team_id, "category_id", category_id)
+        object.__setattr__(self, "primary_categories", categories)
         object.__setattr__(
             self,
             "agent_roles",
@@ -212,6 +213,19 @@ def require_category_id(field_name: str, value: object) -> str:
     return value
 
 
+def require_team_category_pair(
+    team_field_name: str,
+    team_value: object,
+    category_field_name: str,
+    category_value: object,
+) -> tuple[str, str]:
+    team_id = require_team_id(team_field_name, team_value)
+    category_id = require_category_id(category_field_name, category_value)
+    if TEAM_ID_TO_PRIMARY_CATEGORY[team_id] != category_id:
+        raise ValueError(f"{category_field_name} must match {team_field_name}")
+    return team_id, category_id
+
+
 def _normalize_categories(value: tuple[str, ...]) -> tuple[str, ...]:
     if isinstance(value, (str, bytes)):
         raise ValueError("primary_categories must be an iterable")
@@ -246,9 +260,10 @@ def _require_canonical_string(field_name: str, value: object) -> None:
 __all__ = (
     "TEAM_CATEGORIES",
     "TEAM_IDS",
+    "TEAM_ID_TO_PRIMARY_CATEGORY",
     "TeamProfile",
     "build_default_team_profiles",
     "require_category_id",
+    "require_team_category_pair",
     "require_team_id",
 )
-

@@ -11,6 +11,10 @@ TEAM_MODULE_ROOT = REPO_ROOT / "src" / "polymarket_alpha_lab"
 
 PSYCOPG_MODULE_NAME = "team_forecast_psycopg.py"
 PAPER_GUARD_MODULE_NAME = "team_paper_guard.py"
+ADDITIONAL_STATIC_TEAM_MODULE_NAMES = (
+    "crypto_btc_team.py",
+    "supabase_team_forecast_config.py",
+)
 
 FORBIDDEN_IMPORT_PREFIXES = (
     "clob_client",
@@ -83,7 +87,12 @@ FORBIDDEN_LIVE_IDENTIFIER_FRAGMENTS = (
 
 
 def _team_module_paths() -> tuple[Path, ...]:
-    return tuple(sorted(TEAM_MODULE_ROOT.glob("team_*.py")))
+    paths = set(TEAM_MODULE_ROOT.glob("team_*.py"))
+    paths.update(
+        TEAM_MODULE_ROOT / module_name
+        for module_name in ADDITIONAL_STATIC_TEAM_MODULE_NAMES
+    )
+    return tuple(sorted(paths))
 
 
 def _parse_module(path: Path) -> ast.Module:
@@ -176,10 +185,12 @@ def _float_violations(path: Path, tree: ast.AST) -> tuple[str, ...]:
     return tuple(violations)
 
 
-def test_team_modules_exist_and_are_discovered_by_glob():
+def test_team_modules_exist_and_are_discovered_by_static_scope():
     assert _team_module_paths()
     assert TEAM_MODULE_ROOT / "team_forecast_packet.py" in _team_module_paths()
     assert TEAM_MODULE_ROOT / "team_paper_guard.py" in _team_module_paths()
+    assert TEAM_MODULE_ROOT / "crypto_btc_team.py" in _team_module_paths()
+    assert TEAM_MODULE_ROOT / "supabase_team_forecast_config.py" in _team_module_paths()
 
 
 def test_team_modules_do_not_import_live_trading_auth_or_order_surfaces():

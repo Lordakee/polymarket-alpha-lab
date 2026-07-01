@@ -133,6 +133,9 @@ def btc_cost_input(
     max_executable_shares: Decimal = d("25.000000"),
     market_context_fresh: bool = True,
     settlement_context_fresh: bool = True,
+    paper_only: bool = True,
+    report_only: bool = True,
+    readonly: bool = True,
 ) -> TeamForecastCostInterfaceInput:
     return TeamForecastCostInterfaceInput(
         side_price=side_price,
@@ -148,6 +151,9 @@ def btc_cost_input(
         max_executable_shares=max_executable_shares,
         market_context_fresh=market_context_fresh,
         settlement_context_fresh=settlement_context_fresh,
+        paper_only=paper_only,
+        report_only=report_only,
+        readonly=readonly,
     )
 
 
@@ -201,6 +207,8 @@ def test_forecast_and_evidence_packets_reject_invalid_values_and_false_flags():
         btc_forecast_packet(team_id="unknown_team")
     with pytest.raises(ValueError, match="category_id"):
         btc_forecast_packet(category_id="unknown.category")
+    with pytest.raises(ValueError, match="category_id must match team_id"):
+        btc_forecast_packet(category_id="finance.crypto.eth")
     with pytest.raises(ValueError, match="memory_references"):
         btc_forecast_packet(memory_references=(" bad ",))
     with pytest.raises(ValueError, match="paper_only"):
@@ -281,6 +289,9 @@ def test_adapter_builds_side_edge_input_from_forecast_and_central_cost_values():
     assert side_edge_input.max_executable_shares == d("25.000000")
     assert side_edge_input.market_context_fresh is True
     assert side_edge_input.settlement_context_fresh is True
+    assert side_edge_input.paper_only is True
+    assert side_edge_input.report_only is True
+    assert side_edge_input.readonly is True
 
 
 @pytest.mark.parametrize(
@@ -291,6 +302,9 @@ def test_adapter_builds_side_edge_input_from_forecast_and_central_cost_values():
         ("requested_paper_shares", Decimal("-0.000001"), "requested_paper_shares"),
         ("max_executable_shares", Decimal("NaN"), "max_executable_shares"),
         ("market_context_fresh", "true", "market_context_fresh"),
+        ("paper_only", False, "paper_only"),
+        ("report_only", False, "report_only"),
+        ("readonly", False, "readonly"),
     ),
 )
 def test_cost_interface_rejects_invalid_values(field_name, bad_value, match):

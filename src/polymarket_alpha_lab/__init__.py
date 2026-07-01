@@ -91,6 +91,7 @@ from polymarket_alpha_lab.team_market_router import (
     build_team_market_route_report,
 )
 from polymarket_alpha_lab.team_forecast_packet import (
+    TeamForecastCostInterfaceInput,
     TeamForecastEvidencePacket,
     TeamForecastPacket,
     team_forecast_to_side_edge_input,
@@ -103,6 +104,9 @@ from polymarket_alpha_lab.crypto_btc_team import (
     CryptoBtcEvidenceInput,
     CryptoBtcTeamConfig,
     build_crypto_btc_team_forecast,
+)
+from polymarket_alpha_lab.supabase_team_forecast_config import (
+    SupabaseTeamForecastConfig,
 )
 from polymarket_alpha_lab.domain import (
     MarketScore,
@@ -525,6 +529,8 @@ __all__ = [
     "PaperStrategyRiskAuditReport",
     "CryptoBtcEvidenceInput",
     "CryptoBtcTeamConfig",
+    "SupabaseTeamForecastConfig",
+    "TeamForecastCostInterfaceInput",
     "PaperAnalyticsLog",
     "PaperAnalyticsReport",
     "PaperBookImbalanceForecastConfig",

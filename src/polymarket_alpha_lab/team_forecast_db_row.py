@@ -47,6 +47,7 @@ _DECIMAL_QUANTUM = Decimal("0.000001")
 _DECIMAL_CONTEXT = Context(prec=64)
 _SIDES = frozenset(("yes", "no"))
 _HARD_FLAGS = ("paper_only", "report_only", "readonly")
+_NESTED_HARD_FLAG_PAYLOAD_KEYS = frozenset(("evidence", "outcome"))
 _MISSING = object()
 
 
@@ -392,18 +393,11 @@ def team_forecast_evidence_to_db_row(
     _require_canonical_string("forecast_id", forecast_id)
     _require_canonical_string("config_version", config_version)
     generated_at = _as_utc("generated_at", generated_at)
-    evidence_payload = team_forecast_packet_payload(packet)
-    payload_json = _normalize_payload_json(
-        "payload_json",
-        {
-            "forecast_id": forecast_id,
-            "config_version": config_version,
-            "generated_at": generated_at,
-            "evidence": evidence_payload,
-            "paper_only": True,
-            "report_only": True,
-            "readonly": True,
-        },
+    payload_json = _evidence_payload_json(
+        packet,
+        forecast_id=forecast_id,
+        config_version=config_version,
+        generated_at=generated_at,
     )
     return TeamForecastEvidenceDbRow(
         payload_sha256=_payload_sha256(payload_json),
@@ -442,17 +436,10 @@ def team_forecast_outcome_to_db_row(
         raise ValueError("outcome must be a TeamForecastOutcome")
     _require_canonical_string("config_version", config_version)
     generated_at = _as_utc("generated_at", generated_at)
-    outcome_payload = _payload_from_dataclass(outcome)
-    payload_json = _normalize_payload_json(
-        "payload_json",
-        {
-            "config_version": config_version,
-            "generated_at": generated_at,
-            "outcome": outcome_payload,
-            "paper_only": True,
-            "report_only": True,
-            "readonly": True,
-        },
+    payload_json = _outcome_payload_json(
+        outcome,
+        config_version=config_version,
+        generated_at=generated_at,
     )
     return TeamForecastOutcomeDbRow(
         payload_sha256=_payload_sha256(payload_json),
@@ -496,6 +483,46 @@ def _payload_from_dataclass(value: Any) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError("payload_json must be a JSON object")
     return _normalize_payload_json("payload_json", payload)
+
+
+def _evidence_payload_json(
+    packet: TeamForecastEvidencePacket,
+    *,
+    forecast_id: str,
+    config_version: str,
+    generated_at: datetime,
+) -> dict[str, Any]:
+    return _normalize_payload_json(
+        "payload_json",
+        {
+            "forecast_id": forecast_id,
+            "config_version": config_version,
+            "generated_at": generated_at,
+            "evidence": team_forecast_packet_payload(packet),
+            "paper_only": True,
+            "report_only": True,
+            "readonly": True,
+        },
+    )
+
+
+def _outcome_payload_json(
+    outcome: TeamForecastOutcome,
+    *,
+    config_version: str,
+    generated_at: datetime,
+) -> dict[str, Any]:
+    return _normalize_payload_json(
+        "payload_json",
+        {
+            "config_version": config_version,
+            "generated_at": generated_at,
+            "outcome": _payload_from_dataclass(outcome),
+            "paper_only": True,
+            "report_only": True,
+            "readonly": True,
+        },
+    )
 
 
 def _payload_sha256(payload_json: dict[str, Any]) -> str:
@@ -576,6 +603,7 @@ def _validate_route_row_matches_payload(row: TeamMarketRouteDbRow) -> None:
         "readonly": report.readonly,
     }
     _compare_expected_values(row, expected_values)
+    _require_canonical_payload_json(row.payload_json, _payload_from_dataclass(report))
 
 
 def _validate_forecast_row_matches_payload(row: TeamForecastDbRow) -> None:
@@ -595,6 +623,10 @@ def _validate_forecast_row_matches_payload(row: TeamForecastDbRow) -> None:
         "readonly": packet.readonly,
     }
     _compare_expected_values(row, expected_values)
+    _require_canonical_payload_json(
+        row.payload_json,
+        team_forecast_packet_payload(packet),
+    )
 
 
 def _validate_evidence_row_matches_payload(row: TeamForecastEvidenceDbRow) -> None:
@@ -631,6 +663,15 @@ def _validate_evidence_row_matches_payload(row: TeamForecastEvidenceDbRow) -> No
         "readonly": True,
     }
     _compare_expected_values(row, expected_values)
+    _require_canonical_payload_json(
+        row.payload_json,
+        _evidence_payload_json(
+            packet,
+            forecast_id=row.payload_json["forecast_id"],
+            config_version=row.payload_json["config_version"],
+            generated_at=_datetime_from_payload(row.payload_json, "generated_at"),
+        ),
+    )
 
 
 def _validate_outcome_row_matches_payload(row: TeamForecastOutcomeDbRow) -> None:
@@ -666,12 +707,28 @@ def _validate_outcome_row_matches_payload(row: TeamForecastOutcomeDbRow) -> None
         "readonly": True,
     }
     _compare_expected_values(row, expected_values)
+    _require_canonical_payload_json(
+        row.payload_json,
+        _outcome_payload_json(
+            outcome,
+            config_version=row.payload_json["config_version"],
+            generated_at=_datetime_from_payload(row.payload_json, "generated_at"),
+        ),
+    )
 
 
 def _compare_expected_values(row: Any, expected_values: dict[str, Any]) -> None:
     for field_name, expected_value in expected_values.items():
         if getattr(row, field_name) != expected_value:
             raise ValueError(f"{field_name} must match payload_json")
+
+
+def _require_canonical_payload_json(
+    payload_json: dict[str, Any],
+    expected_payload_json: dict[str, Any],
+) -> None:
+    if payload_json != expected_payload_json:
+        raise ValueError("payload_json must match canonical recovered payload")
 
 
 def _normalize_payload_json(field_name: str, value: Any) -> dict[str, Any]:
@@ -716,7 +773,10 @@ def _normalize_json_value(field_path: str, value: Any) -> Any:
 
 def _validate_payload_hard_flags(value: Any, field_path: str) -> None:
     if isinstance(value, dict):
+        require_explicit = _requires_explicit_hard_flags(field_path)
         for flag_name in _HARD_FLAGS:
+            if require_explicit and value.get(flag_name, _MISSING) is not True:
+                raise ValueError(f"{field_path} {flag_name} must be explicitly True")
             if flag_name in value and value[flag_name] is not True:
                 raise ValueError(f"{field_path} {flag_name} must be True")
         for key, item in value.items():
@@ -724,6 +784,12 @@ def _validate_payload_hard_flags(value: Any, field_path: str) -> None:
     elif isinstance(value, list):
         for index, item in enumerate(value):
             _validate_payload_hard_flags(item, f"{field_path}.{index}")
+
+
+def _requires_explicit_hard_flags(field_path: str) -> bool:
+    if field_path == "payload_json":
+        return True
+    return field_path.rsplit(".", 1)[-1] in _NESTED_HARD_FLAG_PAYLOAD_KEYS
 
 
 def _json_object_at(payload_json: dict[str, Any], field_name: str) -> dict[str, Any]:
