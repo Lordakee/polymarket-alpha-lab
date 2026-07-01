@@ -9,8 +9,10 @@ from polymarket_alpha_lab.autonomous_market_scorer_store import (
     load_autonomous_market_scorer_reports as _load_reports,
 )
 from polymarket_alpha_lab.supabase_autonomous_market_scorer_config import (
+    AUTONOMOUS_MARKET_SCORER_DB_DSN_ENV_VAR,
     from_autonomous_market_scorer_db_env,
 )
+from polymarket_alpha_lab.supabase_local_dsn import validate_local_postgres_dsn
 
 
 def load_autonomous_market_scorer_reports_from_env(
@@ -63,6 +65,10 @@ def load_autonomous_market_scorer_reports_from_env(
 
 
 def _connect(dsn: str) -> Any:
+    validate_local_postgres_dsn(
+        dsn,
+        env_var_name=AUTONOMOUS_MARKET_SCORER_DB_DSN_ENV_VAR,
+    )
     try:
         import psycopg
     except ModuleNotFoundError as exc:

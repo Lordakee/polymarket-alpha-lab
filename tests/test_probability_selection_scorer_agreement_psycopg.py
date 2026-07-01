@@ -9,7 +9,11 @@ from typing import Any
 import pytest
 
 
-SECRET_DSN = "postgresql://agreement:secret@example.invalid/polymarket"
+SECRET_DSN = "postgresql://agreement:secret@localhost:54322/polymarket"
+REMOTE_DSN = (
+    "postgresql://agreement:remote-token@db.remote-supabase.example/polymarket"
+)
+REMOTE_HOST = "db.remote-supabase.example"
 ADAPTER_MODULE_NAME = (
     "polymarket_alpha_lab.probability_selection_scorer_agreement_psycopg"
 )
@@ -176,6 +180,34 @@ def test_insert_opens_autocommit_connection_delegates_and_closes(
     assert connection.close_count == 1
 
 
+def test_remote_dsn_is_rejected_before_psycopg_import_without_echoing_secret(
+    monkeypatch: pytest.MonkeyPatch,
+    adapter_module: types.ModuleType,
+) -> None:
+    _remove_psycopg_modules(monkeypatch)
+
+    class RejectingPsycopgFinder:
+        def find_spec(self, fullname: str, path: Any = None, target: Any = None) -> None:
+            if fullname.startswith("psycopg"):
+                raise AssertionError("psycopg must not be imported for remote DSN")
+            return None
+
+    finder = RejectingPsycopgFinder()
+    monkeypatch.setattr(sys, "meta_path", [finder, *sys.meta_path])
+
+    with pytest.raises(ValueError) as exc_info:
+        adapter_module.insert_probability_selection_scorer_agreement_report_with_psycopg(
+            REMOTE_DSN,
+            FakeReport(config_version="probability-selection-scorer-agreement-v0"),
+        )
+
+    message = str(exc_info.value)
+    assert "POLYMARKET_ALPHA_LAB_PROBABILITY_SELECTION_SCORER_AGREEMENT_DB_DSN" in message
+    assert REMOTE_DSN not in message
+    assert "remote-token" not in message
+    assert REMOTE_HOST not in message
+
+
 def test_json_params_are_adapted_for_store_cursor(
     adapter_module: types.ModuleType,
 ) -> None:
@@ -244,7 +276,7 @@ def test_connect_failure_redacts_dsn(
     assert "secret" not in message
 
 
-def test_close_failure_is_suppressed_after_store_success(
+def test_insert_success_close_failure_propagates_without_dsn(
     monkeypatch: pytest.MonkeyPatch,
     adapter_module: types.ModuleType,
 ) -> None:
@@ -260,12 +292,47 @@ def test_close_failure_is_suppressed_after_store_success(
         lambda *args, **kwargs: row,
     )
 
-    inserted = (
+    with pytest.raises(RuntimeError) as exc_info:
         adapter_module.insert_probability_selection_scorer_agreement_report_with_psycopg(
             SECRET_DSN,
             FakeReport(config_version="probability-selection-scorer-agreement-v0"),
         )
+
+    message = str(exc_info.value)
+    assert "close failed without dsn" in message
+    assert SECRET_DSN not in message
+    assert "secret" not in message
+    assert connection.close_count == 1
+
+
+def test_insert_operation_failure_close_failure_is_swallowed_without_echoing_dsn(
+    monkeypatch: pytest.MonkeyPatch,
+    adapter_module: types.ModuleType,
+) -> None:
+    connection = FakeCloseFailingConnection()
+    _install_fake_psycopg(
+        monkeypatch,
+        connect=lambda dsn, *, autocommit=False: connection,
     )
 
-    assert inserted == row
+    def fake_insert(connection_arg: Any, report_arg: Any, *, table_name: str) -> FakeRow:
+        raise ValueError("store failed without dsn")
+
+    monkeypatch.setattr(
+        adapter_module,
+        "insert_probability_selection_scorer_agreement_report",
+        fake_insert,
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        adapter_module.insert_probability_selection_scorer_agreement_report_with_psycopg(
+            SECRET_DSN,
+            FakeReport(config_version="probability-selection-scorer-agreement-v0"),
+        )
+
+    message = str(exc_info.value)
+    assert "store failed without dsn" in message
+    assert "close failed" not in message
+    assert SECRET_DSN not in message
+    assert "secret" not in message
     assert connection.close_count == 1

@@ -187,14 +187,14 @@ def test_load_with_psycopg_opens_autocommit_connection_and_closes_success(
     )
 
     loaded = load_paper_autonomous_allocation_proposal_report_with_psycopg(
-        "postgresql://readonly.example.invalid/proposal",
+        "postgresql://postgres:postgres@localhost:54322/postgres",
         options=PaperAutonomousAllocationProposalReadOptions(limit=5),
     )
 
     assert loaded is proposal
     assert connect_calls == [
         (
-            "postgresql://readonly.example.invalid/proposal",
+            "postgresql://postgres:postgres@localhost:54322/postgres",
             {"autocommit": True},
         ),
     ]
@@ -231,7 +231,7 @@ def test_load_with_psycopg_closes_once_on_loader_error(
 
     with pytest.raises(RuntimeError, match="loader failed"):
         load_paper_autonomous_allocation_proposal_report_with_psycopg(
-            "postgresql://readonly.example.invalid/proposal",
+            "postgresql://postgres:postgres@localhost:54322/postgres",
         )
 
     assert connection.close_count == 1

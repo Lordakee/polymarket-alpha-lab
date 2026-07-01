@@ -39,24 +39,52 @@ class FakeReadinessDbRow:
 
 
 class FakeCursor:
-    def __init__(self, rows: tuple[Any, ...] = ()) -> None:
+    def __init__(
+        self,
+        rows: tuple[Any, ...] = (),
+        *,
+        execute_error: BaseException | None = None,
+        fetchall_error: BaseException | None = None,
+        close_error: BaseException | None = None,
+    ) -> None:
         self.rows = rows
+        self.execute_error = execute_error
+        self.fetchall_error = fetchall_error
+        self.close_error = close_error
         self.calls: list[tuple[str, tuple[Any, ...]]] = []
         self.closed = False
 
     def execute(self, sql: str, params: tuple[Any, ...] = ()) -> None:
         self.calls.append((sql, params))
+        if self.execute_error is not None:
+            raise self.execute_error
 
     def fetchall(self) -> tuple[Any, ...]:
+        if self.fetchall_error is not None:
+            raise self.fetchall_error
         return self.rows
 
     def close(self) -> None:
         self.closed = True
+        if self.close_error is not None:
+            raise self.close_error
 
 
 class FakeConnection:
-    def __init__(self, rows: tuple[Any, ...] = ()) -> None:
-        self.cursor_instance = FakeCursor(rows)
+    def __init__(
+        self,
+        rows: tuple[Any, ...] = (),
+        *,
+        execute_error: BaseException | None = None,
+        fetchall_error: BaseException | None = None,
+        close_error: BaseException | None = None,
+    ) -> None:
+        self.cursor_instance = FakeCursor(
+            rows,
+            execute_error=execute_error,
+            fetchall_error=fetchall_error,
+            close_error=close_error,
+        )
         self.cursor_count = 0
         self.commit_count = 0
         self.rollback_count = 0
@@ -250,6 +278,83 @@ def test_insert_rejects_unsafe_table_name_without_executing_sql(
     assert connection.cursor_instance.calls == []
     assert connection.commit_count == 0
     assert connection.rollback_count == 0
+
+
+def test_insert_preserves_execute_exception_when_cursor_close_also_fails(
+    store_module: types.ModuleType,
+) -> None:
+    execute_error = RuntimeError("execute failed")
+    close_error = RuntimeError("close failed")
+    connection = FakeConnection(
+        execute_error=execute_error,
+        close_error=close_error,
+    )
+
+    with pytest.raises(RuntimeError, match="execute failed") as exc_info:
+        store_module.insert_paper_recommendation_readiness_report(
+            connection,
+            FakeReadinessReport(
+                generated_at=datetime(2026, 6, 25, 8, 30, tzinfo=UTC),
+                config_version="paper-recommendation-readiness-v0",
+                blocked_count=1,
+            ),
+        )
+
+    assert exc_info.value is execute_error
+    assert connection.cursor_instance.closed is True
+
+
+def test_insert_propagates_cursor_close_exception_after_successful_execute(
+    store_module: types.ModuleType,
+) -> None:
+    close_error = RuntimeError("close failed")
+    connection = FakeConnection(close_error=close_error)
+
+    with pytest.raises(RuntimeError, match="close failed") as exc_info:
+        store_module.insert_paper_recommendation_readiness_report(
+            connection,
+            FakeReadinessReport(
+                generated_at=datetime(2026, 6, 25, 8, 30, tzinfo=UTC),
+                config_version="paper-recommendation-readiness-v0",
+                blocked_count=1,
+            ),
+        )
+
+    assert exc_info.value is close_error
+    assert connection.cursor_instance.closed is True
+
+
+def test_load_propagates_cursor_close_exception_after_successful_query(
+    store_module: types.ModuleType,
+) -> None:
+    close_error = RuntimeError("close failed")
+    connection = FakeConnection(
+        rows=(fake_db_row(blocked_count=0),),
+        close_error=close_error,
+    )
+
+    with pytest.raises(RuntimeError, match="close failed") as exc_info:
+        store_module.load_paper_recommendation_readiness_reports(connection)
+
+    assert exc_info.value is close_error
+    assert connection.cursor_instance.closed is True
+
+
+def test_load_preserves_fetchall_exception_when_cursor_close_also_fails(
+    store_module: types.ModuleType,
+) -> None:
+    fetchall_error = RuntimeError("fetchall failed")
+    close_error = RuntimeError("close failed")
+    connection = FakeConnection(
+        fetchall_error=fetchall_error,
+        close_error=close_error,
+    )
+
+    with pytest.raises(RuntimeError, match="fetchall failed") as exc_info:
+        store_module.load_paper_recommendation_readiness_reports(connection)
+
+    assert exc_info.value is fetchall_error
+    assert connection.cursor_instance.closed is True
 
 
 def test_load_paper_recommendation_readiness_reports_filters_and_limits_with_params(

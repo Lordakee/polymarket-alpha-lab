@@ -273,6 +273,28 @@ def test_settlement_validation_marks_trades_pending_without_matching_outcomes():
     assert row.reason_codes == ("outcome_pending",)
 
 
+def test_settlement_validation_characterizes_missing_observation_as_pending():
+    trade = _record(1, filled_size=Decimal("8"), average_price=Decimal("0.3750"))
+
+    report = _report(trade, outcome_report=_outcome_report(pending_count=1))
+
+    assert report.status == "pending"
+    assert report.resolved_count == 0
+    assert report.pending_count == 1
+    assert report.quality_flag_count == 0
+    assert report.forecast_evidence_report is None
+    row = report.rows[0]
+    assert row.status == "pending"
+    assert row.source_packet_id is None
+    assert row.settlement_payout is None
+    assert row.realized_pnl is None
+    assert row.return_ratio is None
+    assert row.predicted_probability is None
+    assert row.actual_outcome_value is None
+    assert row.probability_loss is None
+    assert row.reason_codes == ("outcome_pending",)
+
+
 def test_settlement_validation_flags_empty_outcome_report_as_trade_set_mismatch_for_trades():
     trade = _record(1)
 

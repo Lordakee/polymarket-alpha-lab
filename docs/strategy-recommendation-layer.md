@@ -20,8 +20,10 @@ basic paper edge is forecast-vs-price after costs:
 - forecast probability from the model or analyst input
 - executable market price as the current implied probability
 - cost assumptions for fees and execution friction
-- net edge after taker fee, spread, slippage, funding, finalization, time, and
-  risk cost assumptions
+- net edge after taker fee, slippage, funding, finalization, time, and risk
+  cost assumptions when the entry price is already an executable ask
+- explicit spread cost only when a side-edge input is midpoint/indicative rather
+  than executable-ask based
 
 All numeric calculations in this layer should stay Decimal-only, matching the
 rest of the project.
@@ -192,14 +194,16 @@ gap can vanish after transaction, timing, risk, and paper capital costs. The
 existing cost-aware strategy report models the important paper inputs:
 
 - taker fee, including the Polymarket-style price-dependent fee calculation
-- spread, because the displayed midpoint is not the executable price
+- spread, as an executable-ask liquidity gate and screening penalty because a
+  wide book makes the displayed midpoint less useful for entry review
 - slippage cost placeholder
 - funding cost placeholder
 - finalization cost placeholder
 - time cost placeholder
 - risk cost placeholder
 - paper capital carrying-cost input when notional would be locked
-- total cost per share and net edge per share
+- total cost per share and net edge per share, excluding spread when the
+  strategy report already prices entry at the executable ask
 
 The recommendation score should therefore use net edge and readiness evidence,
 not gross forecast error alone. Strategy-level selection should evaluate YES
@@ -236,9 +240,13 @@ For each candidate side:
 - `side_price` is the executable ask or conservative executable entry price for
   the side, not an optimistic midpoint.
 - `gross_probability_edge` is `side_probability - side_price`.
-- `total_cost_per_share` is the Decimal-only sum of fee, spread, slippage,
-  funding, finalization, time, risk, and paper capital costs assigned to that
-  side.
+- `total_cost_per_share` is the Decimal-only sum of fee, slippage, funding,
+  finalization, time, risk, and paper capital costs assigned to that side when
+  `side_price` is an executable ask. Spread is a separate liquidity
+  gate/screening penalty in that executable-ask flow.
+- `spread_cost_per_share` remains an explicit side-edge cost only for
+  midpoint/indicative inputs where the side price does not already include the
+  bid/ask crossing cost.
 - `net_probability_edge` is `gross_probability_edge - total_cost_per_share`.
 - `recommendation_score` should be derived from positive net edge plus
   readiness quality. It must not reward a side whose cost-adjusted edge is zero
@@ -260,15 +268,21 @@ deterministic report rows, and keeps hard `paper_only`, `report_only`, and
 `readonly` flags. Any CLI surface for these reducers should stay report-only
 and local-file driven.
 
-Reducer modules for this stage are:
+Reducer modules for this stage are listed with their current status:
 
-- `paper_probability_side_edge` for side-aware YES/NO probability-event edge
-  rows.
-- `paper_capital_cost` for explicit paper capital cost estimates.
+- `paper_probability_side_edge` is an available reducer for side-aware YES/NO
+  probability-event edge rows. Available CLI:
+  `paper-probability-side-edge-report --input <path>`.
+- `paper_capital_cost` is an available module-local reducer for explicit paper
+  capital cost estimates and has no standalone CLI in this phase.
+- `paper_capital_cost_side_edge_adapter` is an available module-local adapter
+  that converts capital-cost-aware rows into canonical side-edge inputs with
+  computed `capital_cost_per_share`; it has no standalone CLI in this phase.
 - `paper_side_edge_adapter` for converting supplied strategy/economics rows into
   canonical side-edge inputs.
-- `paper_probability_recommendation_queue` for side-edge review/research queue
-  status reports.
+- `paper_probability_recommendation_queue` is an available reducer for side-edge
+  review/research queue status reports. Available CLI:
+  `paper-recommendation-queue-report --input <path> [--persist]`.
 - `paper_cost_stress` for checking whether recommendations survive extra cost
   shocks.
 - `paper_liquidity_depth_gate` for supplied depth/fill-ratio gates.
@@ -281,7 +295,9 @@ Reducer modules for this stage are:
   checks.
 - `paper_recommendation_allocation` for row-level paper notional allocation.
 - `paper_correlation_grouping` for event/theme/correlation exposure summaries.
-- `paper_recommendation_risk_budget` for local paper allocation caps.
+- `paper_recommendation_risk_budget` is an available reducer for local paper
+  allocation caps. Available CLI:
+  `paper-recommendation-risk-budget-report --input <path> [--nav-notional <amount>] [--persist]`.
 - `paper_recommendation_shadow_nav` for paper NAV-at-risk summaries.
 - `paper_recommendation_gate_summary` for cross-gate status summaries.
 - `paper_recommendation_readiness` for per-market readiness aggregation.
@@ -289,19 +305,22 @@ Reducer modules for this stage are:
 - `paper_recommendation_health` for batch-level recommendation quality health.
 - `paper_recommendation_manifest` for supplied report-presence manifests.
 - `paper_recommendation_consistency` for cross-reducer consistency checks.
-- `paper_recommendation_queue` for a planned generic readonly review queue.
-- `paper_recommendation_reason_trend` for implemented
+- `paper_recommendation_queue` is a planned-only generic readonly review queue.
+- `paper_recommendation_reason_trend` is an available reducer and available CLI:
+  `paper-recommendation-reason-trend --recommendation-log <path> [--persist]`,
+  for implemented
   paper-only/report-only/readonly aggregation of canonical reason-code counts by
   source status and transition trends across recovered paper recommendation
   reports.
 
 Those reducer modules are paper-only/report-only/readonly surfaces, including
 the queue, risk-budget, and reason-trend pieces that feed the report-only
-workflow. `paper_recommendation_reason_trend` is implemented; the remaining
-reducers are planned and should not be package-root exports. Phase 2 modules
-should not import the planned reducers. Until a parallel worker creates one of
-them, documentation and boundary tests should treat each planned reducer name as
-planned scope only rather than importing it.
+workflow. `paper_capital_cost` is available as a module-local reducer and
+`paper_capital_cost_side_edge_adapter` is available as a module-local adapter;
+neither should be package-root exported or presented as a standalone CLI. The
+generic `paper_recommendation_queue` remains planned-only and should not be
+imported until implemented. Available reducer families remain module-local
+surfaces rather than package-root exports.
 
 ### Probability Side Edge
 
@@ -314,8 +333,9 @@ eligible YES or NO side:
 - Side price is the conservative executable entry price for that side, not an
   optimistic midpoint.
 - Gross probability edge is `side_probability - side_price`.
-- Total cost per share includes fee, spread, slippage, funding, finalization,
-  time, risk, and paper capital cost.
+- Total cost per share includes fee, slippage, funding, finalization, time,
+  risk, and paper capital cost for executable-ask inputs. Include explicit
+  spread cost only for midpoint/indicative side-price inputs.
 - Net probability edge is gross probability edge minus total cost per share.
 - Recommendation score can be positive only when net probability edge is
   positive and all required readiness evidence allows selection.
@@ -382,13 +402,13 @@ entries, build readonly reducers, and print deterministic summaries. Useful
 commands print side-edge counts, queue counts, risk-budget allocations, top
 reason codes, and latest-run deltas.
 
-The report-only local-file workflow uses explicit input paths:
+The available CLI report-only local-file workflow uses explicit input paths:
 
 ```bash
 polymarket-alpha-lab paper-probability-side-edge-report --input <path>
-polymarket-alpha-lab paper-recommendation-queue-report --input <path>
-polymarket-alpha-lab paper-recommendation-risk-budget-report --input <path>
-polymarket-alpha-lab paper-recommendation-reason-trend --recommendation-log <path>
+polymarket-alpha-lab paper-recommendation-queue-report --input <path> [--persist]
+polymarket-alpha-lab paper-recommendation-risk-budget-report --input <path> [--nav-notional <amount>] [--persist]
+polymarket-alpha-lab paper-recommendation-reason-trend --recommendation-log <path> [--persist]
 ```
 
 The side-edge report command reads supplied local JSON or JSONL side-edge row
@@ -418,14 +438,23 @@ The summary is for paper review only: source report count, reason-code counts
 by source status, and status-transition counts for recovered local bundle
 reports.
 
+`--persist` is default-off, env-driven, local Supabase/Postgres report-only DB
+persistence for the queue, risk-budget, and reason-trend report commands. It
+only inserts the generated paper-only/report-only/readonly report when the
+matching local DB environment config is enabled, and it is not live trading,
+order sizing, trade approval, an execution queue, or exchange mutation. The
+side-edge report command is print-only and does not expose `--persist`.
+
 CLI commands in this phase must not create live clients, fetch live exchange
 state, authenticate, read wallet or private-key material, sign payloads,
 construct real order payloads, submit orders, cancel orders, or mutate exchange
 or network state. This is the strict phase boundary for
 `paper-probability-side-edge-report`, `paper-recommendation-queue-report`,
 `paper-recommendation-risk-budget-report`, and
-`paper-recommendation-reason-trend`: they also must not append logs, write
-artifacts, inspect accounts, approve trades, or touch live state.
+`paper-recommendation-reason-trend`: without `--persist`, they must not append
+logs, write artifacts, inspect accounts, approve trades, or touch live state;
+with `--persist`, the persist-capable commands may only insert the generated
+local report-only DB row behind the matching default-off environment boundary.
 
 ### Parallel Development Boundaries
 
@@ -632,11 +661,17 @@ The recommendation-layer work is expected to use module-level reducers named:
   selection, and explanation reports into one paper cycle artifact
 - `strategy_recommendation_log` for append-only JSONL persistence and recovery
   of bundle reports
-- `paper_probability_side_edge` for side-aware probability-event scoring
-- `paper_capital_cost` for local paper capital carrying-cost reports
+- `paper_probability_side_edge` for available side-aware probability-event
+  scoring and the available CLI `paper-probability-side-edge-report`
+- `paper_capital_cost` as an available module-local reducer for local paper
+  capital carrying-cost reports
+- `paper_capital_cost_side_edge_adapter` as an available module-local adapter
+  that converts capital-cost-aware rows into canonical side-edge inputs with
+  computed `capital_cost_per_share`
 - `paper_side_edge_adapter` for canonical supplied-input side-edge conversion
-- `paper_probability_recommendation_queue` for readonly side-edge review-queue
-  summaries
+- `paper_probability_recommendation_queue` for available readonly side-edge
+  review-queue summaries and the available CLI
+  `paper-recommendation-queue-report`
 - `paper_cost_stress`, `paper_liquidity_depth_gate`,
   `paper_settlement_timing`, `paper_outcome_uncertainty`,
   `paper_recommendation_calibration_gate`, and
@@ -647,10 +682,12 @@ The recommendation-layer work is expected to use module-level reducers named:
   `paper_recommendation_readiness`, `paper_recommendation_health`,
   `paper_recommendation_manifest`, and `paper_recommendation_consistency` for
   review packets, aggregate readiness, report presence, and consistency checks
-- `paper_recommendation_queue` for a planned generic readonly review queue
-- `paper_recommendation_risk_budget` for paper allocation caps and budget
-  status
-- `paper_recommendation_reason_trend` for implemented
+- `paper_recommendation_queue` as a planned-only generic readonly review queue
+- `paper_recommendation_risk_budget` for available paper allocation caps and
+  budget status and the available CLI
+  `paper-recommendation-risk-budget-report`
+- `paper_recommendation_reason_trend` for the available CLI
+  `paper-recommendation-reason-trend` and implemented
   paper-only/report-only/readonly aggregation of canonical reason-code counts by
   source status and transition trends across recovered paper recommendation
   reports

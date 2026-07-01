@@ -11,6 +11,10 @@ from polymarket_alpha_lab.paper_project_screening_rank_stability_store import (
     insert_paper_project_screening_rank_stability_report,
     load_paper_project_screening_rank_stability_reports,
 )
+from polymarket_alpha_lab.supabase_local_dsn import validate_local_postgres_dsn
+from polymarket_alpha_lab.supabase_paper_project_screening_rank_stability_config import (
+    PAPER_PROJECT_SCREENING_RANK_STABILITY_DB_DSN_ENV_VAR,
+)
 
 
 _T = TypeVar("_T")
@@ -53,23 +57,32 @@ def load_paper_project_screening_rank_stability_reports_with_psycopg(
 
 
 def _with_owned_connection(dsn: str, operation: Callable[[Any], _T]) -> _T:
+    validate_local_postgres_dsn(
+        dsn,
+        env_var_name=PAPER_PROJECT_SCREENING_RANK_STABILITY_DB_DSN_ENV_VAR,
+    )
     jsonb_adapter = _jsonb_adapter()
     connection = _PsycopgJsonConnection(_connect(dsn), jsonb_adapter)
     try:
         result = operation(connection)
         connection.commit()
-        return result
-    except BaseException:
+    except BaseException as exc:
         try:
             connection.rollback()
         except Exception:
             pass
-        raise
-    finally:
         try:
             connection.close()
         except Exception:
             pass
+        if isinstance(exc, Exception):
+            _raise_redacted(exc, dsn=dsn)
+        raise
+    try:
+        connection.close()
+    except Exception as exc:
+        _raise_redacted(exc, dsn=dsn)
+    return result
 
 
 def _connect(dsn: str) -> Any:
@@ -145,6 +158,25 @@ def _adapt_json_params(params: tuple[Any, ...], jsonb_adapter: type[Any]) -> tup
         jsonb_adapter(param) if isinstance(param, (dict, list)) else param
         for param in params
     )
+
+
+def _raise_redacted(exc: Exception, *, dsn: str) -> None:
+    message = _redact_secret_text(str(exc), secret=dsn)
+    if not message.strip():
+        message = exc.__class__.__name__
+    try:
+        redacted_exc = type(exc)(message)
+    except Exception:
+        redacted_exc = RuntimeError(message)
+    raise redacted_exc from None
+
+
+def _redact_secret_text(value: str, *, secret: str) -> str:
+    if secret and secret in value:
+        value = value.replace(secret, "<redacted>")
+    if "postgresql://" in value:
+        return "paper project screening rank stability database operation failed for <redacted>"
+    return value
 
 
 __all__ = (

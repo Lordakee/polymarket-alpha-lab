@@ -13,6 +13,7 @@ PHASE_2_MODULE_PATHS = tuple(
 
 FORBIDDEN_RECOMMENDATION_IMPORT_PREFIXES = (
     "polymarket_alpha_lab.paper_capital_cost",
+    "polymarket_alpha_lab.paper_capital_cost_side_edge_adapter",
     "polymarket_alpha_lab.paper_capital_cost_model",
     "polymarket_alpha_lab.paper_correlation_grouping",
     "polymarket_alpha_lab.paper_cost_stress",
@@ -55,6 +56,7 @@ FORBIDDEN_PACKAGE_ROOT_RECOMMENDATION_EXPORTS = (
     "PaperCapitalCostConfig",
     "PaperCapitalCostReport",
     "PaperCapitalCostRow",
+    "PaperCapitalCostSideEdgeAdapterInput",
     "PaperCostStressConfig",
     "PaperCostStressInput",
     "PaperCostStressReport",
@@ -140,6 +142,7 @@ FORBIDDEN_PACKAGE_ROOT_RECOMMENDATION_EXPORTS = (
     "append_paper_strategy_recommendation_bundle_log",
     "build_paper_strategy_readiness_signals",
     "build_paper_capital_cost_report",
+    "paper_capital_cost_side_edge_input",
     "build_paper_correlation_grouping_report",
     "build_paper_cost_stress_report",
     "build_paper_liquidity_depth_gate_report",
@@ -230,6 +233,7 @@ def test_phase_2_modules_exist_for_recommendation_boundary_regression() -> None:
 def test_phase_2_boundary_blocks_current_recommendation_modules() -> None:
     assert set(FORBIDDEN_RECOMMENDATION_IMPORT_PREFIXES) == {
         "polymarket_alpha_lab.paper_capital_cost",
+        "polymarket_alpha_lab.paper_capital_cost_side_edge_adapter",
         "polymarket_alpha_lab.paper_capital_cost_model",
         "polymarket_alpha_lab.paper_correlation_grouping",
         "polymarket_alpha_lab.paper_cost_stress",
@@ -303,6 +307,11 @@ def test_phase_2_modules_do_not_import_recommendation_layer(
             id="actual-paper-probability-recommendation-queue-import",
         ),
         pytest.param(
+            "from polymarket_alpha_lab.paper_capital_cost_side_edge_adapter "
+            "import PaperCapitalCostSideEdgeAdapterInput\n",
+            id="actual-paper-capital-cost-side-edge-adapter-import",
+        ),
+        pytest.param(
             "from polymarket_alpha_lab.paper_recommendation_allocation import "
             "PaperRecommendationAllocationReport\n",
             id="actual-paper-recommendation-allocation-import",
@@ -320,6 +329,14 @@ def test_phase_2_modules_do_not_import_recommendation_layer(
         pytest.param(
             "from polymarket_alpha_lab import PaperCapitalCostReport\n",
             id="planned-package-root-recommendation-export-import",
+        ),
+        pytest.param(
+            "from polymarket_alpha_lab import PaperCapitalCostSideEdgeAdapterInput\n",
+            id="actual-package-root-capital-cost-side-edge-adapter-input-import",
+        ),
+        pytest.param(
+            "from polymarket_alpha_lab import paper_capital_cost_side_edge_input\n",
+            id="actual-package-root-capital-cost-side-edge-input-import",
         ),
     ),
 )

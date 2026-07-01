@@ -275,6 +275,27 @@ def test_insert_preserves_execute_error_when_cursor_close_also_fails(
     assert connection.cursor_instance.closed is True
 
 
+def test_insert_success_close_propagates_after_execute(
+    store_module: types.ModuleType,
+) -> None:
+    connection = FakeConnection()
+    close_error = RuntimeError("close failed")
+    connection.cursor_instance.close_error = close_error
+
+    with pytest.raises(RuntimeError, match="close failed") as exc_info:
+        store_module.insert_paper_trade_attribution_report(
+            connection,
+            FakeReport(
+                generated_at=datetime(2026, 6, 18, 12, 0, tzinfo=UTC),
+                config_version="paper-trade-attribution-db-v0",
+                trade_count=4,
+            ),
+        )
+
+    assert exc_info.value is close_error
+    assert connection.cursor_instance.closed is True
+
+
 def test_load_reports_filters_limits_orders_and_maps_dict_rows(
     store_module: types.ModuleType,
 ) -> None:
@@ -379,6 +400,40 @@ def test_load_preserves_execute_error_when_cursor_close_also_fails(
         store_module.load_paper_trade_attribution_reports(connection)
 
     assert exc_info.value is execute_error
+    assert connection.cursor_instance.closed is True
+
+
+def test_load_success_close_propagates_after_fetch(
+    store_module: types.ModuleType,
+) -> None:
+    generated_at = datetime(2026, 6, 18, 12, 30, tzinfo=UTC)
+    connection = FakeConnection(rows=(_fake_db_row(FakeReport(
+        generated_at=generated_at,
+        config_version="paper-trade-attribution-db-v0",
+        trade_count=4,
+    )),))
+    close_error = RuntimeError("close failed")
+    connection.cursor_instance.close_error = close_error
+
+    with pytest.raises(RuntimeError, match="close failed") as exc_info:
+        store_module.load_paper_trade_attribution_reports(connection)
+
+    assert exc_info.value is close_error
+    assert connection.cursor_instance.closed is True
+
+
+def test_load_operation_failure_close_swallowed_for_db_row_error(
+    store_module: types.ModuleType,
+) -> None:
+    connection = FakeConnection(rows=((),))
+    connection.cursor_instance.close_error = RuntimeError("close failed")
+
+    with pytest.raises(
+        ValueError,
+        match="DB row must contain selected paper trade attribution columns",
+    ):
+        store_module.load_paper_trade_attribution_reports(connection)
+
     assert connection.cursor_instance.closed is True
 
 

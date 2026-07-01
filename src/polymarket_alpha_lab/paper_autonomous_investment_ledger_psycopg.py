@@ -16,8 +16,10 @@ from polymarket_alpha_lab.paper_autonomous_investment_ledger_store import (
 )
 from polymarket_alpha_lab.supabase_paper_autonomous_investment_ledger_config import (
     DEFAULT_PAPER_AUTONOMOUS_INVESTMENT_LEDGER_DB_TABLE,
+    PAPER_AUTONOMOUS_INVESTMENT_LEDGER_DB_DSN_ENV_VAR,
     SupabasePaperAutonomousInvestmentLedgerConfig,
 )
+from polymarket_alpha_lab.supabase_local_dsn import validate_local_postgres_dsn
 
 
 __all__ = (
@@ -217,9 +219,13 @@ def _with_psycopg_owned_connection(
     *,
     connect: Callable[[str], Any] | None,
 ) -> _T:
-    jsonb_adapter = _jsonb_adapter()
+    validate_local_postgres_dsn(
+        dsn,
+        env_var_name=PAPER_AUTONOMOUS_INVESTMENT_LEDGER_DB_DSN_ENV_VAR,
+    )
 
     def connection_factory() -> _PsycopgJsonConnection:
+        jsonb_adapter = _jsonb_adapter()
         if connect is None:
             connection = _connect(dsn)
         else:
@@ -235,24 +241,31 @@ def _with_owned_connection(
     *,
     connection_factory: Callable[[], Any],
 ) -> _T:
+    validate_local_postgres_dsn(
+        dsn,
+        env_var_name=PAPER_AUTONOMOUS_INVESTMENT_LEDGER_DB_DSN_ENV_VAR,
+    )
     connection = connection_factory()
     try:
         result = operation(connection)
         connection.commit()
-        return result
     except BaseException as exc:
         try:
             connection.rollback()
         except Exception:
             pass
-        if isinstance(exc, Exception):
-            _raise_redacted(exc, dsn=dsn)
-        raise
-    finally:
         try:
             connection.close()
         except Exception:
             pass
+        if isinstance(exc, Exception):
+            _raise_redacted(exc, dsn=dsn)
+        raise
+    try:
+        connection.close()
+    except Exception as exc:
+        _raise_redacted(exc, dsn=dsn)
+    return result
 
 
 def _connect(dsn: str) -> Any:

@@ -7,6 +7,19 @@ Scope constraints:
 - Do not include password, DSN, token, service-role, service role, or secret values.
 - Do not perform live trading, wallet, or order activity.
 - Only use the local Docker Supabase stack and local migration files.
+- Treat local Supabase/Postgres as the only valid durable database target. Do
+  not adapt this runbook for SQLite, Redis, Mongo, SQLAlchemy-managed engines,
+  hosted Postgres, or any hosted DB target.
+- Do not open a connection from any application path that accepts a raw DSN
+  unless the local validator has accepted that value.
+- Do not document raw DSN values or authorize bypassing that validator.
+- This remains Phase 1 paper-only/report-only/readonly persistence for local
+  evidence history.
+- Do not add authentication or private-key handling.
+- Do not add account reads or live trading.
+- Do not add order signing or order submission.
+- Do not add order cancellation or order replacement.
+- Do not add exchange/order mutation.
 
 Local facts:
 

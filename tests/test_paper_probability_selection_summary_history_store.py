@@ -43,25 +43,54 @@ class FakeHistoryDbRow:
 
 
 class FakeCursor:
-    def __init__(self, rows: tuple[Any, ...] = (), rowcount: int = 1) -> None:
+    def __init__(
+        self,
+        rows: tuple[Any, ...] = (),
+        rowcount: int = 1,
+        execute_error: Exception | None = None,
+        fetchall_error: Exception | None = None,
+        close_error: Exception | None = None,
+    ) -> None:
         self.rows = rows
         self.rowcount = rowcount
+        self.execute_error = execute_error
+        self.fetchall_error = fetchall_error
+        self.close_error = close_error
         self.calls: list[tuple[str, tuple[Any, ...]]] = []
         self.closed = False
 
     def execute(self, sql: str, params: tuple[Any, ...] = ()) -> None:
         self.calls.append((sql, params))
+        if self.execute_error is not None:
+            raise self.execute_error
 
     def fetchall(self) -> tuple[Any, ...]:
+        if self.fetchall_error is not None:
+            raise self.fetchall_error
         return self.rows
 
     def close(self) -> None:
         self.closed = True
+        if self.close_error is not None:
+            raise self.close_error
 
 
 class FakeConnection:
-    def __init__(self, rows: tuple[Any, ...] = (), rowcount: int = 1) -> None:
-        self.cursor_instance = FakeCursor(rows, rowcount)
+    def __init__(
+        self,
+        rows: tuple[Any, ...] = (),
+        rowcount: int = 1,
+        execute_error: Exception | None = None,
+        fetchall_error: Exception | None = None,
+        close_error: Exception | None = None,
+    ) -> None:
+        self.cursor_instance = FakeCursor(
+            rows,
+            rowcount,
+            execute_error=execute_error,
+            fetchall_error=fetchall_error,
+            close_error=close_error,
+        )
         self.cursor_count = 0
         self.commit_count = 0
         self.rollback_count = 0
@@ -116,6 +145,16 @@ def fake_db_row(
             "latest_queue_count": latest_queue_count,
             "history_status": history_status,
         },
+    )
+
+
+def fake_report() -> FakeHistoryReport:
+    return FakeHistoryReport(
+        generated_at=datetime(2026, 6, 22, 12, 0, tzinfo=UTC),
+        config_version="paper-probability-selection-summary-history-v0",
+        source_report_count=3,
+        latest_queue_count=6,
+        history_status="watch",
     )
 
 
@@ -541,6 +580,91 @@ def test_load_history_reports_accepts_namedtuple_rows(
             history_status="watch",
         ),
     )
+
+
+@pytest.mark.parametrize("operation", ("insert", "load"))
+def test_cursor_close_error_after_success_is_propagated(
+    store_module: types.ModuleType,
+    operation: str,
+) -> None:
+    connection = FakeConnection(close_error=RuntimeError("cursor close failed"))
+
+    with pytest.raises(RuntimeError, match="cursor close failed") as exc_info:
+        if operation == "insert":
+            store_module.insert_paper_probability_selection_summary_history_report(
+                connection,
+                fake_report(),
+            )
+        else:
+            store_module.load_paper_probability_selection_summary_history_reports(
+                connection,
+            )
+
+    assert exc_info.value is connection.cursor_instance.close_error
+    assert connection.cursor_instance.closed is True
+
+
+@pytest.mark.parametrize(
+    ("operation", "operation_error_name"),
+    (("insert", "execute_error"), ("load", "fetchall_error")),
+)
+def test_operation_error_wins_when_cursor_close_also_fails(
+    store_module: types.ModuleType,
+    operation: str,
+    operation_error_name: str,
+) -> None:
+    operation_error = RuntimeError("db operation failed")
+    close_error = RuntimeError("cursor close failed")
+    connection = FakeConnection(
+        **{
+            operation_error_name: operation_error,
+            "close_error": close_error,
+        },
+    )
+
+    with pytest.raises(RuntimeError, match="db operation failed") as exc_info:
+        if operation == "insert":
+            store_module.insert_paper_probability_selection_summary_history_report(
+                connection,
+                fake_report(),
+            )
+        else:
+            store_module.load_paper_probability_selection_summary_history_reports(
+                connection,
+            )
+
+    assert exc_info.value is operation_error
+    assert connection.cursor_instance.closed is True
+
+
+@pytest.mark.parametrize(
+    ("operation", "operation_error_name"),
+    (("insert", "execute_error"), ("load", "fetchall_error")),
+)
+def test_base_exception_operation_error_still_closes_cursor(
+    store_module: types.ModuleType,
+    operation: str,
+    operation_error_name: str,
+) -> None:
+    class NonExceptionOperationFailure(BaseException):
+        pass
+
+    operation_error = NonExceptionOperationFailure("operation interrupted")
+    connection = FakeConnection(**{operation_error_name: operation_error})
+
+    with pytest.raises(NonExceptionOperationFailure) as exc_info:
+        if operation == "insert":
+            store_module.insert_paper_probability_selection_summary_history_report(
+                connection,
+                fake_report(),
+            )
+        else:
+            store_module.load_paper_probability_selection_summary_history_reports(
+                connection,
+            )
+
+    assert exc_info.value is operation_error
+    assert connection.cursor_instance.closed is True
 
 
 @pytest.mark.parametrize(

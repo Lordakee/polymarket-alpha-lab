@@ -10305,6 +10305,14 @@ def _run_local_observability_trends_db_history(
             config=config,
             generated_at=generated_at,
         )
+    from polymarket_alpha_lab.supabase_local_observability_trends_config import (
+        LOCAL_OBSERVABILITY_TRENDS_DB_DSN_ENV_VAR,
+    )
+
+    validate_local_postgres_dsn(
+        dsn,
+        env_var_name=LOCAL_OBSERVABILITY_TRENDS_DB_DSN_ENV_VAR,
+    )
 
     from polymarket_alpha_lab.local_observability_trends_db_history_load import (
         load_local_observability_trends_db_history_report,

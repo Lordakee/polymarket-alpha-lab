@@ -11,6 +11,10 @@ from polymarket_alpha_lab.paper_order_lifecycle_store import (
     insert_paper_order_lifecycle_record_with_result,
     load_paper_order_lifecycle_records,
 )
+from polymarket_alpha_lab.supabase_local_dsn import validate_local_postgres_dsn
+from polymarket_alpha_lab.supabase_paper_execution_pipeline_config import (
+    PAPER_EXECUTION_PIPELINE_DB_DSN_ENV_VAR,
+)
 
 
 _T = TypeVar("_T")
@@ -53,23 +57,27 @@ def load_paper_order_lifecycle_records_with_psycopg(
 
 
 def _with_owned_connection(dsn: str, operation: Callable[[Any], _T]) -> _T:
+    validate_local_postgres_dsn(
+        dsn,
+        env_var_name=PAPER_EXECUTION_PIPELINE_DB_DSN_ENV_VAR,
+    )
     jsonb_adapter = _jsonb_adapter()
     connection = _PsycopgJsonConnection(_connect(dsn), jsonb_adapter)
     try:
         result = operation(connection)
         connection.commit()
-        return result
     except BaseException:
         try:
             connection.rollback()
         except Exception:
             pass
-        raise
-    finally:
         try:
             connection.close()
         except Exception:
             pass
+        raise
+    connection.close()
+    return result
 
 
 def _connect(dsn: str) -> Any:

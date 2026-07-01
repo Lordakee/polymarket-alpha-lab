@@ -190,6 +190,51 @@ def test_source_watch_and_reject_actions_cannot_be_promoted_by_timing():
     assert "source_action_reject" in source_reject.reason_codes
 
 
+@pytest.mark.parametrize(
+    ("input_kwargs", "expected_status", "expected_reason"),
+    (
+        (
+            {"expected_resolution_at": None},
+            "blocked",
+            "unknown_resolution",
+        ),
+        (
+            {"expected_resolution_at": OBSERVED_AT},
+            "blocked",
+            "resolution_already_due",
+        ),
+        (
+            {"action": "reject"},
+            "blocked",
+            "source_action_reject",
+        ),
+        (
+            {"expected_resolution_at": datetime(2026, 6, 29, 6, 0, tzinfo=UTC)},
+            "blocked",
+            "resolution_horizon_exceeded",
+        ),
+        (
+            {"settlement_context_fresh": False},
+            "watch",
+            "settlement_context_stale",
+        ),
+    ),
+)
+def test_settlement_timing_characterizes_pending_gate_statuses(
+    input_kwargs,
+    expected_status,
+    expected_reason,
+):
+    report = build_report(timing_input(market_slug=expected_reason, **input_kwargs))
+
+    row = report.rows[0]
+    assert row.timing_status == expected_status
+    assert expected_reason in row.reason_codes
+    assert report.blocked_count == (1 if expected_status == "blocked" else 0)
+    assert report.watch_count == (1 if expected_status == "watch" else 0)
+    assert report.acceptable_count == 0
+
+
 def test_rows_sort_by_adjusted_edge_then_status_then_market_and_side():
     report = build_report(
         timing_input(market_slug="blocked-high", expected_resolution_at=None),

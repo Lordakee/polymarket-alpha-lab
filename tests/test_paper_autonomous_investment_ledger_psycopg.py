@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import ast
+import inspect
 import importlib
 import sys
+import textwrap
 import traceback
 import types
 from datetime import UTC, datetime
@@ -19,10 +22,13 @@ from polymarket_alpha_lab.paper_autonomous_investment_ledger_db_row import (
     paper_autonomous_investment_ledger_report_to_db_row,
 )
 from polymarket_alpha_lab.supabase_paper_autonomous_investment_ledger_config import (
+    PAPER_AUTONOMOUS_INVESTMENT_LEDGER_DB_DSN_ENV_VAR,
     SupabasePaperAutonomousInvestmentLedgerConfig,
 )
 
 
+LOCAL_DSN = "postgresql://postgres:postgres@localhost:54322/postgres"
+REMOTE_SECRET_DSN = "postgresql://sensitive-token@fake.example.invalid/db"
 SECRET_DSN = "postgresql://paper-ledger:secret@localhost:54322/db"
 ADAPTER_MODULE_NAME = (
     "polymarket_alpha_lab.paper_autonomous_investment_ledger_psycopg"
@@ -79,6 +85,12 @@ class FakeCommitFailingConnection(FakeConnection):
         raise RuntimeError("commit failed without dsn")
 
 
+class FakeCommitAndCloseFailingConnection(FakeCommitFailingConnection):
+    def close(self) -> None:
+        self.close_count += 1
+        raise RuntimeError("close failed without dsn")
+
+
 class FakeRollbackFailingConnection(FakeConnection):
     def rollback(self) -> None:
         self.rollback_count += 1
@@ -89,6 +101,12 @@ class FakeCloseFailingConnection(FakeConnection):
     def close(self) -> None:
         self.close_count += 1
         raise RuntimeError("close failed without dsn")
+
+
+class FakeSecretCloseFailingConnection(FakeConnection):
+    def close(self) -> None:
+        self.close_count += 1
+        raise RuntimeError(f"close failed for {SECRET_DSN}")
 
 
 class FakeJsonb:
@@ -407,6 +425,85 @@ def test_config_entrypoints_reject_invalid_config_report_and_dsn_before_connecti
     assert connect_calls == []
 
 
+def test_remote_dsn_is_rejected_before_psycopg_import_or_helpers(
+    monkeypatch: pytest.MonkeyPatch,
+    adapter_module: types.ModuleType,
+) -> None:
+    _remove_psycopg_modules(monkeypatch)
+
+    class ForbiddenPsycopgFinder:
+        def find_spec(self, fullname: str, path: Any = None, target: Any = None) -> None:
+            if fullname == "psycopg" or fullname.startswith("psycopg."):
+                raise AssertionError("psycopg must not be imported for invalid DSNs")
+            return None
+
+    finder = ForbiddenPsycopgFinder()
+    monkeypatch.setattr(sys, "meta_path", [finder, *sys.meta_path])
+    monkeypatch.setattr(
+        adapter_module,
+        "_jsonb_adapter",
+        lambda: (_ for _ in ()).throw(AssertionError("_jsonb_adapter must not run")),
+    )
+    monkeypatch.setattr(
+        adapter_module,
+        "_connect",
+        lambda dsn: (_ for _ in ()).throw(AssertionError("_connect must not run")),
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        adapter_module.load_paper_autonomous_investment_ledger_reports_with_psycopg(
+            REMOTE_SECRET_DSN,
+            load_reports=lambda *args, **kwargs: (),
+        )
+
+    message = str(exc_info.value)
+    assert PAPER_AUTONOMOUS_INVESTMENT_LEDGER_DB_DSN_ENV_VAR in message
+    assert REMOTE_SECRET_DSN not in message
+    assert "sensitive-token" not in message
+    assert "fake.example.invalid" not in message
+
+
+def test_remote_dsn_is_rejected_before_injected_connect(
+    adapter_module: types.ModuleType,
+) -> None:
+    connect_calls: list[str] = []
+
+    with pytest.raises(ValueError) as exc_info:
+        adapter_module.load_paper_autonomous_investment_ledger_reports_from_config(
+            _unchecked_config(dsn=REMOTE_SECRET_DSN),
+            connect=lambda dsn: connect_calls.append(dsn),
+            load_reports=lambda *args, **kwargs: (),
+        )
+
+    message = str(exc_info.value)
+    assert PAPER_AUTONOMOUS_INVESTMENT_LEDGER_DB_DSN_ENV_VAR in message
+    assert REMOTE_SECRET_DSN not in message
+    assert "sensitive-token" not in message
+    assert "fake.example.invalid" not in message
+    assert connect_calls == []
+
+
+def test_owned_connection_validates_local_dsn_before_connection_factory(
+    adapter_module: types.ModuleType,
+) -> None:
+    helper_source = inspect.getsource(adapter_module._with_owned_connection)
+    stripped_source = textwrap.dedent(helper_source)
+    first_statement = ast.parse(stripped_source).body[0].body[0]
+
+    assert isinstance(first_statement, ast.Expr)
+    assert isinstance(first_statement.value, ast.Call)
+    assert isinstance(first_statement.value.func, ast.Name)
+    assert first_statement.value.func.id == "validate_local_postgres_dsn"
+    assert len(first_statement.value.args) == 1
+    assert isinstance(first_statement.value.args[0], ast.Name)
+    assert first_statement.value.args[0].id == "dsn"
+    assert len(first_statement.value.keywords) == 1
+    keyword = first_statement.value.keywords[0]
+    assert keyword.arg == "env_var_name"
+    assert isinstance(keyword.value, ast.Name)
+    assert keyword.value.id == "PAPER_AUTONOMOUS_INVESTMENT_LEDGER_DB_DSN_ENV_VAR"
+
+
 @pytest.mark.parametrize("flag_name", ("paper_only", "report_only", "readonly"))
 def test_insert_config_entrypoint_rejects_false_report_flags_before_connecting(
     adapter_module: types.ModuleType,
@@ -508,6 +605,70 @@ def test_with_psycopg_opens_owned_connection_delegates_commits_and_closes(
     assert load_connection.commit_count == 1
     assert load_connection.rollback_count == 0
     assert load_connection.close_count == 1
+
+
+def test_successful_insert_close_failure_propagates(
+    monkeypatch: pytest.MonkeyPatch,
+    adapter_module: types.ModuleType,
+) -> None:
+    connection = FakeCloseFailingConnection()
+    _install_fake_psycopg(monkeypatch, connect=lambda dsn: connection)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        adapter_module.insert_paper_autonomous_investment_ledger_report_with_psycopg(
+            LOCAL_DSN,
+            _report(),
+            insert_report=lambda *args, **kwargs: object(),
+        )
+
+    assert str(exc_info.value) == "close failed without dsn"
+    assert connection.commit_count == 1
+    assert connection.rollback_count == 0
+    assert connection.close_count == 1
+
+
+def test_successful_load_close_failure_propagates(
+    monkeypatch: pytest.MonkeyPatch,
+    adapter_module: types.ModuleType,
+) -> None:
+    connection = FakeCloseFailingConnection()
+    expected_reports = (_report(),)
+    _install_fake_psycopg(monkeypatch, connect=lambda dsn: connection)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        adapter_module.load_paper_autonomous_investment_ledger_reports_with_psycopg(
+            LOCAL_DSN,
+            load_reports=lambda *args, **kwargs: expected_reports,
+        )
+
+    assert str(exc_info.value) == "close failed without dsn"
+    assert connection.commit_count == 1
+    assert connection.rollback_count == 0
+    assert connection.close_count == 1
+
+
+def test_successful_close_failure_propagates_redacted_error(
+    monkeypatch: pytest.MonkeyPatch,
+    adapter_module: types.ModuleType,
+) -> None:
+    connection = FakeSecretCloseFailingConnection()
+    _install_fake_psycopg(monkeypatch, connect=lambda dsn: connection)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        adapter_module.insert_paper_autonomous_investment_ledger_report_with_psycopg(
+            SECRET_DSN,
+            _report(),
+            insert_report=lambda *args, **kwargs: object(),
+        )
+
+    message = str(exc_info.value)
+    assert message == "close failed for <redacted>"
+    assert "postgresql://" not in message
+    assert "secret" not in message
+    assert "localhost" not in message
+    assert connection.commit_count == 1
+    assert connection.rollback_count == 0
+    assert connection.close_count == 1
 
 
 def test_load_with_psycopg_default_path_reconstructs_reports_via_store_and_db_row_codec(
@@ -672,6 +833,40 @@ def test_operation_failure_rolls_back_closes_reraises_and_does_not_echo_dsn(
     assert connection.close_count == 1
 
 
+def test_load_operation_failure_close_failure_is_swallowed_without_echoing_dsn(
+    monkeypatch: pytest.MonkeyPatch,
+    adapter_module: types.ModuleType,
+) -> None:
+    connection = FakeCloseFailingConnection()
+    _install_fake_psycopg(monkeypatch, connect=lambda dsn: connection)
+
+    def load_reports(
+        connection_arg: Any,
+        *,
+        config_version: str | None,
+        ledger_status: str | None,
+        limit: int | None,
+        table_name: str,
+    ) -> tuple[Any, ...]:
+        raise ValueError("load failed without dsn")
+
+    with pytest.raises(ValueError) as exc_info:
+        adapter_module.load_paper_autonomous_investment_ledger_reports_with_psycopg(
+            LOCAL_DSN,
+            load_reports=load_reports,
+        )
+
+    message = str(exc_info.value)
+    assert message == "load failed without dsn"
+    assert "close failed" not in message
+    assert "postgresql://" not in message
+    assert "postgres" not in message
+    assert "localhost" not in message
+    assert connection.commit_count == 0
+    assert connection.rollback_count == 1
+    assert connection.close_count == 1
+
+
 @pytest.mark.parametrize(
     "connection",
     (
@@ -722,6 +917,31 @@ def test_commit_failure_rolls_back_closes_reraises_and_does_not_echo_dsn(
 
     message = str(exc_info.value)
     assert "commit failed without dsn" in message
+    assert "postgresql://" not in message
+    assert "secret" not in message
+    assert "localhost" not in message
+    assert connection.commit_count == 1
+    assert connection.rollback_count == 1
+    assert connection.close_count == 1
+
+
+def test_commit_failure_close_failure_is_swallowed_and_commit_exception_wins(
+    monkeypatch: pytest.MonkeyPatch,
+    adapter_module: types.ModuleType,
+) -> None:
+    connection = FakeCommitAndCloseFailingConnection()
+    _install_fake_psycopg(monkeypatch, connect=lambda dsn: connection)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        adapter_module.insert_paper_autonomous_investment_ledger_report_with_psycopg(
+            SECRET_DSN,
+            _report(),
+            insert_report=lambda *args, **kwargs: object(),
+        )
+
+    message = str(exc_info.value)
+    assert message == "commit failed without dsn"
+    assert "close failed" not in message
     assert "postgresql://" not in message
     assert "secret" not in message
     assert "localhost" not in message

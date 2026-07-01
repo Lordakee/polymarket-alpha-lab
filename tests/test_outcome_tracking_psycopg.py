@@ -9,7 +9,8 @@ from typing import Any
 import pytest
 
 
-SECRET_DSN = "postgresql://fake.example.invalid/db"
+LOCAL_DSN = "postgresql://postgres:local_secret@localhost:54322/postgres"
+REMOTE_DSN = "postgresql://worker:remote_secret@db.example.invalid/polymarket"
 
 
 @dataclass(frozen=True)
@@ -67,6 +68,18 @@ class FakeCommitFailingConnection(FakeConnection):
         raise RuntimeError("commit failed without dsn")
 
 
+class FakeCloseFailingConnection(FakeConnection):
+    def close(self) -> None:
+        self.close_count += 1
+        raise RuntimeError("close failed without dsn")
+
+
+class FakeCommitAndCloseFailingConnection(FakeCloseFailingConnection):
+    def commit(self) -> None:
+        self.commit_count += 1
+        raise RuntimeError("commit failed without dsn")
+
+
 class FakeJsonb:
     def __init__(self, value: Any) -> None:
         self.value = value
@@ -111,13 +124,13 @@ def test_insert_opens_psycopg_connection_delegates_commits_and_closes(
     monkeypatch.setattr(adapter_module, "insert_outcome_tracking_report", fake_insert)
 
     inserted = adapter_module.insert_outcome_tracking_report_with_psycopg(
-        SECRET_DSN,
+        LOCAL_DSN,
         report,
         table_name="outcome_tracking_archive",
     )
 
     assert inserted == row
-    assert connect_calls == [SECRET_DSN]
+    assert connect_calls == [LOCAL_DSN]
     store_connection, store_report, store_table_name = store_calls[0]
     assert store_connection is not connection
     assert store_connection.connection is connection
@@ -155,20 +168,84 @@ def test_load_opens_psycopg_connection_delegates_query_options_commits_and_close
     monkeypatch.setattr(adapter_module, "load_outcome_tracking_reports", fake_load)
 
     loaded = adapter_module.load_outcome_tracking_reports_with_psycopg(
-        SECRET_DSN,
+        LOCAL_DSN,
         config_version="outcome-tracker-db-v0",
         limit=10,
         table_name="outcome_tracking_archive",
     )
 
     assert loaded == (report,)
-    assert connect_calls == [SECRET_DSN]
+    assert connect_calls == [LOCAL_DSN]
     store_connection, config_version, limit, table_name = store_calls[0]
     assert store_connection is not connection
     assert store_connection.connection is connection
     assert config_version == "outcome-tracker-db-v0"
     assert limit == 10
     assert table_name == "outcome_tracking_archive"
+    assert connection.commit_count == 1
+    assert connection.rollback_count == 0
+    assert connection.close_count == 1
+
+
+def test_successful_insert_close_failure_propagates_without_echoing_dsn(
+    monkeypatch: pytest.MonkeyPatch,
+    adapter_module: types.ModuleType,
+) -> None:
+    connection = FakeCloseFailingConnection()
+    report = FakeReport(config_version="outcome-tracker-db-v0")
+    row = FakeRow(report_sha256="a" * 64)
+    _install_fake_psycopg(monkeypatch, connect=lambda dsn: connection)
+
+    def fake_insert(connection_arg: Any, report_arg: Any, *, table_name: str) -> FakeRow:
+        return row
+
+    monkeypatch.setattr(adapter_module, "insert_outcome_tracking_report", fake_insert)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        adapter_module.insert_outcome_tracking_report_with_psycopg(
+            LOCAL_DSN,
+            report,
+        )
+
+    message = str(exc_info.value)
+    assert message == "close failed without dsn"
+    assert "postgresql://" not in message
+    assert "local_secret" not in message
+    assert "localhost" not in message
+    assert connection.commit_count == 1
+    assert connection.rollback_count == 0
+    assert connection.close_count == 1
+
+
+def test_successful_load_close_failure_propagates_without_echoing_dsn(
+    monkeypatch: pytest.MonkeyPatch,
+    adapter_module: types.ModuleType,
+) -> None:
+    connection = FakeCloseFailingConnection()
+    report = FakeReport(config_version="outcome-tracker-db-v0")
+    _install_fake_psycopg(monkeypatch, connect=lambda dsn: connection)
+
+    def fake_load(
+        connection_arg: Any,
+        *,
+        config_version: str | None,
+        limit: int | None,
+        table_name: str,
+    ) -> tuple[FakeReport, ...]:
+        return (report,)
+
+    monkeypatch.setattr(adapter_module, "load_outcome_tracking_reports", fake_load)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        adapter_module.load_outcome_tracking_reports_with_psycopg(
+            LOCAL_DSN,
+        )
+
+    message = str(exc_info.value)
+    assert message == "close failed without dsn"
+    assert "postgresql://" not in message
+    assert "local_secret" not in message
+    assert "localhost" not in message
     assert connection.commit_count == 1
     assert connection.rollback_count == 0
     assert connection.close_count == 1
@@ -205,11 +282,11 @@ def test_insert_adapts_json_values_for_psycopg_without_wrapping_scalars(
     monkeypatch.setattr(adapter_module, "insert_outcome_tracking_report", fake_insert)
 
     adapter_module.insert_outcome_tracking_report_with_psycopg(
-        SECRET_DSN,
+        LOCAL_DSN,
         FakeReport(config_version="outcome-tracker-db-v0"),
     )
 
-    assert connect_calls == [SECRET_DSN]
+    assert connect_calls == [LOCAL_DSN]
     assert connection.cursor_count == 1
     assert connection.cursor_instance.close_count == 1
     _, params = connection.cursor_instance.calls[0]
@@ -238,10 +315,73 @@ def test_insert_rolls_back_closes_and_reraises_store_exception(
 
     with pytest.raises(ValueError, match="store failed without dsn"):
         adapter_module.insert_outcome_tracking_report_with_psycopg(
-            SECRET_DSN,
+            LOCAL_DSN,
             FakeReport(config_version="outcome-tracker-db-v0"),
         )
 
+    assert connection.commit_count == 0
+    assert connection.rollback_count == 1
+    assert connection.close_count == 1
+
+
+def test_insert_operation_failure_close_failure_is_swallowed_without_echoing_dsn(
+    monkeypatch: pytest.MonkeyPatch,
+    adapter_module: types.ModuleType,
+) -> None:
+    connection = FakeCloseFailingConnection()
+    _install_fake_psycopg(monkeypatch, connect=lambda dsn: connection)
+
+    def fake_insert(connection_arg: Any, report_arg: Any, *, table_name: str) -> FakeRow:
+        raise ValueError("store failed without dsn")
+
+    monkeypatch.setattr(adapter_module, "insert_outcome_tracking_report", fake_insert)
+
+    with pytest.raises(ValueError) as exc_info:
+        adapter_module.insert_outcome_tracking_report_with_psycopg(
+            LOCAL_DSN,
+            FakeReport(config_version="outcome-tracker-db-v0"),
+        )
+
+    message = str(exc_info.value)
+    assert message == "store failed without dsn"
+    assert "close failed" not in message
+    assert "postgresql://" not in message
+    assert "local_secret" not in message
+    assert "localhost" not in message
+    assert connection.commit_count == 0
+    assert connection.rollback_count == 1
+    assert connection.close_count == 1
+
+
+def test_load_operation_failure_close_failure_is_swallowed_without_echoing_dsn(
+    monkeypatch: pytest.MonkeyPatch,
+    adapter_module: types.ModuleType,
+) -> None:
+    connection = FakeCloseFailingConnection()
+    _install_fake_psycopg(monkeypatch, connect=lambda dsn: connection)
+
+    def fake_load(
+        connection_arg: Any,
+        *,
+        config_version: str | None,
+        limit: int | None,
+        table_name: str,
+    ) -> tuple[FakeReport, ...]:
+        raise ValueError("store failed without dsn")
+
+    monkeypatch.setattr(adapter_module, "load_outcome_tracking_reports", fake_load)
+
+    with pytest.raises(ValueError) as exc_info:
+        adapter_module.load_outcome_tracking_reports_with_psycopg(
+            LOCAL_DSN,
+        )
+
+    message = str(exc_info.value)
+    assert message == "store failed without dsn"
+    assert "close failed" not in message
+    assert "postgresql://" not in message
+    assert "local_secret" not in message
+    assert "localhost" not in message
     assert connection.commit_count == 0
     assert connection.rollback_count == 1
     assert connection.close_count == 1
@@ -251,7 +391,7 @@ def test_load_rolls_back_closes_and_reraises_commit_exception(
     monkeypatch: pytest.MonkeyPatch,
     adapter_module: types.ModuleType,
 ) -> None:
-    connection = FakeCommitFailingConnection()
+    connection = FakeCommitAndCloseFailingConnection()
     report = FakeReport(config_version="outcome-tracker-db-v0")
     _install_fake_psycopg(monkeypatch, connect=lambda dsn: connection)
 
@@ -266,9 +406,15 @@ def test_load_rolls_back_closes_and_reraises_commit_exception(
 
     monkeypatch.setattr(adapter_module, "load_outcome_tracking_reports", fake_load)
 
-    with pytest.raises(RuntimeError, match="commit failed without dsn"):
-        adapter_module.load_outcome_tracking_reports_with_psycopg(SECRET_DSN)
+    with pytest.raises(RuntimeError) as exc_info:
+        adapter_module.load_outcome_tracking_reports_with_psycopg(LOCAL_DSN)
 
+    message = str(exc_info.value)
+    assert message == "commit failed without dsn"
+    assert "close failed" not in message
+    assert "postgresql://" not in message
+    assert "local_secret" not in message
+    assert "localhost" not in message
     assert connection.commit_count == 1
     assert connection.rollback_count == 1
     assert connection.close_count == 1
@@ -284,12 +430,35 @@ def test_connect_failure_raises_clean_error_without_dsn(
     _install_fake_psycopg(monkeypatch, connect=fail_connect)
 
     with pytest.raises(RuntimeError) as exc_info:
-        adapter_module.load_outcome_tracking_reports_with_psycopg(SECRET_DSN)
+        adapter_module.load_outcome_tracking_reports_with_psycopg(LOCAL_DSN)
 
     assert "failed to connect" in str(exc_info.value)
     assert "postgresql://" not in str(exc_info.value)
-    assert "secret" not in str(exc_info.value)
-    assert "example.invalid" not in str(exc_info.value)
+    assert "local_secret" not in str(exc_info.value)
+    assert "localhost" not in str(exc_info.value)
+
+
+def test_remote_dsn_is_rejected_before_psycopg_import_or_connect_without_echo(
+    monkeypatch: pytest.MonkeyPatch,
+    adapter_module: types.ModuleType,
+) -> None:
+    def unexpected_jsonb_adapter() -> type[Any]:
+        raise AssertionError("psycopg Jsonb import should not happen")
+
+    def unexpected_connect(dsn: str) -> Any:
+        raise AssertionError("psycopg connect should not happen")
+
+    monkeypatch.setattr(adapter_module, "_jsonb_adapter", unexpected_jsonb_adapter)
+    monkeypatch.setattr(adapter_module, "_connect", unexpected_connect)
+
+    with pytest.raises(ValueError) as exc_info:
+        adapter_module.load_outcome_tracking_reports_with_psycopg(REMOTE_DSN)
+
+    message = str(exc_info.value)
+    assert "POLYMARKET_ALPHA_LAB_OUTCOME_TRACKING_DB_DSN" in message
+    assert "postgresql://" not in message
+    assert "remote_secret" not in message
+    assert "db.example.invalid" not in message
 
 
 def test_missing_psycopg_raises_clean_error_without_import_time_dependency(
@@ -308,8 +477,8 @@ def test_missing_psycopg_raises_clean_error_without_import_time_dependency(
     monkeypatch.setattr(sys, "meta_path", [finder, *sys.meta_path])
 
     with pytest.raises(RuntimeError) as exc_info:
-        adapter_module.load_outcome_tracking_reports_with_psycopg(SECRET_DSN)
+        adapter_module.load_outcome_tracking_reports_with_psycopg(LOCAL_DSN)
 
     assert "psycopg is required" in str(exc_info.value)
     assert "postgresql://" not in str(exc_info.value)
-    assert "secret" not in str(exc_info.value)
+    assert "local_secret" not in str(exc_info.value)

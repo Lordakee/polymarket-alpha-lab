@@ -10,6 +10,10 @@ from polymarket_alpha_lab.paper_nav_snapshot_store import (
     insert_paper_nav_snapshot,
     load_paper_nav_snapshots,
 )
+from polymarket_alpha_lab.supabase_local_dsn import validate_local_postgres_dsn
+from polymarket_alpha_lab.supabase_paper_nav_snapshot_config import (
+    PAPER_NAV_SNAPSHOT_DB_DSN_ENV_VAR,
+)
 
 
 _DEFAULT_TABLE_NAME = "paper_nav_snapshots"
@@ -49,23 +53,24 @@ def load_paper_nav_snapshots_with_psycopg(
 
 
 def _with_owned_connection(dsn: str, operation: Callable[[Any], _T]) -> _T:
+    validate_local_postgres_dsn(dsn, env_var_name=PAPER_NAV_SNAPSHOT_DB_DSN_ENV_VAR)
     jsonb_adapter = _jsonb_adapter()
     connection = _PsycopgJsonConnection(_connect(dsn), jsonb_adapter)
     try:
         result = operation(connection)
         connection.commit()
-        return result
     except BaseException:
         try:
             connection.rollback()
         except Exception:
             pass
-        raise
-    finally:
         try:
             connection.close()
         except Exception:
             pass
+        raise
+    connection.close()
+    return result
 
 
 def _connect(dsn: str) -> Any:

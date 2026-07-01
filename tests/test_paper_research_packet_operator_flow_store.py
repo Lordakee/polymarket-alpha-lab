@@ -11,6 +11,10 @@ from typing import Any
 import pytest
 
 
+class CursorCloseFailure(BaseException):
+    pass
+
+
 @dataclass(frozen=True)
 class FakeResearchPacketOperatorFlowReport:
     generated_at: datetime
@@ -52,25 +56,50 @@ class FakeResearchPacketOperatorFlowDbRow:
 
 
 class FakeCursor:
-    def __init__(self, rows: tuple[Any, ...] = (), rowcount: int = 1) -> None:
+    def __init__(
+        self,
+        rows: tuple[Any, ...] = (),
+        rowcount: int = 1,
+        *,
+        execute_error: BaseException | None = None,
+        fetchall_error: BaseException | None = None,
+        close_error: BaseException | None = None,
+    ) -> None:
         self.rows = rows
         self.rowcount = rowcount
+        self.execute_error = execute_error
+        self.fetchall_error = fetchall_error
+        self.close_error = close_error
         self.calls: list[tuple[str, tuple[Any, ...]]] = []
         self.closed = False
 
     def execute(self, sql: str, params: tuple[Any, ...] = ()) -> None:
         self.calls.append((sql, params))
+        if self.execute_error is not None:
+            raise self.execute_error
 
     def fetchall(self) -> tuple[Any, ...]:
+        if self.fetchall_error is not None:
+            raise self.fetchall_error
         return self.rows
 
     def close(self) -> None:
         self.closed = True
+        if self.close_error is not None:
+            raise self.close_error
 
 
 class FakeConnection:
-    def __init__(self, rows: tuple[Any, ...] = (), rowcount: int = 1) -> None:
-        self.cursor_instance = FakeCursor(rows, rowcount)
+    def __init__(
+        self,
+        rows: tuple[Any, ...] = (),
+        rowcount: int = 1,
+        *,
+        cursor: FakeCursor | None = None,
+    ) -> None:
+        if cursor is None:
+            cursor = FakeCursor(rows, rowcount)
+        self.cursor_instance = cursor
         self.cursor_count = 0
         self.commit_count = 0
         self.rollback_count = 0
@@ -321,6 +350,84 @@ def test_insert_operator_flow_report_rejects_unexpected_rowcount(
                 flow_status="pass",
             ),
         )
+
+
+def test_insert_operator_flow_report_preserves_operation_exception_when_cursor_close_fails(
+    store_module: types.ModuleType,
+) -> None:
+    operation_error = RuntimeError("execute failed")
+    close_error = CursorCloseFailure("close failed")
+    cursor = FakeCursor(
+        execute_error=operation_error,
+        close_error=close_error,
+    )
+    connection = FakeConnection(cursor=cursor)
+
+    with pytest.raises(RuntimeError, match="execute failed") as exc_info:
+        store_module.insert_paper_research_packet_operator_flow_report(
+            connection,
+            FakeResearchPacketOperatorFlowReport(
+                generated_at=datetime(2026, 6, 23, 12, 30, tzinfo=UTC),
+                config_version="paper-research-packet-operator-flow-v0",
+                flow_status="pass",
+            ),
+        )
+
+    assert exc_info.value is operation_error
+    assert cursor.closed is True
+
+
+def test_insert_operator_flow_report_propagates_cursor_close_error_after_success(
+    store_module: types.ModuleType,
+) -> None:
+    close_error = RuntimeError("close failed")
+    cursor = FakeCursor(close_error=close_error)
+    connection = FakeConnection(cursor=cursor)
+
+    with pytest.raises(RuntimeError, match="close failed") as exc_info:
+        store_module.insert_paper_research_packet_operator_flow_report(
+            connection,
+            FakeResearchPacketOperatorFlowReport(
+                generated_at=datetime(2026, 6, 23, 12, 30, tzinfo=UTC),
+                config_version="paper-research-packet-operator-flow-v0",
+                flow_status="pass",
+            ),
+        )
+
+    assert exc_info.value is close_error
+    assert cursor.closed is True
+
+
+def test_load_operator_flow_reports_preserves_fetchall_exception_when_cursor_close_fails(
+    store_module: types.ModuleType,
+) -> None:
+    operation_error = RuntimeError("fetchall failed")
+    close_error = CursorCloseFailure("close failed")
+    cursor = FakeCursor(
+        fetchall_error=operation_error,
+        close_error=close_error,
+    )
+    connection = FakeConnection(cursor=cursor)
+
+    with pytest.raises(RuntimeError, match="fetchall failed") as exc_info:
+        store_module.load_paper_research_packet_operator_flow_reports(connection)
+
+    assert exc_info.value is operation_error
+    assert cursor.closed is True
+
+
+def test_load_operator_flow_reports_propagates_cursor_close_error_after_success(
+    store_module: types.ModuleType,
+) -> None:
+    close_error = RuntimeError("close failed")
+    cursor = FakeCursor(rows=(), close_error=close_error)
+    connection = FakeConnection(cursor=cursor)
+
+    with pytest.raises(RuntimeError, match="close failed") as exc_info:
+        store_module.load_paper_research_packet_operator_flow_reports(connection)
+
+    assert exc_info.value is close_error
+    assert cursor.closed is True
 
 
 def test_insert_rejects_unsafe_table_name_without_executing_sql(

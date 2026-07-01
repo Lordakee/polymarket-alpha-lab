@@ -24,6 +24,7 @@ from polymarket_alpha_lab.paper_recommendation_pipeline import (
 from polymarket_alpha_lab.supabase_cycle_snapshot_config import (
     CYCLE_SNAPSHOT_DB_DSN_ENV_VAR,
 )
+from polymarket_alpha_lab.supabase_local_dsn import validate_local_postgres_dsn
 
 
 RUN_SMOKE_ENV_VAR = "POLYMARKET_ALPHA_LAB_RUN_SUPABASE_SMOKE"
@@ -82,7 +83,33 @@ def _smoke_dsn() -> str:
     dsn = os.environ.get(CYCLE_SNAPSHOT_DB_DSN_ENV_VAR)
     if not dsn:
         pytest.skip(f"set {CYCLE_SNAPSHOT_DB_DSN_ENV_VAR} to run local Supabase smoke")
+    try:
+        validate_local_postgres_dsn(
+            dsn,
+            env_var_name=CYCLE_SNAPSHOT_DB_DSN_ENV_VAR,
+        )
+    except ValueError:
+        pytest.skip(
+            f"{CYCLE_SNAPSHOT_DB_DSN_ENV_VAR} must point to local Supabase/Postgres",
+        )
     return dsn
+
+
+def test_smoke_dsn_rejects_remote_dsn_without_leaking_secret(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    remote_dsn = "postgresql://postgres:super-secret-token@db.remote.example.com:5432/postgres"
+    monkeypatch.setenv(RUN_SMOKE_ENV_VAR, "1")
+    monkeypatch.setenv(CYCLE_SNAPSHOT_DB_DSN_ENV_VAR, remote_dsn)
+
+    with pytest.raises(pytest.skip.Exception) as exc_info:
+        _smoke_dsn()
+
+    message = str(exc_info.value)
+    assert CYCLE_SNAPSHOT_DB_DSN_ENV_VAR in message
+    assert "local Supabase/Postgres" in message
+    assert "super-secret-token" not in message
+    assert "db.remote.example.com" not in message
 
 
 def _snapshot_report() -> PaperRecommendationCycleSnapshotReport:

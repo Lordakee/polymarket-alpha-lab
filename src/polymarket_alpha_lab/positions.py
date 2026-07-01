@@ -8,7 +8,6 @@ from contextlib import contextmanager
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 from decimal import ROUND_HALF_EVEN, Context, Decimal, localcontext
-from math import isfinite
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -897,9 +896,7 @@ def _json_ready(value: Any) -> Any:
     if isinstance(value, datetime):
         return _as_utc(value).isoformat()
     if isinstance(value, float):
-        if not isfinite(value):
-            raise ValueError("nav log float values must be finite")
-        return value
+        raise ValueError("nav log values must not be floats")
     if isinstance(value, (str, int, bool)):
         return value
     if isinstance(value, dict):

@@ -9,7 +9,9 @@ from typing import Any
 import pytest
 
 
-SECRET_DSN = "postgresql://worker:secret@example.invalid/polymarket"
+SECRET_DSN = "postgresql://worker:secret@localhost:54322/polymarket"
+REMOTE_DSN = "postgresql://worker:remote-token@db.remote-supabase.example/polymarket"
+REMOTE_HOST = "db.remote-supabase.example"
 STORE_MODULE_NAME = "polymarket_alpha_lab.strategy_recommendation_rank_stability_store"
 ADAPTER_MODULE_NAME = "polymarket_alpha_lab.strategy_recommendation_rank_stability_psycopg"
 
@@ -67,6 +69,24 @@ class FakeCommitFailingConnection(FakeConnection):
     def commit(self) -> None:
         self.commit_count += 1
         raise RuntimeError("commit failed without dsn")
+
+
+class FakeCommitAndCloseFailingConnection(FakeCommitFailingConnection):
+    def close(self) -> None:
+        self.close_count += 1
+        raise RuntimeError("close failed without dsn")
+
+
+class FakeCloseFailingConnection(FakeConnection):
+    def close(self) -> None:
+        self.close_count += 1
+        raise RuntimeError("close failed without dsn")
+
+
+class FakeSecretCloseFailingConnection(FakeConnection):
+    def close(self) -> None:
+        self.close_count += 1
+        raise RuntimeError(f"close failed for {SECRET_DSN}")
 
 
 class FakeJsonb:
@@ -164,7 +184,8 @@ def test_missing_psycopg_error_mentions_install_extra_without_dsn(
     assert "postgres extra" in message
     assert "postgresql://" not in message
     assert "secret" not in message
-    assert "example.invalid" not in message
+    assert "localhost" not in message
+    assert "54322" not in message
 
 
 def test_successful_insert_delegates_to_store_commits_and_closes(
@@ -205,6 +226,35 @@ def test_successful_insert_delegates_to_store_commits_and_closes(
     assert connection.commit_count == 1
     assert connection.rollback_count == 0
     assert connection.close_count == 1
+
+
+def test_remote_dsn_is_rejected_before_psycopg_import_without_echoing_secret(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter_module = _import_adapter(monkeypatch)
+    monkeypatch.delitem(sys.modules, "psycopg", raising=False)
+    monkeypatch.delitem(sys.modules, "psycopg.types", raising=False)
+    monkeypatch.delitem(sys.modules, "psycopg.types.json", raising=False)
+
+    class RejectingPsycopgFinder:
+        def find_spec(self, fullname: str, path: Any = None, target: Any = None) -> None:
+            if fullname.startswith("psycopg"):
+                raise AssertionError("psycopg must not be imported for remote DSN")
+            return None
+
+    finder = RejectingPsycopgFinder()
+    monkeypatch.setattr(sys, "meta_path", [finder, *sys.meta_path])
+
+    with pytest.raises(ValueError) as exc_info:
+        adapter_module.load_strategy_recommendation_rank_stability_reports_with_psycopg(
+            REMOTE_DSN,
+        )
+
+    message = str(exc_info.value)
+    assert "POLYMARKET_ALPHA_LAB_STRATEGY_RECOMMENDATION_RANK_STABILITY_DB_DSN" in message
+    assert REMOTE_DSN not in message
+    assert "remote-token" not in message
+    assert REMOTE_HOST not in message
 
 
 def test_successful_load_delegates_to_store_commits_and_closes(
@@ -259,6 +309,115 @@ def test_successful_load_delegates_to_store_commits_and_closes(
     assert connection.close_count == 1
 
 
+def test_successful_insert_close_failure_propagates_and_does_not_echo_dsn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    connection = FakeCloseFailingConnection()
+    report = FakeReport(candidate_count=2)
+    row = FakeRow(report_sha256="a" * 64)
+    _install_fake_psycopg(monkeypatch, connect=lambda dsn: connection)
+
+    def fake_insert(connection_arg: Any, report_arg: Any, *, table_name: str) -> FakeRow:
+        return row
+
+    _install_fake_store(monkeypatch, insert=fake_insert)
+    sys.modules.pop(ADAPTER_MODULE_NAME, None)
+    adapter_module = importlib.import_module(ADAPTER_MODULE_NAME)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        adapter_module.insert_strategy_recommendation_rank_stability_report_with_psycopg(
+            SECRET_DSN,
+            report,
+        )
+
+    message = str(exc_info.value)
+    assert message == "close failed without dsn"
+    assert "postgresql://" not in message
+    assert "secret" not in message
+    assert "localhost" not in message
+    assert "54322" not in message
+    assert connection.commit_count == 1
+    assert connection.rollback_count == 0
+    assert connection.close_count == 1
+
+
+def test_successful_load_close_failure_propagates_and_does_not_echo_dsn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    connection = FakeCloseFailingConnection()
+    report = FakeReport(candidate_count=2)
+    _install_fake_psycopg(monkeypatch, connect=lambda dsn: connection)
+
+    def fake_load(
+        connection_arg: Any,
+        *,
+        config_version: str | None,
+        stability_status: str | None,
+        limit: int | None,
+        table_name: str,
+    ) -> tuple[FakeReport, ...]:
+        assert config_version is None
+        assert stability_status is None
+        assert limit is None
+        return (report,)
+
+    _install_fake_store(monkeypatch, load=fake_load)
+    sys.modules.pop(ADAPTER_MODULE_NAME, None)
+    adapter_module = importlib.import_module(ADAPTER_MODULE_NAME)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        adapter_module.load_strategy_recommendation_rank_stability_reports_with_psycopg(
+            SECRET_DSN,
+        )
+
+    message = str(exc_info.value)
+    assert message == "close failed without dsn"
+    assert "postgresql://" not in message
+    assert "secret" not in message
+    assert "localhost" not in message
+    assert "54322" not in message
+    assert connection.commit_count == 1
+    assert connection.rollback_count == 0
+    assert connection.close_count == 1
+
+
+def test_successful_close_failure_propagates_redacted_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    connection = FakeSecretCloseFailingConnection()
+    report = FakeReport(candidate_count=2)
+    _install_fake_psycopg(monkeypatch, connect=lambda dsn: connection)
+
+    def fake_load(
+        connection_arg: Any,
+        *,
+        config_version: str | None,
+        stability_status: str | None,
+        limit: int | None,
+        table_name: str,
+    ) -> tuple[FakeReport, ...]:
+        return (report,)
+
+    _install_fake_store(monkeypatch, load=fake_load)
+    sys.modules.pop(ADAPTER_MODULE_NAME, None)
+    adapter_module = importlib.import_module(ADAPTER_MODULE_NAME)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        adapter_module.load_strategy_recommendation_rank_stability_reports_with_psycopg(
+            SECRET_DSN,
+        )
+
+    message = str(exc_info.value)
+    assert message == "close failed for <redacted>"
+    assert "postgresql://" not in message
+    assert "secret" not in message
+    assert "localhost" not in message
+    assert "54322" not in message
+    assert connection.commit_count == 1
+    assert connection.rollback_count == 0
+    assert connection.close_count == 1
+
+
 def test_failure_rolls_back_closes_reraises_and_does_not_echo_dsn(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -282,7 +441,76 @@ def test_failure_rolls_back_closes_reraises_and_does_not_echo_dsn(
     assert "store failed without dsn" in message
     assert "postgresql://" not in message
     assert "secret" not in message
-    assert "example.invalid" not in message
+    assert "localhost" not in message
+    assert "54322" not in message
+    assert connection.commit_count == 0
+    assert connection.rollback_count == 1
+    assert connection.close_count == 1
+
+
+def test_insert_operation_failure_close_failure_is_swallowed_and_does_not_echo_dsn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    connection = FakeCloseFailingConnection()
+    _install_fake_psycopg(monkeypatch, connect=lambda dsn: connection)
+
+    def fake_insert(connection_arg: Any, report_arg: Any, *, table_name: str) -> FakeRow:
+        raise ValueError(f"store failed for {SECRET_DSN}")
+
+    _install_fake_store(monkeypatch, insert=fake_insert)
+    sys.modules.pop(ADAPTER_MODULE_NAME, None)
+    adapter_module = importlib.import_module(ADAPTER_MODULE_NAME)
+
+    with pytest.raises(ValueError) as exc_info:
+        adapter_module.insert_strategy_recommendation_rank_stability_report_with_psycopg(
+            SECRET_DSN,
+            FakeReport(candidate_count=2),
+        )
+
+    message = str(exc_info.value)
+    assert message == "store failed for <redacted>"
+    assert "close failed" not in message
+    assert "postgresql://" not in message
+    assert "secret" not in message
+    assert "localhost" not in message
+    assert "54322" not in message
+    assert connection.commit_count == 0
+    assert connection.rollback_count == 1
+    assert connection.close_count == 1
+
+
+def test_load_operation_failure_close_failure_is_swallowed_and_does_not_echo_dsn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    connection = FakeCloseFailingConnection()
+    _install_fake_psycopg(monkeypatch, connect=lambda dsn: connection)
+
+    def fake_load(
+        connection_arg: Any,
+        *,
+        config_version: str | None,
+        stability_status: str | None,
+        limit: int | None,
+        table_name: str,
+    ) -> tuple[FakeReport, ...]:
+        raise ValueError("store failed without dsn")
+
+    _install_fake_store(monkeypatch, load=fake_load)
+    sys.modules.pop(ADAPTER_MODULE_NAME, None)
+    adapter_module = importlib.import_module(ADAPTER_MODULE_NAME)
+
+    with pytest.raises(ValueError) as exc_info:
+        adapter_module.load_strategy_recommendation_rank_stability_reports_with_psycopg(
+            SECRET_DSN,
+        )
+
+    message = str(exc_info.value)
+    assert message == "store failed without dsn"
+    assert "close failed" not in message
+    assert "postgresql://" not in message
+    assert "secret" not in message
+    assert "localhost" not in message
+    assert "54322" not in message
     assert connection.commit_count == 0
     assert connection.rollback_count == 1
     assert connection.close_count == 1
@@ -320,7 +548,46 @@ def test_commit_failure_rolls_back_closes_reraises_and_does_not_echo_dsn(
     assert "commit failed without dsn" in message
     assert "postgresql://" not in message
     assert "secret" not in message
-    assert "example.invalid" not in message
+    assert "localhost" not in message
+    assert "54322" not in message
+    assert connection.commit_count == 1
+    assert connection.rollback_count == 1
+    assert connection.close_count == 1
+
+
+def test_commit_failure_close_failure_is_swallowed_and_commit_exception_wins(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    connection = FakeCommitAndCloseFailingConnection()
+    report = FakeReport(candidate_count=2)
+    _install_fake_psycopg(monkeypatch, connect=lambda dsn: connection)
+
+    def fake_load(
+        connection_arg: Any,
+        *,
+        config_version: str | None,
+        stability_status: str | None,
+        limit: int | None,
+        table_name: str,
+    ) -> tuple[FakeReport, ...]:
+        return (report,)
+
+    _install_fake_store(monkeypatch, load=fake_load)
+    sys.modules.pop(ADAPTER_MODULE_NAME, None)
+    adapter_module = importlib.import_module(ADAPTER_MODULE_NAME)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        adapter_module.load_strategy_recommendation_rank_stability_reports_with_psycopg(
+            SECRET_DSN,
+        )
+
+    message = str(exc_info.value)
+    assert message == "commit failed without dsn"
+    assert "close failed" not in message
+    assert "postgresql://" not in message
+    assert "secret" not in message
+    assert "localhost" not in message
+    assert "54322" not in message
     assert connection.commit_count == 1
     assert connection.rollback_count == 1
     assert connection.close_count == 1
@@ -346,7 +613,8 @@ def test_connect_failure_raises_redacted_error(
     assert type(exc_info.value.__cause__) is RuntimeError
     assert "postgresql://" not in message
     assert "secret" not in message
-    assert "example.invalid" not in message
+    assert "localhost" not in message
+    assert "54322" not in message
 
 
 def test_dict_and_list_params_are_wrapped_in_jsonb(

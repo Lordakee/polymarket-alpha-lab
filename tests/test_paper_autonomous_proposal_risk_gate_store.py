@@ -207,14 +207,19 @@ def test_insert_closes_cursor_when_execute_fails_without_managing_transaction() 
         insert_paper_autonomous_proposal_risk_gate_report,
     )
 
-    connection = FakeConnection(execute_error=RuntimeError("boom"))
+    execute_error = RuntimeError("execute failed")
+    connection = FakeConnection(
+        execute_error=execute_error,
+        close_error=RuntimeError("close failed"),
+    )
 
-    with pytest.raises(RuntimeError, match="boom"):
+    with pytest.raises(RuntimeError, match="execute failed") as excinfo:
         insert_paper_autonomous_proposal_risk_gate_report(
             connection,
             _risk_gate_report(),
         )
 
+    assert excinfo.value is execute_error
     assert connection.cursor_count == 1
     assert connection.commit_count == 0
     assert connection.rollback_count == 0
@@ -222,19 +227,19 @@ def test_insert_closes_cursor_when_execute_fails_without_managing_transaction() 
     assert connection.cursor_instance.closed is True
 
 
-def test_insert_ignores_cursor_close_errors() -> None:
+def test_insert_propagates_cursor_close_errors_after_successful_execute() -> None:
     from polymarket_alpha_lab.paper_autonomous_proposal_risk_gate_store import (
         insert_paper_autonomous_proposal_risk_gate_report,
     )
 
     connection = FakeConnection(close_error=RuntimeError("close failed"))
 
-    row = insert_paper_autonomous_proposal_risk_gate_report(
-        connection,
-        _risk_gate_report(),
-    )
+    with pytest.raises(RuntimeError, match="close failed"):
+        insert_paper_autonomous_proposal_risk_gate_report(
+            connection,
+            _risk_gate_report(),
+        )
 
-    assert row == _db_row()
     assert connection.cursor_instance.closed is True
 
 
@@ -279,6 +284,44 @@ def test_load_proposal_risk_gate_reports_filters_newest_first_and_selects_insert
         "candidate",
         25,
     )
+
+
+def test_load_preserves_execute_error_when_cursor_close_also_fails() -> None:
+    from polymarket_alpha_lab.paper_autonomous_proposal_risk_gate_store import (
+        load_paper_autonomous_proposal_risk_gate_reports,
+    )
+
+    execute_error = RuntimeError("execute failed")
+    connection = FakeConnection(
+        execute_error=execute_error,
+        close_error=RuntimeError("close failed"),
+    )
+
+    with pytest.raises(RuntimeError, match="execute failed") as excinfo:
+        load_paper_autonomous_proposal_risk_gate_reports(connection)
+
+    assert excinfo.value is execute_error
+    assert connection.cursor_count == 1
+    assert connection.commit_count == 0
+    assert connection.rollback_count == 0
+    assert connection.close_count == 0
+    assert connection.cursor_instance.closed is True
+
+
+def test_load_propagates_cursor_close_errors_after_successful_fetch() -> None:
+    from polymarket_alpha_lab.paper_autonomous_proposal_risk_gate_store import (
+        load_paper_autonomous_proposal_risk_gate_reports,
+    )
+
+    connection = FakeConnection(
+        rows=(_db_row(),),
+        close_error=RuntimeError("close failed"),
+    )
+
+    with pytest.raises(RuntimeError, match="close failed"):
+        load_paper_autonomous_proposal_risk_gate_reports(connection)
+
+    assert connection.cursor_instance.closed is True
 
 
 def test_load_proposal_risk_gate_reports_accepts_positional_rows() -> None:

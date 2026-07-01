@@ -235,13 +235,13 @@ def test_load_with_psycopg_opens_autocommit_connection_without_committing(
     monkeypatch.setitem(sys.modules, "psycopg", types.SimpleNamespace(connect=connect))
 
     loaded = load_paper_action_gated_strategy_recommendation_queue_reports_with_psycopg(
-        "postgresql://readonly.example/action_queue",
+        "postgresql://postgres:postgres@localhost:54322/postgres",
         options=PaperActionGatedStrategyRecommendationQueueReadOptions(limit=10),
     )
 
     assert loaded == (report,)
     assert connect_calls == [
-        ("postgresql://readonly.example/action_queue", {"autocommit": True}),
+        ("postgresql://postgres:postgres@localhost:54322/postgres", {"autocommit": True}),
     ]
     assert connection.commit_count == 0
     assert connection.rollback_count == 0

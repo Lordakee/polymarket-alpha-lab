@@ -15,6 +15,7 @@ from polymarket_alpha_lab.positions import (
     PaperPortfolio,
     PaperPosition,
     PaperPositionMark,
+    _json_ready,
     build_paper_portfolio,
     mark_paper_nav,
 )
@@ -740,6 +741,24 @@ def test_paper_nav_log_preserves_existing_file_when_serialization_fails(tmp_path
         log.append(snapshot)
 
     assert path.read_text(encoding="utf-8") == '{"existing": true}\n'
+
+
+def test_nav_json_ready_serializes_decimal_as_string():
+    assert _json_ready({"cash_balance": Decimal("9948.600")}) == {
+        "cash_balance": "9948.600",
+    }
+
+
+@pytest.mark.parametrize("value", [0.0, 1.25, -3.5])
+def test_nav_json_ready_rejects_finite_float(value):
+    with pytest.raises(ValueError, match="float"):
+        _json_ready({"cash_balance": value})
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_nav_json_ready_rejects_non_finite_float(value):
+    with pytest.raises(ValueError, match="float"):
+        _json_ready({"cash_balance": value})
 
 
 def test_positions_dataclasses_are_frozen():

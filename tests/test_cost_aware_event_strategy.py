@@ -188,6 +188,40 @@ def test_taker_fee_uses_executable_price_formula_and_is_symmetric_around_half():
     )
 
 
+def test_cost_aware_event_strategy_spread_gate_does_not_enter_total_cost_per_share():
+    tight_spread = build_report(
+        snapshot=base_snapshot(spread=Decimal("0.0100")),
+        assumptions=cost_assumptions(
+            taker_fee_rate=Decimal("0.0200"),
+            slippage_cost_per_share=Decimal("0.0010"),
+            funding_cost_per_share=Decimal("0.0020"),
+            finalization_cost_per_share=Decimal("0.0005"),
+            time_cost_per_share=Decimal("0.0005"),
+            risk_cost_per_share=Decimal("0.0010"),
+        ),
+        config=strategy_config(max_spread=Decimal("0.1000")),
+    )
+    wide_spread = build_report(
+        snapshot=base_snapshot(spread=Decimal("0.0800")),
+        assumptions=cost_assumptions(
+            taker_fee_rate=Decimal("0.0200"),
+            slippage_cost_per_share=Decimal("0.0010"),
+            funding_cost_per_share=Decimal("0.0020"),
+            finalization_cost_per_share=Decimal("0.0005"),
+            time_cost_per_share=Decimal("0.0005"),
+            risk_cost_per_share=Decimal("0.0010"),
+        ),
+        config=strategy_config(max_spread=Decimal("0.1000")),
+    )
+
+    assert tight_spread.yes_result.executable_price == Decimal("0.5500")
+    assert wide_spread.yes_result.executable_price == Decimal("0.5500")
+    assert tight_spread.yes_result.total_cost_per_share == Decimal("0.009950")
+    assert wide_spread.yes_result.total_cost_per_share == Decimal("0.009950")
+    assert tight_spread.yes_result.net_edge_per_share == Decimal("0.060050")
+    assert wide_spread.yes_result.net_edge_per_share == Decimal("0.060050")
+
+
 def test_cost_aware_event_strategy_selects_side_with_highest_net_edge():
     report = build_report(
         snapshot=base_snapshot(

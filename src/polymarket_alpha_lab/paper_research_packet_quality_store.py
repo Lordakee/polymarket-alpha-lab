@@ -166,11 +166,10 @@ def insert_paper_research_packet_quality_report_with_result(
     try:
         cursor.execute(sql, params)
         rowcount = cursor.rowcount
-    finally:
-        try:
-            cursor.close()
-        except Exception:
-            pass
+    except BaseException:
+        _close_cursor_preserving_operation_exception(cursor)
+        raise
+    cursor.close()
     if rowcount not in (0, 1):
         raise ValueError("insert rowcount must be 0 or 1")
     return PaperResearchPacketQualityInsertResult(
@@ -226,15 +225,21 @@ def load_paper_research_packet_quality_reports(
     try:
         cursor.execute(sql, tuple(params))
         records = cursor.fetchall()
-    finally:
-        try:
-            cursor.close()
-        except Exception:
-            pass
+    except BaseException:
+        _close_cursor_preserving_operation_exception(cursor)
+        raise
+    cursor.close()
     rows = tuple(_db_row_from_record(record) for record in records)
     return tuple(
         paper_research_packet_quality_report_from_db_row(row) for row in rows
     )
+
+
+def _close_cursor_preserving_operation_exception(cursor: Any) -> None:
+    try:
+        cursor.close()
+    except BaseException:
+        pass
 
 
 def _db_row_from_record(record: Any) -> PaperResearchPacketQualityDbRow:

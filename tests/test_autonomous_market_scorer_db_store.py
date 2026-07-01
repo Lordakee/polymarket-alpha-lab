@@ -72,20 +72,32 @@ class FakeCursor:
         *,
         rowcount: int = 1,
         records: list[Any] | None = None,
+        execute_error: Exception | None = None,
+        fetchall_error: Exception | None = None,
+        close_error: Exception | None = None,
     ) -> None:
         self.rowcount = rowcount
         self.records = [] if records is None else records
+        self.execute_error = execute_error
+        self.fetchall_error = fetchall_error
+        self.close_error = close_error
         self.calls: list[tuple[str, tuple[Any, ...]]] = []
         self.closed = False
 
     def execute(self, sql: str, params: tuple[Any, ...] = ()) -> None:
         self.calls.append((sql, params))
+        if self.execute_error is not None:
+            raise self.execute_error
 
     def fetchall(self) -> list[Any]:
+        if self.fetchall_error is not None:
+            raise self.fetchall_error
         return self.records
 
     def close(self) -> None:
         self.closed = True
+        if self.close_error is not None:
+            raise self.close_error
 
 
 class FakeConnection:
@@ -94,8 +106,17 @@ class FakeConnection:
         *,
         rowcount: int = 1,
         records: list[Any] | None = None,
+        execute_error: Exception | None = None,
+        fetchall_error: Exception | None = None,
+        close_error: Exception | None = None,
     ) -> None:
-        self.cursor_instance = FakeCursor(rowcount=rowcount, records=records)
+        self.cursor_instance = FakeCursor(
+            rowcount=rowcount,
+            records=records,
+            execute_error=execute_error,
+            fetchall_error=fetchall_error,
+            close_error=close_error,
+        )
         self.cursor_count = 0
 
     def cursor(self) -> FakeCursor:
@@ -258,6 +279,86 @@ def test_load_accepts_mapping_and_tuple_records() -> None:
     assert load_autonomous_market_scorer_reports(
         FakeConnection(records=[mapping, tuple_record]),
     ) == (report, report)
+
+
+@pytest.mark.parametrize("operation", ("insert", "load"))
+def test_cursor_close_error_after_success_is_propagated(operation: str) -> None:
+    from polymarket_alpha_lab.autonomous_market_scorer_store import (
+        insert_autonomous_market_scorer_report,
+        load_autonomous_market_scorer_reports,
+    )
+
+    connection = FakeConnection(close_error=RuntimeError("cursor close failed"))
+
+    with pytest.raises(RuntimeError, match="cursor close failed") as exc_info:
+        if operation == "insert":
+            insert_autonomous_market_scorer_report(connection, _report())
+        else:
+            load_autonomous_market_scorer_reports(connection)
+
+    assert exc_info.value is connection.cursor_instance.close_error
+    assert connection.cursor_instance.closed is True
+
+
+@pytest.mark.parametrize(
+    ("operation", "operation_error_name"),
+    (("insert", "execute_error"), ("load", "fetchall_error")),
+)
+def test_operation_error_wins_when_cursor_close_also_fails(
+    operation: str,
+    operation_error_name: str,
+) -> None:
+    from polymarket_alpha_lab.autonomous_market_scorer_store import (
+        insert_autonomous_market_scorer_report,
+        load_autonomous_market_scorer_reports,
+    )
+
+    operation_error = RuntimeError("db operation failed")
+    close_error = RuntimeError("cursor close failed")
+    connection = FakeConnection(
+        **{
+            operation_error_name: operation_error,
+            "close_error": close_error,
+        },
+    )
+
+    with pytest.raises(RuntimeError, match="db operation failed") as exc_info:
+        if operation == "insert":
+            insert_autonomous_market_scorer_report(connection, _report())
+        else:
+            load_autonomous_market_scorer_reports(connection)
+
+    assert exc_info.value is operation_error
+    assert connection.cursor_instance.closed is True
+
+
+@pytest.mark.parametrize(
+    ("operation", "operation_error_name"),
+    (("insert", "execute_error"), ("load", "fetchall_error")),
+)
+def test_base_exception_operation_error_still_closes_cursor(
+    operation: str,
+    operation_error_name: str,
+) -> None:
+    from polymarket_alpha_lab.autonomous_market_scorer_store import (
+        insert_autonomous_market_scorer_report,
+        load_autonomous_market_scorer_reports,
+    )
+
+    class NonExceptionOperationFailure(BaseException):
+        pass
+
+    operation_error = NonExceptionOperationFailure("operation interrupted")
+    connection = FakeConnection(**{operation_error_name: operation_error})
+
+    with pytest.raises(NonExceptionOperationFailure) as exc_info:
+        if operation == "insert":
+            insert_autonomous_market_scorer_report(connection, _report())
+        else:
+            load_autonomous_market_scorer_reports(connection)
+
+    assert exc_info.value is operation_error
+    assert connection.cursor_instance.closed is True
 
 
 @pytest.mark.parametrize("table_name", ("DROP TABLE scorer", "bad-name", "_bad", "bad_"))

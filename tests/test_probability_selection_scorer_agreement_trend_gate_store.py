@@ -222,6 +222,23 @@ def test_insert_preserves_execute_error_when_cursor_close_also_fails() -> None:
     assert connection.cursor_instance.closed is True
 
 
+def test_insert_operation_failure_close_swallowed_for_rowcount_error() -> None:
+    from polymarket_alpha_lab.probability_selection_scorer_agreement_trend_gate_store import (
+        insert_probability_selection_scorer_agreement_trend_gate_report_with_result,
+    )
+
+    connection = FakeConnection(rowcount=2)
+    connection.cursor_instance.close_error = RuntimeError("close failed")
+
+    with pytest.raises(ValueError, match="rowcount must be 0 or 1"):
+        insert_probability_selection_scorer_agreement_trend_gate_report_with_result(
+            connection,
+            _report(),
+        )
+
+    assert connection.cursor_instance.closed is True
+
+
 def test_insert_propagates_cursor_close_error_after_success() -> None:
     from polymarket_alpha_lab.probability_selection_scorer_agreement_trend_gate_store import (
         insert_probability_selection_scorer_agreement_trend_gate_report_with_result,
@@ -296,6 +313,20 @@ def test_load_preserves_execute_error_when_cursor_close_also_fails() -> None:
         load_probability_selection_scorer_agreement_trend_gate_reports(connection)
 
     assert exc_info.value is execute_error
+    assert connection.cursor_instance.closed is True
+
+
+def test_load_operation_failure_close_swallowed_for_db_row_error() -> None:
+    from polymarket_alpha_lab.probability_selection_scorer_agreement_trend_gate_store import (
+        load_probability_selection_scorer_agreement_trend_gate_reports,
+    )
+
+    connection = FakeConnection(records=[()])
+    connection.cursor_instance.close_error = RuntimeError("close failed")
+
+    with pytest.raises(ValueError, match="DB row must contain selected trend-gate columns"):
+        load_probability_selection_scorer_agreement_trend_gate_reports(connection)
+
     assert connection.cursor_instance.closed is True
 
 

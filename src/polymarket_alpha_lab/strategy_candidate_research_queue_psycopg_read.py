@@ -14,6 +14,10 @@ from polymarket_alpha_lab.strategy_candidate_research_queue_db_row import (
     PaperStrategyCandidateResearchQueueDbRow,
     paper_strategy_candidate_research_queue_report_from_db_row,
 )
+from polymarket_alpha_lab.supabase_local_dsn import validate_local_postgres_dsn
+from polymarket_alpha_lab.supabase_strategy_candidate_research_queue_config import (
+    STRATEGY_CANDIDATE_RESEARCH_QUEUE_DB_DSN_ENV_VAR,
+)
 
 
 DEFAULT_STRATEGY_CANDIDATE_RESEARCH_QUEUE_TABLE = (
@@ -143,14 +147,21 @@ def load_paper_strategy_candidate_research_queue_reports_with_psycopg(
 
 
 def _with_owned_connection(dsn: str, operation: Callable[[Any], _T]) -> _T:
+    validate_local_postgres_dsn(
+        dsn,
+        env_var_name=STRATEGY_CANDIDATE_RESEARCH_QUEUE_DB_DSN_ENV_VAR,
+    )
     connection = _connect(dsn)
     try:
-        return operation(connection)
-    finally:
+        result = operation(connection)
+    except BaseException:
         try:
             connection.close()
         except Exception:
             pass
+        raise
+    connection.close()
+    return result
 
 
 def _connect(dsn: str) -> Any:

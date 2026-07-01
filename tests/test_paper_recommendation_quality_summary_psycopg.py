@@ -172,13 +172,13 @@ def test_insert_opens_psycopg_connection_delegates_commits_and_closes(
     )
 
     inserted = adapter_module.insert_paper_recommendation_quality_summary_report_with_psycopg(
-        "postgresql://user:secret@example.invalid/db",
+        "postgresql://postgres:postgres@localhost:54322/postgres",
         report,
         table_name="quality_summary_archive",
     )
 
     assert inserted == row
-    assert connect_calls == ["postgresql://user:secret@example.invalid/db"]
+    assert connect_calls == ["postgresql://postgres:postgres@localhost:54322/postgres"]
     store_connection, store_report, store_table_name = store_calls[0]
     assert store_connection is not connection
     assert store_connection.connection is connection
@@ -222,7 +222,7 @@ def test_load_opens_psycopg_connection_delegates_query_options_commits_and_close
     )
 
     loaded = adapter_module.load_paper_recommendation_quality_summary_reports_with_psycopg(
-        "postgresql://user:secret@example.invalid/db",
+        "postgresql://postgres:postgres@localhost:54322/postgres",
         config_version="paper-recommendation-quality-summary-v0",
         summary_status="blocked",
         limit=10,
@@ -230,7 +230,7 @@ def test_load_opens_psycopg_connection_delegates_query_options_commits_and_close
     )
 
     assert loaded == (report,)
-    assert connect_calls == ["postgresql://user:secret@example.invalid/db"]
+    assert connect_calls == ["postgresql://postgres:postgres@localhost:54322/postgres"]
     store_connection, config_version, summary_status, limit, table_name = store_calls[0]
     assert store_connection is not connection
     assert store_connection.connection is connection
@@ -277,7 +277,7 @@ def test_insert_adapts_json_values_for_psycopg_without_wrapping_scalars(
     )
 
     adapter_module.insert_paper_recommendation_quality_summary_report_with_psycopg(
-        "postgresql://user:secret@example.invalid/db",
+        "postgresql://postgres:postgres@localhost:54322/postgres",
         FakeReport(config_version="paper-recommendation-quality-summary-v0"),
     )
 
@@ -315,7 +315,7 @@ def test_insert_rolls_back_closes_and_reraises_store_exception_without_dsn(
 
     with pytest.raises(ValueError) as exc_info:
         adapter_module.insert_paper_recommendation_quality_summary_report_with_psycopg(
-            "postgresql://user:secret@example.invalid/db",
+            "postgresql://postgres:postgres@localhost:54322/postgres",
             FakeReport(config_version="paper-recommendation-quality-summary-v0"),
         )
 
@@ -352,7 +352,7 @@ def test_cleanup_failure_does_not_mask_store_exception(
 
     with pytest.raises(ValueError) as exc_info:
         adapter_module.insert_paper_recommendation_quality_summary_report_with_psycopg(
-            "postgresql://user:secret@example.invalid/db",
+            "postgresql://postgres:postgres@localhost:54322/postgres",
             FakeReport(config_version="paper-recommendation-quality-summary-v0"),
         )
 
@@ -392,7 +392,7 @@ def test_cleanup_failure_does_not_mask_commit_exception(
 
     with pytest.raises(RuntimeError) as exc_info:
         adapter_module.load_paper_recommendation_quality_summary_reports_with_psycopg(
-            "postgresql://user:secret@example.invalid/db",
+            "postgresql://postgres:postgres@localhost:54322/postgres",
         )
 
     assert str(exc_info.value) == "commit failed without dsn"
@@ -412,7 +412,7 @@ def test_connect_failure_raises_clean_error_without_dsn(
 
     with pytest.raises(RuntimeError) as exc_info:
         adapter_module.load_paper_recommendation_quality_summary_reports_with_psycopg(
-            "postgresql://user:secret@example.invalid/db",
+            "postgresql://postgres:postgres@localhost:54322/postgres",
         )
 
     assert "failed to connect" in str(exc_info.value)
@@ -444,7 +444,7 @@ def test_missing_psycopg_raises_clean_error_without_import_time_dependency(
 
     with pytest.raises(RuntimeError) as exc_info:
         adapter_module.load_paper_recommendation_quality_summary_reports_with_psycopg(
-            "postgresql://user:secret@example.invalid/db",
+            "postgresql://postgres:postgres@localhost:54322/postgres",
         )
 
     assert "psycopg is required" in str(exc_info.value)

@@ -12,6 +12,10 @@ from polymarket_alpha_lab.action_gated_strategy_recommendation_queue_decision_su
     insert_paper_action_gated_strategy_recommendation_queue_decision_support_trend_db_rows,
     load_paper_action_gated_strategy_recommendation_queue_decision_support_trend_db_rows,
 )
+from polymarket_alpha_lab.supabase_action_gated_strategy_recommendation_queue_decision_support_trend_config import (
+    ACTION_GATED_QUEUE_DECISION_SUPPORT_TREND_DB_DSN_ENV_VAR,
+)
+from polymarket_alpha_lab.supabase_local_dsn import validate_local_postgres_dsn
 
 
 __all__ = (
@@ -64,23 +68,27 @@ def load_paper_action_gated_strategy_recommendation_queue_decision_support_trend
 
 
 def _with_owned_connection(dsn: str, operation: Callable[[Any], _T]) -> _T:
+    validate_local_postgres_dsn(
+        dsn,
+        env_var_name=ACTION_GATED_QUEUE_DECISION_SUPPORT_TREND_DB_DSN_ENV_VAR,
+    )
     jsonb_adapter = _jsonb_adapter()
     connection = _PsycopgJsonConnection(_connect(dsn), jsonb_adapter)
     try:
         result = operation(connection)
         connection.commit()
-        return result
     except BaseException:
         try:
             connection.rollback()
         except Exception:
             pass
-        raise
-    finally:
         try:
             connection.close()
         except Exception:
             pass
+        raise
+    connection.close()
+    return result
 
 
 def _connect(dsn: str) -> Any:

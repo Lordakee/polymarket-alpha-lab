@@ -90,13 +90,14 @@ def insert_paper_recommendation_readiness_report(
         row.readonly,
     )
     cursor = connection.cursor()
+    operation_error: BaseException | None = None
     try:
         cursor.execute(sql, params)
+    except BaseException as exc:
+        operation_error = exc
+        raise
     finally:
-        try:
-            cursor.close()
-        except Exception:
-            pass
+        _close_cursor(cursor, operation_error)
     return row
 
 
@@ -144,16 +145,27 @@ def load_paper_recommendation_readiness_reports(
         {limit_clause}
         """
     cursor = connection.cursor()
+    operation_error: BaseException | None = None
     try:
         cursor.execute(sql, tuple(params))
         records = cursor.fetchall()
+    except BaseException as exc:
+        operation_error = exc
+        raise
     finally:
-        try:
-            cursor.close()
-        except Exception:
-            pass
+        _close_cursor(cursor, operation_error)
     rows = tuple(_db_row_from_record(record) for record in records)
     return tuple(paper_recommendation_readiness_report_from_db_row(row) for row in rows)
+
+
+def _close_cursor(cursor: Any, operation_error: BaseException | None) -> None:
+    if operation_error is None:
+        cursor.close()
+        return
+    try:
+        cursor.close()
+    except BaseException:
+        pass
 
 
 def _db_row_from_record(record: Any) -> PaperRecommendationReadinessDbRow:

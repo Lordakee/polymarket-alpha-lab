@@ -258,7 +258,7 @@ def test_insert_metrics_evaluation_report_uses_parameterized_idempotent_insert(
     )
 
 
-def test_insert_preserves_execute_error_when_cursor_close_also_fails(
+def test_insert_operation_failure_close_swallowed(
     store_module: types.ModuleType,
 ) -> None:
     execute_error = RuntimeError("execute failed")
@@ -288,7 +288,7 @@ def test_insert_preserves_execute_error_when_cursor_close_also_fails(
     assert connection.cursor_instance.closed is True
 
 
-def test_insert_propagates_cursor_close_error_after_successful_execute(
+def test_insert_success_close_propagates(
     store_module: types.ModuleType,
 ) -> None:
     close_error = RuntimeError("close failed after execute")
@@ -457,7 +457,7 @@ def test_load_metrics_evaluation_reports_filters_status_config_and_limits_with_p
     )
 
 
-def test_load_preserves_fetchall_error_when_cursor_close_also_fails(
+def test_load_operation_failure_close_swallowed(
     store_module: types.ModuleType,
 ) -> None:
     fetchall_error = RuntimeError("fetchall failed")
@@ -478,7 +478,7 @@ def test_load_preserves_fetchall_error_when_cursor_close_also_fails(
     assert connection.cursor_instance.closed is True
 
 
-def test_load_propagates_cursor_close_error_after_successful_fetchall(
+def test_load_success_close_propagates(
     store_module: types.ModuleType,
 ) -> None:
     close_error = RuntimeError("close failed after fetchall")

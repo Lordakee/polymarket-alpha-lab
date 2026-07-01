@@ -149,13 +149,13 @@ def test_insert_opens_connection_delegates_commits_and_closes(
     )
 
     inserted = adapter_module.insert_autonomous_market_scorer_report_with_psycopg(
-        "postgresql://user:secret@example.invalid/db",
+        "postgresql://postgres:postgres@localhost:54322/postgres",
         report,
         table_name="autonomous_market_scorer_archive",
     )
 
     assert inserted is row
-    assert connect_calls == ["postgresql://user:secret@example.invalid/db"]
+    assert connect_calls == ["postgresql://postgres:postgres@localhost:54322/postgres"]
     store_connection, store_report, store_table_name = store_calls[0]
     assert store_connection is not connection
     assert store_connection.connection is connection
@@ -194,7 +194,7 @@ def test_load_opens_connection_delegates_options_commits_and_closes(
     )
 
     loaded = adapter_module.load_autonomous_market_scorer_reports_with_psycopg(
-        "postgresql://user:secret@example.invalid/db",
+        "postgresql://postgres:postgres@localhost:54322/postgres",
         config_version="autonomous-market-scorer-v0",
         gate_status="pass",
         limit=10,
@@ -248,7 +248,7 @@ def test_insert_adapts_json_values_for_psycopg_without_wrapping_scalars(
     )
 
     adapter_module.insert_autonomous_market_scorer_report_with_psycopg(
-        "postgresql://user:secret@example.invalid/db",
+        "postgresql://postgres:postgres@localhost:54322/postgres",
         FakeReport(config_version="autonomous-market-scorer-v0"),
     )
 
@@ -288,7 +288,7 @@ def test_store_exception_rolls_back_closes_and_does_not_echo_dsn(
 
     with pytest.raises(ValueError) as exc_info:
         adapter_module.insert_autonomous_market_scorer_report_with_psycopg(
-            "postgresql://user:secret@example.invalid/db",
+            "postgresql://postgres:postgres@localhost:54322/postgres",
             FakeReport(config_version="autonomous-market-scorer-v0"),
         )
 
@@ -311,7 +311,7 @@ def test_connect_failure_raises_clean_error_without_dsn(
 
     with pytest.raises(RuntimeError) as exc_info:
         adapter_module.load_autonomous_market_scorer_reports_with_psycopg(
-            "postgresql://user:secret@example.invalid/db",
+            "postgresql://postgres:postgres@localhost:54322/postgres",
         )
 
     assert "failed to connect" in str(exc_info.value)
@@ -336,7 +336,7 @@ def test_missing_psycopg_raises_clean_error_without_import_time_dependency(
 
     with pytest.raises(RuntimeError) as exc_info:
         adapter_module.load_autonomous_market_scorer_reports_with_psycopg(
-            "postgresql://user:secret@example.invalid/db",
+            "postgresql://postgres:postgres@localhost:54322/postgres",
         )
 
     assert "psycopg is required" in str(exc_info.value)

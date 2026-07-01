@@ -40,6 +40,7 @@ class FakeCursor:
         self.calls: list[tuple[str, tuple[Any, ...]]] = []
         self.closed = False
         self.execute_error: BaseException | None = None
+        self.fetchall_error: BaseException | None = None
         self.close_error: BaseException | None = None
 
     def execute(self, sql: str, params: tuple[Any, ...] = ()) -> None:
@@ -48,6 +49,8 @@ class FakeCursor:
             raise self.execute_error
 
     def fetchall(self) -> tuple[Any, ...]:
+        if self.fetchall_error is not None:
+            raise self.fetchall_error
         return self.rows
 
     def close(self) -> None:
@@ -168,6 +171,21 @@ def test_insert_transition_report_with_result_observes_duplicate() -> None:
     assert duplicate.inserted is False
 
 
+def test_insert_preserves_rowcount_error_when_cursor_close_also_fails() -> None:
+    import polymarket_alpha_lab.paper_autonomous_screening_decision_support_gate_transition_store as store
+
+    connection = FakeConnection(rowcount=2)
+    connection.cursor_instance.close_error = RuntimeError("close failed")
+
+    with pytest.raises(ValueError, match="rowcount"):
+        store.insert_paper_autonomous_screening_decision_support_gate_transition_report_with_result(
+            connection,
+            _report(),
+        )
+
+    assert connection.cursor_instance.closed is True
+
+
 def test_insert_preserves_execute_error_when_cursor_close_also_fails() -> None:
     import polymarket_alpha_lab.paper_autonomous_screening_decision_support_gate_transition_store as store
 
@@ -277,6 +295,25 @@ def test_load_preserves_execute_error_when_cursor_close_also_fails() -> None:
         )
 
     assert exc_info.value is execute_error
+    assert connection.cursor_instance.closed is True
+
+
+def test_load_preserves_fetchall_error_when_cursor_close_also_fails() -> None:
+    from polymarket_alpha_lab.paper_autonomous_screening_decision_support_gate_transition_store import (
+        load_paper_autonomous_screening_decision_support_gate_transition_reports,
+    )
+
+    connection = FakeConnection()
+    fetchall_error = RuntimeError("fetchall failed")
+    connection.cursor_instance.fetchall_error = fetchall_error
+    connection.cursor_instance.close_error = RuntimeError("close failed")
+
+    with pytest.raises(RuntimeError, match="fetchall failed") as exc_info:
+        load_paper_autonomous_screening_decision_support_gate_transition_reports(
+            connection,
+        )
+
+    assert exc_info.value is fetchall_error
     assert connection.cursor_instance.closed is True
 
 

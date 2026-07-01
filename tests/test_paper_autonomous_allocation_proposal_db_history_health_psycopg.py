@@ -9,7 +9,10 @@ from typing import Any
 import pytest
 
 
-SECRET_DSN = "postgresql://worker:secret@example.invalid/polymarket"
+LOCAL_SUPABASE_DSN = "postgresql://worker:local-secret@localhost:54322/postgres"
+REMOTE_SECRET_DSN = (
+    "postgresql://worker:remote-token@db.remote.example.invalid:5432/polymarket"
+)
 STORE_MODULE_NAME = (
     "polymarket_alpha_lab."
     "paper_autonomous_allocation_proposal_db_history_health_store"
@@ -80,6 +83,12 @@ class FakeCommitFailingConnection(FakeConnection):
     def commit(self) -> None:
         self.commit_count += 1
         raise RuntimeError("commit failed without dsn")
+
+
+class FakeCloseFailingConnection(FakeConnection):
+    def close(self) -> None:
+        self.close_count += 1
+        raise RuntimeError("close failed without dsn")
 
 
 class FakeJsonb:
@@ -177,15 +186,56 @@ def test_missing_psycopg_error_mentions_install_extra_without_dsn(
 
     with pytest.raises(RuntimeError) as exc_info:
         adapter_module.load_paper_autonomous_allocation_proposal_db_history_health_reports_with_psycopg(
-            SECRET_DSN,
+            LOCAL_SUPABASE_DSN,
         )
 
     message = str(exc_info.value)
     assert "psycopg is required" in message
     assert "postgres extra" in message
     assert "postgresql://" not in message
-    assert "secret" not in message
-    assert "example.invalid" not in message
+    assert "local-secret" not in message
+    assert "localhost" not in message
+
+
+def test_remote_dsn_is_rejected_before_psycopg_import_or_connect(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter_module = _import_adapter(monkeypatch)
+
+    def unexpected_jsonb_adapter() -> type[Any]:
+        raise AssertionError("_jsonb_adapter must not run before DSN validation")
+
+    def unexpected_connect(dsn: str) -> Any:
+        raise AssertionError("_connect must not run before DSN validation")
+
+    monkeypatch.setattr(adapter_module, "_jsonb_adapter", unexpected_jsonb_adapter)
+    monkeypatch.setattr(adapter_module, "_connect", unexpected_connect)
+    monkeypatch.delitem(sys.modules, "psycopg", raising=False)
+    monkeypatch.delitem(sys.modules, "psycopg.types", raising=False)
+    monkeypatch.delitem(sys.modules, "psycopg.types.json", raising=False)
+
+    class ForbiddenPsycopgFinder:
+        def find_spec(self, fullname: str, path: Any = None, target: Any = None) -> None:
+            if fullname == "psycopg" or fullname.startswith("psycopg."):
+                raise AssertionError("psycopg imported before DSN validation")
+            return None
+
+    finder = ForbiddenPsycopgFinder()
+    monkeypatch.setattr(sys, "meta_path", [finder, *sys.meta_path])
+
+    with pytest.raises(ValueError) as exc_info:
+        adapter_module.load_paper_autonomous_allocation_proposal_db_history_health_reports_with_psycopg(
+            REMOTE_SECRET_DSN,
+        )
+
+    message = str(exc_info.value)
+    assert (
+        "POLYMARKET_ALPHA_LAB_PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_HISTORY_HEALTH_DB_DSN"
+        in message
+    )
+    assert "postgresql://" not in message
+    assert "remote-token" not in message
+    assert "db.remote.example.invalid" not in message
 
 
 def test_successful_insert_delegates_to_store_commits_and_closes(
@@ -217,13 +267,13 @@ def test_successful_insert_delegates_to_store_commits_and_closes(
     adapter_module = importlib.import_module(ADAPTER_MODULE_NAME)
 
     inserted = adapter_module.insert_paper_autonomous_allocation_proposal_db_history_health_report_with_psycopg(
-        SECRET_DSN,
+        LOCAL_SUPABASE_DSN,
         report,
         table_name="db_history_health_archive",
     )
 
     assert inserted == result
-    assert connect_calls == [SECRET_DSN]
+    assert connect_calls == [LOCAL_SUPABASE_DSN]
     store_connection, store_report, store_table_name = store_calls[0]
     assert store_connection is not connection
     assert store_connection.connection is connection
@@ -275,7 +325,7 @@ def test_successful_load_delegates_to_store_commits_and_closes(
     adapter_module = importlib.import_module(ADAPTER_MODULE_NAME)
 
     loaded = adapter_module.load_paper_autonomous_allocation_proposal_db_history_health_reports_with_psycopg(
-        SECRET_DSN,
+        LOCAL_SUPABASE_DSN,
         config_version="paper-autonomous-allocation-proposal-db-history-health-v0",
         health_status="pass",
         latest_history_status="pass",
@@ -284,7 +334,7 @@ def test_successful_load_delegates_to_store_commits_and_closes(
     )
 
     assert loaded == (report,)
-    assert connect_calls == [SECRET_DSN]
+    assert connect_calls == [LOCAL_SUPABASE_DSN]
     (
         store_connection,
         config_version,
@@ -300,6 +350,44 @@ def test_successful_load_delegates_to_store_commits_and_closes(
     assert latest_history_status == "pass"
     assert limit == 25
     assert table_name == "db_history_health_archive"
+    assert connection.commit_count == 1
+    assert connection.rollback_count == 0
+    assert connection.close_count == 1
+
+
+def test_load_success_close_propagates_without_echoing_dsn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    connection = FakeCloseFailingConnection()
+    report = FakeReport(health_status="pass")
+
+    _install_fake_psycopg(monkeypatch, connect=lambda dsn: connection)
+
+    def fake_load(
+        connection_arg: Any,
+        *,
+        config_version: str | None,
+        health_status: str | None,
+        latest_history_status: str | None,
+        limit: int | None,
+        table_name: str,
+    ) -> tuple[FakeReport, ...]:
+        return (report,)
+
+    _install_fake_store(monkeypatch, load=fake_load)
+    sys.modules.pop(ADAPTER_MODULE_NAME, None)
+    adapter_module = importlib.import_module(ADAPTER_MODULE_NAME)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        adapter_module.load_paper_autonomous_allocation_proposal_db_history_health_reports_with_psycopg(
+            LOCAL_SUPABASE_DSN,
+        )
+
+    message = str(exc_info.value)
+    assert message == "close failed without dsn"
+    assert "postgresql://" not in message
+    assert "local-secret" not in message
+    assert "localhost" not in message
     assert connection.commit_count == 1
     assert connection.rollback_count == 0
     assert connection.close_count == 1
@@ -325,15 +413,50 @@ def test_failure_rolls_back_closes_reraises_and_does_not_echo_dsn(
 
     with pytest.raises(ValueError) as exc_info:
         adapter_module.insert_paper_autonomous_allocation_proposal_db_history_health_report_with_psycopg(
-            SECRET_DSN,
+            LOCAL_SUPABASE_DSN,
             FakeReport(health_status="pass"),
         )
 
     message = str(exc_info.value)
     assert "store failed without dsn" in message
     assert "postgresql://" not in message
-    assert "secret" not in message
-    assert "example.invalid" not in message
+    assert "local-secret" not in message
+    assert "localhost" not in message
+    assert connection.commit_count == 0
+    assert connection.rollback_count == 1
+    assert connection.close_count == 1
+
+
+def test_insert_operation_failure_close_swallowed_without_echoing_dsn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    connection = FakeCloseFailingConnection()
+    _install_fake_psycopg(monkeypatch, connect=lambda dsn: connection)
+
+    def fake_insert_with_result(
+        connection_arg: Any,
+        report_arg: Any,
+        *,
+        table_name: str,
+    ) -> FakeResult:
+        raise ValueError("store failed without dsn")
+
+    _install_fake_store(monkeypatch, insert_with_result=fake_insert_with_result)
+    sys.modules.pop(ADAPTER_MODULE_NAME, None)
+    adapter_module = importlib.import_module(ADAPTER_MODULE_NAME)
+
+    with pytest.raises(ValueError) as exc_info:
+        adapter_module.insert_paper_autonomous_allocation_proposal_db_history_health_report_with_psycopg(
+            LOCAL_SUPABASE_DSN,
+            FakeReport(health_status="pass"),
+        )
+
+    message = str(exc_info.value)
+    assert message == "store failed without dsn"
+    assert "close failed" not in message
+    assert "postgresql://" not in message
+    assert "local-secret" not in message
+    assert "localhost" not in message
     assert connection.commit_count == 0
     assert connection.rollback_count == 1
     assert connection.close_count == 1
@@ -366,14 +489,14 @@ def test_commit_failure_rolls_back_closes_reraises_and_does_not_echo_dsn(
 
     with pytest.raises(RuntimeError) as exc_info:
         adapter_module.load_paper_autonomous_allocation_proposal_db_history_health_reports_with_psycopg(
-            SECRET_DSN,
+            LOCAL_SUPABASE_DSN,
         )
 
     message = str(exc_info.value)
     assert "commit failed without dsn" in message
     assert "postgresql://" not in message
-    assert "secret" not in message
-    assert "example.invalid" not in message
+    assert "local-secret" not in message
+    assert "localhost" not in message
     assert connection.commit_count == 1
     assert connection.rollback_count == 1
     assert connection.close_count == 1
@@ -390,7 +513,7 @@ def test_connect_failure_raises_redacted_error(
 
     with pytest.raises(RuntimeError) as exc_info:
         adapter_module.load_paper_autonomous_allocation_proposal_db_history_health_reports_with_psycopg(
-            SECRET_DSN,
+            LOCAL_SUPABASE_DSN,
         )
 
     message = str(exc_info.value)
@@ -398,8 +521,8 @@ def test_connect_failure_raises_redacted_error(
     assert exc_info.value.__cause__ is not None
     assert type(exc_info.value.__cause__) is RuntimeError
     assert "postgresql://" not in message
-    assert "secret" not in message
-    assert "example.invalid" not in message
+    assert "local-secret" not in message
+    assert "localhost" not in message
 
 
 def test_dict_and_list_params_are_wrapped_in_jsonb(
@@ -439,11 +562,11 @@ def test_dict_and_list_params_are_wrapped_in_jsonb(
     adapter_module = importlib.import_module(ADAPTER_MODULE_NAME)
 
     adapter_module.insert_paper_autonomous_allocation_proposal_db_history_health_report_with_psycopg(
-        SECRET_DSN,
+        LOCAL_SUPABASE_DSN,
         FakeReport(health_status="pass"),
     )
 
-    assert connect_calls == [SECRET_DSN]
+    assert connect_calls == [LOCAL_SUPABASE_DSN]
     assert connection.cursor_count == 1
     assert connection.cursor_instance.close_count == 1
     _, params = connection.cursor_instance.calls[0]
@@ -487,7 +610,7 @@ def test_json_cursor_exposes_rowcount_for_duplicate_detection(
     adapter_module = importlib.import_module(ADAPTER_MODULE_NAME)
 
     result = adapter_module.insert_paper_autonomous_allocation_proposal_db_history_health_report_with_psycopg(
-        SECRET_DSN,
+        LOCAL_SUPABASE_DSN,
         FakeReport(health_status="pass"),
     )
 

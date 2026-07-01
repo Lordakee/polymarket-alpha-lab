@@ -9,7 +9,11 @@ from typing import Any
 import pytest
 
 
-SECRET_DSN = "postgresql://worker:secret@example.invalid/polymarket"
+LOCAL_SUPABASE_DSN = "postgresql://postgres:postgres@localhost:54322/postgres"
+REMOTE_SECRET_DSN = (
+    "postgresql://worker:super-secret-token@db.remote-supabase.co:5432/polymarket"
+)
+DSN_ENV_VAR = "POLYMARKET_ALPHA_LAB_STRATEGY_CANDIDATE_RESEARCH_QUEUE_DB_DSN"
 ADAPTER_MODULE_NAME = "polymarket_alpha_lab.strategy_candidate_research_queue_psycopg"
 
 
@@ -68,6 +72,18 @@ class FakeCommitFailingConnection(FakeConnection):
         raise RuntimeError("commit failed without dsn")
 
 
+class FakeCloseFailingConnection(FakeConnection):
+    def close(self) -> None:
+        self.close_count += 1
+        raise RuntimeError("close failed without dsn")
+
+
+class FakeCommitAndCloseFailingConnection(FakeCloseFailingConnection):
+    def commit(self) -> None:
+        self.commit_count += 1
+        raise RuntimeError("commit failed without dsn")
+
+
 class FakeJsonb:
     def __init__(self, value: Any) -> None:
         self.value = value
@@ -82,6 +98,20 @@ def _install_fake_psycopg(
     json_module = types.SimpleNamespace(Jsonb=FakeJsonb)
     monkeypatch.setitem(sys.modules, "psycopg", psycopg)
     monkeypatch.setitem(sys.modules, "psycopg.types.json", json_module)
+
+
+def _forbid_psycopg_import(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delitem(sys.modules, "psycopg", raising=False)
+    monkeypatch.delitem(sys.modules, "psycopg.types", raising=False)
+    monkeypatch.delitem(sys.modules, "psycopg.types.json", raising=False)
+
+    class ForbiddenPsycopgFinder:
+        def find_spec(self, fullname: str, path: Any = None, target: Any = None) -> None:
+            if fullname == "psycopg" or fullname.startswith("psycopg."):
+                raise AssertionError("psycopg imported before dsn validation")
+            return None
+
+    monkeypatch.setattr(sys, "meta_path", [ForbiddenPsycopgFinder(), *sys.meta_path])
 
 
 @pytest.fixture()
@@ -117,14 +147,14 @@ def test_insert_opens_psycopg_connection_delegates_commits_and_closes(
 
     inserted = (
         adapter_module.insert_paper_strategy_candidate_research_queue_report_with_psycopg(
-            SECRET_DSN,
+            LOCAL_SUPABASE_DSN,
             report,
             table_name="paper_strategy_candidate_research_queue_archive",
         )
     )
 
     assert inserted == row
-    assert connect_calls == [SECRET_DSN]
+    assert connect_calls == [LOCAL_SUPABASE_DSN]
     store_connection, store_report, store_table_name = store_calls[0]
     assert store_connection is not connection
     assert store_connection.connection is connection
@@ -170,11 +200,11 @@ def test_insert_wraps_dict_and_list_params_with_jsonb(
     )
 
     adapter_module.insert_paper_strategy_candidate_research_queue_report_with_psycopg(
-        SECRET_DSN,
+        LOCAL_SUPABASE_DSN,
         FakeReport(config_version="strategy-candidate-research-queue-v0"),
     )
 
-    assert connect_calls == [SECRET_DSN]
+    assert connect_calls == [LOCAL_SUPABASE_DSN]
     assert connection.cursor_count == 1
     assert connection.cursor_instance.close_count == 1
     _, params = connection.cursor_instance.calls[0]
@@ -207,7 +237,7 @@ def test_insert_rolls_back_closes_and_reraises_store_exception(
 
     with pytest.raises(ValueError, match="store failed without dsn"):
         adapter_module.insert_paper_strategy_candidate_research_queue_report_with_psycopg(
-            SECRET_DSN,
+            LOCAL_SUPABASE_DSN,
             FakeReport(config_version="strategy-candidate-research-queue-v0"),
         )
 
@@ -220,7 +250,7 @@ def test_insert_rolls_back_closes_and_reraises_commit_exception(
     monkeypatch: pytest.MonkeyPatch,
     adapter_module: types.ModuleType,
 ) -> None:
-    connection = FakeCommitFailingConnection()
+    connection = FakeCommitAndCloseFailingConnection()
     report = FakeReport(config_version="strategy-candidate-research-queue-v0")
     row = FakeRow(report_sha256="a" * 64)
     _install_fake_psycopg(monkeypatch, connect=lambda dsn: connection)
@@ -234,13 +264,83 @@ def test_insert_rolls_back_closes_and_reraises_commit_exception(
         fake_insert,
     )
 
-    with pytest.raises(RuntimeError, match="commit failed without dsn"):
+    with pytest.raises(RuntimeError) as exc_info:
         adapter_module.insert_paper_strategy_candidate_research_queue_report_with_psycopg(
-            SECRET_DSN,
+            LOCAL_SUPABASE_DSN,
             report,
         )
 
+    message = str(exc_info.value)
+    assert "commit failed without dsn" in message
+    assert "close failed" not in message
     assert connection.commit_count == 1
+    assert connection.rollback_count == 1
+    assert connection.close_count == 1
+
+
+def test_insert_success_close_failure_propagates_without_dsn(
+    monkeypatch: pytest.MonkeyPatch,
+    adapter_module: types.ModuleType,
+) -> None:
+    connection = FakeCloseFailingConnection()
+    report = FakeReport(config_version="strategy-candidate-research-queue-v0")
+    row = FakeRow(report_sha256="a" * 64)
+    _install_fake_psycopg(monkeypatch, connect=lambda dsn: connection)
+
+    def fake_insert(connection_arg: Any, report_arg: Any, *, table_name: str) -> FakeRow:
+        return row
+
+    monkeypatch.setattr(
+        adapter_module,
+        "insert_paper_strategy_candidate_research_queue_report",
+        fake_insert,
+    )
+
+    with pytest.raises(RuntimeError) as exc_info:
+        adapter_module.insert_paper_strategy_candidate_research_queue_report_with_psycopg(
+            LOCAL_SUPABASE_DSN,
+            report,
+        )
+
+    message = str(exc_info.value)
+    assert "close failed without dsn" in message
+    assert "postgresql://" not in message
+    assert "postgres:postgres" not in message
+    assert "localhost" not in message
+    assert connection.commit_count == 1
+    assert connection.rollback_count == 0
+    assert connection.close_count == 1
+
+
+def test_insert_operation_failure_close_failure_is_swallowed_without_echoing_dsn(
+    monkeypatch: pytest.MonkeyPatch,
+    adapter_module: types.ModuleType,
+) -> None:
+    connection = FakeCloseFailingConnection()
+    _install_fake_psycopg(monkeypatch, connect=lambda dsn: connection)
+
+    def fake_insert(connection_arg: Any, report_arg: Any, *, table_name: str) -> FakeRow:
+        raise ValueError("store failed without dsn")
+
+    monkeypatch.setattr(
+        adapter_module,
+        "insert_paper_strategy_candidate_research_queue_report",
+        fake_insert,
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        adapter_module.insert_paper_strategy_candidate_research_queue_report_with_psycopg(
+            LOCAL_SUPABASE_DSN,
+            FakeReport(config_version="strategy-candidate-research-queue-v0"),
+        )
+
+    message = str(exc_info.value)
+    assert "store failed without dsn" in message
+    assert "close failed" not in message
+    assert "postgresql://" not in message
+    assert "postgres:postgres" not in message
+    assert "localhost" not in message
+    assert connection.commit_count == 0
     assert connection.rollback_count == 1
     assert connection.close_count == 1
 
@@ -256,15 +356,35 @@ def test_connect_failure_raises_clean_error_without_dsn(
 
     with pytest.raises(RuntimeError) as exc_info:
         adapter_module.insert_paper_strategy_candidate_research_queue_report_with_psycopg(
-            SECRET_DSN,
+            LOCAL_SUPABASE_DSN,
             FakeReport(config_version="strategy-candidate-research-queue-v0"),
         )
 
     message = str(exc_info.value)
     assert "failed to connect" in message
     assert "postgresql://" not in message
-    assert "secret" not in message
-    assert "example.invalid" not in message
+    assert "postgres:postgres" not in message
+    assert "localhost" not in message
+
+
+def test_insert_rejects_remote_dsn_before_psycopg_import_without_echoing_secret(
+    monkeypatch: pytest.MonkeyPatch,
+    adapter_module: types.ModuleType,
+) -> None:
+    _forbid_psycopg_import(monkeypatch)
+
+    with pytest.raises(ValueError) as exc_info:
+        adapter_module.insert_paper_strategy_candidate_research_queue_report_with_psycopg(
+            REMOTE_SECRET_DSN,
+            FakeReport(config_version="strategy-candidate-research-queue-v0"),
+        )
+
+    message = str(exc_info.value)
+    assert DSN_ENV_VAR in message
+    assert REMOTE_SECRET_DSN not in message
+    assert "postgresql://" not in message
+    assert "super-secret-token" not in message
+    assert "db.remote-supabase.co" not in message
 
 
 def test_missing_psycopg_raises_clean_error_without_import_time_dependency(
@@ -284,7 +404,7 @@ def test_missing_psycopg_raises_clean_error_without_import_time_dependency(
 
     with pytest.raises(RuntimeError) as exc_info:
         adapter_module.insert_paper_strategy_candidate_research_queue_report_with_psycopg(
-            SECRET_DSN,
+            LOCAL_SUPABASE_DSN,
             FakeReport(config_version="strategy-candidate-research-queue-v0"),
         )
 
@@ -292,5 +412,5 @@ def test_missing_psycopg_raises_clean_error_without_import_time_dependency(
     assert "psycopg is required" in message
     assert "postgres extra" in message
     assert "postgresql://" not in message
-    assert "secret" not in message
-    assert "example.invalid" not in message
+    assert "postgres:postgres" not in message
+    assert "localhost" not in message

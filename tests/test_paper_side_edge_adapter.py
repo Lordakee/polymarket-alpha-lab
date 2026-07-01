@@ -142,6 +142,21 @@ def test_adapter_converts_strategy_rows_to_canonical_probability_side_edge_input
     assert inputs[1].max_executable_shares == d("40.000000")
 
 
+def test_adapter_preserves_zero_spread_cost_for_executable_ask_inputs():
+    inputs = paper_side_edge_inputs_from_strategy_rows(
+        (
+            strategy_row(
+                side_price=d("0.570000"),
+                spread_cost_per_share=ZERO,
+                reason_codes=("executable_ask",),
+            ),
+        ),
+    )
+
+    assert inputs[0].side_price == d("0.570000")
+    assert inputs[0].spread_cost_per_share == ZERO
+
+
 def test_adapter_builds_canonical_report_with_side_specific_probability_semantics_and_all_costs():
     report = build_paper_side_edge_report_from_strategy_rows(
         (

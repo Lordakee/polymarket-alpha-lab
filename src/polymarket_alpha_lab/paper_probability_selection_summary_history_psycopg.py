@@ -15,7 +15,9 @@ from polymarket_alpha_lab.paper_probability_selection_summary_history_store impo
     insert_paper_probability_selection_summary_history_report,
     load_paper_probability_selection_summary_history_reports,
 )
+from polymarket_alpha_lab.supabase_local_dsn import validate_local_postgres_dsn
 from polymarket_alpha_lab.supabase_paper_probability_selection_summary_history_config import (
+    PAPER_PROBABILITY_SELECTION_SUMMARY_HISTORY_DB_DSN_ENV_VAR,
     SupabasePaperProbabilitySelectionSummaryHistoryConfig,
 )
 
@@ -245,9 +247,13 @@ def _with_psycopg_owned_connection(
     *,
     connect: Callable[[str], Any] | None,
 ) -> _T:
-    jsonb_adapter = _jsonb_adapter()
+    validate_local_postgres_dsn(
+        dsn,
+        env_var_name=PAPER_PROBABILITY_SELECTION_SUMMARY_HISTORY_DB_DSN_ENV_VAR,
+    )
 
     def connection_factory() -> _PsycopgJsonConnection:
+        jsonb_adapter = _jsonb_adapter()
         if connect is None:
             connection = _connect(dsn)
         else:
@@ -263,24 +269,28 @@ def _with_owned_connection(
     *,
     connection_factory: Callable[[], Any],
 ) -> _T:
+    validate_local_postgres_dsn(
+        dsn,
+        env_var_name=PAPER_PROBABILITY_SELECTION_SUMMARY_HISTORY_DB_DSN_ENV_VAR,
+    )
     connection = connection_factory()
     try:
         result = operation(connection)
         connection.commit()
-        return result
     except BaseException as exc:
         try:
             connection.rollback()
         except Exception:
             pass
-        if isinstance(exc, Exception):
-            _raise_redacted(exc, dsn=dsn)
-        raise
-    finally:
         try:
             connection.close()
         except Exception:
             pass
+        if isinstance(exc, Exception):
+            _raise_redacted(exc, dsn=dsn)
+        raise
+    connection.close()
+    return result
 
 
 def _connect(dsn: str) -> Any:

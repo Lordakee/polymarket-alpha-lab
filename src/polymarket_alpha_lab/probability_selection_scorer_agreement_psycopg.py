@@ -10,6 +10,10 @@ from polymarket_alpha_lab.probability_selection_scorer_agreement_store import (
     DEFAULT_PROBABILITY_SELECTION_SCORER_AGREEMENT_REPORTS_TABLE,
     insert_probability_selection_scorer_agreement_report,
 )
+from polymarket_alpha_lab.supabase_local_dsn import validate_local_postgres_dsn
+from polymarket_alpha_lab.supabase_probability_selection_scorer_agreement_config import (
+    PROBABILITY_SELECTION_SCORER_AGREEMENT_DB_DSN_ENV_VAR,
+)
 
 
 _T = TypeVar("_T")
@@ -32,15 +36,22 @@ def insert_probability_selection_scorer_agreement_report_with_psycopg(
 
 
 def _with_owned_connection(dsn: str, operation: Callable[[Any], _T]) -> _T:
+    validate_local_postgres_dsn(
+        dsn,
+        env_var_name=PROBABILITY_SELECTION_SCORER_AGREEMENT_DB_DSN_ENV_VAR,
+    )
     jsonb_adapter = _jsonb_adapter()
     connection = _PsycopgJsonConnection(_connect(dsn), jsonb_adapter)
     try:
-        return operation(connection)
-    finally:
+        result = operation(connection)
+    except BaseException:
         try:
             connection.close()
         except Exception:
             pass
+        raise
+    connection.close()
+    return result
 
 
 def _connect(dsn: str) -> Any:

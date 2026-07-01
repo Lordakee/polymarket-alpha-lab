@@ -14,6 +14,13 @@ The long-term research direction is a system that can screen markets, research c
 
 This repository currently contains the project design, research notes, implementation plans, a read-only market scanner, research packet assembly, paper research packet generation and DB-history readback, pure paper research packet quality reports and quality-history trend gates, bid/ask paper-fill simulation, optional local Supabase/Postgres paper-trade record write persistence for `strategy-cycle --paper-execute`, DB-backed paper-trade read sources for the one-shot `portfolio-nav` CLI, continuous-run NAV source handling, `check-outcomes` source handling, and `cost-audit` source handling when the local paper trade journal DB env is enabled, a read-only DB helper for paper cost-audit source records, legacy JSONL compatibility/export/replay for not-yet-migrated JSONL-reader consumers, paper-only risk gates, rejected-candidate logs, paper position ledgers, executable NAV marks, paper-only portfolio analytics, exposure reports, executable-NAV drawdown reports, paper-only analytics history validation, paper-only forecast evidence reports, paper-only outcome-tracking report logs, local-only strategy risk audit CLI reports with a cost discipline gate over paper logs, optional local Strategy Risk Audit logs and history summaries, local-only strategy evidence snapshot summaries over paper logs and local reports, local-only paper trade cost audit reports over paper logs, paper-only cost-aware event strategy reports, paper-only project screening research queues, paper-only manual-review queues, paper-only strategy recommendation bundle and bundle-log artifacts with a read-only history CLI summary, human-review proposal packet artifacts, append-only proposal-review record artifacts, proposal-review summary report artifacts, proposal-review quality gate artifacts, proposal-review diagnostic artifacts, proposal-review coverage report artifacts, proposal-review dossier artifacts, proposal-review dossier batch health artifacts, proposal evidence comparison artifacts, proposal evidence comparison history artifacts, proposal evidence comparison history batch-health artifacts, proposal evidence comparison history batch-health trend artifacts, proposal evidence comparison history batch-health trend-batch artifacts, proposal evidence comparison history batch-health trend-batch health artifacts, proposal evidence comparison history batch-health trend-batch health trend artifacts, paper autonomous allocation proposal artifacts, paper autonomous allocation proposal DB-history artifacts, paper autonomous allocation proposal DB-history gate artifacts, paper autonomous allocation proposal DB-history metrics artifacts, paper autonomous allocation proposal DB-history health artifacts, paper autonomous allocation proposal DB-history health trend artifacts, paper autonomous allocation proposal DB-history health-trend gate artifacts, paper autonomous investment ledger artifacts, paper autonomous investment ledger DB-history artifacts, paper autonomous readiness digest CLI/readback with optional agreement trend-gate evidence, and local DB persistence for DB-history health reports through local Supabase/Postgres plus explicitly documented DB-backed paper evidence surfaces.
 
+## Project Iron Rules
+
+- Persistent project data must use only the local Supabase/Postgres instance on this host. Do not add SQLite, Redis, Mongo, SQLAlchemy, hosted database assumptions, generic database abstraction layers, or file-backed database substitutes as durable persistence.
+- Any raw DSN from environment variables, config objects, CLI plumbing, tests, fixtures, or helper constructors must pass through `validate_local_postgres_dsn` before a connection, psycopg wrapper, or persistence adapter uses it.
+- Phase 1 is paper-only, report-only, and readonly. It must not add live trading, account authentication, wallet/private-key handling, account reads, order signing, order submission, order cancellation, order replacement, or exchange/order mutation.
+- DB-backed features in Phase 1 are local paper evidence storage and readback only. Persisted and recovered report surfaces must preserve `paper_only=True`, `report_only=True`, and `readonly=True` wherever those flags exist.
+
 Continuous run as a whole is not fully DB-backed; only its NAV paper-trade source handling can use `paper_trade_journal_records` when the local paper trade journal DB env is enabled. `check-outcomes` and `cost-audit` can also use `paper_trade_journal_records` as their paper-trade source when that env is enabled. JSONL remains the legacy compatibility/export/replay path and the still-current input for history/performance summary, strategy audit, and observability/trend consumers until their separate migrations land.
 
 It also includes an optional local-only Strategy Risk Audit preflight for continuous paper runs, optional Strategy Risk Audit logging, and a local history summary over that optional log; the preflight reads existing paper logs and can pause the next paper run before any public client is constructed, audit logging is explicit opt-in local append-only JSONL evidence, and the history summary reads that evidence without changing run behavior.
@@ -106,6 +113,31 @@ Phase 1 boundary: this module is pure local report math. It does not score marke
 - Summarize an explicitly selected local recommendation bundle JSONL artifact with `polymarket-alpha-lab strategy-recommendation-history --recommendation-log <path>`.
 - The command reads bundle reports with `read_paper_strategy_recommendation_bundle_log(...)`, passes each bundle's nested `recommendation_report` into the readonly history reducer, and prints source recommendation counts plus the latest bundle's selected count and selected notional.
 - Empty logs produce a zero-count summary. The command does not construct clients, fetch data, execute paper trades, append to logs, write artifacts, tune strategy behavior, alter strategy-cycle decisions, rank investments, provide trade instruction, or provide financial advice.
+
+## Recommendation Reducer CLI Status
+
+The current paper recommendation reducer CLI surfaces are available local report
+commands:
+
+- Available CLI: `polymarket-alpha-lab paper-probability-side-edge-report --input <path>`.
+- Available CLI: `polymarket-alpha-lab paper-recommendation-queue-report --input <path> [--persist]`.
+- Available CLI: `polymarket-alpha-lab paper-recommendation-risk-budget-report --input <path> [--nav-notional <amount>] [--persist]`.
+- Available CLI: `polymarket-alpha-lab paper-recommendation-reason-trend --recommendation-log <path> [--persist]`.
+
+`--persist` is default-off, env-driven, local Supabase/Postgres report-only DB
+persistence for the queue, risk-budget, and reason-trend report commands. It is
+not live trading and does not create clients, read accounts or wallets, sign or
+submit orders, approve trades, size exchange orders, or mutate exchange state.
+The side-edge report command is print-only and does not expose `--persist`.
+
+`paper_capital_cost` is an available module-local reducer for explicit paper
+capital-cost estimates and has no standalone CLI in this phase.
+`paper_capital_cost_side_edge_adapter` is also available as a module-local
+adapter that converts capital-cost-aware rows into canonical side-edge inputs
+with computed `capital_cost_per_share`; it has no standalone CLI in this phase.
+Planned-only reducer families remain docs/planning names until implemented: the
+generic `paper_recommendation_queue`. The available queue CLI uses
+`paper_probability_recommendation_queue`.
 
 ## Strategy Evidence Snapshot v0
 

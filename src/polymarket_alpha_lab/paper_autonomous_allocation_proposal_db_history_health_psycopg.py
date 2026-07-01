@@ -11,6 +11,10 @@ from polymarket_alpha_lab.paper_autonomous_allocation_proposal_db_history_health
     insert_paper_autonomous_allocation_proposal_db_history_health_report_with_result,
     load_paper_autonomous_allocation_proposal_db_history_health_reports,
 )
+from polymarket_alpha_lab.supabase_local_dsn import validate_local_postgres_dsn
+from polymarket_alpha_lab.supabase_paper_autonomous_allocation_proposal_db_history_health_config import (
+    PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_HISTORY_HEALTH_DB_DSN_ENV_VAR,
+)
 
 
 _T = TypeVar("_T")
@@ -61,23 +65,27 @@ def load_paper_autonomous_allocation_proposal_db_history_health_reports_with_psy
 
 
 def _with_owned_connection(dsn: str, operation: Callable[[Any], _T]) -> _T:
+    validate_local_postgres_dsn(
+        dsn,
+        env_var_name=PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_HISTORY_HEALTH_DB_DSN_ENV_VAR,
+    )
     jsonb_adapter = _jsonb_adapter()
     connection = _PsycopgJsonConnection(_connect(dsn), jsonb_adapter)
     try:
         result = operation(connection)
         connection.commit()
-        return result
     except BaseException:
         try:
             connection.rollback()
         except Exception:
             pass
-        raise
-    finally:
         try:
             connection.close()
         except Exception:
             pass
+        raise
+    connection.close()
+    return result
 
 
 def _connect(dsn: str) -> Any:

@@ -9,6 +9,16 @@ from typing import Any
 
 import pytest
 
+from polymarket_alpha_lab.supabase_paper_recommendation_consistency_config import (
+    PAPER_RECOMMENDATION_CONSISTENCY_DB_DSN_ENV_VAR,
+)
+
+
+LOCAL_SUPABASE_DSN = "postgresql://user:secret@127.0.0.1:54322/db"
+REMOTE_SUPABASE_DSN = (
+    "postgresql://service_role_token@db.remote-supabase.example:5432/postgres"
+)
+
 
 @dataclass(frozen=True)
 class FakeReport:
@@ -149,6 +159,36 @@ def test_import_does_not_require_psycopg(
     )
 
 
+def test_remote_dsn_is_rejected_before_psycopg_import_or_connect(
+    monkeypatch: pytest.MonkeyPatch,
+    adapter_module: types.ModuleType,
+) -> None:
+    _remove_psycopg_modules(monkeypatch)
+    psycopg_imports: list[str] = []
+
+    class UnexpectedPsycopgImportFinder:
+        def find_spec(self, fullname: str, path: Any = None, target: Any = None) -> None:
+            if fullname == "psycopg" or fullname.startswith("psycopg."):
+                psycopg_imports.append(fullname)
+                raise AssertionError(f"unexpected psycopg import: {fullname}")
+            return None
+
+    finder = UnexpectedPsycopgImportFinder()
+    monkeypatch.setattr(sys, "meta_path", [finder, *sys.meta_path])
+
+    with pytest.raises(ValueError) as exc_info:
+        adapter_module.load_paper_recommendation_consistency_reports_with_psycopg(
+            REMOTE_SUPABASE_DSN,
+        )
+
+    message = str(exc_info.value)
+    assert PAPER_RECOMMENDATION_CONSISTENCY_DB_DSN_ENV_VAR in message
+    assert "postgresql://" not in message
+    assert "service_role_token" not in message
+    assert "db.remote-supabase.example" not in message
+    assert psycopg_imports == []
+
+
 def test_insert_opens_psycopg_connection_delegates_commits_and_closes(
     monkeypatch: pytest.MonkeyPatch,
     adapter_module: types.ModuleType,
@@ -176,13 +216,13 @@ def test_insert_opens_psycopg_connection_delegates_commits_and_closes(
     )
 
     inserted = adapter_module.insert_paper_recommendation_consistency_report_with_psycopg(
-        "postgresql://user:secret@example.invalid/db",
+        LOCAL_SUPABASE_DSN,
         report,
         table_name="consistency_archive",
     )
 
     assert inserted is None
-    assert connect_calls == ["postgresql://user:secret@example.invalid/db"]
+    assert connect_calls == [LOCAL_SUPABASE_DSN]
     store_connection, store_report, store_table_name = store_calls[0]
     assert store_connection is not connection
     assert store_connection.connection is connection
@@ -229,7 +269,7 @@ def test_load_opens_psycopg_connection_delegates_query_options_commits_and_close
     )
 
     loaded = adapter_module.load_paper_recommendation_consistency_reports_with_psycopg(
-        "postgresql://user:secret@example.invalid/db",
+        LOCAL_SUPABASE_DSN,
         config_version="recommendation-consistency-v1",
         consistency_status="blocked",
         limit=10,
@@ -237,7 +277,7 @@ def test_load_opens_psycopg_connection_delegates_query_options_commits_and_close
     )
 
     assert loaded == (report,)
-    assert connect_calls == ["postgresql://user:secret@example.invalid/db"]
+    assert connect_calls == [LOCAL_SUPABASE_DSN]
     store_connection, config_version, consistency_status, limit, table_name = (
         store_calls[0]
     )
@@ -248,6 +288,58 @@ def test_load_opens_psycopg_connection_delegates_query_options_commits_and_close
     assert limit == 10
     assert table_name == "consistency_archive"
     assert connection.cursor_count == 0
+    assert connection.commit_count == 1
+    assert connection.rollback_count == 0
+    assert connection.close_count == 1
+
+
+def test_load_success_connection_close_failure_propagates_without_dsn(
+    monkeypatch: pytest.MonkeyPatch,
+    adapter_module: types.ModuleType,
+) -> None:
+    connection = FakeCloseFailingConnection()
+    report = FakeReport(config_version="recommendation-consistency-v1")
+    connect_calls: list[str] = []
+    store_calls: list[Any] = []
+
+    _install_fake_psycopg(
+        monkeypatch,
+        connect=lambda dsn: connect_calls.append(dsn) or connection,
+    )
+
+    def fake_load(
+        connection_arg: Any,
+        *,
+        config_version: str | None,
+        consistency_status: str | None,
+        limit: int | None,
+        table_name: str,
+    ) -> tuple[FakeReport, ...]:
+        store_calls.append(connection_arg)
+        return (report,)
+
+    monkeypatch.setattr(
+        adapter_module,
+        "load_paper_recommendation_consistency_reports",
+        fake_load,
+        raising=False,
+    )
+
+    with pytest.raises(RuntimeError) as exc_info:
+        adapter_module.load_paper_recommendation_consistency_reports_with_psycopg(
+            LOCAL_SUPABASE_DSN,
+            config_version="recommendation-consistency-v1",
+            consistency_status="watch",
+            table_name="consistency_archive",
+        )
+
+    assert str(exc_info.value) == "close failed without dsn"
+    assert "postgresql://" not in str(exc_info.value)
+    assert "secret" not in str(exc_info.value)
+    assert "127.0.0.1" not in str(exc_info.value)
+    assert connect_calls == [LOCAL_SUPABASE_DSN]
+    assert store_calls[0] is not connection
+    assert store_calls[0].connection is connection
     assert connection.commit_count == 1
     assert connection.rollback_count == 0
     assert connection.close_count == 1
@@ -291,11 +383,11 @@ def test_insert_adapts_json_values_for_psycopg_without_wrapping_scalars(
     )
 
     adapter_module.insert_paper_recommendation_consistency_report_with_psycopg(
-        "postgresql://user:secret@example.invalid/db",
+        LOCAL_SUPABASE_DSN,
         FakeReport(config_version="recommendation-consistency-v1"),
     )
 
-    assert connect_calls == ["postgresql://user:secret@example.invalid/db"]
+    assert connect_calls == [LOCAL_SUPABASE_DSN]
     assert connection.cursor_count == 1
     assert connection.cursor_instance.close_count == 1
     _, params = connection.cursor_instance.calls[0]
@@ -341,7 +433,7 @@ def test_load_delegates_filter_and_table_validation_to_store(
 
     with pytest.raises(ValueError, match="consistency_status"):
         adapter_module.load_paper_recommendation_consistency_reports_with_psycopg(
-            "postgresql://user:secret@example.invalid/db",
+            LOCAL_SUPABASE_DSN,
             consistency_status="selected",
             table_name="consistency_archive;drop",
         )
@@ -372,14 +464,14 @@ def test_insert_rolls_back_closes_and_reraises_store_exception_without_dsn(
 
     with pytest.raises(ValueError) as exc_info:
         adapter_module.insert_paper_recommendation_consistency_report_with_psycopg(
-            "postgresql://user:secret@example.invalid/db",
+            LOCAL_SUPABASE_DSN,
             FakeReport(config_version="recommendation-consistency-v1"),
         )
 
     assert str(exc_info.value) == "store failed without dsn"
     assert "postgresql://" not in str(exc_info.value)
     assert "secret" not in str(exc_info.value)
-    assert "example.invalid" not in str(exc_info.value)
+    assert "127.0.0.1" not in str(exc_info.value)
     assert connection.commit_count == 0
     assert connection.rollback_count == 1
     assert connection.close_count == 1
@@ -411,7 +503,7 @@ def test_cleanup_failure_does_not_mask_store_exception(
 
     with pytest.raises(ValueError) as exc_info:
         adapter_module.insert_paper_recommendation_consistency_report_with_psycopg(
-            "postgresql://user:secret@example.invalid/db",
+            LOCAL_SUPABASE_DSN,
             FakeReport(config_version="recommendation-consistency-v1"),
         )
 
@@ -449,13 +541,13 @@ def test_load_rolls_back_closes_and_reraises_commit_exception_without_dsn(
 
     with pytest.raises(RuntimeError) as exc_info:
         adapter_module.load_paper_recommendation_consistency_reports_with_psycopg(
-            "postgresql://user:secret@example.invalid/db",
+            LOCAL_SUPABASE_DSN,
         )
 
     assert str(exc_info.value) == "commit failed without dsn"
     assert "postgresql://" not in str(exc_info.value)
     assert "secret" not in str(exc_info.value)
-    assert "example.invalid" not in str(exc_info.value)
+    assert "127.0.0.1" not in str(exc_info.value)
     assert connection.commit_count == 1
     assert connection.rollback_count == 1
     assert connection.close_count == 1
@@ -472,13 +564,13 @@ def test_connect_failure_raises_clean_error_without_dsn(
 
     with pytest.raises(RuntimeError) as exc_info:
         adapter_module.load_paper_recommendation_consistency_reports_with_psycopg(
-            "postgresql://user:secret@example.invalid/db",
+            LOCAL_SUPABASE_DSN,
         )
 
     assert "failed to connect" in str(exc_info.value)
     assert "postgresql://" not in str(exc_info.value)
     assert "secret" not in str(exc_info.value)
-    assert "example.invalid" not in str(exc_info.value)
+    assert "127.0.0.1" not in str(exc_info.value)
 
 
 def test_missing_psycopg_raises_clean_error_without_import_time_dependency(
@@ -498,7 +590,7 @@ def test_missing_psycopg_raises_clean_error_without_import_time_dependency(
 
     with pytest.raises(RuntimeError) as exc_info:
         adapter_module.load_paper_recommendation_consistency_reports_with_psycopg(
-            "postgresql://user:secret@example.invalid/db",
+            LOCAL_SUPABASE_DSN,
         )
 
     assert "psycopg is required" in str(exc_info.value)

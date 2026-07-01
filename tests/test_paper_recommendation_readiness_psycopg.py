@@ -152,13 +152,13 @@ def test_insert_opens_psycopg_connection_delegates_commits_and_closes(
     )
 
     inserted = adapter_module.insert_paper_recommendation_readiness_report_with_psycopg(
-        "postgresql://user:secret@example.invalid/db",
+        "postgresql://postgres:postgres@localhost:54322/postgres",
         report,
         table_name="readiness_archive",
     )
 
     assert inserted is None
-    assert connect_calls == ["postgresql://user:secret@example.invalid/db"]
+    assert connect_calls == ["postgresql://postgres:postgres@localhost:54322/postgres"]
     store_connection, store_report, store_table_name = store_calls[0]
     assert store_connection is not connection
     assert store_connection.connection is connection
@@ -199,7 +199,7 @@ def test_load_opens_psycopg_connection_delegates_query_options_commits_and_close
     )
 
     loaded = adapter_module.load_paper_recommendation_readiness_reports_with_psycopg(
-        "postgresql://user:secret@example.invalid/db",
+        "postgresql://postgres:postgres@localhost:54322/postgres",
         config_version="paper-recommendation-readiness-v0",
         min_blocked_count=1,
         limit=10,
@@ -207,7 +207,7 @@ def test_load_opens_psycopg_connection_delegates_query_options_commits_and_close
     )
 
     assert loaded == (report,)
-    assert connect_calls == ["postgresql://user:secret@example.invalid/db"]
+    assert connect_calls == ["postgresql://postgres:postgres@localhost:54322/postgres"]
     store_connection, config_version, min_blocked_count, limit, table_name = store_calls[0]
     assert store_connection is not connection
     assert store_connection.connection is connection
@@ -255,11 +255,11 @@ def test_insert_adapts_json_values_for_psycopg_without_wrapping_scalars(
     )
 
     adapter_module.insert_paper_recommendation_readiness_report_with_psycopg(
-        "postgresql://user:secret@example.invalid/db",
+        "postgresql://postgres:postgres@localhost:54322/postgres",
         FakeReport(config_version="paper-recommendation-readiness-v0"),
     )
 
-    assert connect_calls == ["postgresql://user:secret@example.invalid/db"]
+    assert connect_calls == ["postgresql://postgres:postgres@localhost:54322/postgres"]
     assert connection.cursor_count == 1
     assert connection.cursor_instance.close_count == 1
     _, params = connection.cursor_instance.calls[0]
@@ -305,7 +305,7 @@ def test_load_delegates_filter_and_table_validation_to_store(
 
     with pytest.raises(ValueError, match="store validation failed"):
         adapter_module.load_paper_recommendation_readiness_reports_with_psycopg(
-            "postgresql://user:secret@example.invalid/db",
+            "postgresql://postgres:postgres@localhost:54322/postgres",
             config_version="bad config",
             min_blocked_count=-1,
             limit=0,
@@ -337,7 +337,7 @@ def test_insert_rolls_back_and_closes_on_store_failure(
 
     with pytest.raises(RuntimeError, match="insert failed"):
         adapter_module.insert_paper_recommendation_readiness_report_with_psycopg(
-            "postgresql://user:secret@example.invalid/db",
+            "postgresql://postgres:postgres@localhost:54322/postgres",
             FakeReport(config_version="paper-recommendation-readiness-v0"),
         )
 
@@ -372,7 +372,7 @@ def test_load_rolls_back_and_closes_on_commit_failure(
 
     with pytest.raises(RuntimeError, match="commit failed"):
         adapter_module.load_paper_recommendation_readiness_reports_with_psycopg(
-            "postgresql://user:secret@example.invalid/db",
+            "postgresql://postgres:postgres@localhost:54322/postgres",
         )
 
     assert connection.commit_count == 1
@@ -384,7 +384,7 @@ def test_connect_failure_raises_clean_error_without_dsn(
     monkeypatch: pytest.MonkeyPatch,
     adapter_module: types.ModuleType,
 ) -> None:
-    secret_dsn = "postgresql://user:secret-token@example.invalid/db"
+    secret_dsn = "postgresql://postgres:postgres@localhost:54322/postgres"
 
     def fail_connect(dsn: str) -> FakeConnection:
         raise RuntimeError(f"connection failed for {dsn}")
@@ -417,7 +417,7 @@ def test_missing_psycopg_raises_clean_error_without_import_time_dependency(
 
     with pytest.raises(RuntimeError) as exc_info:
         adapter_module.load_paper_recommendation_readiness_reports_with_psycopg(
-            "postgresql://user:secret@example.invalid/db",
+            "postgresql://postgres:postgres@localhost:54322/postgres",
         )
 
     message = str(exc_info.value)

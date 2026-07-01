@@ -123,11 +123,10 @@ def insert_strategy_recommendation_reason_trend_report(
     cursor = connection.cursor()
     try:
         cursor.execute(sql, params)
-    finally:
-        try:
-            cursor.close()
-        except Exception:
-            pass
+    except BaseException:
+        _close_cursor_after_operation_error(cursor)
+        raise
+    cursor.close()
     return row
 
 
@@ -178,11 +177,10 @@ def load_strategy_recommendation_reason_trend_reports(
     try:
         cursor.execute(sql, tuple(params))
         records = cursor.fetchall()
-    finally:
-        try:
-            cursor.close()
-        except Exception:
-            pass
+    except BaseException:
+        _close_cursor_after_operation_error(cursor)
+        raise
+    cursor.close()
     rows = tuple(_db_row_from_record(record) for record in records)
     return tuple(strategy_recommendation_reason_trend_report_from_db_row(row) for row in rows)
 
@@ -240,6 +238,13 @@ def _db_row_from_record(record: Any) -> PaperStrategyRecommendationReasonTrendDb
         report_only=values[22],
         readonly=values[23],
     )
+
+
+def _close_cursor_after_operation_error(cursor: Any) -> None:
+    try:
+        cursor.close()
+    except BaseException:
+        pass
 
 
 def _normalize_json_object(field_name: str, value: Any) -> dict[str, Any]:

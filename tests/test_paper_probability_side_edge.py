@@ -136,6 +136,33 @@ def test_build_report_preserves_yes_and_no_probability_event_economics():
     assert report.reject_count == 0
 
 
+def test_explicit_spread_cost_lowers_net_probability_edge():
+    no_spread_cost = build_report(
+        edge_input(
+            market_slug="no-spread-cost",
+            forecast_probability=d("0.640000"),
+            side_price=d("0.570000"),
+            fee_cost_per_share=d("0.010000"),
+            spread_cost_per_share=ZERO,
+        ),
+    ).rows[0]
+    with_spread_cost = build_report(
+        edge_input(
+            market_slug="with-spread-cost",
+            forecast_probability=d("0.640000"),
+            side_price=d("0.570000"),
+            fee_cost_per_share=d("0.010000"),
+            spread_cost_per_share=d("0.004000"),
+        ),
+    ).rows[0]
+
+    assert no_spread_cost.total_cost_per_share == d("0.010000")
+    assert no_spread_cost.net_probability_edge == d("0.060000")
+    assert with_spread_cost.total_cost_per_share == d("0.014000")
+    assert with_spread_cost.net_probability_edge == d("0.056000")
+    assert with_spread_cost.net_probability_edge < no_spread_cost.net_probability_edge
+
+
 def test_stale_market_or_settlement_context_can_only_watch_with_zero_score():
     report = build_report(
         edge_input(market_slug="stale-market", market_context_fresh=False),

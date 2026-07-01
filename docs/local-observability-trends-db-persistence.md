@@ -10,6 +10,25 @@ default-off: `observability-trends` does not write by default. Only
 config and insert the generated paper-only/report-only/readonly row when the
 enabled env config is present. There are no DSN CLI flags.
 
+## Phase 1 Local DB Contract
+
+Phase 1 durable DB persistence and readback are allowed only against a local
+Supabase/Postgres instance. The DB URL must be a raw Postgres DSN read from
+process environment only, and the raw DSN must pass
+`validate_local_postgres_dsn` before any store, adapter, migration helper, or
+readback path opens a connection.
+
+Hosted Postgres and external database services are out of scope. SQLite, Redis,
+Mongo, SQLAlchemy-managed engines, ORM-managed engine factories, non-Postgres
+datastores, and any externally hosted DB connection are forbidden for this
+persistence/readback surface.
+
+The DSN must not be accepted through CLI flags, positional arguments, config
+files, checked-in examples, generated reports, logs, exception messages, or
+tracebacks. Errors may identify that local DSN validation failed, but they must
+redact credentials, hosts, ports, database names, query strings, and any other
+raw DSN material.
+
 ## Environment
 
 Set these variables at the process edge when local observability trends DB
@@ -69,12 +88,15 @@ paper/report snapshots only.
 There is no live trading. There is no auth. There is no wallet access. There are
 no private keys. There are no account reads. There is no order construction.
 There is no signing. There is no order submission. There is no cancellation.
-There is no replacement. There is no exchange mutation.
+There is no replacement. There is no order mutation. There is no exchange
+mutation. There is no exchange mutation path.
 
 The config may read process environment values, validate them, and return a
-frozen dataclass. Store and adapter code may connect to Supabase/Postgres and
-insert or load local observability trend rows only. The CLI may invoke the
-insert path only under explicit `--persist` plus enabled environment config, and
-it must not add DSN CLI flags. These paths must not authenticate exchange
-clients, read exchange accounts, construct orders, sign payloads, submit orders,
-cancel orders, replace orders, or mutate the exchange.
+frozen dataclass. Store and adapter code may connect only to local
+Supabase/Postgres after `validate_local_postgres_dsn` accepts the env-provided
+raw DSN, then insert or load local observability trend rows only. The CLI may
+invoke the insert path only under explicit `--persist` plus enabled environment
+config, and it must not add DSN CLI flags. These paths must not authenticate
+exchange clients, read exchange accounts, construct orders, sign payloads,
+submit orders, cancel orders, replace orders, mutate orders, or mutate the
+exchange.

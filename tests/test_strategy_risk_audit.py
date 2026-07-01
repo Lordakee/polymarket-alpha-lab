@@ -360,6 +360,130 @@ def test_strategy_risk_audit_adds_settlement_nav_risk_gate_when_overlay_supplied
 
 
 @pytest.mark.parametrize(
+    (
+        "overlay_status",
+        "expected_gate_status",
+        "expected_report_status",
+        "expected_message",
+    ),
+    (
+        (
+            "settlement_nav_risk_clear",
+            "pass",
+            "audit_ready",
+            "Settlement NAV risk overlay is clear.",
+        ),
+        (
+            "empty_nav_settlement_risk_overlay",
+            "incomplete",
+            "insufficient_evidence",
+            "Settlement NAV risk overlay has no exposure rows.",
+        ),
+        (
+            "settlement_nav_risk_watch",
+            "fail",
+            "blocked_by_risk",
+            "Settlement NAV risk overlay requires paper review.",
+        ),
+        (
+            "settlement_nav_risk_blocked",
+            "fail",
+            "blocked_by_risk",
+            "Settlement NAV risk overlay requires paper review.",
+        ),
+    ),
+)
+def test_strategy_risk_audit_characterizes_settlement_nav_gate_statuses(
+    overlay_status,
+    expected_gate_status,
+    expected_report_status,
+    expected_message,
+):
+    rows = ()
+    overrides = {}
+    if overlay_status == "settlement_nav_risk_watch":
+        rows = (
+            PaperNavSettlementRiskOverlayRow(
+                condition_id="condition-risky",
+                market_slug="market-risky",
+                token_count=1,
+                open_size=Decimal("100.0000"),
+                cost_basis=Decimal("100.0000"),
+                exit_value=Decimal("100.0000"),
+                share_of_exit_nav=Decimal("0.009950"),
+                overlay_status="watch",
+                settlement_timing_status="watch",
+                timing_cost_per_share=Decimal("0.020000"),
+                adjusted_net_probability_edge=Decimal("0.050000"),
+                reason_codes=("settlement_context_stale",),
+            ),
+        )
+        overrides = {
+            "acceptable_count": 0,
+            "watch_count": 1,
+            "acceptable_exit_value": Decimal("0"),
+            "watch_exit_value": Decimal("100.0000"),
+            "status": overlay_status,
+            "rows": rows,
+        }
+    elif overlay_status == "settlement_nav_risk_blocked":
+        rows = (
+            PaperNavSettlementRiskOverlayRow(
+                condition_id="condition-risky",
+                market_slug="market-risky",
+                token_count=1,
+                open_size=Decimal("100.0000"),
+                cost_basis=Decimal("100.0000"),
+                exit_value=Decimal("100.0000"),
+                share_of_exit_nav=Decimal("0.009950"),
+                overlay_status="blocked",
+                settlement_timing_status="blocked",
+                timing_cost_per_share=Decimal("0.050000"),
+                adjusted_net_probability_edge=Decimal("-0.010000"),
+                reason_codes=("unknown_resolution",),
+            ),
+        )
+        overrides = {
+            "acceptable_count": 0,
+            "blocked_count": 1,
+            "acceptable_exit_value": Decimal("0"),
+            "blocked_exit_value": Decimal("100.0000"),
+            "blocked_or_missing_exit_value": Decimal("100.0000"),
+            "blocked_or_missing_exit_nav_share": Decimal("0.150000"),
+            "status": overlay_status,
+            "rows": rows,
+        }
+    elif overlay_status == "empty_nav_settlement_risk_overlay":
+        overrides = {
+            "settlement_row_count": 0,
+            "exposure_row_count": 0,
+            "acceptable_count": 0,
+            "acceptable_exit_value": Decimal("0"),
+            "blocked_or_missing_exit_nav_share": Decimal("0.000000"),
+            "status": overlay_status,
+            "rows": (),
+        }
+
+    report = _report(
+        outcomes=_outcomes(),
+        cost_audit=_cost_audit(),
+        settlement_nav_risk=_settlement_nav_overlay(**overrides),
+    )
+
+    gate = report.gate_results[-1]
+    assert report.status == expected_report_status
+    assert gate.gate_name == "settlement_nav_risk"
+    assert gate.status == expected_gate_status
+    assert gate.message == expected_message
+    assert gate.observed_value == (
+        Decimal("0.000000")
+        if overlay_status != "settlement_nav_risk_blocked"
+        else Decimal("0.150000")
+    )
+    assert gate.threshold == Decimal("0.100000")
+
+
+@pytest.mark.parametrize(
     ("overlay_status", "expected_status", "expected_report_status"),
     (
         ("empty_nav_settlement_risk_overlay", "incomplete", "insufficient_evidence"),

@@ -296,6 +296,56 @@ def test_overlay_blocks_missing_settlement_timing_for_open_nav_exposure():
     assert missing_row.reason_codes == ("missing_settlement_timing",)
 
 
+def test_overlay_characterizes_missing_timing_row_as_blocked_with_missing_totals():
+    nav_report = _nav_report(
+        _exposure(
+            condition_id="condition-known",
+            market_slug="known-market",
+            open_size=Decimal("100.0000"),
+            cost_basis=Decimal("70.0000"),
+            exit_value=Decimal("80.0000"),
+            share_of_exit_nav=Decimal("0.080000"),
+        ),
+        _exposure(
+            condition_id="condition-missing-a",
+            market_slug="missing-a",
+            open_size=Decimal("75.0000"),
+            cost_basis=Decimal("55.0000"),
+            exit_value=Decimal("60.0000"),
+            share_of_exit_nav=Decimal("0.060000"),
+        ),
+        _exposure(
+            condition_id="condition-missing-b",
+            market_slug="missing-b",
+            open_size=Decimal("45.0000"),
+            cost_basis=Decimal("30.0000"),
+            exit_value=Decimal("35.0000"),
+            share_of_exit_nav=Decimal("0.035000"),
+        ),
+    )
+
+    report = _build_overlay(
+        nav_report,
+        _settlement_report(_timing_row(market_slug="known-market")),
+    )
+
+    assert report.status == "settlement_nav_risk_blocked"
+    assert report.acceptable_count == 1
+    assert report.watch_count == 0
+    assert report.blocked_count == 2
+    assert report.missing_settlement_count == 2
+    assert report.blocked_exit_value == Decimal("0")
+    assert report.missing_settlement_exit_value == Decimal("95.0000")
+    assert report.blocked_or_missing_exit_value == Decimal("95.0000")
+    assert report.blocked_or_missing_exit_nav_share == Decimal("0.095000")
+    missing_rows = tuple(
+        row for row in report.rows if row.settlement_timing_status is None
+    )
+    assert tuple(row.market_slug for row in missing_rows) == ("missing-a", "missing-b")
+    assert all(row.overlay_status == "blocked" for row in missing_rows)
+    assert all(row.reason_codes == ("missing_settlement_timing",) for row in missing_rows)
+
+
 def test_overlay_blocks_when_blocked_settlement_exposure_exceeds_configured_share():
     nav_report = _nav_report(
         _exposure(

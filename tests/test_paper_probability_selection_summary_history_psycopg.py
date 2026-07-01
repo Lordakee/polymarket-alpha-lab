@@ -16,6 +16,10 @@ from polymarket_alpha_lab.paper_probability_selection_summary_history import (
 
 
 SECRET_DSN = "postgresql://selection-history:secret@localhost:54322/db"
+REMOTE_DSN = (
+    "postgresql://selection-history:remote-token@db.remote-supabase.example/db"
+)
+REMOTE_HOST = "db.remote-supabase.example"
 ADAPTER_MODULE_NAME = (
     "polymarket_alpha_lab.paper_probability_selection_summary_history_psycopg"
 )
@@ -493,6 +497,88 @@ def test_load_with_psycopg_delegates_filters_commits_and_closes(
     assert connection.commit_count == 1
     assert connection.rollback_count == 0
     assert connection.close_count == 1
+
+
+def test_load_success_connection_close_failure_propagates_without_dsn(
+    monkeypatch: pytest.MonkeyPatch,
+    adapter_module: types.ModuleType,
+) -> None:
+    connection = FakeCloseFailingConnection()
+    report = _report()
+    connect_calls: list[str] = []
+    load_calls: list[Any] = []
+    _install_fake_psycopg(
+        monkeypatch,
+        connect=lambda dsn: connect_calls.append(dsn) or connection,
+    )
+
+    def load_reports(
+        connection_arg: Any,
+        *,
+        config_version: str | None,
+        history_status: str | None,
+        limit: int | None,
+        table_name: str,
+    ) -> tuple[PaperProbabilitySelectionSummaryHistoryReport, ...]:
+        load_calls.append(connection_arg)
+        return (report,)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        (
+            adapter_module
+            .load_paper_probability_selection_summary_history_reports_with_psycopg(
+                SECRET_DSN,
+                config_version="paper-probability-selection-summary-history-v0",
+                history_status="watch",
+                table_name="paper_probability_selection_summary_history_archive",
+                load_reports=load_reports,
+            )
+        )
+
+    assert str(exc_info.value) == "close failed without dsn"
+    assert "postgresql://" not in str(exc_info.value)
+    assert "secret" not in str(exc_info.value)
+    assert "localhost" not in str(exc_info.value)
+    assert "54322" not in str(exc_info.value)
+    assert connect_calls == [SECRET_DSN]
+    assert load_calls[0] is not connection
+    assert load_calls[0].connection is connection
+    assert connection.commit_count == 1
+    assert connection.rollback_count == 0
+    assert connection.close_count == 1
+
+
+def test_remote_dsn_is_rejected_before_psycopg_import_or_connect_without_leak(
+    monkeypatch: pytest.MonkeyPatch,
+    adapter_module: types.ModuleType,
+) -> None:
+    _remove_psycopg_modules(monkeypatch)
+    connect_calls: list[str] = []
+
+    class RejectingPsycopgFinder:
+        def find_spec(self, fullname: str, path: Any = None, target: Any = None) -> None:
+            if fullname.startswith("psycopg"):
+                raise AssertionError("psycopg must not be imported for remote DSN")
+            return None
+
+    finder = RejectingPsycopgFinder()
+    monkeypatch.setattr(sys, "meta_path", [finder, *sys.meta_path])
+
+    with pytest.raises(ValueError) as exc_info:
+        adapter_module.load_paper_probability_selection_summary_history_reports_with_psycopg(
+            REMOTE_DSN,
+            connect=lambda dsn: connect_calls.append(dsn) or FakeConnection(),
+        )
+
+    message = str(exc_info.value)
+    assert (
+        "POLYMARKET_ALPHA_LAB_PAPER_PROBABILITY_SELECTION_SUMMARY_HISTORY_DB_DSN"
+        in message
+    )
+    assert REMOTE_DSN not in message
+    assert "remote-token" not in message
+    assert REMOTE_HOST not in message
+    assert connect_calls == []
 
 
 def test_default_boundaries_use_history_store_functions(

@@ -11,6 +11,16 @@ from typing import Any
 
 import pytest
 
+from polymarket_alpha_lab.supabase_paper_research_packet_operator_flow_config import (
+    PAPER_RESEARCH_PACKET_OPERATOR_FLOW_DB_DSN_ENV_VAR,
+)
+
+
+LOCAL_POSTGRES_DSN = "postgresql://user:secret@localhost:54322/postgres"
+REMOTE_POSTGRES_DSN = (
+    "postgresql://user:supabase-service-token@db.remote.example/postgres"
+)
+
 
 @dataclass(frozen=True)
 class FakeReport:
@@ -136,6 +146,21 @@ def _remove_psycopg_modules(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delitem(sys.modules, "psycopg.types.json", raising=False)
 
 
+def _install_psycopg_import_blocker(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    attempted_imports: list[str] = []
+
+    class PyscopgImportBlocker:
+        def find_spec(self, fullname: str, path: Any = None, target: Any = None) -> None:
+            if fullname == "psycopg" or fullname.startswith("psycopg."):
+                attempted_imports.append(fullname)
+                raise AssertionError(f"unexpected psycopg import: {fullname}")
+            return None
+
+    finder = PyscopgImportBlocker()
+    monkeypatch.setattr(sys, "meta_path", [finder, *sys.meta_path])
+    return attempted_imports
+
+
 @pytest.fixture()
 def adapter_module(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
     _install_fake_store(monkeypatch)
@@ -207,13 +232,13 @@ def test_insert_opens_psycopg_connection_delegates_commits_and_closes(
     )
 
     inserted = adapter_module.insert_paper_research_packet_operator_flow_report_with_psycopg(
-        "postgresql://user:secret@example.invalid/db",
+        LOCAL_POSTGRES_DSN,
         report,
         table_name="operator_flow_archive",
     )
 
     assert inserted == row
-    assert connect_calls == ["postgresql://user:secret@example.invalid/db"]
+    assert connect_calls == [LOCAL_POSTGRES_DSN]
     store_connection, store_report, store_table_name = store_calls[0]
     assert store_connection is not connection
     assert store_connection.connection is connection
@@ -259,7 +284,7 @@ def test_load_opens_psycopg_connection_delegates_query_options_commits_and_close
     )
 
     loaded = adapter_module.load_paper_research_packet_operator_flow_reports_with_psycopg(
-        "postgresql://user:secret@example.invalid/db",
+        LOCAL_POSTGRES_DSN,
         config_version="paper-research-packet-operator-flow-v0",
         flow_status="pass",
         limit=10,
@@ -267,7 +292,7 @@ def test_load_opens_psycopg_connection_delegates_query_options_commits_and_close
     )
 
     assert loaded == (report,)
-    assert connect_calls == ["postgresql://user:secret@example.invalid/db"]
+    assert connect_calls == [LOCAL_POSTGRES_DSN]
     store_connection, config_version, flow_status, limit, table_name = store_calls[0]
     assert store_connection is not connection
     assert store_connection.connection is connection
@@ -275,6 +300,58 @@ def test_load_opens_psycopg_connection_delegates_query_options_commits_and_close
     assert flow_status == "pass"
     assert limit == 10
     assert table_name == "operator_flow_archive"
+    assert connection.commit_count == 1
+    assert connection.rollback_count == 0
+    assert connection.close_count == 1
+
+
+def test_load_success_connection_close_failure_propagates_without_dsn(
+    monkeypatch: pytest.MonkeyPatch,
+    adapter_module: types.ModuleType,
+) -> None:
+    connection = FakeCloseFailingConnection()
+    report = _fake_report()
+    connect_calls: list[str] = []
+    store_calls: list[Any] = []
+    _install_fake_psycopg(
+        monkeypatch,
+        connect=lambda dsn: connect_calls.append(dsn) or connection,
+    )
+
+    def fake_load(
+        connection_arg: Any,
+        *,
+        config_version: str | None,
+        flow_status: str | None,
+        limit: int | None,
+        table_name: str,
+    ) -> tuple[FakeReport, ...]:
+        store_calls.append(connection_arg)
+        return (report,)
+
+    monkeypatch.setattr(
+        adapter_module,
+        "load_paper_research_packet_operator_flow_reports",
+        fake_load,
+        raising=False,
+    )
+
+    with pytest.raises(RuntimeError) as exc_info:
+        adapter_module.load_paper_research_packet_operator_flow_reports_with_psycopg(
+            LOCAL_POSTGRES_DSN,
+            config_version="paper-research-packet-operator-flow-v0",
+            flow_status="pass",
+            table_name="operator_flow_archive",
+        )
+
+    assert str(exc_info.value) == "close failed without dsn"
+    assert "postgresql://" not in str(exc_info.value)
+    assert "secret" not in str(exc_info.value)
+    assert "localhost" not in str(exc_info.value)
+    assert "54322" not in str(exc_info.value)
+    assert connect_calls == [LOCAL_POSTGRES_DSN]
+    assert store_calls[0] is not connection
+    assert store_calls[0].connection is connection
     assert connection.commit_count == 1
     assert connection.rollback_count == 0
     assert connection.close_count == 1
@@ -316,7 +393,7 @@ def test_insert_adapts_json_values_for_psycopg_without_wrapping_scalars(
     )
 
     adapter_module.insert_paper_research_packet_operator_flow_report_with_psycopg(
-        "postgresql://user:secret@example.invalid/db",
+        LOCAL_POSTGRES_DSN,
         _fake_report(),
     )
 
@@ -360,7 +437,7 @@ def test_insert_exposes_cursor_rowcount_to_store(
     )
 
     inserted = adapter_module.insert_paper_research_packet_operator_flow_report_with_psycopg(
-        "postgresql://user:secret@example.invalid/db",
+        LOCAL_POSTGRES_DSN,
         _fake_report(),
     )
 
@@ -388,7 +465,7 @@ def test_insert_rolls_back_closes_and_reraises_store_exception_without_dsn(
 
     with pytest.raises(ValueError) as exc_info:
         adapter_module.insert_paper_research_packet_operator_flow_report_with_psycopg(
-            "postgresql://user:secret@example.invalid/db",
+            LOCAL_POSTGRES_DSN,
             _fake_report(),
         )
 
@@ -425,7 +502,7 @@ def test_cleanup_failure_does_not_mask_store_exception(
 
     with pytest.raises(ValueError) as exc_info:
         adapter_module.insert_paper_research_packet_operator_flow_report_with_psycopg(
-            "postgresql://user:secret@example.invalid/db",
+            LOCAL_POSTGRES_DSN,
             _fake_report(),
         )
 
@@ -445,7 +522,7 @@ def test_connect_failure_raises_clean_error_without_dsn(
 
     with pytest.raises(RuntimeError) as exc_info:
         adapter_module.load_paper_research_packet_operator_flow_reports_with_psycopg(
-            "postgresql://user:secret@example.invalid/db",
+            LOCAL_POSTGRES_DSN,
         )
 
     assert "failed to connect" in str(exc_info.value)
@@ -477,8 +554,34 @@ def test_missing_psycopg_raises_clean_error_without_import_time_dependency(
 
     with pytest.raises(RuntimeError) as exc_info:
         adapter_module.load_paper_research_packet_operator_flow_reports_with_psycopg(
-            "postgresql://user:secret@example.invalid/db",
+            LOCAL_POSTGRES_DSN,
         )
 
     assert "psycopg is required" in str(exc_info.value)
     assert "postgresql://" not in str(exc_info.value)
+
+
+def test_remote_dsn_is_rejected_before_psycopg_import_or_connect(
+    monkeypatch: pytest.MonkeyPatch,
+    adapter_module: types.ModuleType,
+) -> None:
+    _remove_psycopg_modules(monkeypatch)
+    attempted_imports = _install_psycopg_import_blocker(monkeypatch)
+
+    with pytest.raises(ValueError) as exc_info:
+        adapter_module.load_paper_research_packet_operator_flow_reports_with_psycopg(
+            REMOTE_POSTGRES_DSN,
+        )
+
+    assert attempted_imports == []
+    message = str(exc_info.value)
+    assert PAPER_RESEARCH_PACKET_OPERATOR_FLOW_DB_DSN_ENV_VAR in message
+    assert REMOTE_POSTGRES_DSN not in message
+    assert "supabase-service-token" not in message
+    assert "db.remote.example" not in message
+    formatted = "".join(
+        traceback.format_exception(exc_info.type, exc_info.value, exc_info.tb),
+    )
+    assert REMOTE_POSTGRES_DSN not in formatted
+    assert "supabase-service-token" not in formatted
+    assert "db.remote.example" not in formatted

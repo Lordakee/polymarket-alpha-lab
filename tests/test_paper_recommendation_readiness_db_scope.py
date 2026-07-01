@@ -42,6 +42,8 @@ ALLOWED_IMPORTS = {
         "psycopg.types.json",
         "typing",
         "polymarket_alpha_lab.paper_recommendation_readiness_store",
+        "polymarket_alpha_lab.supabase_local_dsn",
+        "polymarket_alpha_lab.supabase_paper_recommendation_readiness_config",
     },
     CONFIG_PATH.name: {
         "__future__",

@@ -16,6 +16,8 @@ from polymarket_alpha_lab.supabase_paper_broker_config import (
 )
 
 
+LOCAL_DSN = "postgresql://postgres:postgres@localhost:54322/postgres"
+REMOTE_SECRET_DSN = "postgresql://sensitive-token@fake.example.invalid/db"
 SECRET_DSN = "postgresql://paper-broker:secret@localhost:54322/db"
 ADAPTER_MODULE_NAME = "polymarket_alpha_lab.paper_broker_psycopg"
 
@@ -66,6 +68,12 @@ class FakeCommitFailingConnection(FakeConnection):
         raise RuntimeError("commit failed without dsn")
 
 
+class FakeCommitAndCloseFailingConnection(FakeCommitFailingConnection):
+    def close(self) -> None:
+        self.close_count += 1
+        raise RuntimeError("close failed without dsn")
+
+
 class FakeRollbackFailingConnection(FakeConnection):
     def rollback(self) -> None:
         self.rollback_count += 1
@@ -76,6 +84,12 @@ class FakeCloseFailingConnection(FakeConnection):
     def close(self) -> None:
         self.close_count += 1
         raise RuntimeError("close failed without dsn")
+
+
+class FakeSecretCloseFailingConnection(FakeConnection):
+    def close(self) -> None:
+        self.close_count += 1
+        raise RuntimeError(f"close failed for {SECRET_DSN}")
 
 
 class FakeJsonb:
@@ -142,6 +156,14 @@ def _enabled_config() -> SupabasePaperBrokerConfig:
         dsn=SECRET_DSN,
         table_name="paper_broker_execution_archive",
     )
+
+
+def _unchecked_enabled_config(dsn: str) -> SupabasePaperBrokerConfig:
+    config = object.__new__(SupabasePaperBrokerConfig)
+    object.__setattr__(config, "enabled", True)
+    object.__setattr__(config, "dsn", dsn)
+    object.__setattr__(config, "table_name", "paper_broker_execution_records")
+    return config
 
 
 def test_public_exports_and_import_do_not_require_psycopg(
@@ -364,6 +386,123 @@ def test_config_entrypoint_rejects_false_record_flags_before_connecting(
     assert connect_calls == []
 
 
+@pytest.mark.parametrize(
+    ("entrypoint_name", "call_kwargs"),
+    (
+        (
+            "insert_paper_broker_execution_record_with_psycopg",
+            {"record": _record(), "insert_record": lambda *args, **kwargs: object()},
+        ),
+        (
+            "load_paper_broker_execution_records_with_psycopg",
+            {"load_records": lambda *args, **kwargs: ()},
+        ),
+    ),
+)
+def test_remote_dsn_is_rejected_before_psycopg_connect_and_json_adapter(
+    monkeypatch: pytest.MonkeyPatch,
+    adapter_module: types.ModuleType,
+    entrypoint_name: str,
+    call_kwargs: dict[str, object],
+) -> None:
+    connect_calls: list[str] = []
+    _install_fake_psycopg(
+        monkeypatch,
+        connect=lambda dsn: connect_calls.append(dsn) or FakeConnection(),
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        getattr(adapter_module, entrypoint_name)(REMOTE_SECRET_DSN, **call_kwargs)
+
+    message = str(exc_info.value)
+    assert "POLYMARKET_ALPHA_LAB_PAPER_BROKER_DB_DSN" in message
+    assert REMOTE_SECRET_DSN not in message
+    assert "postgresql://" not in message
+    assert "sensitive-token" not in message
+    assert "fake.example.invalid" not in message
+    assert connect_calls == []
+
+
+def test_remote_dsn_from_config_is_rejected_before_connect_injection(
+    adapter_module: types.ModuleType,
+) -> None:
+    connect_calls: list[str] = []
+    config = _unchecked_enabled_config(REMOTE_SECRET_DSN)
+
+    with pytest.raises(ValueError) as exc_info:
+        adapter_module.insert_paper_broker_execution_record_from_config(
+            config,
+            _record(),
+            connect=lambda dsn: connect_calls.append(dsn) or FakeConnection(),
+            insert_record=lambda *args, **kwargs: object(),
+        )
+
+    message = str(exc_info.value)
+    assert "POLYMARKET_ALPHA_LAB_PAPER_BROKER_DB_DSN" in message
+    assert REMOTE_SECRET_DSN not in message
+    assert "postgresql://" not in message
+    assert "sensitive-token" not in message
+    assert "fake.example.invalid" not in message
+    assert connect_calls == []
+
+
+def test_owned_connection_rejects_remote_dsn_before_connection_factory(
+    adapter_module: types.ModuleType,
+) -> None:
+    factory_calls = 0
+    operation_calls = 0
+
+    def connection_factory() -> FakeConnection:
+        nonlocal factory_calls
+        factory_calls += 1
+        raise AssertionError("connection factory must not run before dsn validation")
+
+    def operation(connection: Any) -> object:
+        nonlocal operation_calls
+        operation_calls += 1
+        return object()
+
+    with pytest.raises(ValueError) as exc_info:
+        adapter_module._with_owned_connection(
+            REMOTE_SECRET_DSN,
+            operation,
+            connection_factory=connection_factory,
+        )
+
+    message = str(exc_info.value)
+    assert "POLYMARKET_ALPHA_LAB_PAPER_BROKER_DB_DSN" in message
+    assert REMOTE_SECRET_DSN not in message
+    assert "postgresql://" not in message
+    assert "sensitive-token" not in message
+    assert "fake.example.invalid" not in message
+    assert factory_calls == 0
+    assert operation_calls == 0
+
+
+def test_local_dsn_reaches_psycopg_connect_and_json_adapter(
+    monkeypatch: pytest.MonkeyPatch,
+    adapter_module: types.ModuleType,
+) -> None:
+    connection = FakeConnection()
+    connect_calls: list[str] = []
+    _install_fake_psycopg(
+        monkeypatch,
+        connect=lambda dsn: connect_calls.append(dsn) or connection,
+    )
+
+    result = adapter_module.insert_paper_broker_execution_record_with_psycopg(
+        LOCAL_DSN,
+        _record(),
+        insert_record=lambda *args, **kwargs: "inserted",
+    )
+
+    assert result == "inserted"
+    assert connect_calls == [LOCAL_DSN]
+    assert connection.commit_count == 1
+    assert connection.rollback_count == 0
+    assert connection.close_count == 1
+
+
 def test_with_psycopg_opens_owned_connection_delegates_commits_and_closes(
     monkeypatch: pytest.MonkeyPatch,
     adapter_module: types.ModuleType,
@@ -467,6 +606,70 @@ def test_load_with_psycopg_opens_owned_connection_delegates_commits_and_closes(
     assert source_gate_status == "pass"
     assert limit == 10
     assert table_name == "paper_broker_execution_archive"
+    assert connection.commit_count == 1
+    assert connection.rollback_count == 0
+    assert connection.close_count == 1
+
+
+def test_successful_insert_close_failure_propagates(
+    monkeypatch: pytest.MonkeyPatch,
+    adapter_module: types.ModuleType,
+) -> None:
+    connection = FakeCloseFailingConnection()
+    _install_fake_psycopg(monkeypatch, connect=lambda dsn: connection)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        adapter_module.insert_paper_broker_execution_record_with_psycopg(
+            LOCAL_DSN,
+            _record(),
+            insert_record=lambda *args, **kwargs: object(),
+        )
+
+    assert str(exc_info.value) == "close failed without dsn"
+    assert connection.commit_count == 1
+    assert connection.rollback_count == 0
+    assert connection.close_count == 1
+
+
+def test_successful_load_close_failure_propagates(
+    monkeypatch: pytest.MonkeyPatch,
+    adapter_module: types.ModuleType,
+) -> None:
+    connection = FakeCloseFailingConnection()
+    expected_records = (_record(),)
+    _install_fake_psycopg(monkeypatch, connect=lambda dsn: connection)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        adapter_module.load_paper_broker_execution_records_with_psycopg(
+            LOCAL_DSN,
+            load_records=lambda *args, **kwargs: expected_records,
+        )
+
+    assert str(exc_info.value) == "close failed without dsn"
+    assert connection.commit_count == 1
+    assert connection.rollback_count == 0
+    assert connection.close_count == 1
+
+
+def test_successful_close_failure_propagates_redacted_error(
+    monkeypatch: pytest.MonkeyPatch,
+    adapter_module: types.ModuleType,
+) -> None:
+    connection = FakeSecretCloseFailingConnection()
+    _install_fake_psycopg(monkeypatch, connect=lambda dsn: connection)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        adapter_module.insert_paper_broker_execution_record_with_psycopg(
+            SECRET_DSN,
+            _record(),
+            insert_record=lambda *args, **kwargs: object(),
+        )
+
+    message = str(exc_info.value)
+    assert message == "close failed for <redacted>"
+    assert "postgresql://" not in message
+    assert "secret" not in message
+    assert "localhost" not in message
     assert connection.commit_count == 1
     assert connection.rollback_count == 0
     assert connection.close_count == 1
@@ -584,6 +787,33 @@ def test_load_failure_rolls_back_closes_reraises_and_does_not_echo_dsn(
     assert connection.close_count == 1
 
 
+def test_load_operation_failure_close_failure_is_swallowed_without_echoing_dsn(
+    monkeypatch: pytest.MonkeyPatch,
+    adapter_module: types.ModuleType,
+) -> None:
+    connection = FakeCloseFailingConnection()
+    _install_fake_psycopg(monkeypatch, connect=lambda dsn: connection)
+
+    def load_records(connection_arg: Any, **kwargs: object) -> object:
+        raise ValueError("load failed without dsn")
+
+    with pytest.raises(ValueError) as exc_info:
+        adapter_module.load_paper_broker_execution_records_with_psycopg(
+            LOCAL_DSN,
+            load_records=load_records,
+        )
+
+    message = str(exc_info.value)
+    assert message == "load failed without dsn"
+    assert "close failed" not in message
+    assert "postgresql://" not in message
+    assert "postgres" not in message
+    assert "localhost" not in message
+    assert connection.commit_count == 0
+    assert connection.rollback_count == 1
+    assert connection.close_count == 1
+
+
 @pytest.mark.parametrize(
     "connection",
     (
@@ -634,6 +864,31 @@ def test_commit_failure_rolls_back_closes_reraises_and_does_not_echo_dsn(
 
     message = str(exc_info.value)
     assert "commit failed without dsn" in message
+    assert "postgresql://" not in message
+    assert "secret" not in message
+    assert "localhost" not in message
+    assert connection.commit_count == 1
+    assert connection.rollback_count == 1
+    assert connection.close_count == 1
+
+
+def test_commit_failure_close_failure_is_swallowed_and_commit_exception_wins(
+    monkeypatch: pytest.MonkeyPatch,
+    adapter_module: types.ModuleType,
+) -> None:
+    connection = FakeCommitAndCloseFailingConnection()
+    _install_fake_psycopg(monkeypatch, connect=lambda dsn: connection)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        adapter_module.insert_paper_broker_execution_record_with_psycopg(
+            SECRET_DSN,
+            _record(),
+            insert_record=lambda *args, **kwargs: object(),
+        )
+
+    message = str(exc_info.value)
+    assert message == "commit failed without dsn"
+    assert "close failed" not in message
     assert "postgresql://" not in message
     assert "secret" not in message
     assert "localhost" not in message

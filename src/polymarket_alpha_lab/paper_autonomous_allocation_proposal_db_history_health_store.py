@@ -120,11 +120,13 @@ def insert_paper_autonomous_allocation_proposal_db_history_health_report_with_re
     try:
         cursor.execute(sql, params)
         rowcount = cursor.rowcount
-    finally:
+    except BaseException:
         try:
             cursor.close()
-        except Exception:
+        except BaseException:
             pass
+        raise
+    cursor.close()
     if rowcount not in (0, 1):
         raise ValueError("insert rowcount must be 0 or 1")
     return PaperAutonomousAllocationProposalDbHistoryHealthInsertResult(
@@ -188,11 +190,13 @@ def load_paper_autonomous_allocation_proposal_db_history_health_reports(
     try:
         cursor.execute(sql, tuple(params))
         records = cursor.fetchall()
-    finally:
+    except BaseException:
         try:
             cursor.close()
-        except Exception:
+        except BaseException:
             pass
+        raise
+    cursor.close()
     rows = tuple(_db_row_from_record(record) for record in records)
     return tuple(
         paper_autonomous_allocation_proposal_db_history_health_report_from_db_row(

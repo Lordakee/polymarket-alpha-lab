@@ -39,13 +39,17 @@ DB_ROW_CODEC_MODULE_NAMES = (
 )
 
 PLANNED_RECOMMENDATION_MODULE_NAMES = (
+    "paper_recommendation_queue",
+)
+
+AVAILABLE_MODULE_LOCAL_RECOMMENDATION_MODULE_NAMES = (
     "paper_capital_cost",
+    "paper_capital_cost_side_edge_adapter",
     "paper_correlation_grouping",
     "paper_cost_stress",
     "paper_liquidity_depth_gate",
     "paper_outcome_uncertainty",
     "paper_probability_recommendation_queue",
-    "paper_recommendation_queue",
     "paper_recommendation_allocation",
     "paper_recommendation_calibration_gate",
     "paper_recommendation_consistency",
@@ -60,6 +64,11 @@ PLANNED_RECOMMENDATION_MODULE_NAMES = (
     "paper_side_edge_adapter",
 )
 
+RECOMMENDATION_SCOPE_BOUNDARY_MODULE_NAMES = (
+    PLANNED_RECOMMENDATION_MODULE_NAMES
+    + AVAILABLE_MODULE_LOCAL_RECOMMENDATION_MODULE_NAMES
+)
+
 RECOMMENDATION_MODULE_NAMES = IMPLEMENTED_RECOMMENDATION_MODULE_NAMES + tuple(
     module_name
     for module_name in DB_ROW_CODEC_MODULE_NAMES
@@ -67,175 +76,12 @@ RECOMMENDATION_MODULE_NAMES = IMPLEMENTED_RECOMMENDATION_MODULE_NAMES + tuple(
 )
 
 PLANNED_RECOMMENDATION_PUBLIC_NAMES = {
-    "paper_capital_cost": frozenset(
-        {
-            "PaperCapitalCostConfig",
-            "PaperCapitalCostReport",
-            "PaperCapitalCostRow",
-            "build_paper_capital_cost_report",
-        },
-    ),
-    "paper_correlation_grouping": frozenset(
-        {
-            "PaperCorrelationGroupingConfig",
-            "PaperCorrelationGroupingReport",
-            "PaperCorrelationGroupRow",
-            "PaperCorrelationInputRow",
-            "build_paper_correlation_grouping_report",
-        },
-    ),
-    "paper_cost_stress": frozenset(
-        {
-            "PaperCostStressConfig",
-            "PaperCostStressInput",
-            "PaperCostStressReport",
-            "PaperCostStressScenarioRow",
-            "build_paper_cost_stress_report",
-        },
-    ),
-    "paper_liquidity_depth_gate": frozenset(
-        {
-            "PaperLiquidityDepthGateConfig",
-            "PaperLiquidityDepthGateInput",
-            "PaperLiquidityDepthGateReport",
-            "PaperLiquidityDepthGateRow",
-            "build_paper_liquidity_depth_gate_report",
-        },
-    ),
-    "paper_outcome_uncertainty": frozenset(
-        {
-            "PaperOutcomeUncertaintyConfig",
-            "PaperOutcomeUncertaintyInput",
-            "PaperOutcomeUncertaintyReport",
-            "PaperOutcomeUncertaintyRow",
-            "build_paper_outcome_uncertainty_report",
-        },
-    ),
-    "paper_probability_recommendation_queue": frozenset(
-        {
-            "PaperProbabilityRecommendationQueueConfig",
-            "PaperProbabilityRecommendationQueueReport",
-            "PaperProbabilityRecommendationQueueRow",
-            "build_paper_probability_recommendation_queue_report",
-        },
-    ),
     "paper_recommendation_queue": frozenset(
         {
             "PaperRecommendationQueueConfig",
             "PaperRecommendationQueueReport",
             "PaperRecommendationQueueRow",
             "build_paper_recommendation_queue_report",
-        },
-    ),
-    "paper_recommendation_allocation": frozenset(
-        {
-            "PaperRecommendationAllocationConfig",
-            "PaperRecommendationAllocationInput",
-            "PaperRecommendationAllocationReport",
-            "PaperRecommendationAllocationRow",
-            "build_paper_recommendation_allocation_report",
-        },
-    ),
-    "paper_recommendation_calibration_gate": frozenset(
-        {
-            "PaperRecommendationCalibrationGateConfig",
-            "PaperRecommendationCalibrationGateMetric",
-            "PaperRecommendationCalibrationGateReport",
-            "PaperRecommendationCalibrationGateRow",
-            "PaperRecommendationCalibrationGateSourceRow",
-            "build_paper_recommendation_calibration_gate_report",
-        },
-    ),
-    "paper_recommendation_consistency": frozenset(
-        {
-            "PaperRecommendationConsistencyConfig",
-            "PaperRecommendationConsistencyFact",
-            "PaperRecommendationConsistencyReport",
-            "PaperRecommendationConsistencyRow",
-            "build_paper_recommendation_consistency_report",
-        },
-    ),
-    "paper_recommendation_gate_summary": frozenset(
-        {
-            "GateReasonCodeCount",
-            "PaperRecommendationGateInputRow",
-            "PaperRecommendationGateSummaryReport",
-            "PaperRecommendationGateSummaryRow",
-            "build_paper_recommendation_gate_summary_report",
-        },
-    ),
-    "paper_recommendation_health": frozenset(
-        {
-            "PaperRecommendationHealthConfig",
-            "PaperRecommendationHealthInputRow",
-            "PaperRecommendationHealthReasonCodeCount",
-            "PaperRecommendationHealthReport",
-            "build_paper_recommendation_health_report",
-        },
-    ),
-    "paper_recommendation_manifest": frozenset(
-        {
-            "PaperRecommendationManifestConfig",
-            "PaperRecommendationManifestItem",
-            "PaperRecommendationManifestReport",
-            "build_paper_recommendation_manifest_report",
-        },
-    ),
-    "paper_recommendation_readiness": frozenset(
-        {
-            "PaperRecommendationReadinessConfig",
-            "PaperRecommendationReadinessGateInput",
-            "PaperRecommendationReadinessReport",
-            "PaperRecommendationReadinessRow",
-            "build_paper_recommendation_readiness_report",
-        },
-    ),
-    "paper_recommendation_shadow_nav": frozenset(
-        {
-            "PaperRecommendationShadowNavAllocationRow",
-            "PaperRecommendationShadowNavConfig",
-            "PaperRecommendationShadowNavReport",
-            "build_paper_recommendation_shadow_nav_report",
-        },
-    ),
-    "paper_recommendation_thresholds": frozenset(
-        {
-            "PaperRecommendationThresholdsConfig",
-            "PaperRecommendationThresholdsInputRow",
-            "PaperRecommendationThresholdsReport",
-            "PaperRecommendationThresholdsRow",
-            "build_paper_recommendation_thresholds_report",
-        },
-    ),
-    "paper_research_packet": frozenset(
-        {
-            "PaperResearchPacketConfig",
-            "PaperResearchPacketInputRow",
-            "PaperResearchPacketReport",
-            "PaperResearchPacketRow",
-            "build_paper_research_packet",
-            "build_paper_research_packet_report",
-        },
-    ),
-    "paper_settlement_timing": frozenset(
-        {
-            "PaperSettlementTimingConfig",
-            "PaperSettlementTimingInput",
-            "PaperSettlementTimingReport",
-            "PaperSettlementTimingRow",
-            "build_paper_settlement_timing_report",
-        },
-    ),
-    "paper_side_edge_adapter": frozenset(
-        {
-            "PaperSideEdgeAdapterConfig",
-            "PaperSideEdgeAdapterInput",
-            "PaperSideEdgeStrategyRow",
-            "build_paper_side_edge_report",
-            "build_paper_side_edge_report_from_adapter_inputs",
-            "build_paper_side_edge_report_from_strategy_rows",
-            "paper_side_edge_inputs_from_adapter_inputs",
-            "paper_side_edge_inputs_from_strategy_rows",
         },
     ),
 }
@@ -631,13 +477,19 @@ def test_recommendation_layer_scope_includes_current_recommendation_modules() ->
 
 def test_recommendation_layer_scope_lists_planned_recommendation_modules() -> None:
     assert set(PLANNED_RECOMMENDATION_MODULE_NAMES) == {
+        "paper_recommendation_queue",
+    }
+
+
+def test_recommendation_layer_scope_lists_available_module_local_recommendation_modules() -> None:
+    assert set(AVAILABLE_MODULE_LOCAL_RECOMMENDATION_MODULE_NAMES) == {
         "paper_capital_cost",
+        "paper_capital_cost_side_edge_adapter",
         "paper_correlation_grouping",
         "paper_cost_stress",
         "paper_liquidity_depth_gate",
         "paper_outcome_uncertainty",
         "paper_probability_recommendation_queue",
-        "paper_recommendation_queue",
         "paper_recommendation_allocation",
         "paper_recommendation_calibration_gate",
         "paper_recommendation_consistency",
@@ -651,6 +503,32 @@ def test_recommendation_layer_scope_lists_planned_recommendation_modules() -> No
         "paper_settlement_timing",
         "paper_side_edge_adapter",
     }
+
+
+def test_available_module_local_recommendation_modules_are_not_planned() -> None:
+    assert (
+        set(AVAILABLE_MODULE_LOCAL_RECOMMENDATION_MODULE_NAMES)
+        & set(PLANNED_RECOMMENDATION_MODULE_NAMES)
+    ) == set()
+
+
+def test_paper_recommendation_queue_remains_planned_only() -> None:
+    assert "paper_recommendation_queue" in PLANNED_RECOMMENDATION_MODULE_NAMES
+    assert (
+        "paper_recommendation_queue"
+        not in AVAILABLE_MODULE_LOCAL_RECOMMENDATION_MODULE_NAMES
+    )
+
+
+def test_planned_recommendation_public_names_are_planned_only() -> None:
+    assert set(PLANNED_RECOMMENDATION_PUBLIC_NAMES) == set(
+        PLANNED_RECOMMENDATION_MODULE_NAMES,
+    )
+
+
+def test_available_module_local_recommendation_modules_exist() -> None:
+    for module_name in AVAILABLE_MODULE_LOCAL_RECOMMENDATION_MODULE_NAMES:
+        assert module_path(module_name).exists(), module_name
 
 
 def test_recommendation_layer_lists_db_row_codec_modules() -> None:
@@ -667,6 +545,19 @@ def test_planned_recommendation_public_names_are_not_package_root_exports() -> N
         for public_name in public_names:
             assert public_name not in package_exports, public_name
             assert public_name not in package_bound_names, public_name
+
+
+@pytest.mark.parametrize("module_name", AVAILABLE_MODULE_LOCAL_RECOMMENDATION_MODULE_NAMES)
+def test_available_module_local_public_names_are_not_package_root_exports(
+    module_name: str,
+) -> None:
+    module = import_recommendation_module(module_name)
+    package_exports = package_root_exports()
+    package_bound_names = package_root_bound_names()
+
+    for public_name in public_api_names(module):
+        assert public_name not in package_exports, public_name
+        assert public_name not in package_bound_names, public_name
 
 
 def import_recommendation_module(module_name: str) -> ModuleType:
@@ -1050,8 +941,8 @@ def assert_no_package_root_import_dependency(module: ModuleType) -> None:
             )
 
 
-@pytest.mark.parametrize("module_name", PLANNED_RECOMMENDATION_MODULE_NAMES)
-def test_planned_recommendation_module_source_boundary_when_present(
+@pytest.mark.parametrize("module_name", RECOMMENDATION_SCOPE_BOUNDARY_MODULE_NAMES)
+def test_recommendation_layer_scope_module_source_boundary_when_present(
     module_name: str,
 ) -> None:
     path = module_path(module_name)

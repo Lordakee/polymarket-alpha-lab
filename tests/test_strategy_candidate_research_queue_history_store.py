@@ -307,7 +307,7 @@ def test_insert_history_report_uses_parameterized_insert(
     assert params[0] == "a" * 64
 
 
-def test_insert_history_report_preserves_execute_error_when_cursor_close_also_fails(
+def test_insert_history_report_operation_failure_close_swallowed_for_execute_error(
     store_module: types.ModuleType,
 ) -> None:
     execute_error = RuntimeError("execute failed")
@@ -325,7 +325,7 @@ def test_insert_history_report_preserves_execute_error_when_cursor_close_also_fa
     assert cursor.closed is True
 
 
-def test_insert_history_report_propagates_cursor_close_error_after_successful_execute(
+def test_insert_history_report_success_close_propagates_after_execute(
     store_module: types.ModuleType,
 ) -> None:
     close_error = RuntimeError("close failed")
@@ -420,7 +420,7 @@ def test_load_history_reports_filters_and_limits_with_params(
     assert params == ("research_ready", "ready", 25)
 
 
-def test_load_history_reports_preserves_execute_error_when_cursor_close_also_fails(
+def test_load_history_reports_operation_failure_close_swallowed_for_execute_error(
     store_module: types.ModuleType,
 ) -> None:
     execute_error = RuntimeError("execute failed")
@@ -437,7 +437,7 @@ def test_load_history_reports_preserves_execute_error_when_cursor_close_also_fai
     assert cursor.closed is True
 
 
-def test_load_history_reports_propagates_cursor_close_error_after_successful_fetch(
+def test_load_history_reports_success_close_propagates_after_fetch(
     store_module: types.ModuleType,
 ) -> None:
     close_error = RuntimeError("close failed")
@@ -452,6 +452,28 @@ def test_load_history_reports_propagates_cursor_close_error_after_successful_fet
 
     assert exc_info.value is close_error
     assert cursor.calls
+
+
+def test_load_history_reports_operation_failure_close_swallowed_for_db_row_error(
+    store_module: types.ModuleType,
+) -> None:
+    close_error = RuntimeError("close failed")
+    row = _history_db_row(_history_report())
+    bad_row = FakeHistoryDbRow(
+        **{
+            **row.__dict__,
+            "readonly": False,
+        },
+    )
+    cursor = FakeCursor(rows=(bad_row,), close_error=close_error)
+    connection = FakeConnection(cursor=cursor)
+
+    with pytest.raises(ValueError, match="readonly"):
+        store_module.load_paper_strategy_candidate_research_queue_history_reports(
+            connection,
+        )
+
+    assert cursor.closed is True
 
 
 def test_load_history_reports_filters_by_research_status_only(

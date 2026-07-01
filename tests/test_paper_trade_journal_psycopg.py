@@ -108,13 +108,13 @@ def test_insert_opens_psycopg_connection_delegates_commits_and_closes(
     monkeypatch.setattr(adapter_module, "insert_paper_trade_record", fake_insert)
 
     inserted = adapter_module.insert_paper_trade_record_with_psycopg(
-        "postgresql://fake.example.invalid/db",
+        "postgresql://postgres:postgres@localhost:54322/postgres",
         record,
         table_name="paper_trade_archive",
     )
 
     assert inserted == row
-    assert connect_calls == ["postgresql://fake.example.invalid/db"]
+    assert connect_calls == ["postgresql://postgres:postgres@localhost:54322/postgres"]
     store_connection, store_record, store_table_name = store_calls[0]
     assert store_connection is not connection
     assert store_connection.connection is connection
@@ -153,7 +153,7 @@ def test_load_opens_psycopg_connection_delegates_query_options_commits_and_close
     monkeypatch.setattr(adapter_module, "load_paper_trade_records", fake_load)
 
     loaded = adapter_module.load_paper_trade_records_with_psycopg(
-        "postgresql://fake.example.invalid/db",
+        "postgresql://postgres:postgres@localhost:54322/postgres",
         condition_id="0xabc",
         token_id="111",
         limit=10,
@@ -161,7 +161,7 @@ def test_load_opens_psycopg_connection_delegates_query_options_commits_and_close
     )
 
     assert loaded == (record,)
-    assert connect_calls == ["postgresql://fake.example.invalid/db"]
+    assert connect_calls == ["postgresql://postgres:postgres@localhost:54322/postgres"]
     store_connection, condition_id, token_id, limit, table_name = store_calls[0]
     assert store_connection is not connection
     assert store_connection.connection is connection
@@ -205,11 +205,11 @@ def test_insert_adapts_json_values_for_psycopg_without_wrapping_scalars(
     monkeypatch.setattr(adapter_module, "insert_paper_trade_record", fake_insert)
 
     adapter_module.insert_paper_trade_record_with_psycopg(
-        "postgresql://fake.example.invalid/db",
+        "postgresql://postgres:postgres@localhost:54322/postgres",
         FakeRecord(packet_id="packet-1"),
     )
 
-    assert connect_calls == ["postgresql://fake.example.invalid/db"]
+    assert connect_calls == ["postgresql://postgres:postgres@localhost:54322/postgres"]
     assert connection.cursor_count == 1
     assert connection.cursor_instance.close_count == 1
     _, params = connection.cursor_instance.calls[0]
@@ -238,7 +238,7 @@ def test_insert_rolls_back_closes_and_reraises_store_exception(
 
     with pytest.raises(ValueError, match="store failed without dsn"):
         adapter_module.insert_paper_trade_record_with_psycopg(
-            "postgresql://fake.example.invalid/db",
+            "postgresql://postgres:postgres@localhost:54322/postgres",
             FakeRecord(packet_id="packet-1"),
         )
 
@@ -269,7 +269,7 @@ def test_load_rolls_back_closes_and_reraises_commit_exception(
 
     with pytest.raises(RuntimeError, match="commit failed without dsn"):
         adapter_module.load_paper_trade_records_with_psycopg(
-            "postgresql://fake.example.invalid/db",
+            "postgresql://postgres:postgres@localhost:54322/postgres",
         )
 
     assert connection.commit_count == 1
@@ -288,7 +288,7 @@ def test_connect_failure_raises_clean_error_without_dsn(
 
     with pytest.raises(RuntimeError) as exc_info:
         adapter_module.load_paper_trade_records_with_psycopg(
-            "postgresql://fake.example.invalid/db",
+            "postgresql://postgres:postgres@localhost:54322/postgres",
         )
 
     assert "failed to connect" in str(exc_info.value)
@@ -314,7 +314,7 @@ def test_missing_psycopg_raises_clean_error_without_import_time_dependency(
 
     with pytest.raises(RuntimeError) as exc_info:
         adapter_module.load_paper_trade_records_with_psycopg(
-            "postgresql://fake.example.invalid/db",
+            "postgresql://postgres:postgres@localhost:54322/postgres",
         )
 
     assert "psycopg is required" in str(exc_info.value)

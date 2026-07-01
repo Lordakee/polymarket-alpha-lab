@@ -141,7 +141,7 @@ def test_load_with_psycopg_opens_autocommit_connection_and_closes_it(
 
     loaded = (
         read_module.load_paper_autonomous_screening_decision_support_gate_reports_with_psycopg(
-            "postgresql://readonly.example/autonomous_gate",
+            "postgresql://postgres:postgres@localhost:54322/postgres",
             options=read_module.PaperAutonomousScreeningDecisionSupportGateReadOptions(
                 limit=10,
             ),
@@ -150,7 +150,7 @@ def test_load_with_psycopg_opens_autocommit_connection_and_closes_it(
 
     assert loaded == expected_reports
     assert connect_calls == [
-        ("postgresql://readonly.example/autonomous_gate", {"autocommit": True}),
+        ("postgresql://postgres:postgres@localhost:54322/postgres", {"autocommit": True}),
     ]
     assert loader_connections == [connection]
     assert connection.commit_count == 0
@@ -175,7 +175,7 @@ def test_load_with_psycopg_closes_owned_connection_once_on_loader_error(
 
     with pytest.raises(RuntimeError, match="boom"):
         read_module.load_paper_autonomous_screening_decision_support_gate_reports_with_psycopg(
-            "postgresql://readonly.example/autonomous_gate",
+            "postgresql://postgres:postgres@localhost:54322/postgres",
         )
 
     assert connection.close_count == 1

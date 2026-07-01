@@ -99,11 +99,10 @@ def insert_autonomous_market_scorer_report_with_result(
     try:
         cursor.execute(sql, params)
         rowcount = cursor.rowcount
-    finally:
-        try:
-            cursor.close()
-        except Exception:
-            pass
+    except BaseException:
+        _close_cursor_after_operation_error(cursor)
+        raise
+    cursor.close()
     if rowcount not in (0, 1):
         raise ValueError("insert rowcount must be 0 or 1; rowcount must be 0 or 1")
     return AutonomousMarketScorerInsertResult(
@@ -159,11 +158,10 @@ def load_autonomous_market_scorer_reports(
     try:
         cursor.execute(sql, tuple(params))
         records = cursor.fetchall()
-    finally:
-        try:
-            cursor.close()
-        except Exception:
-            pass
+    except BaseException:
+        _close_cursor_after_operation_error(cursor)
+        raise
+    cursor.close()
     rows = tuple(_db_row_from_record(record) for record in records)
     return tuple(autonomous_market_scorer_report_from_db_row(row) for row in rows)
 
@@ -176,6 +174,13 @@ def _param_for_column(row: AutonomousMarketScorerDbRow, column: str) -> Any:
     if column == "payload":
         return row.payload_json
     return getattr(row, column)
+
+
+def _close_cursor_after_operation_error(cursor: Any) -> None:
+    try:
+        cursor.close()
+    except BaseException:
+        pass
 
 
 def _db_row_from_record(record: Any) -> AutonomousMarketScorerDbRow:

@@ -11,7 +11,9 @@ from typing import Any
 import pytest
 
 
-SECRET_DSN = "postgresql://worker:secret@example.invalid/polymarket"
+SECRET_DSN = "postgresql://worker:secret@localhost:54322/polymarket"
+REMOTE_DSN = "postgresql://worker:remote-token@db.remote-supabase.example/polymarket"
+REMOTE_HOST = "db.remote-supabase.example"
 ADAPTER_MODULE_NAME = (
     "polymarket_alpha_lab.paper_probability_selection_summary_psycopg"
 )
@@ -263,6 +265,86 @@ def test_load_delegates_all_selection_summary_filters_commits_and_closes(
     assert connection.close_count == 1
 
 
+def test_load_success_connection_close_failure_propagates_without_dsn(
+    monkeypatch: pytest.MonkeyPatch,
+    adapter_module: types.ModuleType,
+) -> None:
+    connection = FakeCloseFailingConnection()
+    report = FakeReport(config_version="paper-probability-selection-summary-v0")
+    connect_calls: list[str] = []
+    store_calls: list[Any] = []
+    _install_fake_psycopg(
+        monkeypatch,
+        connect=lambda dsn: connect_calls.append(dsn) or connection,
+    )
+
+    def fake_load(
+        connection_arg: Any,
+        *,
+        config_version: str | None,
+        source_queue_config_version: str | None,
+        source_cost_stress_config_version: str | None,
+        selection_status: str | None,
+        limit: int | None,
+        table_name: str,
+    ) -> tuple[FakeReport, ...]:
+        store_calls.append(connection_arg)
+        return (report,)
+
+    monkeypatch.setattr(
+        adapter_module,
+        "load_paper_probability_selection_summary_reports",
+        fake_load,
+    )
+
+    with pytest.raises(RuntimeError) as exc_info:
+        adapter_module.load_paper_probability_selection_summary_reports_with_psycopg(
+            SECRET_DSN,
+            config_version="paper-probability-selection-summary-v0",
+            selection_status="watch",
+            table_name="selection_summary_archive",
+        )
+
+    assert str(exc_info.value) == "close failed without dsn"
+    assert "postgresql://" not in str(exc_info.value)
+    assert "secret" not in str(exc_info.value)
+    assert "localhost" not in str(exc_info.value)
+    assert "54322" not in str(exc_info.value)
+    assert connect_calls == [SECRET_DSN]
+    assert store_calls[0] is not connection
+    assert store_calls[0].connection is connection
+    assert connection.commit_count == 1
+    assert connection.rollback_count == 0
+    assert connection.close_count == 1
+
+
+def test_remote_dsn_is_rejected_before_psycopg_import_without_echoing_secret(
+    monkeypatch: pytest.MonkeyPatch,
+    adapter_module: types.ModuleType,
+) -> None:
+    _remove_psycopg_modules(monkeypatch)
+
+    class RejectingPsycopgFinder:
+        def find_spec(self, fullname: str, path: Any = None, target: Any = None) -> None:
+            if fullname.startswith("psycopg"):
+                raise AssertionError("psycopg must not be imported for remote DSN")
+            return None
+
+    finder = RejectingPsycopgFinder()
+    monkeypatch.setattr(sys, "meta_path", [finder, *sys.meta_path])
+
+    with pytest.raises(ValueError) as exc_info:
+        adapter_module.load_paper_probability_selection_summary_reports_with_psycopg(
+            REMOTE_DSN,
+        )
+
+    message = str(exc_info.value)
+    assert "POLYMARKET_ALPHA_LAB_PAPER_PROBABILITY_SELECTION_SUMMARY_DB_DSN" in message
+    assert REMOTE_DSN not in message
+    assert "remote-token" not in message
+    assert REMOTE_HOST not in message
+
+
 def test_cursor_exposes_rowcount_and_wraps_dict_list_params_only(
     monkeypatch: pytest.MonkeyPatch,
     adapter_module: types.ModuleType,
@@ -342,7 +424,8 @@ def test_store_failure_rolls_back_closes_reraises_and_does_not_echo_dsn(
     assert "store failed without dsn" in message
     assert "postgresql://" not in message
     assert "secret" not in message
-    assert "example.invalid" not in message
+    assert "localhost" not in message
+    assert "54322" not in message
     assert connection.commit_count == 0
     assert connection.rollback_count == 1
     assert connection.close_count == 1
@@ -417,7 +500,8 @@ def test_commit_failure_rolls_back_closes_reraises_and_does_not_echo_dsn(
     assert "commit failed without dsn" in message
     assert "postgresql://" not in message
     assert "secret" not in message
-    assert "example.invalid" not in message
+    assert "localhost" not in message
+    assert "54322" not in message
     assert connection.commit_count == 1
     assert connection.rollback_count == 1
     assert connection.close_count == 1
@@ -440,7 +524,8 @@ def test_connect_failure_raises_clean_error_without_dsn(
     assert "failed to connect" in str(exc_info.value)
     assert "postgresql://" not in str(exc_info.value)
     assert "secret" not in str(exc_info.value)
-    assert "example.invalid" not in str(exc_info.value)
+    assert "localhost" not in str(exc_info.value)
+    assert "54322" not in str(exc_info.value)
     assert exc_info.value.__cause__ is None
     assert exc_info.value.__suppress_context__ is True
     formatted = "".join(
@@ -475,3 +560,5 @@ def test_missing_psycopg_raises_clean_runtime_error_without_dsn(
     assert "postgres extra" in message
     assert "postgresql://" not in message
     assert "secret" not in message
+    assert "localhost" not in message
+    assert "54322" not in message

@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 
 
-SECRET_DSN = "postgresql://worker:secret@example.invalid/polymarket"
+SECRET_DSN = "postgresql://postgres:postgres@localhost:54322/postgres"
 STORE_MODULE_NAME = (
     "polymarket_alpha_lab."
     "paper_autonomous_investment_ledger_db_history_health_store"

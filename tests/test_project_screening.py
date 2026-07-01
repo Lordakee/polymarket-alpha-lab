@@ -204,6 +204,45 @@ def test_project_screening_score_uses_weighted_edge_confidence_depth_risk_and_co
     assert report.queue_items[0].screening_score == Decimal("0.130000")
 
 
+def test_project_screening_spread_penalty_and_cost_penalty_are_independent():
+    report = build_report(
+        (
+            cost_aware_report(
+                market_slug="wide-spread-low-cost",
+                spread=Decimal("0.0800"),
+                risk_cost_per_share=Decimal("0.0000"),
+            ),
+            cost_aware_report(
+                market_slug="tight-spread-high-cost",
+                spread=Decimal("0.0100"),
+                risk_cost_per_share=Decimal("0.0200"),
+                min_net_edge=Decimal("0.0001"),
+            ),
+        ),
+        config=screening_config(
+            min_screening_score=Decimal("0.0000"),
+            spread_penalty_weight=Decimal("0.5000"),
+            cost_penalty_weight=Decimal("1.0000"),
+        ),
+    )
+
+    wide_spread = next(
+        candidate
+        for candidate in report.candidates
+        if candidate.market_slug == "wide-spread-low-cost"
+    )
+    high_cost = next(
+        candidate
+        for candidate in report.candidates
+        if candidate.market_slug == "tight-spread-high-cost"
+    )
+
+    assert wide_spread.spread_penalty == Decimal("0.040000")
+    assert wide_spread.cost_penalty == Decimal("0.000000")
+    assert high_cost.spread_penalty == Decimal("0.005000")
+    assert high_cost.cost_penalty == Decimal("0.020000")
+
+
 @pytest.mark.parametrize(
     ("source_report", "expected_bucket"),
     (

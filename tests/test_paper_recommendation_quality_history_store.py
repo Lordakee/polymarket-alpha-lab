@@ -45,25 +45,56 @@ class FakeQualityHistoryDbRow:
 
 
 class FakeCursor:
-    def __init__(self, rows: tuple[Any, ...] = (), rowcount: int = 1) -> None:
+    def __init__(
+        self,
+        rows: tuple[Any, ...] = (),
+        rowcount: int = 1,
+        *,
+        execute_error: BaseException | None = None,
+        fetchall_error: BaseException | None = None,
+        close_error: BaseException | None = None,
+    ) -> None:
         self.rows = rows
         self.rowcount = rowcount
+        self.execute_error = execute_error
+        self.fetchall_error = fetchall_error
+        self.close_error = close_error
         self.calls: list[tuple[str, tuple[Any, ...]]] = []
         self.closed = False
 
     def execute(self, sql: str, params: tuple[Any, ...] = ()) -> None:
         self.calls.append((sql, params))
+        if self.execute_error is not None:
+            raise self.execute_error
 
     def fetchall(self) -> tuple[Any, ...]:
+        if self.fetchall_error is not None:
+            raise self.fetchall_error
         return self.rows
 
     def close(self) -> None:
         self.closed = True
+        if self.close_error is not None:
+            raise self.close_error
 
 
 class FakeConnection:
-    def __init__(self, rows: tuple[Any, ...] = (), rowcount: int = 1) -> None:
-        self.cursor_instance = FakeCursor(rows, rowcount)
+    def __init__(
+        self,
+        rows: tuple[Any, ...] = (),
+        rowcount: int = 1,
+        *,
+        execute_error: BaseException | None = None,
+        fetchall_error: BaseException | None = None,
+        close_error: BaseException | None = None,
+    ) -> None:
+        self.cursor_instance = FakeCursor(
+            rows,
+            rowcount,
+            execute_error=execute_error,
+            fetchall_error=fetchall_error,
+            close_error=close_error,
+        )
         self.cursor_count = 0
         self.commit_count = 0
         self.rollback_count = 0
@@ -356,6 +387,46 @@ def test_insert_rejects_unsafe_table_name_without_executing_sql(
 
     assert connection.cursor_count == 0
     assert connection.cursor_instance.calls == []
+
+
+def test_insert_preserves_execute_exception_when_cursor_close_also_fails(
+    store_module: types.ModuleType,
+) -> None:
+    execute_error = RuntimeError("execute failed")
+    close_error = RuntimeError("close failed")
+    connection = FakeConnection(
+        execute_error=execute_error,
+        close_error=close_error,
+    )
+
+    with pytest.raises(RuntimeError, match="execute failed") as exc_info:
+        store_module.insert_paper_recommendation_quality_history_report(
+            connection,
+            FakeQualityHistoryReport(
+                generated_at=datetime(2026, 6, 22, 18, 30, tzinfo=UTC),
+                config_version="paper-recommendation-quality-history-v0",
+                history_status="pass",
+            ),
+        )
+
+    assert exc_info.value is execute_error
+    assert connection.cursor_instance.closed is True
+
+
+def test_load_propagates_cursor_close_exception_after_successful_query(
+    store_module: types.ModuleType,
+) -> None:
+    close_error = RuntimeError("close failed")
+    connection = FakeConnection(
+        rows=(fake_db_row(history_status="pass"),),
+        close_error=close_error,
+    )
+
+    with pytest.raises(RuntimeError, match="close failed") as exc_info:
+        store_module.load_paper_recommendation_quality_history_reports(connection)
+
+    assert exc_info.value is close_error
+    assert connection.cursor_instance.closed is True
 
 
 def test_load_quality_history_reports_filters_and_limits_with_params(

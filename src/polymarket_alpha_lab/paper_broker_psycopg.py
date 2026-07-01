@@ -13,8 +13,10 @@ from polymarket_alpha_lab.paper_broker_db_row import (
 )
 from polymarket_alpha_lab.supabase_paper_broker_config import (
     DEFAULT_PAPER_BROKER_DB_TABLE,
+    PAPER_BROKER_DB_DSN_ENV_VAR,
     SupabasePaperBrokerConfig,
 )
+from polymarket_alpha_lab.supabase_local_dsn import validate_local_postgres_dsn
 
 
 __all__ = (
@@ -284,6 +286,7 @@ def _with_raw_owned_connection(
     *,
     connect: Callable[[str], Any],
 ) -> _T:
+    validate_local_postgres_dsn(dsn, env_var_name=PAPER_BROKER_DB_DSN_ENV_VAR)
     return _with_owned_connection(
         dsn,
         operation,
@@ -297,6 +300,7 @@ def _with_psycopg_owned_connection(
     *,
     connect: Callable[[str], Any] | None,
 ) -> _T:
+    validate_local_postgres_dsn(dsn, env_var_name=PAPER_BROKER_DB_DSN_ENV_VAR)
     jsonb_adapter = _jsonb_adapter()
 
     def connection_factory() -> _PsycopgJsonConnection:
@@ -315,24 +319,28 @@ def _with_owned_connection(
     *,
     connection_factory: Callable[[], Any],
 ) -> _T:
+    validate_local_postgres_dsn(dsn, env_var_name=PAPER_BROKER_DB_DSN_ENV_VAR)
     connection = connection_factory()
     try:
         result = operation(connection)
         connection.commit()
-        return result
     except BaseException as exc:
         try:
             connection.rollback()
         except Exception:
             pass
-        if isinstance(exc, Exception):
-            _raise_redacted(exc, dsn=dsn)
-        raise
-    finally:
         try:
             connection.close()
         except Exception:
             pass
+        if isinstance(exc, Exception):
+            _raise_redacted(exc, dsn=dsn)
+        raise
+    try:
+        connection.close()
+    except Exception as exc:
+        _raise_redacted(exc, dsn=dsn)
+    return result
 
 
 def _connect(dsn: str) -> Any:

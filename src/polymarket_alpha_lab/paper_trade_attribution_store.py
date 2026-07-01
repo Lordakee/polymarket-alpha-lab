@@ -111,15 +111,14 @@ def insert_paper_trade_attribution_report(
         row.readonly,
     )
     cursor = connection.cursor()
+    operation_error: BaseException | None = None
     try:
         cursor.execute(sql, params)
-    except BaseException:
-        try:
-            cursor.close()
-        except Exception:
-            pass
+    except BaseException as exc:
+        operation_error = exc
         raise
-    cursor.close()
+    finally:
+        _close_cursor(cursor, operation_error)
     return row
 
 
@@ -157,18 +156,28 @@ def load_paper_trade_attribution_reports(
         {limit_clause}
         """
     cursor = connection.cursor()
+    operation_error: BaseException | None = None
     try:
         cursor.execute(sql, tuple(params))
         records = cursor.fetchall()
-    except BaseException:
-        try:
-            cursor.close()
-        except Exception:
-            pass
+        rows = tuple(_db_row_from_record(record) for record in records)
+        reports = tuple(paper_trade_attribution_report_from_db_row(row) for row in rows)
+    except BaseException as exc:
+        operation_error = exc
         raise
-    cursor.close()
-    rows = tuple(_db_row_from_record(record) for record in records)
-    return tuple(paper_trade_attribution_report_from_db_row(row) for row in rows)
+    finally:
+        _close_cursor(cursor, operation_error)
+    return reports
+
+
+def _close_cursor(cursor: Any, operation_error: BaseException | None) -> None:
+    if operation_error is None:
+        cursor.close()
+        return
+    try:
+        cursor.close()
+    except BaseException:
+        pass
 
 
 def _db_row_from_record(record: Any) -> PaperTradeAttributionReportDbRow:

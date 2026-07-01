@@ -114,18 +114,17 @@ def insert_probability_selection_scorer_agreement_trend_gate_report_with_result(
         """
     params = tuple(_param_for_column(row, column) for column in SELECT_COLUMNS)
     cursor = connection.cursor()
+    operation_error: BaseException | None = None
     try:
         cursor.execute(sql, params)
         rowcount = cursor.rowcount
         if rowcount not in (0, 1):
             raise ValueError("insert rowcount must be 0 or 1; rowcount must be 0 or 1")
-    except BaseException:
-        try:
-            cursor.close()
-        except Exception:
-            pass
+    except BaseException as exc:
+        operation_error = exc
         raise
-    cursor.close()
+    finally:
+        _close_cursor(cursor, operation_error)
     return ProbabilitySelectionScorerAgreementTrendGateInsertResult(
         row=row,
         inserted=rowcount == 1,
@@ -178,21 +177,31 @@ def load_probability_selection_scorer_agreement_trend_gate_reports(
         {limit_clause}
         """
     cursor = connection.cursor()
+    operation_error: BaseException | None = None
     try:
         cursor.execute(sql, tuple(params))
         records = cursor.fetchall()
-    except BaseException:
-        try:
-            cursor.close()
-        except Exception:
-            pass
+        rows = tuple(_db_row_from_record(record) for record in records)
+        reports = tuple(
+            probability_selection_scorer_agreement_trend_gate_report_from_db_row(row)
+            for row in rows
+        )
+    except BaseException as exc:
+        operation_error = exc
         raise
-    cursor.close()
-    rows = tuple(_db_row_from_record(record) for record in records)
-    return tuple(
-        probability_selection_scorer_agreement_trend_gate_report_from_db_row(row)
-        for row in rows
-    )
+    finally:
+        _close_cursor(cursor, operation_error)
+    return reports
+
+
+def _close_cursor(cursor: Any, operation_error: BaseException | None) -> None:
+    if operation_error is None:
+        cursor.close()
+        return
+    try:
+        cursor.close()
+    except BaseException:
+        pass
 
 
 def _param_for_column(

@@ -188,15 +188,16 @@ def load_paper_strategy_candidate_research_queue_history_reports(
     try:
         cursor.execute(sql, tuple(params))
         records = cursor.fetchall()
+        rows = tuple(_db_row_from_record(record) for record in records)
+        reports = tuple(
+            paper_strategy_candidate_research_queue_history_report_from_db_row(row)
+            for row in rows
+        )
     except BaseException:
         _close_cursor_after_operation_error(cursor)
         raise
     cursor.close()
-    rows = tuple(_db_row_from_record(record) for record in records)
-    return tuple(
-        paper_strategy_candidate_research_queue_history_report_from_db_row(row)
-        for row in rows
-    )
+    return reports
 
 
 def _db_row_from_record(
@@ -314,5 +315,5 @@ def _require_positive_int(field_name: str, value: object) -> None:
 def _close_cursor_after_operation_error(cursor: Any) -> None:
     try:
         cursor.close()
-    except Exception:
+    except BaseException:
         pass

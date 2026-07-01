@@ -10,6 +10,10 @@ from polymarket_alpha_lab.paper_recommendation_consistency_store import (
     insert_paper_recommendation_consistency_report,
     load_paper_recommendation_consistency_reports,
 )
+from polymarket_alpha_lab.supabase_local_dsn import validate_local_postgres_dsn
+from polymarket_alpha_lab.supabase_paper_recommendation_consistency_config import (
+    PAPER_RECOMMENDATION_CONSISTENCY_DB_DSN_ENV_VAR,
+)
 
 
 DEFAULT_PAPER_RECOMMENDATION_CONSISTENCY_TABLE = (
@@ -55,23 +59,27 @@ def load_paper_recommendation_consistency_reports_with_psycopg(
 
 
 def _with_owned_connection(dsn: str, operation: Callable[[Any], _T]) -> _T:
+    validate_local_postgres_dsn(
+        dsn,
+        env_var_name=PAPER_RECOMMENDATION_CONSISTENCY_DB_DSN_ENV_VAR,
+    )
     jsonb_adapter = _jsonb_adapter()
     connection = _PsycopgJsonConnection(_connect(dsn), jsonb_adapter)
     try:
         result = operation(connection)
         connection.commit()
-        return result
     except BaseException:
         try:
             connection.rollback()
         except Exception:
             pass
-        raise
-    finally:
         try:
             connection.close()
         except Exception:
             pass
+        raise
+    connection.close()
+    return result
 
 
 def _connect(dsn: str) -> Any:

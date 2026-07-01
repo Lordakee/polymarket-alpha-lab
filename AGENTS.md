@@ -25,24 +25,37 @@ the user explicitly changes them in a later instruction.
    substitutes, file-backed database substitutes, JSONL/file journals as durable
    substitutes, SQLAlchemy, Redis, Mongo, or generic database abstraction
    layers. Configuration, stores, loaders, migrations, runbooks, fixtures, and
-   tests must preserve the local Supabase/Postgres assumption.
+   tests must preserve the local Supabase/Postgres assumption. Any raw DSN from
+   environment, config, CLI plumbing, test fixtures, or helper construction must
+   be validated through `validate_local_postgres_dsn` before it can be used to
+   open a connection, construct a psycopg wrapper, or reach any persistence
+   adapter. Do not bypass this with ad hoc URL parsing, trusted-test shortcuts,
+   hosted-DB allowlists, or alternate validator functions.
 2. **Legacy file persistence is frozen.** Existing JSONL/file-backed journals,
    logs, archives, and local input loaders are legacy surfaces that predate the
    strict persistence rule. Do not expand them or add new file-backed
    persistence. When touching a legacy persistence surface, prefer migrating the
    write path to local Supabase/Postgres, or document a read-only compatibility
    boundary if immediate migration is out of scope.
-3. **Reviews go directly to local opencode.** All plan reviews, code reviews,
+3. **Phase 1 execution boundary is paper-only/report-only/readonly.** Phase 1
+   must not add live trading, account authentication, private-key handling,
+   wallet handling, hosted account reads, order signing, order submission,
+   order cancellation, order replacement, or any exchange/order mutation path.
+   New reducers, CLIs, stores, runbooks, migrations, and review plans must keep
+   `paper_only=True`, `report_only=True`, and `readonly=True` where those flags
+   exist, and must describe any DB persistence as local paper evidence storage
+   rather than execution authorization.
+4. **Reviews go directly to local opencode.** All plan reviews, code reviews,
    stage audits, post-node external review gates, and handoff review gates must
    go directly to local opencode using model `zhipuai-coding-plan/glm-5.2` with
    variant/thinking level `max`. Do not route reviews to Claude Code or any
    other reviewer unless the user explicitly changes this rule. Review prompts
    must be read-only: reviewers may inspect plans, diffs, and files, but must
    not modify, create, or delete files.
-4. **Fast mode is forbidden.** Do not use fast mode for the main Codex agent,
+5. **Fast mode is forbidden.** Do not use fast mode for the main Codex agent,
    Codex subagents, opencode reviews, implementation workers, planning workers,
    or audit workers.
-5. **Codex subagents use GPT-5.5 xhigh.** Codex subagents dispatched for this
+6. **Codex subagents use GPT-5.5 xhigh.** Codex subagents dispatched for this
    project must use model `gpt-5.5` with reasoning effort `xhigh`. If the user
    informally writes `xhign`, treat it as the executable setting `xhigh`.
 

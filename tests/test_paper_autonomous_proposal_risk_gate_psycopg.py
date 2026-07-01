@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from typing import Any
 
 import pytest
@@ -7,6 +8,11 @@ import pytest
 from tests.test_paper_autonomous_proposal_risk_gate_db_row import (
     _db_row,
     _risk_gate_report,
+)
+
+
+REMOTE_SECRET_DSN = (
+    "postgresql://risk-worker:remote-token@db.remote.example.invalid:5432/polymarket"
 )
 
 
@@ -22,10 +28,12 @@ class FakeCursor:
         rows: tuple[Any, ...] = (),
         rowcount: int = 1,
         execute_error: Exception | None = None,
+        close_error: Exception | None = None,
     ) -> None:
         self.rows = rows
         self.rowcount = rowcount
         self.execute_error = execute_error
+        self.close_error = close_error
         self.calls: list[tuple[str, tuple[Any, ...]]] = []
         self.closed = False
 
@@ -39,6 +47,8 @@ class FakeCursor:
 
     def close(self) -> None:
         self.closed = True
+        if self.close_error is not None:
+            raise self.close_error
 
 
 class FakeConnection:
@@ -48,11 +58,13 @@ class FakeConnection:
         rows: tuple[Any, ...] = (),
         rowcount: int = 1,
         execute_error: Exception | None = None,
+        cursor_close_error: Exception | None = None,
     ) -> None:
         self.cursor_instance = FakeCursor(
             rows=rows,
             rowcount=rowcount,
             execute_error=execute_error,
+            close_error=cursor_close_error,
         )
         self.cursor_count = 0
         self.commit_count = 0
@@ -71,6 +83,12 @@ class FakeConnection:
 
     def close(self) -> None:
         self.close_count += 1
+
+
+class FakeCloseFailingConnection(FakeConnection):
+    def close(self) -> None:
+        self.close_count += 1
+        raise RuntimeError("close failed without dsn")
 
 
 def test_insert_with_psycopg_wraps_json_params_and_manages_connection(
@@ -121,6 +139,71 @@ def test_insert_with_psycopg_rolls_back_and_closes_on_execute_error(
     assert connection.cursor_instance.closed is True
 
 
+def test_insert_operation_failure_close_swallowed_without_echoing_dsn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import polymarket_alpha_lab.paper_autonomous_proposal_risk_gate_psycopg as adapter
+
+    connection = FakeCloseFailingConnection(execute_error=RuntimeError("boom"))
+    monkeypatch.setattr(adapter, "_connect", lambda dsn: connection)
+    monkeypatch.setattr(adapter, "_jsonb_adapter", lambda: FakeJsonb)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        adapter.insert_paper_autonomous_proposal_risk_gate_report_with_psycopg(
+            "postgresql://localhost/postgres",
+            _risk_gate_report(),
+        )
+
+    message = str(exc_info.value)
+    assert message == "boom"
+    assert "close failed" not in message
+    assert "postgresql://" not in message
+    assert "localhost" not in message
+    assert connection.commit_count == 0
+    assert connection.rollback_count == 1
+    assert connection.close_count == 1
+    assert connection.cursor_instance.closed is True
+
+
+def test_remote_dsn_is_rejected_before_psycopg_import_or_connect(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import polymarket_alpha_lab.paper_autonomous_proposal_risk_gate_psycopg as adapter
+
+    def unexpected_jsonb_adapter() -> type[Any]:
+        raise AssertionError("_jsonb_adapter must not run before DSN validation")
+
+    def unexpected_connect(dsn: str) -> Any:
+        raise AssertionError("_connect must not run before DSN validation")
+
+    monkeypatch.setattr(adapter, "_jsonb_adapter", unexpected_jsonb_adapter)
+    monkeypatch.setattr(adapter, "_connect", unexpected_connect)
+    monkeypatch.delitem(sys.modules, "psycopg", raising=False)
+    monkeypatch.delitem(sys.modules, "psycopg.types", raising=False)
+    monkeypatch.delitem(sys.modules, "psycopg.types.json", raising=False)
+
+    class ForbiddenPsycopgFinder:
+        def find_spec(self, fullname: str, path: Any = None, target: Any = None) -> None:
+            if fullname == "psycopg" or fullname.startswith("psycopg."):
+                raise AssertionError("psycopg imported before DSN validation")
+            return None
+
+    finder = ForbiddenPsycopgFinder()
+    monkeypatch.setattr(sys, "meta_path", [finder, *sys.meta_path])
+
+    with pytest.raises(ValueError) as exc_info:
+        adapter.insert_paper_autonomous_proposal_risk_gate_report_with_psycopg(
+            REMOTE_SECRET_DSN,
+            _risk_gate_report(),
+        )
+
+    message = str(exc_info.value)
+    assert "POLYMARKET_ALPHA_LAB_PAPER_AUTONOMOUS_PROPOSAL_RISK_GATE_DB_DSN" in message
+    assert "postgresql://" not in message
+    assert "remote-token" not in message
+    assert "db.remote.example.invalid" not in message
+
+
 def test_load_with_psycopg_passes_filters_and_manages_connection(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -151,6 +234,30 @@ def test_load_with_psycopg_passes_filters_and_manages_connection(
         "candidate",
         10,
     )
+
+
+def test_load_success_close_propagates_without_echoing_dsn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import polymarket_alpha_lab.paper_autonomous_proposal_risk_gate_psycopg as adapter
+
+    connection = FakeCloseFailingConnection(rows=(_db_row(),))
+    monkeypatch.setattr(adapter, "_connect", lambda dsn: connection)
+    monkeypatch.setattr(adapter, "_jsonb_adapter", lambda: FakeJsonb)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        adapter.load_paper_autonomous_proposal_risk_gate_reports_with_psycopg(
+            "postgresql://localhost/postgres",
+        )
+
+    message = str(exc_info.value)
+    assert message == "close failed without dsn"
+    assert "postgresql://" not in message
+    assert "localhost" not in message
+    assert connection.commit_count == 1
+    assert connection.rollback_count == 0
+    assert connection.close_count == 1
+    assert connection.cursor_instance.closed is True
 
 
 def test_public_exports_are_exact() -> None:

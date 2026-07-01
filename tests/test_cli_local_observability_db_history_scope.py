@@ -55,6 +55,7 @@ EXPECTED_HELPER_CALLS = {
     "commit",
     "rollback",
     "close",
+    "validate_local_postgres_dsn",
 }
 
 EXPECTED_HELPER_IMPORT_MODULES = {
@@ -296,6 +297,25 @@ def test_local_observability_trends_db_history_helper_uses_readonly_db_loader_on
     config_version = "local-observability-trends-db-history-v0"
     assert config_version in references
     _assert_no_forbidden_fragments(references, FORBIDDEN_PHASE_ONE_ESCAPE_FRAGMENTS)
+
+
+def test_local_observability_trends_db_history_helper_validates_dsn_before_connect() -> None:
+    body = _function_body(parse_cli(), HELPER)
+    validator_lines: list[int] = []
+    connect_lines: list[int] = []
+    for statement in body:
+        for node in ast.walk(statement):
+            if not isinstance(node, ast.Call):
+                continue
+            call_name = call_or_attribute_name(node)
+            if call_name == "validate_local_postgres_dsn":
+                validator_lines.append(node.lineno)
+            elif call_name == "connect":
+                connect_lines.append(node.lineno)
+
+    assert validator_lines, HELPER
+    assert connect_lines, HELPER
+    assert min(validator_lines) < min(connect_lines)
 
 
 def test_local_observability_trends_db_history_summary_is_aggregate_only() -> None:
