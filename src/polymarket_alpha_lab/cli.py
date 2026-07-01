@@ -404,6 +404,7 @@ TeamDiagnosticsBundleBuilder = Callable[..., object]
 TeamDiagnosticsFormatter = Callable[[object], str]
 TeamDiagnosticsSnapshotBuilder = Callable[..., object]
 TeamDiagnosticsSnapshotDbSink = Callable[..., object]
+TeamDiagnosticsSnapshotHistoryRunner = Callable[..., object]
 MAX_PAPER_AUTONOMOUS_READINESS_DIGEST_READ_LIMIT = 500
 _MISSING = object()
 STRATEGY_CYCLE_HISTORY_GATE_DB_DSN_ENV_VAR = (
@@ -1421,6 +1422,86 @@ def _run_team_diagnostics_snapshot(
     return _format_team_diagnostics_snapshot_stdout(snapshot, insert_result)
 
 
+def _run_team_diagnostics_snapshot_history(
+    *,
+    team_id: str | None,
+    market_slug: str | None,
+    forecast_id: str | None,
+    config_version: str | None,
+    limit: int,
+    runner: TeamDiagnosticsSnapshotHistoryRunner | None,
+) -> str:
+    if isinstance(limit, bool) or type(limit) is not int or limit <= 0:
+        raise ValueError("team-diagnostics-snapshot-history limit must be positive")
+
+    from polymarket_alpha_lab.supabase_team_diagnostics_snapshot_config import (
+        from_team_diagnostics_snapshot_db_env,
+    )
+
+    snapshot_db_config = from_team_diagnostics_snapshot_db_env()
+    if not snapshot_db_config.enabled:
+        raise ValueError(
+            "team-diagnostics-snapshot-history requires team diagnostics "
+            "snapshot DB to be enabled; team diagnostics snapshot DB is disabled",
+        )
+    dsn = snapshot_db_config.dsn
+    if dsn is None:
+        raise ValueError(
+            "team-diagnostics-snapshot-history requires a team diagnostics "
+            "snapshot DB DSN",
+        )
+
+    from polymarket_alpha_lab.team_diagnostics_snapshot_history import (
+        TeamDiagnosticsSnapshotHistoryConfig,
+        build_team_diagnostics_snapshot_history_report,
+    )
+    from polymarket_alpha_lab.team_diagnostics_snapshot_history_cli_format import (
+        format_team_diagnostics_snapshot_history_cli_stdout,
+    )
+
+    generated_at = datetime.now(UTC)
+    history_config = TeamDiagnosticsSnapshotHistoryConfig()
+    try:
+        if runner is not None:
+            report = runner(
+                dsn=dsn,
+                table_name=snapshot_db_config.table_name,
+                team_id=team_id,
+                market_slug=market_slug,
+                forecast_id=forecast_id,
+                config_version=config_version,
+                limit=limit,
+                config=history_config,
+                generated_at=generated_at,
+            )
+        else:
+            from polymarket_alpha_lab.team_diagnostics_snapshot_history_db_source import (
+                load_team_diagnostics_snapshot_history_report,
+            )
+            from polymarket_alpha_lab.team_diagnostics_snapshot_psycopg import (
+                load_team_diagnostics_snapshot_reports_from_env,
+            )
+
+            report = load_team_diagnostics_snapshot_history_report(
+                load_snapshots=load_team_diagnostics_snapshot_reports_from_env,
+                history_builder=build_team_diagnostics_snapshot_history_report,
+                config=history_config,
+                generated_at=generated_at,
+                team_id=team_id,
+                market_slug=market_slug,
+                forecast_id=forecast_id,
+                config_version=config_version,
+                limit=limit,
+            )
+        _require_hard_flags_if_present("team diagnostics snapshot history", report)
+        return format_team_diagnostics_snapshot_history_cli_stdout(report)
+    except Exception as exc:
+        _raise_redacted_team_diagnostics_snapshot_db_read_error(
+            exc,
+            db_config=snapshot_db_config,
+        )
+
+
 def _build_team_diagnostics_snapshot(
     bundle: object,
     *,
@@ -1582,6 +1663,25 @@ def _raise_redacted_team_diagnostics_db_read_error(
 
 
 def _raise_redacted_team_diagnostics_snapshot_db_write_error(
+    exc: Exception,
+    *,
+    db_config: Any,
+) -> NoReturn:
+    message = str(exc)
+    dsn = getattr(db_config, "dsn", None)
+    if dsn is not None:
+        message = _redact_db_dsn(message, dsn=dsn)
+        message = _redact_db_dsn_host(message, dsn=dsn)
+    table_name = getattr(db_config, "table_name", None)
+    if table_name:
+        message = _redact_db_table_name_and_tail(message, table_name=table_name)
+    message = _redact_paper_research_packet_sensitive_fields(message)
+    if not message.strip():
+        message = exc.__class__.__name__
+    raise RuntimeError(message) from None
+
+
+def _raise_redacted_team_diagnostics_snapshot_db_read_error(
     exc: Exception,
     *,
     db_config: Any,
@@ -1952,6 +2052,9 @@ def main(
     team_diagnostics_stdout_formatter: TeamDiagnosticsFormatter | None = None,
     team_diagnostics_snapshot_builder: TeamDiagnosticsSnapshotBuilder | None = None,
     team_diagnostics_snapshot_db_sink: TeamDiagnosticsSnapshotDbSink | None = None,
+    team_diagnostics_snapshot_history_runner: (
+        TeamDiagnosticsSnapshotHistoryRunner | None
+    ) = None,
 ) -> int:
     parser = argparse.ArgumentParser(prog="polymarket-alpha-lab")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -2359,6 +2462,44 @@ def main(
         dest="forecast_id",
     )
     team_diagnostics_snapshot.add_argument(
+        "--limit",
+        type=int,
+        default=100,
+        dest="limit",
+    )
+    team_diagnostics_snapshot_history = subparsers.add_parser(
+        "team-diagnostics-snapshot-history",
+        allow_abbrev=False,
+        description=(
+            "Build a read-only, report-only diagnostics snapshot history "
+            "report from local Supabase/Postgres team diagnostics snapshots."
+        ),
+        help=(
+            "read-only report-only team diagnostics snapshot history from "
+            "local Supabase/Postgres"
+        ),
+    )
+    team_diagnostics_snapshot_history.add_argument(
+        "--team-id",
+        default=None,
+        dest="team_id",
+    )
+    team_diagnostics_snapshot_history.add_argument(
+        "--market-slug",
+        default=None,
+        dest="market_slug",
+    )
+    team_diagnostics_snapshot_history.add_argument(
+        "--forecast-id",
+        default=None,
+        dest="forecast_id",
+    )
+    team_diagnostics_snapshot_history.add_argument(
+        "--config-version",
+        default=None,
+        dest="config_version",
+    )
+    team_diagnostics_snapshot_history.add_argument(
         "--limit",
         type=int,
         default=100,
@@ -3334,6 +3475,22 @@ def main(
             return 0
         except Exception as exc:
             print(f"team-diagnostics-snapshot failed: {exc}", file=sys.stderr)
+            return 1
+
+    if args.command == "team-diagnostics-snapshot-history":
+        try:
+            stdout = _run_team_diagnostics_snapshot_history(
+                team_id=args.team_id,
+                market_slug=args.market_slug,
+                forecast_id=args.forecast_id,
+                config_version=args.config_version,
+                limit=args.limit,
+                runner=team_diagnostics_snapshot_history_runner,
+            )
+            print(stdout, end="")
+            return 0
+        except Exception as exc:
+            print(f"team-diagnostics-snapshot-history failed: {exc}", file=sys.stderr)
             return 1
 
     if args.command == "portfolio-nav":

@@ -171,6 +171,54 @@ def test_team_diagnostics_docs_cover_snapshot_persistence_surface() -> None:
             assert env_var in text
 
 
+def test_team_diagnostics_docs_cover_snapshot_history_readback_surface() -> None:
+    expected_output_fields = (
+        "status=",
+        "snapshot_count=",
+        "required_snapshot_count=",
+        "earliest_generated_at=",
+        "latest_generated_at=",
+        "span_seconds=",
+        "status_counts=",
+        "evidence_quality_average_delta=",
+        "memory_eligible_delta=",
+        "settled_calibration_delta=",
+        "duplicate_latest_generated_at=",
+        "reason_codes=",
+        "paper_only=True",
+        "report_only=True",
+        "readonly=True",
+    )
+    forbidden_cli_flags = (
+        "--dsn",
+        "--db-dsn",
+        "--table",
+        "--db-table",
+        "--snapshot-dsn",
+        "--snapshot-table",
+    )
+
+    for path in (DOC_PATH, README_PATH):
+        assert path.exists(), f"{path} must exist"
+        text = path.read_text(encoding="utf-8")
+        lower_text = text.lower()
+
+        assert "team-diagnostics-snapshot-history" in text
+        assert "persisted local Supabase/Postgres" in text
+        assert "team_diagnostics_snapshots" in text
+        assert "long-term team-memory" in lower_text
+        assert "readback" in lower_text
+        assert "paper-only/report-only/readonly" in text
+        assert "no live trading" in lower_text
+        assert "order" in lower_text
+        for env_var in SNAPSHOT_ENV_VARS:
+            assert env_var in text
+        for field in expected_output_fields:
+            assert field in text
+        for flag in forbidden_cli_flags:
+            assert flag not in text
+
+
 def test_env_example_lists_team_diagnostics_snapshot_env_surface() -> None:
     assert ENV_EXAMPLE_PATH.exists(), f"{ENV_EXAMPLE_PATH} must exist"
     text = ENV_EXAMPLE_PATH.read_text(encoding="utf-8")

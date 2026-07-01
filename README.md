@@ -22,6 +22,8 @@ For team diagnostics over those persisted rows, see [docs/team-diagnostics-reado
 
 Team diagnostics snapshot history is also a Phase 1 paper-only/report-only/readonly local Supabase/Postgres surface. The `team_diagnostics_snapshots` table is internal report persistence for generated diagnostics snapshots only, configured with `POLYMARKET_ALPHA_LAB_TEAM_DIAGNOSTICS_SNAPSHOT_DB_ENABLED`, `POLYMARKET_ALPHA_LAB_TEAM_DIAGNOSTICS_SNAPSHOT_DB_DSN`, and `POLYMARKET_ALPHA_LAB_TEAM_DIAGNOSTICS_SNAPSHOT_DB_TABLE`; it is not live trading, auth, wallet, account, order, or exchange mutation infrastructure.
 
+Read persisted local Supabase/Postgres snapshot history with `polymarket-alpha-lab team-diagnostics-snapshot-history --limit 100`. The command reads `team_diagnostics_snapshots` through the snapshot env vars only, performs readback over generated diagnostics snapshots, and reports long-term team-memory deltas such as `evidence_quality_average_delta=`, `memory_eligible_delta=`, and `settled_calibration_delta=`. Sample output fields include `status=`, `snapshot_count=`, `required_snapshot_count=`, `earliest_generated_at=`, `latest_generated_at=`, `span_seconds=`, `status_counts=`, `duplicate_latest_generated_at=`, `reason_codes=`, `paper_only=True`, `report_only=True`, and `readonly=True`. It stays paper-only/report-only/readonly with no live trading, auth, wallet, account, order, exchange mutation, or DSN/table CLI flags.
+
 ## Project Iron Rules
 
 - Persistent project data must use only the local Supabase/Postgres instance on this host. Do not add SQLite, Redis, Mongo, SQLAlchemy, hosted database assumptions, generic database abstraction layers, or file-backed database substitutes as durable persistence.

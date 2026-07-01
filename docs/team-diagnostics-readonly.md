@@ -56,6 +56,24 @@ Default table name:
 
 `POLYMARKET_ALPHA_LAB_TEAM_DIAGNOSTICS_SNAPSHOT_DB_DSN` must point to the same local Supabase/Postgres class of database accepted by `validate_local_postgres_dsn`. Keep the DSN in operator-managed environment injection; do not commit it and do not print it in reports or error output.
 
+## Snapshot History Readback
+
+Read persisted local Supabase/Postgres diagnostics snapshot history with the env-driven readback command:
+
+```bash
+polymarket-alpha-lab team-diagnostics-snapshot-history --limit 100
+```
+
+The command reads already-persisted `team_diagnostics_snapshots` rows from the local Supabase/Postgres snapshot table configured by `POLYMARKET_ALPHA_LAB_TEAM_DIAGNOSTICS_SNAPSHOT_DB_ENABLED`, `POLYMARKET_ALPHA_LAB_TEAM_DIAGNOSTICS_SNAPSHOT_DB_DSN`, and `POLYMARKET_ALPHA_LAB_TEAM_DIAGNOSTICS_SNAPSHOT_DB_TABLE`. Configuration stays in environment variables; there are no DSN/table CLI flags.
+
+Use this readback to inspect long-term team-memory deltas from persisted diagnostics snapshots. The history report compares earliest and latest snapshot rows, then prints the observed status mix plus long-term deltas for evidence quality, memory-eligible references, and settled calibration coverage. It remains Phase 1 paper-only/report-only/readonly: no live trading, no auth, no wallet, no account access, no order path, and no mutation of Team Forecast or snapshot rows.
+
+Sample output fields:
+
+```text
+team-diagnostics-snapshot-history: status=observed snapshot_count=12 required_snapshot_count=2 earliest_generated_at=2026-07-01T08:30:00+00:00 latest_generated_at=2026-07-01T09:45:15+00:00 span_seconds=4515 status_counts=pass:7,watch:5 evidence_quality_average_delta=0.125 memory_eligible_delta=4 settled_calibration_delta=3 duplicate_latest_generated_at=False reason_codes=none paper_only=True report_only=True readonly=True
+```
+
 ## What Diagnostics Evaluate
 
 Team memory:
