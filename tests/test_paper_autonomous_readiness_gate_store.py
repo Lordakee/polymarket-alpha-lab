@@ -33,25 +33,56 @@ SELECT_COLUMNS = (
 
 
 class FakeCursor:
-    def __init__(self, rows: tuple[Any, ...] = (), rowcount: int = 1) -> None:
+    def __init__(
+        self,
+        rows: tuple[Any, ...] = (),
+        rowcount: int = 1,
+        *,
+        execute_error: Exception | None = None,
+        fetchall_error: Exception | None = None,
+        close_error: Exception | None = None,
+    ) -> None:
         self.rows = rows
         self.rowcount = rowcount
+        self.execute_error = execute_error
+        self.fetchall_error = fetchall_error
+        self.close_error = close_error
         self.calls: list[tuple[str, tuple[Any, ...]]] = []
         self.closed = False
 
     def execute(self, sql: str, params: tuple[Any, ...] = ()) -> None:
         self.calls.append((sql, params))
+        if self.execute_error is not None:
+            raise self.execute_error
 
     def fetchall(self) -> tuple[Any, ...]:
+        if self.fetchall_error is not None:
+            raise self.fetchall_error
         return self.rows
 
     def close(self) -> None:
         self.closed = True
+        if self.close_error is not None:
+            raise self.close_error
 
 
 class FakeConnection:
-    def __init__(self, rows: tuple[Any, ...] = (), rowcount: int = 1) -> None:
-        self.cursor_instance = FakeCursor(rows, rowcount)
+    def __init__(
+        self,
+        rows: tuple[Any, ...] = (),
+        rowcount: int = 1,
+        *,
+        execute_error: Exception | None = None,
+        fetchall_error: Exception | None = None,
+        close_error: Exception | None = None,
+    ) -> None:
+        self.cursor_instance = FakeCursor(
+            rows,
+            rowcount,
+            execute_error=execute_error,
+            fetchall_error=fetchall_error,
+            close_error=close_error,
+        )
         self.cursor_count = 0
         self.commit_count = 0
         self.rollback_count = 0
@@ -161,6 +192,44 @@ def test_insert_readiness_gate_report_rejects_unexpected_rowcount() -> None:
         )
 
 
+def test_insert_preserves_execute_exception_when_cursor_close_fails() -> None:
+    from polymarket_alpha_lab.paper_autonomous_readiness_gate_store import (
+        insert_paper_autonomous_readiness_gate_report_with_result,
+    )
+
+    execute_error = RuntimeError("execute failed")
+    close_error = RuntimeError("close failed")
+    connection = FakeConnection(
+        execute_error=execute_error,
+        close_error=close_error,
+    )
+
+    with pytest.raises(RuntimeError, match="execute failed") as exc_info:
+        insert_paper_autonomous_readiness_gate_report_with_result(
+            connection,
+            _report(),
+        )
+
+    assert exc_info.value is execute_error
+    assert connection.cursor_instance.closed is True
+
+
+def test_insert_raises_cursor_close_error_after_successful_execute() -> None:
+    from polymarket_alpha_lab.paper_autonomous_readiness_gate_store import (
+        insert_paper_autonomous_readiness_gate_report_with_result,
+    )
+
+    close_error = RuntimeError("close failed")
+
+    with pytest.raises(RuntimeError, match="close failed") as exc_info:
+        insert_paper_autonomous_readiness_gate_report_with_result(
+            FakeConnection(close_error=close_error),
+            _report(),
+        )
+
+    assert exc_info.value is close_error
+
+
 def test_load_readiness_gate_reports_filters_in_deterministic_order() -> None:
     from polymarket_alpha_lab.paper_autonomous_readiness_gate_store import (
         load_paper_autonomous_readiness_gate_reports,
@@ -232,6 +301,40 @@ def test_load_readiness_gate_reports_filters_in_deterministic_order() -> None:
         [[INVESTMENT_LEDGER_SOURCE_NAME, "ledger-trend-gate-v0"]],
         25,
     )
+
+
+def test_load_preserves_fetchall_exception_when_cursor_close_fails() -> None:
+    from polymarket_alpha_lab.paper_autonomous_readiness_gate_store import (
+        load_paper_autonomous_readiness_gate_reports,
+    )
+
+    fetchall_error = RuntimeError("fetchall failed")
+    close_error = RuntimeError("close failed")
+    connection = FakeConnection(
+        fetchall_error=fetchall_error,
+        close_error=close_error,
+    )
+
+    with pytest.raises(RuntimeError, match="fetchall failed") as exc_info:
+        load_paper_autonomous_readiness_gate_reports(connection)
+
+    assert exc_info.value is fetchall_error
+    assert connection.cursor_instance.closed is True
+
+
+def test_load_raises_cursor_close_error_after_successful_fetch() -> None:
+    from polymarket_alpha_lab.paper_autonomous_readiness_gate_store import (
+        load_paper_autonomous_readiness_gate_reports,
+    )
+
+    close_error = RuntimeError("close failed")
+
+    with pytest.raises(RuntimeError, match="close failed") as exc_info:
+        load_paper_autonomous_readiness_gate_reports(
+            FakeConnection(close_error=close_error),
+        )
+
+    assert exc_info.value is close_error
 
 
 def test_load_readiness_gate_reports_filters_strategy_cycle_history_gate_source() -> None:
