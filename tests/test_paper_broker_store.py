@@ -78,20 +78,32 @@ class FakeCursor:
         *,
         rowcount: int = 1,
         records: tuple[Any, ...] = (),
+        execute_error: BaseException | None = None,
+        fetchall_error: BaseException | None = None,
+        close_error: BaseException | None = None,
     ) -> None:
         self.rowcount = rowcount
         self.records = records
+        self.execute_error = execute_error
+        self.fetchall_error = fetchall_error
+        self.close_error = close_error
         self.calls: list[tuple[str, tuple[Any, ...]]] = []
         self.closed = False
 
     def execute(self, sql: str, params: tuple[Any, ...] = ()) -> None:
+        if self.execute_error is not None:
+            raise self.execute_error
         self.calls.append((sql, params))
 
     def fetchall(self) -> tuple[Any, ...]:
+        if self.fetchall_error is not None:
+            raise self.fetchall_error
         return self.records
 
     def close(self) -> None:
         self.closed = True
+        if self.close_error is not None:
+            raise self.close_error
 
 
 class FakeConnection:
@@ -100,8 +112,17 @@ class FakeConnection:
         *,
         rowcount: int = 1,
         records: tuple[Any, ...] = (),
+        execute_error: BaseException | None = None,
+        fetchall_error: BaseException | None = None,
+        close_error: BaseException | None = None,
     ) -> None:
-        self.cursor_instance = FakeCursor(rowcount=rowcount, records=records)
+        self.cursor_instance = FakeCursor(
+            rowcount=rowcount,
+            records=records,
+            execute_error=execute_error,
+            fetchall_error=fetchall_error,
+            close_error=close_error,
+        )
         self.cursor_count = 0
         self.commit_count = 0
         self.rollback_count = 0
@@ -231,6 +252,40 @@ def test_insert_rejects_unexpected_rowcount() -> None:
         )
 
 
+def test_insert_propagates_cursor_close_error_after_success() -> None:
+    store = _store()
+    connection = FakeConnection(
+        rowcount=1,
+        close_error=RuntimeError("cursor close failed"),
+    )
+
+    with pytest.raises(RuntimeError, match="cursor close failed"):
+        store.insert_paper_broker_execution_record_with_result(
+            connection,
+            _record(),
+        )
+
+    assert connection.cursor_instance.closed is True
+
+
+def test_insert_execute_error_wins_when_cursor_close_also_fails() -> None:
+    store = _store()
+    execute_error = RuntimeError("insert execute failed")
+    connection = FakeConnection(
+        execute_error=execute_error,
+        close_error=RuntimeError("cursor close failed"),
+    )
+
+    with pytest.raises(RuntimeError, match="insert execute failed") as exc_info:
+        store.insert_paper_broker_execution_record_with_result(
+            connection,
+            _record(),
+        )
+
+    assert exc_info.value is execute_error
+    assert connection.cursor_instance.closed is True
+
+
 @pytest.mark.parametrize(
     "table_name",
     (
@@ -305,6 +360,36 @@ def test_load_filters_orders_and_reconstructs_records_from_db_rows() -> None:
         """,
     )
     assert params == (CONFIG_VERSION, "paper_submitted", "pass", 5)
+
+
+def test_load_propagates_cursor_close_error_after_success() -> None:
+    store = _store()
+    record = _record()
+    row = paper_broker_execution_record_to_db_row(record)
+    connection = FakeConnection(
+        records=(row,),
+        close_error=RuntimeError("cursor close failed"),
+    )
+
+    with pytest.raises(RuntimeError, match="cursor close failed"):
+        store.load_paper_broker_execution_records(connection)
+
+    assert connection.cursor_instance.closed is True
+
+
+def test_load_fetchall_error_wins_when_cursor_close_also_fails() -> None:
+    store = _store()
+    fetchall_error = RuntimeError("load fetchall failed")
+    connection = FakeConnection(
+        fetchall_error=fetchall_error,
+        close_error=RuntimeError("cursor close failed"),
+    )
+
+    with pytest.raises(RuntimeError, match="load fetchall failed") as exc_info:
+        store.load_paper_broker_execution_records(connection)
+
+    assert exc_info.value is fetchall_error
+    assert connection.cursor_instance.closed is True
 
 
 def test_load_rejects_invalid_filters_without_executing_sql() -> None:

@@ -48,25 +48,56 @@ class FakeReconciliationDbRow:
 
 
 class FakeCursor:
-    def __init__(self, rows: tuple[Any, ...] = (), rowcount: int = 1) -> None:
+    def __init__(
+        self,
+        rows: tuple[Any, ...] = (),
+        rowcount: int = 1,
+        *,
+        execute_error: BaseException | None = None,
+        fetchall_error: BaseException | None = None,
+        close_error: BaseException | None = None,
+    ) -> None:
         self.rows = rows
         self.rowcount = rowcount
+        self.execute_error = execute_error
+        self.fetchall_error = fetchall_error
+        self.close_error = close_error
         self.calls: list[tuple[str, tuple[Any, ...]]] = []
         self.closed = False
 
     def execute(self, sql: str, params: tuple[Any, ...] = ()) -> None:
+        if self.execute_error is not None:
+            raise self.execute_error
         self.calls.append((sql, params))
 
     def fetchall(self) -> tuple[Any, ...]:
+        if self.fetchall_error is not None:
+            raise self.fetchall_error
         return self.rows
 
     def close(self) -> None:
         self.closed = True
+        if self.close_error is not None:
+            raise self.close_error
 
 
 class FakeConnection:
-    def __init__(self, rows: tuple[Any, ...] = (), rowcount: int = 1) -> None:
-        self.cursor_instance = FakeCursor(rows, rowcount)
+    def __init__(
+        self,
+        rows: tuple[Any, ...] = (),
+        rowcount: int = 1,
+        *,
+        execute_error: BaseException | None = None,
+        fetchall_error: BaseException | None = None,
+        close_error: BaseException | None = None,
+    ) -> None:
+        self.cursor_instance = FakeCursor(
+            rows,
+            rowcount,
+            execute_error=execute_error,
+            fetchall_error=fetchall_error,
+            close_error=close_error,
+        )
         self.cursor_count = 0
         self.commit_count = 0
         self.rollback_count = 0
@@ -285,6 +316,42 @@ def test_insert_rejects_unexpected_rowcount(store_module: types.ModuleType) -> N
         )
 
 
+def test_insert_propagates_cursor_close_error_after_success(
+    store_module: types.ModuleType,
+) -> None:
+    connection = FakeConnection(
+        rowcount=1,
+        close_error=RuntimeError("cursor close failed"),
+    )
+
+    with pytest.raises(RuntimeError, match="cursor close failed"):
+        store_module.insert_paper_execution_reconciliation_report_with_result(
+            connection,
+            _fake_report(),
+        )
+
+    assert connection.cursor_instance.closed is True
+
+
+def test_insert_execute_error_wins_when_cursor_close_also_fails(
+    store_module: types.ModuleType,
+) -> None:
+    execute_error = RuntimeError("insert execute failed")
+    connection = FakeConnection(
+        execute_error=execute_error,
+        close_error=RuntimeError("cursor close failed"),
+    )
+
+    with pytest.raises(RuntimeError, match="insert execute failed") as exc_info:
+        store_module.insert_paper_execution_reconciliation_report_with_result(
+            connection,
+            _fake_report(),
+        )
+
+    assert exc_info.value is execute_error
+    assert connection.cursor_instance.closed is True
+
+
 def test_insert_rejects_unsafe_table_name_without_opening_cursor(
     store_module: types.ModuleType,
 ) -> None:
@@ -500,6 +567,62 @@ def test_load_reconciliation_reports_accepts_positional_dict_and_namedtuple_rows
             total_positions=1,
         ),
     )
+
+
+def test_load_propagates_cursor_close_error_after_success(
+    store_module: types.ModuleType,
+) -> None:
+    row = FakeReconciliationDbRow(
+        report_sha256="e" * 64,
+        generated_at=datetime(2026, 6, 25, 13, 30, tzinfo=UTC),
+        config_version="paper-execution-reconciliation-v0",
+        reconciliation_status="has_pending",
+        total_positions=1,
+        filled_pending_count=1,
+        settled_win_count=0,
+        settled_loss_count=0,
+        expired_count=0,
+        cancelled_count=0,
+        total_fill_notional=d("10.000000"),
+        total_cost_basis=d("10.000000"),
+        total_outcome_value=None,
+        total_pnl=None,
+        realized_pnl=d("0.000000"),
+        unrealized_pnl=d("0.000000"),
+        position_rows_json=[{"condition_id": "condition-alpha"}],
+        reason_codes_json=["paper_execution_reconciliation_has_pending"],
+        payload_json={
+            "generated_at": "2026-06-25T13:30:00+00:00",
+            "config_version": "paper-execution-reconciliation-v0",
+            "reconciliation_status": "has_pending",
+            "total_positions": 1,
+        },
+    )
+    connection = FakeConnection(
+        rows=(row,),
+        close_error=RuntimeError("cursor close failed"),
+    )
+
+    with pytest.raises(RuntimeError, match="cursor close failed"):
+        store_module.load_paper_execution_reconciliation_reports(connection)
+
+    assert connection.cursor_instance.closed is True
+
+
+def test_load_fetchall_error_wins_when_cursor_close_also_fails(
+    store_module: types.ModuleType,
+) -> None:
+    fetchall_error = RuntimeError("load fetchall failed")
+    connection = FakeConnection(
+        fetchall_error=fetchall_error,
+        close_error=RuntimeError("cursor close failed"),
+    )
+
+    with pytest.raises(RuntimeError, match="load fetchall failed") as exc_info:
+        store_module.load_paper_execution_reconciliation_reports(connection)
+
+    assert exc_info.value is fetchall_error
+    assert connection.cursor_instance.closed is True
 
 
 @pytest.mark.parametrize(

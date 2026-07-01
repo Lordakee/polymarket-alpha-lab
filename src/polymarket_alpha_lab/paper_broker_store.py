@@ -99,11 +99,10 @@ def insert_paper_broker_execution_record_with_result(
     try:
         cursor.execute(sql, params)
         rowcount = cursor.rowcount
-    finally:
-        try:
-            cursor.close()
-        except Exception:
-            pass
+    except BaseException:
+        _close_cursor_after_operation_error(cursor)
+        raise
+    cursor.close()
     if rowcount not in (0, 1):
         raise ValueError("insert rowcount must be 0 or 1")
     return PaperBrokerExecutionInsertResult(
@@ -165,11 +164,10 @@ def load_paper_broker_execution_records(
     try:
         cursor.execute(sql, tuple(params))
         records = cursor.fetchall()
-    finally:
-        try:
-            cursor.close()
-        except Exception:
-            pass
+    except BaseException:
+        _close_cursor_after_operation_error(cursor)
+        raise
+    cursor.close()
     rows = tuple(_db_row_from_record(record) for record in records)
     return tuple(from_db_row(row) for row in rows)
 
@@ -234,3 +232,10 @@ def _require_positive_int(field_name: str, value: object) -> None:
         raise ValueError(f"{field_name} must be an int")
     if value <= 0:
         raise ValueError(f"{field_name} must be positive")
+
+
+def _close_cursor_after_operation_error(cursor: Any) -> None:
+    try:
+        cursor.close()
+    except Exception:
+        pass
