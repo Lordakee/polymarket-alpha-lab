@@ -58,24 +58,52 @@ SELECT_COLUMNS = (
 
 
 class FakeCursor:
-    def __init__(self, rows: tuple[Any, ...] = ()) -> None:
+    def __init__(
+        self,
+        rows: tuple[Any, ...] = (),
+        *,
+        execute_error: BaseException | None = None,
+        fetchall_error: BaseException | None = None,
+        close_error: BaseException | None = None,
+    ) -> None:
         self.rows = rows
+        self.execute_error = execute_error
+        self.fetchall_error = fetchall_error
+        self.close_error = close_error
         self.calls: list[tuple[str, tuple[Any, ...]]] = []
         self.closed = False
 
     def execute(self, sql: str, params: tuple[Any, ...] = ()) -> None:
         self.calls.append((sql, params))
+        if self.execute_error is not None:
+            raise self.execute_error
 
     def fetchall(self) -> tuple[Any, ...]:
+        if self.fetchall_error is not None:
+            raise self.fetchall_error
         return self.rows
 
     def close(self) -> None:
         self.closed = True
+        if self.close_error is not None:
+            raise self.close_error
 
 
 class FakeConnection:
-    def __init__(self, rows: tuple[Any, ...] = ()) -> None:
-        self.cursor_instance = FakeCursor(rows)
+    def __init__(
+        self,
+        rows: tuple[Any, ...] = (),
+        *,
+        execute_error: BaseException | None = None,
+        fetchall_error: BaseException | None = None,
+        close_error: BaseException | None = None,
+    ) -> None:
+        self.cursor_instance = FakeCursor(
+            rows,
+            execute_error=execute_error,
+            fetchall_error=fetchall_error,
+            close_error=close_error,
+        )
         self.cursor_count = 0
         self.commit_count = 0
         self.rollback_count = 0
@@ -175,6 +203,18 @@ def test_insert_local_observability_trends_report_uses_parameterized_insert() ->
     assert params == _row_values(expected_row)
 
 
+def test_insert_local_observability_trends_report_preserves_execute_error_when_close_fails() -> None:
+    execute_error = RuntimeError("execute failed")
+    close_error = RuntimeError("close failed")
+    connection = FakeConnection(execute_error=execute_error, close_error=close_error)
+
+    with pytest.raises(RuntimeError, match="execute failed") as exc_info:
+        insert_local_observability_trends_report(connection, _report())
+
+    assert exc_info.value is execute_error
+    assert connection.cursor_instance.closed is True
+
+
 def test_load_local_observability_trends_reports_selects_latest_reports_with_limit() -> None:
     row = _row()
     connection = FakeConnection(rows=(row,))
@@ -215,6 +255,17 @@ def test_load_local_observability_trends_reports_selects_latest_reports_with_lim
         """,
     )
     assert params == (25,)
+
+
+def test_load_local_observability_trends_reports_propagates_close_error_after_success() -> None:
+    close_error = RuntimeError("close failed")
+    connection = FakeConnection(rows=(_row(),), close_error=close_error)
+
+    with pytest.raises(RuntimeError, match="close failed") as exc_info:
+        load_local_observability_trends_reports(connection)
+
+    assert exc_info.value is close_error
+    assert connection.cursor_instance.closed is True
 
 
 def test_load_local_observability_trends_reports_accepts_positional_rows() -> None:

@@ -87,8 +87,13 @@ def insert_strategy_risk_audit_report(
     cursor = connection.cursor()
     try:
         cursor.execute(sql, params)
-    finally:
-        cursor.close()
+    except BaseException:
+        try:
+            cursor.close()
+        except Exception:
+            pass
+        raise
+    cursor.close()
     return row
 
 
@@ -129,8 +134,13 @@ def load_strategy_risk_audit_reports(
     try:
         cursor.execute(sql, tuple(params))
         records = cursor.fetchall()
-    finally:
-        cursor.close()
+    except BaseException:
+        try:
+            cursor.close()
+        except Exception:
+            pass
+        raise
+    cursor.close()
     rows = tuple(_db_row_from_record(record) for record in records)
     return tuple(strategy_risk_audit_report_from_db_row(row) for row in rows)
 

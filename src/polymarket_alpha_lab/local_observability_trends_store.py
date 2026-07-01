@@ -92,8 +92,13 @@ def insert_local_observability_trends_report(
     cursor = connection.cursor()
     try:
         cursor.execute(sql, params)
-    finally:
-        cursor.close()
+    except BaseException:
+        try:
+            cursor.close()
+        except Exception:
+            pass
+        raise
+    cursor.close()
     return row
 
 
@@ -125,8 +130,13 @@ def load_local_observability_trends_reports(
     try:
         cursor.execute(sql, tuple(params))
         records = cursor.fetchall()
-    finally:
-        cursor.close()
+    except BaseException:
+        try:
+            cursor.close()
+        except Exception:
+            pass
+        raise
+    cursor.close()
     rows = tuple(_db_row_from_record(record) for record in records)
     return tuple(local_observability_trends_report_from_db_row(row) for row in rows)
 
