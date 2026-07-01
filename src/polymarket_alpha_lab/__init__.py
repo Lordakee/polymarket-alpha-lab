@@ -105,6 +105,51 @@ from polymarket_alpha_lab.crypto_btc_team import (
     CryptoBtcTeamConfig,
     build_crypto_btc_team_forecast,
 )
+from polymarket_alpha_lab.crypto_eth_team import (
+    CryptoEthEvidenceInput,
+    CryptoEthTeamConfig,
+    build_crypto_eth_team_forecast,
+)
+from polymarket_alpha_lab.macro_rates_team import (
+    MacroRatesEvidenceInput,
+    MacroRatesTeamConfig,
+    build_macro_rates_team_forecast,
+)
+from polymarket_alpha_lab.equity_indices_team import (
+    EquityIndicesEvidenceInput,
+    EquityIndicesTeamConfig,
+    build_equity_indices_team_forecast,
+)
+from polymarket_alpha_lab.commodities_gold_team import (
+    CommoditiesGoldEvidenceInput,
+    CommoditiesGoldTeamConfig,
+    build_commodities_gold_team_forecast,
+)
+from polymarket_alpha_lab.commodities_oil_team import (
+    CommoditiesOilEvidenceInput,
+    CommoditiesOilTeamConfig,
+    build_commodities_oil_team_forecast,
+)
+from polymarket_alpha_lab.politics_team import (
+    PoliticsEvidenceInput,
+    PoliticsTeamConfig,
+    build_politics_team_forecast,
+)
+from polymarket_alpha_lab.sports_basketball_team import (
+    SportsBasketballEvidenceInput,
+    SportsBasketballTeamConfig,
+    build_sports_basketball_team_forecast,
+)
+from polymarket_alpha_lab.sports_soccer_team import (
+    SportsSoccerEvidenceInput,
+    SportsSoccerTeamConfig,
+    build_sports_soccer_team_forecast,
+)
+from polymarket_alpha_lab.sports_other_team import (
+    SportsOtherEvidenceInput,
+    SportsOtherTeamConfig,
+    build_sports_other_team_forecast,
+)
 from polymarket_alpha_lab.supabase_team_forecast_config import (
     SupabaseTeamForecastConfig,
 )
@@ -527,8 +572,26 @@ __all__ = [
     "PaperStrategyRiskAuditConfig",
     "PaperStrategyRiskAuditGateResult",
     "PaperStrategyRiskAuditReport",
+    "CommoditiesGoldEvidenceInput",
+    "CommoditiesGoldTeamConfig",
+    "CommoditiesOilEvidenceInput",
+    "CommoditiesOilTeamConfig",
     "CryptoBtcEvidenceInput",
     "CryptoBtcTeamConfig",
+    "CryptoEthEvidenceInput",
+    "CryptoEthTeamConfig",
+    "EquityIndicesEvidenceInput",
+    "EquityIndicesTeamConfig",
+    "MacroRatesEvidenceInput",
+    "MacroRatesTeamConfig",
+    "PoliticsEvidenceInput",
+    "PoliticsTeamConfig",
+    "SportsBasketballEvidenceInput",
+    "SportsBasketballTeamConfig",
+    "SportsOtherEvidenceInput",
+    "SportsOtherTeamConfig",
+    "SportsSoccerEvidenceInput",
+    "SportsSoccerTeamConfig",
     "SupabaseTeamForecastConfig",
     "TeamForecastCostInterfaceInput",
     "PaperAnalyticsLog",
@@ -736,8 +799,17 @@ __all__ = [
     "build_paper_trade_cost_audit_report",
     "check_outcomes",
     "build_paper_strategy_risk_audit_report",
+    "build_commodities_gold_team_forecast",
+    "build_commodities_oil_team_forecast",
     "build_crypto_btc_team_forecast",
+    "build_crypto_eth_team_forecast",
     "build_default_team_profiles",
+    "build_equity_indices_team_forecast",
+    "build_macro_rates_team_forecast",
+    "build_politics_team_forecast",
+    "build_sports_basketball_team_forecast",
+    "build_sports_other_team_forecast",
+    "build_sports_soccer_team_forecast",
     "build_team_market_route_report",
     "build_team_performance_summary_report",
     "build_trade_proposal_evidence_comparison_history_batch_health_report",

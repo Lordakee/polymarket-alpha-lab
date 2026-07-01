@@ -98,6 +98,51 @@ from polymarket_alpha_lab.crypto_btc_team import (
     CryptoBtcTeamConfig,
     build_crypto_btc_team_forecast,
 )
+from polymarket_alpha_lab.crypto_eth_team import (
+    CryptoEthEvidenceInput,
+    CryptoEthTeamConfig,
+    build_crypto_eth_team_forecast,
+)
+from polymarket_alpha_lab.macro_rates_team import (
+    MacroRatesEvidenceInput,
+    MacroRatesTeamConfig,
+    build_macro_rates_team_forecast,
+)
+from polymarket_alpha_lab.equity_indices_team import (
+    EquityIndicesEvidenceInput,
+    EquityIndicesTeamConfig,
+    build_equity_indices_team_forecast,
+)
+from polymarket_alpha_lab.commodities_gold_team import (
+    CommoditiesGoldEvidenceInput,
+    CommoditiesGoldTeamConfig,
+    build_commodities_gold_team_forecast,
+)
+from polymarket_alpha_lab.commodities_oil_team import (
+    CommoditiesOilEvidenceInput,
+    CommoditiesOilTeamConfig,
+    build_commodities_oil_team_forecast,
+)
+from polymarket_alpha_lab.politics_team import (
+    PoliticsEvidenceInput,
+    PoliticsTeamConfig,
+    build_politics_team_forecast,
+)
+from polymarket_alpha_lab.sports_basketball_team import (
+    SportsBasketballEvidenceInput,
+    SportsBasketballTeamConfig,
+    build_sports_basketball_team_forecast,
+)
+from polymarket_alpha_lab.sports_soccer_team import (
+    SportsSoccerEvidenceInput,
+    SportsSoccerTeamConfig,
+    build_sports_soccer_team_forecast,
+)
+from polymarket_alpha_lab.sports_other_team import (
+    SportsOtherEvidenceInput,
+    SportsOtherTeamConfig,
+    build_sports_other_team_forecast,
+)
 from polymarket_alpha_lab.supabase_team_forecast_config import (
     SupabaseTeamForecastConfig,
 )
@@ -823,8 +868,26 @@ def test_strategy_risk_audit_public_api_exports():
 
 def test_team_public_api_exports():
     expected_exports = {
+        "CommoditiesGoldEvidenceInput",
+        "CommoditiesGoldTeamConfig",
+        "CommoditiesOilEvidenceInput",
+        "CommoditiesOilTeamConfig",
         "CryptoBtcEvidenceInput",
         "CryptoBtcTeamConfig",
+        "CryptoEthEvidenceInput",
+        "CryptoEthTeamConfig",
+        "EquityIndicesEvidenceInput",
+        "EquityIndicesTeamConfig",
+        "MacroRatesEvidenceInput",
+        "MacroRatesTeamConfig",
+        "PoliticsEvidenceInput",
+        "PoliticsTeamConfig",
+        "SportsBasketballEvidenceInput",
+        "SportsBasketballTeamConfig",
+        "SportsOtherEvidenceInput",
+        "SportsOtherTeamConfig",
+        "SportsSoccerEvidenceInput",
+        "SportsSoccerTeamConfig",
         "SupabaseTeamForecastConfig",
         "TeamForecastCostInterfaceInput",
         "TeamForecastEvidencePacket",
@@ -834,16 +897,43 @@ def test_team_public_api_exports():
         "TeamMarketRouteReport",
         "TeamPerformanceSummaryReport",
         "TeamProfile",
+        "build_commodities_gold_team_forecast",
+        "build_commodities_oil_team_forecast",
         "build_crypto_btc_team_forecast",
+        "build_crypto_eth_team_forecast",
         "build_default_team_profiles",
+        "build_equity_indices_team_forecast",
+        "build_macro_rates_team_forecast",
+        "build_politics_team_forecast",
+        "build_sports_basketball_team_forecast",
+        "build_sports_other_team_forecast",
+        "build_sports_soccer_team_forecast",
         "build_team_market_route_report",
         "build_team_performance_summary_report",
         "team_forecast_to_side_edge_input",
     }
 
     assert expected_exports <= set(lab.__all__)
+    assert lab.CommoditiesGoldEvidenceInput is CommoditiesGoldEvidenceInput
+    assert lab.CommoditiesGoldTeamConfig is CommoditiesGoldTeamConfig
+    assert lab.CommoditiesOilEvidenceInput is CommoditiesOilEvidenceInput
+    assert lab.CommoditiesOilTeamConfig is CommoditiesOilTeamConfig
     assert lab.CryptoBtcEvidenceInput is CryptoBtcEvidenceInput
     assert lab.CryptoBtcTeamConfig is CryptoBtcTeamConfig
+    assert lab.CryptoEthEvidenceInput is CryptoEthEvidenceInput
+    assert lab.CryptoEthTeamConfig is CryptoEthTeamConfig
+    assert lab.EquityIndicesEvidenceInput is EquityIndicesEvidenceInput
+    assert lab.EquityIndicesTeamConfig is EquityIndicesTeamConfig
+    assert lab.MacroRatesEvidenceInput is MacroRatesEvidenceInput
+    assert lab.MacroRatesTeamConfig is MacroRatesTeamConfig
+    assert lab.PoliticsEvidenceInput is PoliticsEvidenceInput
+    assert lab.PoliticsTeamConfig is PoliticsTeamConfig
+    assert lab.SportsBasketballEvidenceInput is SportsBasketballEvidenceInput
+    assert lab.SportsBasketballTeamConfig is SportsBasketballTeamConfig
+    assert lab.SportsOtherEvidenceInput is SportsOtherEvidenceInput
+    assert lab.SportsOtherTeamConfig is SportsOtherTeamConfig
+    assert lab.SportsSoccerEvidenceInput is SportsSoccerEvidenceInput
+    assert lab.SportsSoccerTeamConfig is SportsSoccerTeamConfig
     assert lab.SupabaseTeamForecastConfig is SupabaseTeamForecastConfig
     assert lab.TeamForecastCostInterfaceInput is TeamForecastCostInterfaceInput
     assert lab.TeamForecastEvidencePacket is TeamForecastEvidencePacket
@@ -853,8 +943,26 @@ def test_team_public_api_exports():
     assert lab.TeamMarketRouteReport is TeamMarketRouteReport
     assert lab.TeamPerformanceSummaryReport is TeamPerformanceSummaryReport
     assert lab.TeamProfile is TeamProfile
+    assert (
+        lab.build_commodities_gold_team_forecast
+        is build_commodities_gold_team_forecast
+    )
+    assert (
+        lab.build_commodities_oil_team_forecast
+        is build_commodities_oil_team_forecast
+    )
     assert lab.build_crypto_btc_team_forecast is build_crypto_btc_team_forecast
+    assert lab.build_crypto_eth_team_forecast is build_crypto_eth_team_forecast
     assert lab.build_default_team_profiles is build_default_team_profiles
+    assert lab.build_equity_indices_team_forecast is build_equity_indices_team_forecast
+    assert lab.build_macro_rates_team_forecast is build_macro_rates_team_forecast
+    assert lab.build_politics_team_forecast is build_politics_team_forecast
+    assert (
+        lab.build_sports_basketball_team_forecast
+        is build_sports_basketball_team_forecast
+    )
+    assert lab.build_sports_other_team_forecast is build_sports_other_team_forecast
+    assert lab.build_sports_soccer_team_forecast is build_sports_soccer_team_forecast
     assert lab.build_team_market_route_report is build_team_market_route_report
     assert (
         lab.build_team_performance_summary_report

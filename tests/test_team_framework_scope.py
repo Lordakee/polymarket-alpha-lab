@@ -12,7 +12,6 @@ TEAM_MODULE_ROOT = REPO_ROOT / "src" / "polymarket_alpha_lab"
 PSYCOPG_MODULE_NAME = "team_forecast_psycopg.py"
 PAPER_GUARD_MODULE_NAME = "team_paper_guard.py"
 ADDITIONAL_STATIC_TEAM_MODULE_NAMES = (
-    "crypto_btc_team.py",
     "supabase_team_forecast_config.py",
 )
 
@@ -88,6 +87,7 @@ FORBIDDEN_LIVE_IDENTIFIER_FRAGMENTS = (
 
 def _team_module_paths() -> tuple[Path, ...]:
     paths = set(TEAM_MODULE_ROOT.glob("team_*.py"))
+    paths.update(TEAM_MODULE_ROOT.glob("*_team.py"))
     paths.update(
         TEAM_MODULE_ROOT / module_name
         for module_name in ADDITIONAL_STATIC_TEAM_MODULE_NAMES
@@ -189,7 +189,16 @@ def test_team_modules_exist_and_are_discovered_by_static_scope():
     assert _team_module_paths()
     assert TEAM_MODULE_ROOT / "team_forecast_packet.py" in _team_module_paths()
     assert TEAM_MODULE_ROOT / "team_paper_guard.py" in _team_module_paths()
+    assert TEAM_MODULE_ROOT / "commodities_gold_team.py" in _team_module_paths()
+    assert TEAM_MODULE_ROOT / "commodities_oil_team.py" in _team_module_paths()
     assert TEAM_MODULE_ROOT / "crypto_btc_team.py" in _team_module_paths()
+    assert TEAM_MODULE_ROOT / "crypto_eth_team.py" in _team_module_paths()
+    assert TEAM_MODULE_ROOT / "equity_indices_team.py" in _team_module_paths()
+    assert TEAM_MODULE_ROOT / "macro_rates_team.py" in _team_module_paths()
+    assert TEAM_MODULE_ROOT / "politics_team.py" in _team_module_paths()
+    assert TEAM_MODULE_ROOT / "sports_basketball_team.py" in _team_module_paths()
+    assert TEAM_MODULE_ROOT / "sports_other_team.py" in _team_module_paths()
+    assert TEAM_MODULE_ROOT / "sports_soccer_team.py" in _team_module_paths()
     assert TEAM_MODULE_ROOT / "supabase_team_forecast_config.py" in _team_module_paths()
 
 

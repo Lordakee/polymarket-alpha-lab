@@ -251,6 +251,10 @@ EXPECTED_NON_LEVEL_2_PACKAGE_ROOT_EXPORTS_WITH_NODE_11_TERMS = {
     "OutcomeTrackingReport",
     "check_outcomes",
     "polymarket_default_cost_assumptions",
+    "TeamMarketRouteConfig",
+    "TeamMarketRouteInput",
+    "TeamMarketRouteReport",
+    "build_team_market_route_report",
 }
 
 ALLOWED_IMPORT_PREFIXES = {
