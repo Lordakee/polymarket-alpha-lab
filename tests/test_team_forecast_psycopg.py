@@ -4,6 +4,7 @@ import importlib
 import sys
 import types
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -11,6 +12,7 @@ import pytest
 
 LOCAL_DSN = "postgresql://postgres:postgres@localhost:54322/postgres"
 REMOTE_SECRET_DSN = "postgresql://sensitive-token@fake.example.invalid/db"
+GENERATED_AT = datetime(2026, 7, 1, 12, 0, tzinfo=UTC)
 
 
 @dataclass(frozen=True)
@@ -19,8 +21,36 @@ class FakePacket:
 
 
 @dataclass(frozen=True)
+class FakeEvidencePacket:
+    evidence_id: str
+
+
+@dataclass(frozen=True)
+class FakeOutcome:
+    outcome_id: str
+
+
+@dataclass(frozen=True)
 class FakeRow:
     payload_sha256: str
+
+
+@dataclass(frozen=True)
+class FakeForecastDbRow:
+    payload_sha256: str
+    generated_at: datetime
+    forecast_id: str
+    condition_id: str
+    team_id: str
+    market_slug: str
+    config_version: str
+    selected_side: str
+    forecast_probability: str
+    confidence: str
+    payload_json: dict[str, Any]
+    paper_only: bool = True
+    report_only: bool = True
+    readonly: bool = True
 
 
 class FakeConnection:
@@ -43,6 +73,7 @@ class FakeCursor:
     def __init__(self) -> None:
         self.calls: list[tuple[str, tuple[Any, ...]]] = []
         self.close_count = 0
+        self.rowcount = 1
 
     def execute(self, sql: str, params: tuple[Any, ...] = ()) -> None:
         self.calls.append((sql, params))
@@ -108,11 +139,17 @@ def test_insert_opens_psycopg_connection_delegates_commits_and_closes(
         connect=lambda dsn: connect_calls.append(dsn) or connection,
     )
 
-    def fake_insert(connection_arg: Any, packet_arg: Any, *, table_name: str) -> FakeRow:
-        store_calls.append((connection_arg, packet_arg, table_name))
+    def fake_insert(connection_arg: Any, row_arg: Any, *, table_name: str) -> FakeRow:
+        store_calls.append((connection_arg, row_arg, table_name))
         return row
 
     monkeypatch.setattr(adapter_module, "insert_team_forecast", fake_insert)
+    monkeypatch.setattr(
+        adapter_module,
+        "team_forecast_to_db_row",
+        lambda packet_arg: row,
+        raising=False,
+    )
 
     inserted = adapter_module.insert_team_forecast_with_psycopg(
         LOCAL_DSN,
@@ -122,10 +159,10 @@ def test_insert_opens_psycopg_connection_delegates_commits_and_closes(
 
     assert inserted == row
     assert connect_calls == [LOCAL_DSN]
-    store_connection, store_packet, store_table_name = store_calls[0]
+    store_connection, store_row, store_table_name = store_calls[0]
     assert store_connection is not connection
     assert store_connection.connection is connection
-    assert store_packet == packet
+    assert store_row == row
     assert store_table_name == "team_forecasts_archive"
     assert connection.commit_count == 1
     assert connection.rollback_count == 0
@@ -195,7 +232,7 @@ def test_insert_adapts_json_values_for_psycopg_without_wrapping_scalars(
         connect=lambda dsn: connect_calls.append(dsn) or connection,
     )
 
-    def fake_insert(connection_arg: Any, packet_arg: Any, *, table_name: str) -> FakeRow:
+    def fake_insert(connection_arg: Any, row_arg: Any, *, table_name: str) -> FakeRow:
         cursor = connection_arg.cursor()
         try:
             cursor.execute(
@@ -213,6 +250,12 @@ def test_insert_adapts_json_values_for_psycopg_without_wrapping_scalars(
         return FakeRow(payload_sha256="a" * 64)
 
     monkeypatch.setattr(adapter_module, "insert_team_forecast", fake_insert)
+    monkeypatch.setattr(
+        adapter_module,
+        "team_forecast_to_db_row",
+        lambda packet_arg: FakeRow(payload_sha256="a" * 64),
+        raising=False,
+    )
 
     adapter_module.insert_team_forecast_with_psycopg(
         LOCAL_DSN,
@@ -236,6 +279,54 @@ def test_insert_adapts_json_values_for_psycopg_without_wrapping_scalars(
     assert connection.close_count == 1
 
 
+def test_insert_forecast_real_store_path_delegates_psycopg_cursor_rowcount(
+    monkeypatch: pytest.MonkeyPatch,
+    adapter_module: types.ModuleType,
+) -> None:
+    store_module = importlib.import_module("polymarket_alpha_lab.team_forecast_store")
+    connection = FakeCursorConnection()
+    row = FakeForecastDbRow(
+        payload_sha256="a" * 64,
+        generated_at=GENERATED_AT,
+        forecast_id="forecast-btc-1",
+        condition_id="condition-btc",
+        team_id="crypto_btc",
+        market_slug="bitcoin-above-120k",
+        config_version="team-forecast-v0",
+        selected_side="yes",
+        forecast_probability="0.620000",
+        confidence="0.710000",
+        payload_json={"kind": "forecast", "paper_only": True},
+    )
+    connect_calls: list[str] = []
+
+    _install_fake_psycopg(
+        monkeypatch,
+        connect=lambda dsn: connect_calls.append(dsn) or connection,
+    )
+    monkeypatch.setattr(
+        adapter_module,
+        "team_forecast_to_db_row",
+        lambda packet_arg: row,
+        raising=False,
+    )
+    monkeypatch.setattr(store_module, "TeamForecastDbRow", FakeForecastDbRow)
+
+    inserted = adapter_module.insert_team_forecast_with_psycopg(
+        LOCAL_DSN,
+        FakePacket(forecast_id="forecast-btc-1"),
+        table_name="team_forecasts_archive",
+    )
+
+    assert inserted == row
+    assert connect_calls == [LOCAL_DSN]
+    assert connection.cursor_count == 1
+    assert connection.cursor_instance.close_count == 1
+    assert connection.commit_count == 1
+    assert connection.rollback_count == 0
+    assert connection.close_count == 1
+
+
 def test_insert_rolls_back_closes_and_reraises_store_exception(
     monkeypatch: pytest.MonkeyPatch,
     adapter_module: types.ModuleType,
@@ -243,10 +334,16 @@ def test_insert_rolls_back_closes_and_reraises_store_exception(
     connection = FakeConnection()
     _install_fake_psycopg(monkeypatch, connect=lambda dsn: connection)
 
-    def fake_insert(connection_arg: Any, packet_arg: Any, *, table_name: str) -> FakeRow:
+    def fake_insert(connection_arg: Any, row_arg: Any, *, table_name: str) -> FakeRow:
         raise ValueError("store failed without dsn")
 
     monkeypatch.setattr(adapter_module, "insert_team_forecast", fake_insert)
+    monkeypatch.setattr(
+        adapter_module,
+        "team_forecast_to_db_row",
+        lambda packet_arg: FakeRow(payload_sha256="a" * 64),
+        raising=False,
+    )
 
     with pytest.raises(ValueError, match="store failed without dsn"):
         adapter_module.insert_team_forecast_with_psycopg(
@@ -257,6 +354,221 @@ def test_insert_rolls_back_closes_and_reraises_store_exception(
 
     assert connection.commit_count == 0
     assert connection.rollback_count == 1
+    assert connection.close_count == 1
+
+
+def test_insert_evidence_opens_psycopg_converts_delegates_commits_and_closes(
+    monkeypatch: pytest.MonkeyPatch,
+    adapter_module: types.ModuleType,
+) -> None:
+    connection = FakeConnection()
+    packet = FakeEvidencePacket(evidence_id="evidence-btc-1")
+    row = FakeRow(payload_sha256="b" * 64)
+    connect_calls: list[str] = []
+    store_calls: list[tuple[Any, Any, str]] = []
+    converter_calls: list[tuple[Any, str, str, datetime]] = []
+
+    _install_fake_psycopg(
+        monkeypatch,
+        connect=lambda dsn: connect_calls.append(dsn) or connection,
+    )
+
+    def fake_converter(
+        packet_arg: Any,
+        *,
+        forecast_id: str,
+        config_version: str,
+        generated_at: datetime,
+    ) -> FakeRow:
+        converter_calls.append((packet_arg, forecast_id, config_version, generated_at))
+        return row
+
+    def fake_insert(connection_arg: Any, row_arg: Any, *, table_name: str) -> FakeRow:
+        store_calls.append((connection_arg, row_arg, table_name))
+        return row
+
+    monkeypatch.setattr(adapter_module, "team_forecast_evidence_to_db_row", fake_converter, raising=False)
+    monkeypatch.setattr(adapter_module, "insert_team_forecast_evidence", fake_insert, raising=False)
+
+    inserted = adapter_module.insert_team_forecast_evidence_with_psycopg(
+        LOCAL_DSN,
+        packet,
+        forecast_id="forecast-btc-1",
+        config_version="team-forecast-v0",
+        generated_at=GENERATED_AT,
+        table_name="team_forecast_evidence_archive",
+    )
+
+    assert inserted == row
+    assert connect_calls == [LOCAL_DSN]
+    assert converter_calls == [
+        (packet, "forecast-btc-1", "team-forecast-v0", GENERATED_AT),
+    ]
+    store_connection, store_row, table_name = store_calls[0]
+    assert store_connection is not connection
+    assert store_connection.connection is connection
+    assert store_row == row
+    assert table_name == "team_forecast_evidence_archive"
+    assert connection.commit_count == 1
+    assert connection.rollback_count == 0
+    assert connection.close_count == 1
+
+
+def test_load_evidence_opens_psycopg_delegates_query_options_commits_and_closes(
+    monkeypatch: pytest.MonkeyPatch,
+    adapter_module: types.ModuleType,
+) -> None:
+    connection = FakeConnection()
+    packet = FakeEvidencePacket(evidence_id="evidence-btc-1")
+    connect_calls: list[str] = []
+    store_calls: list[
+        tuple[Any, str | None, str | None, str | None, int | None, str]
+    ] = []
+
+    _install_fake_psycopg(
+        monkeypatch,
+        connect=lambda dsn: connect_calls.append(dsn) or connection,
+    )
+
+    def fake_load(
+        connection_arg: Any,
+        *,
+        forecast_id: str | None,
+        team_id: str | None,
+        market_slug: str | None,
+        limit: int | None,
+        table_name: str,
+    ) -> tuple[FakeEvidencePacket, ...]:
+        store_calls.append(
+            (connection_arg, forecast_id, team_id, market_slug, limit, table_name),
+        )
+        return (packet,)
+
+    monkeypatch.setattr(adapter_module, "load_team_forecast_evidence", fake_load, raising=False)
+
+    loaded = adapter_module.load_team_forecast_evidence_with_psycopg(
+        LOCAL_DSN,
+        forecast_id="forecast-btc-1",
+        team_id="crypto_btc",
+        market_slug="bitcoin-above-120k",
+        limit=10,
+        table_name="team_forecast_evidence_archive",
+    )
+
+    assert loaded == (packet,)
+    assert connect_calls == [LOCAL_DSN]
+    store_connection, forecast_id, team_id, market_slug, limit, table_name = store_calls[0]
+    assert store_connection is not connection
+    assert store_connection.connection is connection
+    assert forecast_id == "forecast-btc-1"
+    assert team_id == "crypto_btc"
+    assert market_slug == "bitcoin-above-120k"
+    assert limit == 10
+    assert table_name == "team_forecast_evidence_archive"
+    assert connection.commit_count == 1
+    assert connection.rollback_count == 0
+    assert connection.close_count == 1
+
+
+def test_insert_outcome_opens_psycopg_converts_delegates_commits_and_closes(
+    monkeypatch: pytest.MonkeyPatch,
+    adapter_module: types.ModuleType,
+) -> None:
+    connection = FakeConnection()
+    outcome = FakeOutcome(outcome_id="outcome-btc-1")
+    row = FakeRow(payload_sha256="c" * 64)
+    connect_calls: list[str] = []
+    store_calls: list[tuple[Any, Any, str]] = []
+    converter_calls: list[tuple[Any, str, datetime]] = []
+
+    _install_fake_psycopg(
+        monkeypatch,
+        connect=lambda dsn: connect_calls.append(dsn) or connection,
+    )
+
+    def fake_converter(
+        outcome_arg: Any,
+        *,
+        config_version: str,
+        generated_at: datetime,
+    ) -> FakeRow:
+        converter_calls.append((outcome_arg, config_version, generated_at))
+        return row
+
+    def fake_insert(connection_arg: Any, row_arg: Any, *, table_name: str) -> FakeRow:
+        store_calls.append((connection_arg, row_arg, table_name))
+        return row
+
+    monkeypatch.setattr(adapter_module, "team_forecast_outcome_to_db_row", fake_converter, raising=False)
+    monkeypatch.setattr(adapter_module, "insert_team_forecast_outcome", fake_insert, raising=False)
+
+    inserted = adapter_module.insert_team_forecast_outcome_with_psycopg(
+        LOCAL_DSN,
+        outcome,
+        config_version="team-forecast-v0",
+        generated_at=GENERATED_AT,
+        table_name="team_forecast_outcomes_archive",
+    )
+
+    assert inserted == row
+    assert connect_calls == [LOCAL_DSN]
+    assert converter_calls == [(outcome, "team-forecast-v0", GENERATED_AT)]
+    store_connection, store_row, table_name = store_calls[0]
+    assert store_connection is not connection
+    assert store_connection.connection is connection
+    assert store_row == row
+    assert table_name == "team_forecast_outcomes_archive"
+    assert connection.commit_count == 1
+    assert connection.rollback_count == 0
+    assert connection.close_count == 1
+
+
+def test_load_outcomes_opens_psycopg_delegates_query_options_commits_and_closes(
+    monkeypatch: pytest.MonkeyPatch,
+    adapter_module: types.ModuleType,
+) -> None:
+    connection = FakeConnection()
+    outcome = FakeOutcome(outcome_id="outcome-btc-1")
+    connect_calls: list[str] = []
+    store_calls: list[tuple[Any, str | None, str | None, int | None, str]] = []
+
+    _install_fake_psycopg(
+        monkeypatch,
+        connect=lambda dsn: connect_calls.append(dsn) or connection,
+    )
+
+    def fake_load(
+        connection_arg: Any,
+        *,
+        team_id: str | None,
+        market_slug: str | None,
+        limit: int | None,
+        table_name: str,
+    ) -> tuple[FakeOutcome, ...]:
+        store_calls.append((connection_arg, team_id, market_slug, limit, table_name))
+        return (outcome,)
+
+    monkeypatch.setattr(adapter_module, "load_team_forecast_outcomes", fake_load, raising=False)
+
+    loaded = adapter_module.load_team_forecast_outcomes_with_psycopg(
+        LOCAL_DSN,
+        team_id="crypto_btc",
+        market_slug="bitcoin-above-120k",
+        limit=10,
+        table_name="team_forecast_outcomes_archive",
+    )
+
+    assert loaded == (outcome,)
+    assert connect_calls == [LOCAL_DSN]
+    store_connection, team_id, market_slug, limit, table_name = store_calls[0]
+    assert store_connection is not connection
+    assert store_connection.connection is connection
+    assert team_id == "crypto_btc"
+    assert market_slug == "bitcoin-above-120k"
+    assert limit == 10
+    assert table_name == "team_forecast_outcomes_archive"
+    assert connection.commit_count == 1
+    assert connection.rollback_count == 0
     assert connection.close_count == 1
 
 
@@ -388,3 +700,79 @@ def test_missing_psycopg_raises_clean_error_after_dsn_validation(
     assert "psycopg is required" in str(exc_info.value)
     assert "postgresql://" not in str(exc_info.value)
     assert "secret" not in str(exc_info.value)
+
+
+def test_public_exports_include_all_team_forecast_psycopg_wrappers(
+    adapter_module: types.ModuleType,
+) -> None:
+    assert set(adapter_module.__all__) == {
+        "insert_team_forecast_with_psycopg",
+        "load_team_forecasts_with_psycopg",
+        "insert_team_forecast_evidence_with_psycopg",
+        "load_team_forecast_evidence_with_psycopg",
+        "insert_team_forecast_outcome_with_psycopg",
+        "load_team_forecast_outcomes_with_psycopg",
+    }
+
+
+def test_missing_store_module_public_wrappers_raise_clean_runtime_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setitem(sys.modules, "polymarket_alpha_lab.team_forecast_store", None)
+    sys.modules.pop("polymarket_alpha_lab.team_forecast_psycopg", None)
+    module = importlib.import_module("polymarket_alpha_lab.team_forecast_psycopg")
+    connection = FakeConnection()
+    _install_fake_psycopg(monkeypatch, connect=lambda dsn: connection)
+    row = FakeRow(payload_sha256="d" * 64)
+    monkeypatch.setattr(module, "team_forecast_to_db_row", lambda packet: row, raising=False)
+    monkeypatch.setattr(
+        module,
+        "team_forecast_evidence_to_db_row",
+        lambda packet, *, forecast_id, config_version, generated_at: row,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        module,
+        "team_forecast_outcome_to_db_row",
+        lambda outcome, *, config_version, generated_at: row,
+        raising=False,
+    )
+
+    calls = (
+        lambda: module.insert_team_forecast_with_psycopg(
+            LOCAL_DSN,
+            FakePacket(forecast_id="forecast-btc-1"),
+            table_name="team_forecasts",
+        ),
+        lambda: module.load_team_forecasts_with_psycopg(
+            LOCAL_DSN,
+            table_name="team_forecasts",
+        ),
+        lambda: module.insert_team_forecast_evidence_with_psycopg(
+            LOCAL_DSN,
+            FakeEvidencePacket(evidence_id="evidence-btc-1"),
+            forecast_id="forecast-btc-1",
+            config_version="team-forecast-v0",
+            generated_at=GENERATED_AT,
+            table_name="team_forecast_evidence",
+        ),
+        lambda: module.load_team_forecast_evidence_with_psycopg(
+            LOCAL_DSN,
+            table_name="team_forecast_evidence",
+        ),
+        lambda: module.insert_team_forecast_outcome_with_psycopg(
+            LOCAL_DSN,
+            FakeOutcome(outcome_id="outcome-btc-1"),
+            config_version="team-forecast-v0",
+            generated_at=GENERATED_AT,
+            table_name="team_forecast_outcomes",
+        ),
+        lambda: module.load_team_forecast_outcomes_with_psycopg(
+            LOCAL_DSN,
+            table_name="team_forecast_outcomes",
+        ),
+    )
+
+    for call in calls:
+        with pytest.raises(RuntimeError, match="team forecast store module is required"):
+            call()

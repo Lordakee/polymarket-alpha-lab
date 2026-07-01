@@ -24,6 +24,13 @@ class FakeTeamForecastPacket:
 
 
 @dataclass(frozen=True)
+class FakeTeamForecastEvidencePacket:
+    evidence_id: str
+    team_id: str
+    market_slug: str
+
+
+@dataclass(frozen=True)
 class FakeTeamForecastOutcome:
     outcome_id: str
     team_id: str
@@ -279,6 +286,15 @@ def store_module(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
             market_slug=row.market_slug,
         )
 
+    def team_forecast_evidence_from_db_row(
+        row: FakeTeamForecastEvidenceDbRow,
+    ) -> FakeTeamForecastEvidencePacket:
+        return FakeTeamForecastEvidencePacket(
+            evidence_id=row.evidence_id,
+            team_id=row.team_id,
+            market_slug=row.market_slug,
+        )
+
     def team_forecast_outcome_from_db_row(
         row: FakeTeamForecastOutcomeDbRow,
     ) -> FakeTeamForecastOutcome:
@@ -293,6 +309,7 @@ def store_module(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
     companion.TeamForecastEvidenceDbRow = FakeTeamForecastEvidenceDbRow
     companion.TeamForecastOutcomeDbRow = FakeTeamForecastOutcomeDbRow
     companion.team_forecast_from_db_row = team_forecast_from_db_row
+    companion.team_forecast_evidence_from_db_row = team_forecast_evidence_from_db_row
     companion.team_forecast_outcome_from_db_row = team_forecast_outcome_from_db_row
     monkeypatch.setitem(
         sys.modules,
@@ -673,6 +690,58 @@ def test_load_team_forecasts_filters_limits_newest_first_and_restores_packets(
     assert params == ("crypto_btc", "bitcoin-above-120k", 25)
 
 
+def test_load_team_forecast_evidence_filters_limits_newest_first_and_restores_packets(
+    store_module: types.ModuleType,
+) -> None:
+    connection = FakeConnection(rows=(evidence_row(),))
+
+    packets = store_module.load_team_forecast_evidence(
+        connection,
+        forecast_id="forecast-btc-1",
+        team_id="crypto_btc",
+        market_slug="bitcoin-above-120k",
+        limit=25,
+        table_name="research.team_forecast_evidence",
+    )
+
+    assert packets == (
+        FakeTeamForecastEvidencePacket(
+            evidence_id="evidence-btc-1",
+            team_id="crypto_btc",
+            market_slug="bitcoin-above-120k",
+        ),
+    )
+    assert connection.commit_count == 0
+    assert connection.cursor_instance.closed is True
+    sql, params = connection.cursor_instance.calls[0]
+    assert normalize_sql(sql) == normalize_sql(
+        """
+        SELECT
+            payload_sha256,
+            generated_at,
+            forecast_id,
+            evidence_id,
+            team_id,
+            market_slug,
+            config_version,
+            source_id,
+            data_timestamp,
+            data_freshness_seconds,
+            evidence_type,
+            weight,
+            payload_json,
+            paper_only,
+            report_only,
+            readonly
+        FROM research.team_forecast_evidence
+        WHERE forecast_id = %s AND team_id = %s AND market_slug = %s
+        ORDER BY generated_at DESC, inserted_at DESC, payload_sha256 DESC
+        LIMIT %s
+        """,
+    )
+    assert params == ("forecast-btc-1", "crypto_btc", "bitcoin-above-120k", 25)
+
+
 def test_load_team_forecast_outcomes_filters_limits_newest_first_and_restores_outcomes(
     store_module: types.ModuleType,
 ) -> None:
@@ -768,10 +837,32 @@ def test_load_accepts_mapping_and_positional_rows(
         True,
         True,
     )
+    evidence_tuple = (
+        "g" * 64,
+        GENERATED_AT,
+        "forecast-btc-2",
+        "evidence-btc-2",
+        "crypto_btc",
+        "bitcoin-above-120k",
+        "team-forecast-evidence-v0",
+        "source-coinbase-premium",
+        DATA_TIMESTAMP,
+        90,
+        "coinbase_premium",
+        Decimal("0.510000"),
+        {"kind": "evidence-2", "paper_only": True},
+        True,
+        True,
+        True,
+    )
 
     packets = store_module.load_team_forecasts(
         FakeConnection(rows=(forecast_mapping,)),
         table_name="team_forecasts",
+    )
+    evidence_packets = store_module.load_team_forecast_evidence(
+        FakeConnection(rows=(evidence_tuple,)),
+        table_name="team_forecast_evidence",
     )
     outcomes = store_module.load_team_forecast_outcomes(
         FakeConnection(rows=(outcome_tuple,)),
@@ -781,6 +872,13 @@ def test_load_accepts_mapping_and_positional_rows(
     assert packets == (
         FakeTeamForecastPacket(
             forecast_id="forecast-btc-2",
+            team_id="crypto_btc",
+            market_slug="bitcoin-above-120k",
+        ),
+    )
+    assert evidence_packets == (
+        FakeTeamForecastEvidencePacket(
+            evidence_id="evidence-btc-2",
             team_id="crypto_btc",
             market_slug="bitcoin-above-120k",
         ),
@@ -824,6 +922,62 @@ def test_load_propagates_cursor_close_error_after_successful_query(
     assert exc_info.value is close_error
     assert connection.cursor_instance.close_count == 1
     assert connection.cursor_instance.calls
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    (
+        ({"table_name": "schema.too.many.parts"}, "table_name"),
+        ({"forecast_id": ""}, "forecast_id"),
+        ({"forecast_id": " forecast-btc-1"}, "forecast_id"),
+        ({"team_id": ""}, "team_id"),
+        ({"team_id": " crypto_btc"}, "team_id"),
+        ({"market_slug": ""}, "market_slug"),
+        ({"market_slug": " bitcoin-above-120k"}, "market_slug"),
+        ({"limit": 0}, "limit"),
+        ({"limit": True}, "limit"),
+    ),
+)
+def test_load_team_forecast_evidence_rejects_invalid_query_inputs_without_executing_sql(
+    store_module: types.ModuleType,
+    kwargs: dict[str, Any],
+    message: str,
+) -> None:
+    connection = FakeConnection()
+    kwargs.setdefault("table_name", "team_forecast_evidence")
+
+    with pytest.raises(ValueError, match=message):
+        store_module.load_team_forecast_evidence(connection, **kwargs)
+
+    assert connection.cursor_count == 0
+    assert connection.cursor_instance.calls == []
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    (
+        ({"table_name": "schema.too.many.parts"}, "table_name"),
+        ({"team_id": ""}, "team_id"),
+        ({"team_id": " crypto_btc"}, "team_id"),
+        ({"market_slug": ""}, "market_slug"),
+        ({"market_slug": " bitcoin-above-120k"}, "market_slug"),
+        ({"limit": 0}, "limit"),
+        ({"limit": True}, "limit"),
+    ),
+)
+def test_load_team_forecast_outcomes_rejects_invalid_query_inputs_without_executing_sql(
+    store_module: types.ModuleType,
+    kwargs: dict[str, Any],
+    message: str,
+) -> None:
+    connection = FakeConnection()
+    kwargs.setdefault("table_name", "team_forecast_outcomes")
+
+    with pytest.raises(ValueError, match=message):
+        store_module.load_team_forecast_outcomes(connection, **kwargs)
+
+    assert connection.cursor_count == 0
+    assert connection.cursor_instance.calls == []
 
 
 @pytest.mark.parametrize(

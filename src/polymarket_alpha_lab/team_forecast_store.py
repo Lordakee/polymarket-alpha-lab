@@ -3,16 +3,22 @@
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from polymarket_alpha_lab.team_forecast_db_row import (
     TeamForecastDbRow,
     TeamForecastEvidenceDbRow,
     TeamForecastOutcomeDbRow,
     TeamMarketRouteDbRow,
+    team_forecast_evidence_from_db_row,
     team_forecast_from_db_row,
     team_forecast_outcome_from_db_row,
 )
+
+if TYPE_CHECKING:
+    from polymarket_alpha_lab.team_forecast_db_row import TeamForecastOutcome
+    from polymarket_alpha_lab.team_forecast_packet import TeamForecastEvidencePacket
+    from polymarket_alpha_lab.team_forecast_packet import TeamForecastPacket
 
 
 __all__ = (
@@ -20,6 +26,7 @@ __all__ = (
     "insert_team_forecast",
     "insert_team_forecast_evidence",
     "insert_team_forecast_outcome",
+    "load_team_forecast_evidence",
     "load_team_forecasts",
     "load_team_forecast_outcomes",
 )
@@ -164,7 +171,7 @@ def load_team_forecasts(
     market_slug: str | None = None,
     limit: int | None = None,
     table_name: str = _DEFAULT_FORECAST_TABLE_NAME,
-) -> tuple[Any, ...]:
+) -> tuple[TeamForecastPacket, ...]:
     table_name = _validate_table_name(table_name)
     where_clause, params = _filter_params(
         team_id=team_id,
@@ -189,6 +196,40 @@ def load_team_forecasts(
     return tuple(team_forecast_from_db_row(row) for row in rows)
 
 
+def load_team_forecast_evidence(
+    connection: Any,
+    *,
+    forecast_id: str | None = None,
+    team_id: str | None = None,
+    market_slug: str | None = None,
+    limit: int | None = None,
+    table_name: str = _DEFAULT_EVIDENCE_TABLE_NAME,
+) -> tuple[TeamForecastEvidencePacket, ...]:
+    table_name = _validate_table_name(table_name)
+    where_clause, params = _filter_params(
+        forecast_id=forecast_id,
+        team_id=team_id,
+        market_slug=market_slug,
+        limit=limit,
+    )
+    limit_clause = _limit_clause(limit)
+    columns = ",\n            ".join(_EVIDENCE_COLUMNS)
+    sql = f"""
+        SELECT
+            {columns}
+        FROM {table_name}
+        {where_clause}
+        ORDER BY generated_at DESC, inserted_at DESC, payload_sha256 DESC
+        {limit_clause}
+        """
+    records = _execute_load(connection, sql, tuple(params))
+    rows = tuple(
+        _db_row_from_record(record, TeamForecastEvidenceDbRow, _EVIDENCE_COLUMNS)
+        for record in records
+    )
+    return tuple(team_forecast_evidence_from_db_row(row) for row in rows)
+
+
 def load_team_forecast_outcomes(
     connection: Any,
     *,
@@ -196,7 +237,7 @@ def load_team_forecast_outcomes(
     market_slug: str | None = None,
     limit: int | None = None,
     table_name: str = _DEFAULT_OUTCOME_TABLE_NAME,
-) -> tuple[Any, ...]:
+) -> tuple[TeamForecastOutcome, ...]:
     table_name = _validate_table_name(table_name)
     where_clause, params = _filter_params(
         team_id=team_id,
@@ -265,10 +306,13 @@ def _execute_load(connection: Any, sql: str, params: tuple[Any, ...]) -> tuple[A
 
 def _filter_params(
     *,
+    forecast_id: str | None = None,
     team_id: str | None,
     market_slug: str | None,
     limit: int | None,
 ) -> tuple[str, list[Any]]:
+    if forecast_id is not None:
+        _require_canonical_string("forecast_id", forecast_id)
     if team_id is not None:
         _require_canonical_string("team_id", team_id)
     if market_slug is not None:
@@ -278,6 +322,9 @@ def _filter_params(
 
     where_parts: list[str] = []
     params: list[Any] = []
+    if forecast_id is not None:
+        where_parts.append("forecast_id = %s")
+        params.append(forecast_id)
     if team_id is not None:
         where_parts.append("team_id = %s")
         params.append(team_id)

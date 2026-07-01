@@ -32,6 +32,7 @@ TRANSACTIONAL_MODULES = (
     "polymarket_alpha_lab.strategy_recommendation_rank_stability_psycopg",
     "polymarket_alpha_lab.strategy_recommendation_reason_trend_psycopg",
     "polymarket_alpha_lab.strategy_risk_audit_psycopg",
+    "polymarket_alpha_lab.team_forecast_psycopg",
 )
 
 READ_ONLY_MODULES = (

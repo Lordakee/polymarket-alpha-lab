@@ -34,6 +34,9 @@ def test_codex_node_push_policy_preserves_verified_push_gate():
     assert "post-node external review gate passes through claude code" in normalized
     assert "claude-opus-4-8" in normalized
     assert "thinking level `max`" in normalized
+    assert "if local claude code is unavailable" in normalized
+    assert "treat the review gate as blocked" in normalized
+    assert "no fallback reviewer" in normalized
     assert "opencode" not in normalized.split("## omo / sisyphus session workflow", 1)[0]
     _assert_phrases_appear_in_order(
         normalized,

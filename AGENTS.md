@@ -49,9 +49,10 @@ the user explicitly changes them in a later instruction.
    stage audits, post-node external review gates, and handoff review gates must
    go directly to local Claude Code using model `claude-opus-4-8` with thinking
    level `max`. Do not route reviews to any other reviewer unless the user
-   explicitly changes this rule. Review prompts must be read-only:
-   reviewers may inspect plans, diffs, and files, but must not modify, create,
-   or delete files.
+   explicitly changes this rule. If local Claude Code is unavailable, treat the
+   review gate as blocked; there is no fallback reviewer under the current
+   rules. Review prompts must be read-only: reviewers may inspect plans, diffs,
+   and files, but must not modify, create, or delete files.
 5. **Fast mode is forbidden.** Do not use fast mode for the main Codex agent,
    Codex subagents, Claude Code reviews, implementation workers, planning workers,
    or audit workers.
@@ -113,6 +114,7 @@ Avoid using website scraping as a primary data path unless a needed field is una
 - All plan reviews, code reviews, stage audits, and post-node external review gates go directly to local Claude Code.
 - Use `claude-opus-4-8` with thinking level `max` for every local Claude Code review.
 - Do not route reviews to any other reviewer unless the user explicitly changes this rule again.
+- If local Claude Code is unavailable, treat the review gate as blocked; there is no fallback reviewer under the current rules.
 - Review prompts must be read-only: reviewers may inspect plans, diffs, and files, but must not modify, create, or delete files.
 
 ## Codex Node Push Policy
@@ -129,6 +131,7 @@ Push a completed Codex node to GitHub after all of the following are true:
 - CodeGraph is synced when `.codegraph/` exists.
 - A secret scan finds no leaked credentials or tokens in tracked content.
 - The configured post-node external review gate passes through Claude Code (`claude-opus-4-8`, thinking level `max`).
+- If local Claude Code is unavailable, treat the review gate as blocked; there is no fallback reviewer under the current rules.
 
 Do not push half-finished work, failing tests, unreviewed code, or work that still has unresolved review findings.
 
