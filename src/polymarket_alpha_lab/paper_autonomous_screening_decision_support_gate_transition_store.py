@@ -112,13 +112,15 @@ def insert_paper_autonomous_screening_decision_support_gate_transition_report_wi
     try:
         cursor.execute(sql, params)
         rowcount = cursor.rowcount
-    finally:
+        if rowcount not in (0, 1):
+            raise ValueError("insert rowcount must be 0 or 1")
+    except BaseException:
         try:
             cursor.close()
         except Exception:
             pass
-    if rowcount not in (0, 1):
-        raise ValueError("insert rowcount must be 0 or 1")
+        raise
+    cursor.close()
     return PaperAutonomousScreeningDecisionSupportGateTransitionInsertResult(
         row=row,
         inserted=rowcount == 1,
@@ -180,11 +182,13 @@ def load_paper_autonomous_screening_decision_support_gate_transition_reports(
     try:
         cursor.execute(sql, tuple(params))
         records = cursor.fetchall()
-    finally:
+    except BaseException:
         try:
             cursor.close()
         except Exception:
             pass
+        raise
+    cursor.close()
     rows = tuple(_db_row_from_record(record) for record in records)
     return tuple(
         paper_autonomous_screening_decision_support_gate_transition_report_from_db_row(

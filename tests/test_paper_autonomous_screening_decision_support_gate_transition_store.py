@@ -39,15 +39,21 @@ class FakeCursor:
         self.rowcount = rowcount
         self.calls: list[tuple[str, tuple[Any, ...]]] = []
         self.closed = False
+        self.execute_error: BaseException | None = None
+        self.close_error: BaseException | None = None
 
     def execute(self, sql: str, params: tuple[Any, ...] = ()) -> None:
         self.calls.append((sql, params))
+        if self.execute_error is not None:
+            raise self.execute_error
 
     def fetchall(self) -> tuple[Any, ...]:
         return self.rows
 
     def close(self) -> None:
         self.closed = True
+        if self.close_error is not None:
+            raise self.close_error
 
 
 class FakeConnection:
@@ -162,6 +168,41 @@ def test_insert_transition_report_with_result_observes_duplicate() -> None:
     assert duplicate.inserted is False
 
 
+def test_insert_preserves_execute_error_when_cursor_close_also_fails() -> None:
+    import polymarket_alpha_lab.paper_autonomous_screening_decision_support_gate_transition_store as store
+
+    connection = FakeConnection()
+    execute_error = RuntimeError("execute failed")
+    connection.cursor_instance.execute_error = execute_error
+    connection.cursor_instance.close_error = RuntimeError("close failed")
+
+    with pytest.raises(RuntimeError, match="execute failed") as exc_info:
+        store.insert_paper_autonomous_screening_decision_support_gate_transition_report_with_result(
+            connection,
+            _report(),
+        )
+
+    assert exc_info.value is execute_error
+    assert connection.cursor_instance.closed is True
+
+
+def test_insert_propagates_cursor_close_error_after_success() -> None:
+    import polymarket_alpha_lab.paper_autonomous_screening_decision_support_gate_transition_store as store
+
+    connection = FakeConnection()
+    close_error = RuntimeError("close failed")
+    connection.cursor_instance.close_error = close_error
+
+    with pytest.raises(RuntimeError, match="close failed") as exc_info:
+        store.insert_paper_autonomous_screening_decision_support_gate_transition_report_with_result(
+            connection,
+            _report(),
+        )
+
+    assert exc_info.value is close_error
+    assert connection.cursor_instance.closed is True
+
+
 def test_load_transition_reports_filters_by_config_statuses_and_limit() -> None:
     from polymarket_alpha_lab.paper_autonomous_screening_decision_support_gate_transition_store import (
         load_paper_autonomous_screening_decision_support_gate_transition_reports,
@@ -218,6 +259,43 @@ def test_load_transition_reports_filters_by_config_statuses_and_limit() -> None:
         "watch",
         25,
     )
+
+
+def test_load_preserves_execute_error_when_cursor_close_also_fails() -> None:
+    from polymarket_alpha_lab.paper_autonomous_screening_decision_support_gate_transition_store import (
+        load_paper_autonomous_screening_decision_support_gate_transition_reports,
+    )
+
+    connection = FakeConnection()
+    execute_error = RuntimeError("execute failed")
+    connection.cursor_instance.execute_error = execute_error
+    connection.cursor_instance.close_error = RuntimeError("close failed")
+
+    with pytest.raises(RuntimeError, match="execute failed") as exc_info:
+        load_paper_autonomous_screening_decision_support_gate_transition_reports(
+            connection,
+        )
+
+    assert exc_info.value is execute_error
+    assert connection.cursor_instance.closed is True
+
+
+def test_load_propagates_cursor_close_error_after_success() -> None:
+    from polymarket_alpha_lab.paper_autonomous_screening_decision_support_gate_transition_store import (
+        load_paper_autonomous_screening_decision_support_gate_transition_reports,
+    )
+
+    connection = FakeConnection()
+    close_error = RuntimeError("close failed")
+    connection.cursor_instance.close_error = close_error
+
+    with pytest.raises(RuntimeError, match="close failed") as exc_info:
+        load_paper_autonomous_screening_decision_support_gate_transition_reports(
+            connection,
+        )
+
+    assert exc_info.value is close_error
+    assert connection.cursor_instance.closed is True
 
 
 def test_load_transition_reports_accepts_positional_rows() -> None:
