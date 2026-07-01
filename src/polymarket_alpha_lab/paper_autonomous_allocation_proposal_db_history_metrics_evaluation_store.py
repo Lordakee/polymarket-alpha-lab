@@ -93,8 +93,13 @@ def insert_paper_autonomous_allocation_proposal_db_history_metrics_evaluation_re
     cursor = connection.cursor()
     try:
         cursor.execute(sql, params)
-    finally:
-        cursor.close()
+    except BaseException:
+        try:
+            cursor.close()
+        except Exception:
+            pass
+        raise
+    cursor.close()
     return row
 
 
@@ -147,8 +152,13 @@ def load_paper_autonomous_allocation_proposal_db_history_metrics_evaluation_repo
     try:
         cursor.execute(sql, tuple(params))
         records = cursor.fetchall()
-    finally:
-        cursor.close()
+    except BaseException:
+        try:
+            cursor.close()
+        except Exception:
+            pass
+        raise
+    cursor.close()
     rows = tuple(_db_row_from_record(record) for record in records)
     return tuple(
         paper_autonomous_allocation_proposal_db_history_metrics_evaluation_from_db_row(
