@@ -405,6 +405,7 @@ TeamDiagnosticsFormatter = Callable[[object], str]
 TeamDiagnosticsSnapshotBuilder = Callable[..., object]
 TeamDiagnosticsSnapshotDbSink = Callable[..., object]
 TeamDiagnosticsSnapshotHistoryRunner = Callable[..., object]
+TeamDiagnosticsSnapshotHistoryGateRunner = Callable[..., object]
 MAX_PAPER_AUTONOMOUS_READINESS_DIGEST_READ_LIMIT = 500
 _MISSING = object()
 STRATEGY_CYCLE_HISTORY_GATE_DB_DSN_ENV_VAR = (
@@ -524,7 +525,7 @@ def _redact_paper_research_packet_sensitive_fields(text: str) -> str:
     )
     message = _redact_keyed_sensitive_fields(
         message,
-        field_names=("market_slug",),
+        field_names=("market_slug", "marketSlug"),
         replacement="<redacted-market-slug>",
     )
     message = _redact_keyed_sensitive_fields(
@@ -636,6 +637,19 @@ def _redact_keyed_sensitive_fields(
             field_name=field_name,
             replacement=replacement,
         )
+    return message
+
+
+def _redact_sensitive_values(
+    text: str,
+    *,
+    values: tuple[str | None, ...],
+    replacement: str,
+) -> str:
+    message = text
+    for value in values:
+        if value:
+            message = message.replace(value, replacement)
     return message
 
 
@@ -1499,6 +1513,129 @@ def _run_team_diagnostics_snapshot_history(
         _raise_redacted_team_diagnostics_snapshot_db_read_error(
             exc,
             db_config=snapshot_db_config,
+            sensitive_values=(market_slug,),
+        )
+
+
+def _run_team_diagnostics_snapshot_history_gate(
+    *,
+    team_id: str | None,
+    market_slug: str | None,
+    forecast_id: str | None,
+    config_version: str | None,
+    limit: int,
+    runner: TeamDiagnosticsSnapshotHistoryGateRunner | None,
+) -> str:
+    if isinstance(limit, bool) or type(limit) is not int or limit <= 0:
+        raise ValueError("team-diagnostics-snapshot-history-gate limit must be positive")
+
+    from polymarket_alpha_lab.supabase_team_diagnostics_snapshot_config import (
+        from_team_diagnostics_snapshot_db_env,
+    )
+
+    snapshot_db_config = from_team_diagnostics_snapshot_db_env()
+    if not snapshot_db_config.enabled:
+        raise ValueError(
+            "team-diagnostics-snapshot-history-gate requires team diagnostics "
+            "snapshot DB to be enabled; team diagnostics snapshot DB is disabled",
+        )
+    dsn = snapshot_db_config.dsn
+    if dsn is None:
+        raise ValueError(
+            "team-diagnostics-snapshot-history-gate requires a team diagnostics "
+            "snapshot DB DSN",
+        )
+
+    from polymarket_alpha_lab.team_diagnostics_snapshot_history import (
+        TeamDiagnosticsSnapshotHistoryConfig,
+        build_team_diagnostics_snapshot_history_report,
+    )
+    from polymarket_alpha_lab.team_diagnostics_snapshot_history_gate import (
+        TeamDiagnosticsSnapshotHistoryGateConfig,
+        build_team_diagnostics_snapshot_history_gate_report,
+    )
+    from polymarket_alpha_lab.team_diagnostics_snapshot_history_gate_cli_format import (
+        format_team_diagnostics_snapshot_history_gate_cli_stdout,
+    )
+
+    generated_at = datetime.now(UTC)
+    history_config = TeamDiagnosticsSnapshotHistoryConfig()
+    gate_config = TeamDiagnosticsSnapshotHistoryGateConfig()
+    try:
+        if runner is not None:
+            report = runner(
+                dsn=dsn,
+                table_name=snapshot_db_config.table_name,
+                team_id=team_id,
+                market_slug=market_slug,
+                forecast_id=forecast_id,
+                config_version=config_version,
+                limit=limit,
+                history_config=history_config,
+                gate_config=gate_config,
+                generated_at=generated_at,
+            )
+        else:
+            from polymarket_alpha_lab.team_diagnostics_snapshot_history_db_source import (
+                load_team_diagnostics_snapshot_history_report,
+            )
+            from polymarket_alpha_lab.team_diagnostics_snapshot_history_gate_db_source import (
+                load_team_diagnostics_snapshot_history_gate_report,
+            )
+            from polymarket_alpha_lab.team_diagnostics_snapshot_psycopg import (
+                load_team_diagnostics_snapshot_reports_from_env,
+            )
+
+            def history_loader(
+                *,
+                config: TeamDiagnosticsSnapshotHistoryConfig | None = None,
+                history_config: TeamDiagnosticsSnapshotHistoryConfig | None = None,
+                generated_at: datetime,
+                team_id: str | None = None,
+                market_slug: str | None = None,
+                forecast_id: str | None = None,
+                config_version: str | None = None,
+                limit: int | None = None,
+            ) -> object:
+                selected_history_config = (
+                    history_config if history_config is not None else config
+                )
+                if selected_history_config is None:
+                    raise ValueError("history_config must be provided")
+                return load_team_diagnostics_snapshot_history_report(
+                    load_snapshots=load_team_diagnostics_snapshot_reports_from_env,
+                    history_builder=build_team_diagnostics_snapshot_history_report,
+                    config=selected_history_config,
+                    generated_at=generated_at,
+                    team_id=team_id,
+                    market_slug=market_slug,
+                    forecast_id=forecast_id,
+                    config_version=config_version,
+                    limit=limit,
+                )
+
+            report = load_team_diagnostics_snapshot_history_gate_report(
+                history_loader=history_loader,
+                gate_builder=build_team_diagnostics_snapshot_history_gate_report,
+                history_config=history_config,
+                gate_config=gate_config,
+                generated_at=generated_at,
+                team_id=team_id,
+                market_slug=market_slug,
+                forecast_id=forecast_id,
+                config_version=config_version,
+                limit=limit,
+            )
+        _require_hard_flags(
+            "team diagnostics snapshot history gate",
+            report,
+        )
+        return format_team_diagnostics_snapshot_history_gate_cli_stdout(report)
+    except Exception as exc:
+        _raise_redacted_team_diagnostics_snapshot_db_read_error(
+            exc,
+            db_config=snapshot_db_config,
+            sensitive_values=(market_slug,),
         )
 
 
@@ -1638,6 +1775,12 @@ def _require_hard_flags_if_present(label: str, value: object) -> None:
             raise ValueError(f"{field_name} must be True for {label}")
 
 
+def _require_hard_flags(label: str, value: object) -> None:
+    for field_name in ("paper_only", "report_only", "readonly"):
+        if getattr(value, field_name, None) is not True:
+            raise ValueError(f"{field_name} must be True for {label}")
+
+
 def _raise_redacted_team_diagnostics_db_read_error(
     exc: Exception,
     *,
@@ -1685,6 +1828,7 @@ def _raise_redacted_team_diagnostics_snapshot_db_read_error(
     exc: Exception,
     *,
     db_config: Any,
+    sensitive_values: tuple[str | None, ...] = (),
 ) -> NoReturn:
     message = str(exc)
     dsn = getattr(db_config, "dsn", None)
@@ -1695,6 +1839,11 @@ def _raise_redacted_team_diagnostics_snapshot_db_read_error(
     if table_name:
         message = _redact_db_table_name_and_tail(message, table_name=table_name)
     message = _redact_paper_research_packet_sensitive_fields(message)
+    message = _redact_sensitive_values(
+        message,
+        values=sensitive_values,
+        replacement="<redacted-market-slug>",
+    )
     if not message.strip():
         message = exc.__class__.__name__
     raise RuntimeError(message) from None
@@ -2054,6 +2203,9 @@ def main(
     team_diagnostics_snapshot_db_sink: TeamDiagnosticsSnapshotDbSink | None = None,
     team_diagnostics_snapshot_history_runner: (
         TeamDiagnosticsSnapshotHistoryRunner | None
+    ) = None,
+    team_diagnostics_snapshot_history_gate_runner: (
+        TeamDiagnosticsSnapshotHistoryGateRunner | None
     ) = None,
 ) -> int:
     parser = argparse.ArgumentParser(prog="polymarket-alpha-lab")
@@ -2500,6 +2652,44 @@ def main(
         dest="config_version",
     )
     team_diagnostics_snapshot_history.add_argument(
+        "--limit",
+        type=int,
+        default=100,
+        dest="limit",
+    )
+    team_diagnostics_snapshot_history_gate = subparsers.add_parser(
+        "team-diagnostics-snapshot-history-gate",
+        allow_abbrev=False,
+        description=(
+            "Build a read-only, report-only diagnostics snapshot history gate "
+            "report from local Supabase/Postgres team diagnostics snapshots."
+        ),
+        help=(
+            "read-only report-only team diagnostics snapshot history gate from "
+            "local Supabase/Postgres"
+        ),
+    )
+    team_diagnostics_snapshot_history_gate.add_argument(
+        "--team-id",
+        default=None,
+        dest="team_id",
+    )
+    team_diagnostics_snapshot_history_gate.add_argument(
+        "--market-slug",
+        default=None,
+        dest="market_slug",
+    )
+    team_diagnostics_snapshot_history_gate.add_argument(
+        "--forecast-id",
+        default=None,
+        dest="forecast_id",
+    )
+    team_diagnostics_snapshot_history_gate.add_argument(
+        "--config-version",
+        default=None,
+        dest="config_version",
+    )
+    team_diagnostics_snapshot_history_gate.add_argument(
         "--limit",
         type=int,
         default=100,
@@ -3491,6 +3681,25 @@ def main(
             return 0
         except Exception as exc:
             print(f"team-diagnostics-snapshot-history failed: {exc}", file=sys.stderr)
+            return 1
+
+    if args.command == "team-diagnostics-snapshot-history-gate":
+        try:
+            stdout = _run_team_diagnostics_snapshot_history_gate(
+                team_id=args.team_id,
+                market_slug=args.market_slug,
+                forecast_id=args.forecast_id,
+                config_version=args.config_version,
+                limit=args.limit,
+                runner=team_diagnostics_snapshot_history_gate_runner,
+            )
+            print(stdout, end="")
+            return 0
+        except Exception as exc:
+            print(
+                f"team-diagnostics-snapshot-history-gate failed: {exc}",
+                file=sys.stderr,
+            )
             return 1
 
     if args.command == "portfolio-nav":

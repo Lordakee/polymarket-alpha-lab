@@ -74,6 +74,30 @@ Sample output fields:
 team-diagnostics-snapshot-history: status=observed snapshot_count=12 required_snapshot_count=2 earliest_generated_at=2026-07-01T08:30:00+00:00 latest_generated_at=2026-07-01T09:45:15+00:00 span_seconds=4515 status_counts=pass:7,watch:5 evidence_quality_average_delta=0.125 memory_eligible_delta=4 settled_calibration_delta=3 duplicate_latest_generated_at=False reason_codes=none paper_only=True report_only=True readonly=True
 ```
 
+## Snapshot History Gate
+
+Gate persisted diagnostics snapshot history with the env-driven local Supabase/Postgres readback command:
+
+```bash
+polymarket-alpha-lab team-diagnostics-snapshot-history-gate --limit 100
+```
+
+The gate reads the same already-persisted `team_diagnostics_snapshots` rows from the local Supabase/Postgres snapshot table configured by `POLYMARKET_ALPHA_LAB_TEAM_DIAGNOSTICS_SNAPSHOT_DB_ENABLED`, `POLYMARKET_ALPHA_LAB_TEAM_DIAGNOSTICS_SNAPSHOT_DB_DSN`, and `POLYMARKET_ALPHA_LAB_TEAM_DIAGNOSTICS_SNAPSHOT_DB_TABLE`. It is a pass/watch/blocked gate over persisted diagnostics snapshot history, not a writer and not a second configuration surface. Configuration stays in existing environment variables.
+
+Gate status semantics:
+
+- gate status `pass`: local readback succeeds, enough persisted history exists, and the latest snapshot history has no blocking reason codes.
+- gate status `watch`: local readback succeeds, but the persisted history has non-blocking deterioration or source reason observations, such as evidence quality, memory coverage, settled calibration, or source history warning signals.
+- gate status `blocked`: local readback cannot be evaluated safely because required local DB configuration is missing or invalid, the read fails, hard Phase 1 flags are missing or false, or the persisted history is insufficient, stale, or duplicate-latest history.
+
+The gate remains Phase 1 read-only/report-only and paper-only/report-only/readonly. It has no live trading, no auth, no wallet, no account access, no order path, and no mutation of Team Forecast or snapshot rows.
+
+Sample gate output fields:
+
+```text
+team-diagnostics-snapshot-history-gate: gate_status=pass recommended_next_step=allow_team_diagnostics_snapshot_history_memory_use source_config_version=team-diagnostics-snapshot-history-v0 source_generated_at=2026-07-01T09:45:15+00:00 source_snapshot_count=12 source_required_snapshot_count=3 source_status=observed source_span_seconds=4515 source_status_counts=pass:7,watch:5 source_reason_codes=none latest_snapshot_age_seconds=1200 reason_code_counts=team_diagnostics_snapshot_history_gate_passed:1 evidence_quality_average_delta=0.125 memory_eligible_delta=4 settled_calibration_delta=3 duplicate_latest_generated_at=False reason_codes=team_diagnostics_snapshot_history_gate_passed paper_only=True report_only=True readonly=True
+```
+
 ## What Diagnostics Evaluate
 
 Team memory:

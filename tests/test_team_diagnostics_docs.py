@@ -40,6 +40,15 @@ def _doc_text() -> str:
     return DOC_PATH.read_text(encoding="utf-8")
 
 
+def _section_between(text: str, start: str, end: str | None) -> str:
+    assert start in text
+    section = text.split(start, 1)[1]
+    if end is not None:
+        assert end in section
+        section = section.split(end, 1)[0]
+    return section
+
+
 def test_team_diagnostics_readonly_doc_covers_purpose_and_phase_1_boundary() -> None:
     text = _doc_text()
     lower_text = text.lower()
@@ -172,7 +181,7 @@ def test_team_diagnostics_docs_cover_snapshot_persistence_surface() -> None:
 
 
 def test_team_diagnostics_docs_cover_snapshot_history_readback_surface() -> None:
-    expected_output_fields = (
+    expected_history_output_fields = (
         "status=",
         "snapshot_count=",
         "required_snapshot_count=",
@@ -189,6 +198,47 @@ def test_team_diagnostics_docs_cover_snapshot_history_readback_surface() -> None
         "report_only=True",
         "readonly=True",
     )
+    expected_gate_output_fields = (
+        "gate_status=",
+        "recommended_next_step=",
+        "source_config_version=",
+        "source_generated_at=",
+        "source_snapshot_count=",
+        "source_required_snapshot_count=",
+        "source_status=",
+        "source_span_seconds=",
+        "source_status_counts=",
+        "source_reason_codes=",
+        "latest_snapshot_age_seconds=",
+        "reason_code_counts=",
+        "evidence_quality_average_delta=",
+        "memory_eligible_delta=",
+        "settled_calibration_delta=",
+        "duplicate_latest_generated_at=",
+        "reason_codes=",
+        "paper_only=True",
+        "report_only=True",
+        "readonly=True",
+    )
+    stale_gate_history_fields = (
+        " status=",
+        " snapshot_count=",
+        " required_snapshot_count=",
+        " earliest_generated_at=",
+        " latest_generated_at=",
+        " span_seconds=",
+        " status_counts=",
+    )
+    required_gate_fragments = (
+        "team-diagnostics-snapshot-history-gate",
+        "local Supabase/Postgres readback",
+        "persisted diagnostics snapshot history",
+        "pass/watch/blocked",
+        "gate status `pass`",
+        "gate status `watch`",
+        "gate status `blocked`",
+        "insufficient, stale, or duplicate-latest history",
+    )
     forbidden_cli_flags = (
         "--dsn",
         "--db-dsn",
@@ -196,14 +246,45 @@ def test_team_diagnostics_docs_cover_snapshot_history_readback_surface() -> None
         "--db-table",
         "--snapshot-dsn",
         "--snapshot-table",
+        "--persist",
+        "--live",
+        "--auth",
+        "--wallet",
+        "--order",
+        "--private-key",
+        "--account",
     )
 
     for path in (DOC_PATH, README_PATH):
         assert path.exists(), f"{path} must exist"
         text = path.read_text(encoding="utf-8")
         lower_text = text.lower()
+        if path == DOC_PATH:
+            history_section = _section_between(
+                text,
+                "## Snapshot History Readback",
+                "## Snapshot History Gate",
+            )
+            gate_section = _section_between(
+                text,
+                "## Snapshot History Gate",
+                "## What Diagnostics Evaluate",
+            )
+        else:
+            history_section = _section_between(
+                text,
+                "Read persisted local Supabase/Postgres snapshot history",
+                "Gate persisted diagnostics snapshot history",
+            )
+            gate_section = _section_between(
+                text,
+                "Gate persisted diagnostics snapshot history",
+                "## Project Iron Rules",
+            )
 
         assert "team-diagnostics-snapshot-history" in text
+        for fragment in required_gate_fragments:
+            assert fragment in text
         assert "persisted local Supabase/Postgres" in text
         assert "team_diagnostics_snapshots" in text
         assert "long-term team-memory" in lower_text
@@ -213,10 +294,15 @@ def test_team_diagnostics_docs_cover_snapshot_history_readback_surface() -> None
         assert "order" in lower_text
         for env_var in SNAPSHOT_ENV_VARS:
             assert env_var in text
-        for field in expected_output_fields:
-            assert field in text
+        for field in expected_history_output_fields:
+            assert field in history_section
+        for field in expected_gate_output_fields:
+            assert field in gate_section
+        for field in stale_gate_history_fields:
+            assert field not in gate_section
         for flag in forbidden_cli_flags:
-            assert flag not in text
+            assert flag not in history_section
+            assert flag not in gate_section
 
 
 def test_env_example_lists_team_diagnostics_snapshot_env_surface() -> None:
