@@ -980,6 +980,27 @@ def test_cycle_report_sink_receives_each_successful_report(tmp_path):
     assert len(PaperStrategyCycleLog.read(tmp_path / "cycle.jsonl")) == 2
 
 
+def test_cycle_report_sink_can_be_sole_durable_report_persistence(tmp_path):
+    market, books = _screening_ready_market_and_books()
+    reports = []
+
+    summary = run_strategy_loop(
+        client=FakeMarketDataClient([market], books),
+        scan_config=scan_config(tmp_path),
+        cycle_config=cycle_config(),
+        starting_cash=Decimal("10000"),
+        nav_log_path=tmp_path / "nav.jsonl",
+        cycle_report_log_path=None,
+        cycle_report_sink=reports.append,
+    )
+
+    assert summary.iterations_completed == 1
+    assert summary.iterations_failed == 0
+    assert summary.cycle_reports_persisted == 1
+    assert len(reports) == 1
+    assert not (tmp_path / "cycle.jsonl").exists()
+
+
 def test_cycle_report_sink_failure_counts_as_iteration_failure(tmp_path):
     market, books = _screening_ready_market_and_books()
 
@@ -1022,12 +1043,12 @@ def test_cycle_report_sink_failure_propagates_under_raise(tmp_path):
         )
 
 
-def test_cycle_report_log_is_appended_before_cycle_report_sink_failure(tmp_path):
+def test_cycle_report_log_is_not_appended_when_cycle_report_sink_fails(tmp_path):
     market, books = _screening_ready_market_and_books()
     cycle_log = tmp_path / "cycle.jsonl"
 
     def broken_cycle_report_sink(report):
-        assert len(PaperStrategyCycleLog.read(cycle_log)) == 1
+        assert not cycle_log.exists()
         raise RuntimeError("cycle report db unavailable")
 
     summary = run_strategy_loop(
@@ -1045,7 +1066,7 @@ def test_cycle_report_log_is_appended_before_cycle_report_sink_failure(tmp_path)
     assert summary.iterations_failed == 1
     assert summary.cycle_reports_persisted == 0
     assert summary.last_error == "RuntimeError: cycle report db unavailable"
-    assert len(PaperStrategyCycleLog.read(cycle_log)) == 1
+    assert not cycle_log.exists()
 
 
 def test_cycle_snapshot_source_and_sink_run_once_per_completed_iteration(tmp_path):
@@ -1536,6 +1557,10 @@ def test_execution_reconciliation_sink_failure_counts_as_iteration_failure(tmp_p
         (
             {"cycle_report_sink": object()},
             "cycle_report_sink must be callable or None",
+        ),
+        (
+            {"cycle_report_log_path": None},
+            "cycle_report_sink or cycle_report_log_path is required",
         ),
         (
             {"action_gated_queue_source": object()},

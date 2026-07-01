@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
+import os
 import re
 import shlex
 import sys
@@ -1557,7 +1558,7 @@ def main(
     cycle.add_argument(
         "--output",
         type=Path,
-        default=Path("artifacts/strategy-cycle.jsonl"),
+        default=None,
     )
     cycle.add_argument("--max-markets", type=int, default=50)
     cycle.add_argument("--search", default=None, dest="market_search")
@@ -2669,7 +2670,7 @@ def main(
     run_loop.add_argument(
         "--cycle-log",
         type=Path,
-        default=Path("artifacts/strategy-cycle.jsonl"),
+        default=None,
         dest="cycle_log",
     )
     run_loop.add_argument(
@@ -2807,11 +2808,15 @@ def main(
                     "paper trade DB persistence or --paper-journal is required "
                     "for --paper-execute",
                 )
+            if strategy_cycle_report_sink is None and args.output is None:
+                raise ValueError(
+                    "paper strategy cycle report DB persistence or --output is required",
+                )
 
             scan_config = MarketScanConfig(
                 limit=args.limit,
                 archive_root=args.archive_root,
-                output_path=args.output,
+                output_path=args.output or Path(os.devnull),
                 fetch_books=True,
             )
             cycle_config = _build_default_cycle_config(
@@ -2836,9 +2841,10 @@ def main(
                     strategy_cycle_paper_trade_record_sink
                 )
             report = cycle_runner(**cycle_runner_kwargs)
-            PaperStrategyCycleLog(args.output).append(report)
             if strategy_cycle_report_sink is not None:
                 strategy_cycle_report_sink(report)
+            if args.output is not None:
+                PaperStrategyCycleLog(args.output).append(report)
             _print_strategy_cycle_summary(report)
             return 0
         except Exception as exc:
@@ -6001,10 +6007,14 @@ def main(
                         )
                     except Exception as exc:
                         _raise_redacted_db_sink_error(exc, dsn=db_dsn)
+            if run_cycle_report_sink is None and args.cycle_log is None:
+                raise ValueError(
+                    "paper strategy cycle report DB persistence or --cycle-log is required",
+                )
             scan_config = MarketScanConfig(
                 limit=args.limit,
                 archive_root=args.archive_root,
-                output_path=args.cycle_log,
+                output_path=args.cycle_log or Path(os.devnull),
                 fetch_books=True,
             )
             cycle_config = _build_default_cycle_config(

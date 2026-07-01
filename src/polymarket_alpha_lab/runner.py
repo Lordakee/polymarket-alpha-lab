@@ -3,7 +3,7 @@
 Thin live-layer loop that chains the already-tested Stage 1b/4/5 primitives in
 a synchronous ``time.sleep`` loop:
 
-    run_strategy_cycle -> PaperStrategyCycleLog.append -> paper NAV mark
+    run_strategy_cycle -> injected cycle report sink/export -> paper NAV mark
 
 Each iteration is isolated: a single cycle/NAV failure is recorded in the
 ``RunLoopSummary`` (``iterations_failed`` + ``last_error``) and the loop
@@ -148,7 +148,7 @@ def run_strategy_loop(
     cycle_config: PaperStrategyCycleConfig,
     starting_cash: Decimal,
     nav_log_path: Path | str | None,
-    cycle_report_log_path: Path | str,
+    cycle_report_log_path: Path | str | None,
     cycle_report_sink: object | None = None,
     repeat_mode: str = "once",
     interval_seconds: int = 0,
@@ -171,8 +171,8 @@ def run_strategy_loop(
     Per iteration (each isolated in its own ``try/except``):
 
     (a) ``report = run_strategy_cycle(client, scan_config, cycle_config)``.
-    (b) ``PaperStrategyCycleLog(cycle_report_log_path).append(report)``.
-    (c) If ``cycle_report_sink`` is set, call ``cycle_report_sink(report)``.
+    (b) If ``cycle_report_sink`` is set, call ``cycle_report_sink(report)``.
+    (c) If ``cycle_report_log_path`` is set, append a JSONL compatibility export.
     (d) If ``cycle_config.paper_trade_journal_path`` is set AND the journal file
         exists, ``mark_paper_portfolio_nav(...)``; otherwise skip the NAV mark
         (first-run / no paper trades yet) and increment ``nav_marks_skipped``.
@@ -255,12 +255,13 @@ def run_strategy_loop(
                 cycle_config=cycle_config,
                 paper_trade_record_sink=paper_trade_record_sink,
             )
-            # (b) Append the validated report to the cycle JSONL log.
-            PaperStrategyCycleLog(cycle_report_log_path).append(report)
-            # (c) Optional supplied full cycle report persistence.
+            # (b) Optional supplied full cycle report persistence.
             if cycle_report_sink is not None:
                 cycle_report_sink(report)
                 cycle_reports_persisted += 1
+            # (c) Optional explicit JSONL compatibility export.
+            if cycle_report_log_path is not None:
+                PaperStrategyCycleLog(cycle_report_log_path).append(report)
             # (d) Optional supplied recommendation-cycle snapshot persistence.
             if cycle_snapshot_source is not None and cycle_snapshot_sink is not None:
                 cycle_snapshot = cycle_snapshot_source(
@@ -436,8 +437,13 @@ def _validate_loop_params(
     assert isinstance(starting_cash, Decimal)
     if starting_cash <= 0:
         raise ValueError("starting_cash must be positive")
-    if not isinstance(cycle_report_log_path, (Path, str)):
-        raise ValueError("cycle_report_log_path must be a Path or string")
+    if cycle_report_sink is None and cycle_report_log_path is None:
+        raise ValueError("cycle_report_sink or cycle_report_log_path is required")
+    if cycle_report_log_path is not None and not isinstance(
+        cycle_report_log_path,
+        (Path, str),
+    ):
+        raise ValueError("cycle_report_log_path must be a Path, string, or None")
     if isinstance(cycle_report_log_path, str) and not cycle_report_log_path.strip():
         raise ValueError("cycle_report_log_path must be nonblank")
     if nav_log_path is not None and not isinstance(nav_log_path, (Path, str)):

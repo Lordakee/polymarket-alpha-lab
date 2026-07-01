@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -13,6 +14,8 @@ SCAN_ROOTS = (
 
 FORBIDDEN_IMPORT_ROOTS = frozenset(
     (
+        "mongoengine",
+        "motor",
         "pymongo",
         "redis",
         "sqlalchemy",
@@ -21,6 +24,7 @@ FORBIDDEN_IMPORT_ROOTS = frozenset(
 )
 FORBIDDEN_DYNAMIC_IMPORTS = FORBIDDEN_IMPORT_ROOTS
 FORBIDDEN_CALL_NAMES = frozenset(("create_engine",))
+SRC_ROOT = REPO_ROOT / "src"
 SMOKE_TEST_PATH_FRAGMENT = "_supabase_smoke"
 LOCAL_DSN_VALIDATOR = "validate_local_postgres_dsn"
 PSYCOPG_ADAPTER_ROOT = REPO_ROOT / "src" / "polymarket_alpha_lab"
@@ -31,6 +35,91 @@ PSYCOPG_SETUP_CALLS_REQUIRING_DSN_VALIDATION = frozenset(
         "_PsycopgJsonConnection",
     ),
 )
+DURABLE_APPEND_CONTAINER_SUFFIXES = ("Log", "Journal")
+DURABLE_FILE_WRITE_METHODS = frozenset(("write_bytes", "write_text"))
+DURABLE_FILE_WRITE_CONTEXT_TOKENS = frozenset(
+    (
+        "archive",
+        "archives",
+        "artifact",
+        "artifacts",
+        "data",
+        "raw",
+    ),
+)
+LEGACY_DURABLE_FILE_PERSISTENCE_ALLOWLIST = frozenset(
+    (
+        "src/polymarket_alpha_lab/analytics.py:457: durable file-backed append method PaperAnalyticsLog.append",
+        "src/polymarket_alpha_lab/analytics.py:464: durable file append open(a)",
+        "src/polymarket_alpha_lab/analytics_history.py:240: durable file-backed append method PaperAnalyticsHistoryLog.append",
+        "src/polymarket_alpha_lab/analytics_history.py:247: durable file append open(a)",
+        "src/polymarket_alpha_lab/archive.py:45: durable file write write_text",
+        "src/polymarket_alpha_lab/archive.py:49: durable file write write_text",
+        "src/polymarket_alpha_lab/book_imbalance_forecast.py:132: durable file-backed append method PaperBookImbalanceForecastLog.append",
+        "src/polymarket_alpha_lab/book_imbalance_forecast.py:143: durable file append open(a)",
+        "src/polymarket_alpha_lab/cost_aware_event_strategy.py:270: durable file-backed append method PaperCostAwareEventStrategyLog.append",
+        "src/polymarket_alpha_lab/cost_aware_event_strategy.py:277: durable file append open(a)",
+        "src/polymarket_alpha_lab/cost_aware_snapshot_builder.py:131: durable file-backed append method PaperCostAwareSnapshotLog.append",
+        "src/polymarket_alpha_lab/cost_aware_snapshot_builder.py:139: durable file append open(a)",
+        "src/polymarket_alpha_lab/forecast_evidence.py:304: durable file-backed append method PaperForecastEvidenceLog.append",
+        "src/polymarket_alpha_lab/forecast_evidence.py:311: durable file append open(a)",
+        "src/polymarket_alpha_lab/forecast_provider.py:98: durable file-backed append method PaperForecastLog.append",
+        "src/polymarket_alpha_lab/forecast_provider.py:106: durable file append open(a)",
+        "src/polymarket_alpha_lab/journal.py:247: durable file-backed append method PaperTradeJournal.append",
+        "src/polymarket_alpha_lab/journal.py:250: durable file append open(a)",
+        "src/polymarket_alpha_lab/llm_forecast.py:175: durable file-backed append method PaperLLMForecastLog.append",
+        "src/polymarket_alpha_lab/llm_forecast.py:186: durable file append open(a)",
+        "src/polymarket_alpha_lab/manual_review_queue.py:391: durable file-backed append method PaperManualReviewLog.append",
+        "src/polymarket_alpha_lab/manual_review_queue.py:398: durable file append open(a)",
+        "src/polymarket_alpha_lab/outcome_tracker.py:210: durable file-backed append method OutcomeTrackingLog.append",
+        "src/polymarket_alpha_lab/outcome_tracker.py:224: durable file append open(a)",
+        "src/polymarket_alpha_lab/paper_execution.py:171: durable file-backed append method PaperExecutionLog.append",
+        "src/polymarket_alpha_lab/paper_execution.py:179: durable file append open(a)",
+        "src/polymarket_alpha_lab/paper_recommendation_cycle_snapshot_log.py:47: durable file append open(a)",
+        "src/polymarket_alpha_lab/positions.py:281: durable file-backed append method PaperNavLog.append",
+        "src/polymarket_alpha_lab/positions.py:287: durable file append open(a)",
+        "src/polymarket_alpha_lab/project_screening.py:263: durable file-backed append method PaperProjectScreeningLog.append",
+        "src/polymarket_alpha_lab/project_screening.py:270: durable file append open(a)",
+        "src/polymarket_alpha_lab/proposal_evidence_comparison.py:347: durable file-backed append method TradeProposalEvidenceComparisonLog.append",
+        "src/polymarket_alpha_lab/proposal_evidence_comparison.py:355: durable file append open(a)",
+        "src/polymarket_alpha_lab/proposal_evidence_comparison_history.py:314: durable file-backed append method TradeProposalEvidenceComparisonHistoryLog.append",
+        "src/polymarket_alpha_lab/proposal_evidence_comparison_history.py:324: durable file append open(a)",
+        "src/polymarket_alpha_lab/proposal_evidence_comparison_history_batch_health.py:382: durable file-backed append method TradeProposalEvidenceComparisonHistoryBatchHealthLog.append",
+        "src/polymarket_alpha_lab/proposal_evidence_comparison_history_batch_health.py:396: durable file append open(a)",
+        "src/polymarket_alpha_lab/proposal_evidence_comparison_history_batch_health_trend.py:348: durable file-backed append method TradeProposalEvidenceComparisonHistoryBatchHealthTrendLog.append",
+        "src/polymarket_alpha_lab/proposal_evidence_comparison_history_batch_health_trend.py:362: durable file append open(a)",
+        "src/polymarket_alpha_lab/proposal_evidence_comparison_history_batch_health_trend_batch.py:302: durable file-backed append method TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchLog.append",
+        "src/polymarket_alpha_lab/proposal_evidence_comparison_history_batch_health_trend_batch.py:316: durable file append open(a)",
+        "src/polymarket_alpha_lab/proposal_evidence_comparison_history_batch_health_trend_batch_health.py:304: durable file-backed append method TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthLog.append",
+        "src/polymarket_alpha_lab/proposal_evidence_comparison_history_batch_health_trend_batch_health.py:318: durable file append open(a)",
+        "src/polymarket_alpha_lab/proposal_evidence_comparison_history_batch_health_trend_batch_health_trend.py:307: durable file-backed append method TradeProposalEvidenceComparisonHistoryBatchHealthTrendBatchHealthTrendLog.append",
+        "src/polymarket_alpha_lab/proposal_evidence_comparison_history_batch_health_trend_batch_health_trend.py:321: durable file append open(a)",
+        "src/polymarket_alpha_lab/proposal_packet.py:120: durable file-backed append method TradeProposalPacketLog.append",
+        "src/polymarket_alpha_lab/proposal_packet.py:127: durable file append open(a)",
+        "src/polymarket_alpha_lab/proposal_review.py:206: durable file-backed append method TradeProposalReviewLog.append",
+        "src/polymarket_alpha_lab/proposal_review.py:213: durable file append open(a)",
+        "src/polymarket_alpha_lab/proposal_review_coverage.py:564: durable file-backed append method TradeProposalReviewCoverageLog.append",
+        "src/polymarket_alpha_lab/proposal_review_coverage.py:571: durable file append open(a)",
+        "src/polymarket_alpha_lab/proposal_review_diagnostics.py:465: durable file-backed append method TradeProposalReviewDiagnosticLog.append",
+        "src/polymarket_alpha_lab/proposal_review_diagnostics.py:472: durable file append open(a)",
+        "src/polymarket_alpha_lab/proposal_review_dossier.py:344: durable file-backed append method TradeProposalReviewDossierLog.append",
+        "src/polymarket_alpha_lab/proposal_review_dossier.py:351: durable file append open(a)",
+        "src/polymarket_alpha_lab/proposal_review_dossier_batch.py:325: durable file-backed append method TradeProposalReviewDossierBatchLog.append",
+        "src/polymarket_alpha_lab/proposal_review_dossier_batch.py:333: durable file append open(a)",
+        "src/polymarket_alpha_lab/proposal_review_quality.py:365: durable file-backed append method TradeProposalReviewQualityLog.append",
+        "src/polymarket_alpha_lab/proposal_review_quality.py:372: durable file append open(a)",
+        "src/polymarket_alpha_lab/proposal_review_summary.py:254: durable file-backed append method TradeProposalReviewSummaryLog.append",
+        "src/polymarket_alpha_lab/proposal_review_summary.py:261: durable file append open(a)",
+        "src/polymarket_alpha_lab/rejections.py:111: durable file-backed append method RejectedCandidateLog.append",
+        "src/polymarket_alpha_lab/rejections.py:117: durable file append open(a)",
+        "src/polymarket_alpha_lab/strategy_cycle.py:331: durable file-backed append method PaperStrategyCycleLog.append",
+        "src/polymarket_alpha_lab/strategy_cycle.py:346: durable file append open(a)",
+        "src/polymarket_alpha_lab/strategy_recommendation_log.py:56: durable file append open(a)",
+        "src/polymarket_alpha_lab/strategy_risk_audit_log.py:29: durable file-backed append method PaperStrategyRiskAuditLog.append",
+        "src/polymarket_alpha_lab/strategy_risk_audit_log.py:43: durable file append open(a)",
+    ),
+)
+IDENTIFIER_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9]*")
 
 
 @dataclass(frozen=True)
@@ -96,6 +185,137 @@ def _forbidden_call_violations(path: Path, node: ast.Call) -> tuple[StaticViolat
                     ),
                 )
     return ()
+
+
+def _durable_file_persistence_violations(
+    path: Path,
+    tree: ast.Module,
+) -> tuple[StaticViolation, ...]:
+    if not _is_src_path(path):
+        return ()
+    visitor = _DurableFilePersistenceVisitor(path)
+    visitor.visit(tree)
+    return tuple(visitor.violations)
+
+
+def _is_src_path(path: Path) -> bool:
+    try:
+        path.relative_to(SRC_ROOT)
+    except ValueError:
+        return False
+    return True
+
+
+class _DurableFilePersistenceVisitor(ast.NodeVisitor):
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self.violations: list[StaticViolation] = []
+        self._class_stack: list[str] = []
+        self._function_stack: list[str] = []
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        self._class_stack.append(node.name)
+        if node.name.endswith(DURABLE_APPEND_CONTAINER_SUFFIXES):
+            for statement in node.body:
+                if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    if statement.name == "append":
+                        qualified_name = f"{node.name}.append"
+                        self.violations.append(
+                            StaticViolation(
+                                self.path,
+                                statement.lineno,
+                                "durable file-backed append method",
+                                qualified_name,
+                            ),
+                        )
+        self.generic_visit(node)
+        self._class_stack.pop()
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        self._function_stack.append(node.name)
+        self.generic_visit(node)
+        self._function_stack.pop()
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        self._function_stack.append(node.name)
+        self.generic_visit(node)
+        self._function_stack.pop()
+
+    def visit_Call(self, node: ast.Call) -> None:
+        append_mode = _append_open_mode(node)
+        if append_mode is not None:
+            name = f"open({append_mode})"
+            self.violations.append(
+                StaticViolation(
+                    self.path,
+                    node.lineno,
+                    "durable file append",
+                    name,
+                ),
+            )
+        write_method = _durable_file_write_method(node)
+        if write_method is not None and self._is_contextual_durable_file_write(node):
+            self.violations.append(
+                StaticViolation(
+                    self.path,
+                    node.lineno,
+                    "durable file write",
+                    write_method,
+                ),
+            )
+        self.generic_visit(node)
+
+    def _is_contextual_durable_file_write(self, node: ast.Call) -> bool:
+        context = " ".join(
+            (
+                self.path.relative_to(REPO_ROOT).as_posix(),
+                " ".join(self._class_stack),
+                " ".join(self._function_stack),
+                _unparse(node.func.value) if isinstance(node.func, ast.Attribute) else "",
+            ),
+        )
+        return bool(_identifier_tokens(context) & DURABLE_FILE_WRITE_CONTEXT_TOKENS)
+
+def _append_open_mode(node: ast.Call) -> str | None:
+    if not isinstance(node.func, ast.Attribute):
+        return None
+    if node.func.attr != "open":
+        return None
+    mode = _constant_open_mode(node)
+    if mode is None or "a" not in mode:
+        return None
+    return mode
+
+
+def _constant_open_mode(node: ast.Call) -> str | None:
+    if node.args:
+        first_arg = node.args[0]
+        if isinstance(first_arg, ast.Constant) and isinstance(first_arg.value, str):
+            return first_arg.value
+    for keyword in node.keywords:
+        if keyword.arg == "mode":
+            value = keyword.value
+            if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                return value.value
+    return None
+
+
+def _durable_file_write_method(node: ast.Call) -> str | None:
+    if isinstance(node.func, ast.Attribute):
+        if node.func.attr in DURABLE_FILE_WRITE_METHODS:
+            return node.func.attr
+    return None
+
+
+def _identifier_tokens(value: str) -> frozenset[str]:
+    return frozenset(token.lower() for token in IDENTIFIER_TOKEN_RE.findall(value))
+
+
+def _unparse(node: ast.AST) -> str:
+    try:
+        return ast.unparse(node)
+    except ValueError:
+        return ""
 
 
 def _call_name(func: ast.expr) -> str | None:
@@ -259,6 +479,19 @@ def test_src_and_tests_do_not_import_or_create_nonlocal_persistence_backends() -
     assert violations == [], _format_violations(tuple(violations))
 
 
+def test_src_durable_file_backed_persistence_stays_on_legacy_allowlist() -> None:
+    violations: list[StaticViolation] = []
+    for path in sorted(SRC_ROOT.rglob("*.py")):
+        violations.extend(_durable_file_persistence_violations(path, _parse_file(path)))
+
+    unexpected = tuple(
+        violation
+        for violation in violations
+        if violation.render() not in LEGACY_DURABLE_FILE_PERSISTENCE_ALLOWLIST
+    )
+    assert unexpected == (), _format_violations(unexpected)
+
+
 def test_negative_strings_fake_psycopg_and_remote_dsn_fixtures_are_not_flagged() -> None:
     fixture_tree = ast.parse(
         """
@@ -295,6 +528,54 @@ engine = create_engine("postgresql://localhost/postgres")
         "sqlalchemy",
         "create_engine",
     ]
+
+
+def test_durable_file_persistence_guard_catches_file_backed_write_patterns() -> None:
+    fixture_tree = ast.parse(
+        """
+class PaperThingLog:
+    def append(self, report):
+        with self.path.open("a", encoding="utf-8") as handle:
+            handle.write("durable jsonl")
+
+def persist_artifact(artifacts_dir, raw_dir):
+    (artifacts_dir / "packet.json").write_text("{}", encoding="utf-8")
+    (raw_dir / "snapshot.bin").write_bytes(b"raw")
+""",
+    )
+
+    violations = _durable_file_persistence_violations(
+        REPO_ROOT / "src" / "polymarket_alpha_lab" / "fixture.py",
+        fixture_tree,
+    )
+
+    assert [violation.name for violation in violations] == [
+        "PaperThingLog.append",
+        "open(a)",
+        "write_text",
+        "write_bytes",
+    ]
+
+
+def test_durable_file_persistence_guard_ignores_non_src_support_files() -> None:
+    fixture_tree = ast.parse(
+        """
+class PaperThingLog:
+    def append(self, report):
+        with self.path.open("a", encoding="utf-8") as handle:
+            handle.write("fixture jsonl")
+
+def write_artifact(artifacts_dir):
+    (artifacts_dir / "packet.json").write_text("{}", encoding="utf-8")
+""",
+    )
+
+    violations = _durable_file_persistence_violations(
+        REPO_ROOT / "tests" / "fixture.py",
+        fixture_tree,
+    )
+
+    assert violations == ()
 
 
 def test_supabase_smoke_tests_validate_local_postgres_dsn_before_live_connect() -> None:

@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -591,6 +592,34 @@ def test_strategy_cycle_cli_paper_execute_requires_db_sink_or_explicit_journal(
     assert "cycle runner should not run" not in captured.err
 
 
+def test_strategy_cycle_cli_requires_cycle_report_db_or_explicit_export(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    monkeypatch.delenv(PAPER_STRATEGY_CYCLE_REPORT_DB_ENABLED_ENV_VAR, raising=False)
+    monkeypatch.delenv(PAPER_STRATEGY_CYCLE_REPORT_DB_DSN_ENV_VAR, raising=False)
+
+    def forbidden_cycle_runner(**kwargs):
+        raise AssertionError("cycle runner should not run")
+
+    exit_code = main(
+        [
+            "strategy-cycle",
+            "--archive-root",
+            str(tmp_path / "raw"),
+        ],
+        cycle_runner=forbidden_cycle_runner,
+        client_factory=lambda: "fake-client",
+    )
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert "paper strategy cycle report DB persistence or --output is required" in captured.err
+    assert "cycle runner should not run" not in captured.err
+    assert not (tmp_path / "strategy-cycle.jsonl").exists()
+
+
 def test_strategy_cycle_cli_wires_cycle_report_db_sink_when_enabled(
     tmp_path,
     monkeypatch,
@@ -608,11 +637,11 @@ def test_strategy_cycle_cli_wires_cycle_report_db_sink_when_enabled(
     sink_calls = []
 
     def fake_cycle_runner(*, client, scan_config, cycle_config):
+        assert scan_config.output_path == output_path
         return report
 
     def fake_cycle_report_db_sink(*, dsn, report, table_name):
-        rows_at_sink = PaperStrategyCycleLog.read(output_path)
-        assert rows_at_sink == (report,)
+        assert not output_path.exists()
         sink_calls.append((dsn, report, table_name))
 
     exit_code = main(
@@ -639,6 +668,7 @@ def test_strategy_cycle_cli_wires_cycle_report_db_sink_when_enabled(
     captured = capsys.readouterr()
     assert cycle_report_dsn not in captured.out
     assert cycle_report_dsn not in captured.err
+    assert PaperStrategyCycleLog.read(output_path) == (report,)
 
 
 def test_strategy_cycle_cli_redacts_dsn_when_cycle_report_db_sink_fails(
@@ -660,8 +690,7 @@ def test_strategy_cycle_cli_redacts_dsn_when_cycle_report_db_sink_fails(
         return report
 
     def broken_cycle_report_db_sink(*, dsn, report, table_name):
-        rows_at_sink = PaperStrategyCycleLog.read(output_path)
-        assert rows_at_sink == (report,)
+        assert not output_path.exists()
         raise RuntimeError(f"could not connect to {dsn}")
 
     exit_code = main(
@@ -678,12 +707,41 @@ def test_strategy_cycle_cli_redacts_dsn_when_cycle_report_db_sink_fails(
     )
 
     assert exit_code == 1
-    rows_after_failure = PaperStrategyCycleLog.read(output_path)
-    assert rows_after_failure == (report,)
+    assert not output_path.exists()
     captured = capsys.readouterr()
     assert cycle_report_dsn not in captured.out
     assert cycle_report_dsn not in captured.err
     assert "<redacted-dsn>" in captured.err
+
+
+def test_strategy_cycle_cli_db_only_uses_devnull_scan_output(
+    tmp_path,
+    monkeypatch,
+):
+    cycle_report_dsn = "postgresql://cycle-report:secret@localhost:54322/db"
+    monkeypatch.setenv(PAPER_STRATEGY_CYCLE_REPORT_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(PAPER_STRATEGY_CYCLE_REPORT_DB_DSN_ENV_VAR, cycle_report_dsn)
+    report = _empty_strategy_cycle_report()
+    calls = []
+
+    def fake_cycle_runner(*, client, scan_config, cycle_config):
+        calls.append(scan_config.output_path)
+        return report
+
+    exit_code = main(
+        [
+            "strategy-cycle",
+            "--archive-root",
+            str(tmp_path / "raw"),
+        ],
+        cycle_runner=fake_cycle_runner,
+        paper_strategy_cycle_report_db_sink=lambda **kwargs: None,
+        client_factory=lambda: "fake-client",
+    )
+
+    assert exit_code == 0
+    assert calls == [__import__("pathlib").Path(os.devnull)]
+    assert not (tmp_path / "strategy-cycle.jsonl").exists()
 
 
 def test_strategy_cycle_cli_requires_cycle_report_db_dsn_before_runner_work(
@@ -7600,6 +7658,36 @@ def test_run_cli_paper_execute_flag_enables_inline_paper_pass(tmp_path):
     assert cycle_config.paper_trade_journal_path == journal_path
 
 
+def test_run_cli_requires_cycle_report_db_or_explicit_cycle_log(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    monkeypatch.delenv(PAPER_STRATEGY_CYCLE_REPORT_DB_ENABLED_ENV_VAR, raising=False)
+    monkeypatch.delenv(PAPER_STRATEGY_CYCLE_REPORT_DB_DSN_ENV_VAR, raising=False)
+
+    def forbidden_loop_runner(**kwargs):
+        raise AssertionError("loop runner should not run")
+
+    exit_code = main(
+        [
+            "run",
+            "--archive-root",
+            str(tmp_path / "raw"),
+            "--starting-cash",
+            "10000",
+        ],
+        loop_runner=forbidden_loop_runner,
+        client_factory=lambda: "fake-client",
+    )
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert "paper strategy cycle report DB persistence or --cycle-log is required" in captured.err
+    assert "loop runner should not run" not in captured.err
+    assert not (tmp_path / "strategy-cycle.jsonl").exists()
+
+
 def test_run_cli_leaves_cycle_snapshot_db_disabled_by_default(
     tmp_path,
     monkeypatch,
@@ -10419,6 +10507,8 @@ def test_run_cli_wires_cycle_report_db_sink_when_env_enabled(
 
     def fake_loop_runner(**kwargs):
         assert kwargs["cycle_report_sink"] is not None
+        assert kwargs["scan_config"].output_path == __import__("pathlib").Path(os.devnull)
+        assert kwargs["cycle_report_log_path"] is None
         kwargs["cycle_report_sink"](report)
         return RunLoopSummary(
             iterations_completed=1,
@@ -10439,8 +10529,6 @@ def test_run_cli_wires_cycle_report_db_sink_when_env_enabled(
             str(tmp_path / "raw"),
             "--starting-cash",
             "10000",
-            "--cycle-log",
-            str(tmp_path / "cycle.jsonl"),
         ],
         loop_runner=fake_loop_runner,
         paper_strategy_cycle_report_db_sink=fake_cycle_report_db_sink,
@@ -11523,6 +11611,8 @@ def test_run_cli_json_config_strategy_audit_preflight_requires_nav_log(
             str(config_path),
             "--starting-cash",
             "10000",
+            "--cycle-log",
+            str(tmp_path / "cycle.jsonl"),
         ],
         strategy_audit_runner=forbidden_strategy_audit_runner,
         loop_runner=forbidden_loop_runner,
@@ -11565,6 +11655,8 @@ def test_run_cli_no_strategy_audit_preflight_overrides_json_true(tmp_path):
             "--no-strategy-audit-preflight",
             "--starting-cash",
             "10000",
+            "--cycle-log",
+            str(tmp_path / "cycle.jsonl"),
         ],
         strategy_audit_runner=fake_strategy_audit_runner,
         loop_runner=fake_loop_runner,
@@ -11597,6 +11689,8 @@ def test_run_cli_strategy_audit_log_is_inert_without_preflight(tmp_path):
             str(audit_log),
             "--starting-cash",
             "10000",
+            "--cycle-log",
+            str(tmp_path / "cycle.jsonl"),
         ],
         strategy_audit_runner=fake_strategy_audit_runner,
         loop_runner=fake_loop_runner,
