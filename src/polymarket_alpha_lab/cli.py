@@ -12,7 +12,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, NoReturn
 from urllib.parse import urlsplit
 
 from polymarket_alpha_lab.api import PolymarketPublicClient
@@ -279,6 +279,9 @@ from polymarket_alpha_lab.supabase_strategy_candidate_research_queue_history_con
 from polymarket_alpha_lab.supabase_strategy_risk_audit_config import (
     from_strategy_risk_audit_db_env,
 )
+from polymarket_alpha_lab.supabase_team_forecast_config import (
+    from_team_forecast_db_env,
+)
 
 if TYPE_CHECKING:
     from polymarket_alpha_lab.nav_risk_metrics import PaperNavRiskMetricsReport
@@ -396,6 +399,9 @@ ProbabilitySelectionScorerAgreementRunner = Callable[..., object]
 ProbabilitySelectionScorerAgreementDbSink = Callable[..., object]
 ProbabilitySelectionScorerAgreementTrendRunner = Callable[..., object]
 ProbabilitySelectionScorerAgreementTrendGateRunner = Callable[..., object]
+TeamDiagnosticsRowsLoader = Callable[..., object]
+TeamDiagnosticsBundleBuilder = Callable[..., object]
+TeamDiagnosticsFormatter = Callable[[object], str]
 MAX_PAPER_AUTONOMOUS_READINESS_DIGEST_READ_LIMIT = 500
 _MISSING = object()
 STRATEGY_CYCLE_HISTORY_GATE_DB_DSN_ENV_VAR = (
@@ -1222,6 +1228,124 @@ def _raise_redacted_db_read_error(
     raise RuntimeError(message) from None
 
 
+def _run_team_diagnostics(
+    *,
+    team_id: str | None,
+    market_slug: str | None,
+    forecast_id: str | None,
+    limit: int,
+    rows_loader: TeamDiagnosticsRowsLoader | None,
+    bundle_builder: TeamDiagnosticsBundleBuilder | None,
+    stdout_formatter: TeamDiagnosticsFormatter | None,
+) -> str:
+    from polymarket_alpha_lab.team_cli_wiring import (
+        TeamDiagnosticsCliLoaders,
+        TeamDiagnosticsCliRequest,
+        run_team_diagnostics_cli_request,
+    )
+    from polymarket_alpha_lab.team_diagnostics_bundle import (
+        TeamDiagnosticsBundleConfig,
+        build_team_diagnostics_bundle_report,
+    )
+    from polymarket_alpha_lab.team_diagnostics_cli_format import (
+        format_team_diagnostics_cli_stdout,
+    )
+    from polymarket_alpha_lab.team_diagnostics_db_source import (
+        TeamDiagnosticsDbSourceRequest,
+        load_team_diagnostics_rows_from_env,
+    )
+
+    cli_request = TeamDiagnosticsCliRequest(
+        team_id=team_id,
+        market_slug=market_slug,
+        forecast_id=forecast_id,
+        limit=limit,
+    )
+    db_config = from_team_forecast_db_env()
+    if not db_config.enabled:
+        raise ValueError(
+            "team-diagnostics requires team forecast DB to be enabled; "
+            "team forecast DB is disabled",
+        )
+    if db_config.dsn is None:
+        raise ValueError("team-diagnostics requires a team forecast DB DSN")
+
+    source_request = TeamDiagnosticsDbSourceRequest(
+        team_id=team_id,
+        market_slug=market_slug,
+        forecast_id=forecast_id,
+        limit=limit,
+    )
+    resolved_rows_loader = (
+        load_team_diagnostics_rows_from_env if rows_loader is None else rows_loader
+    )
+    try:
+        if rows_loader is None:
+            rows = resolved_rows_loader(request=source_request)
+        else:
+            rows = resolved_rows_loader(config=db_config, request=source_request)
+    except Exception as exc:
+        _raise_redacted_team_diagnostics_db_read_error(exc, db_config=db_config)
+
+    generated_at = datetime.now(UTC)
+
+    def build_bundle(*, forecasts: object, evidence: object, outcomes: object) -> object:
+        if bundle_builder is None:
+            return build_team_diagnostics_bundle_report(
+                forecasts,
+                evidence,
+                outcomes,
+                config=TeamDiagnosticsBundleConfig(),
+                generated_at=generated_at,
+            )
+        return bundle_builder(
+            forecasts=forecasts,
+            evidence=evidence,
+            outcomes=outcomes,
+            generated_at=generated_at,
+        )
+
+    cli_result = run_team_diagnostics_cli_request(
+        cli_request,
+        loaders=TeamDiagnosticsCliLoaders(
+            load_forecasts=lambda **_filters: rows.forecasts,
+            load_evidence=lambda **_filters: rows.evidence,
+            load_outcomes=lambda **_filters: rows.outcomes,
+        ),
+        bundle_builder=build_bundle,
+    )
+    formatter = (
+        format_team_diagnostics_cli_stdout
+        if stdout_formatter is None
+        else stdout_formatter
+    )
+    return formatter(cli_result.bundle)
+
+
+def _raise_redacted_team_diagnostics_db_read_error(
+    exc: Exception,
+    *,
+    db_config: Any,
+) -> NoReturn:
+    message = str(exc)
+    dsn = getattr(db_config, "dsn", None)
+    if dsn is not None:
+        message = _redact_db_dsn(message, dsn=dsn)
+        message = _redact_db_dsn_host(message, dsn=dsn)
+    for field_name in (
+        "team_forecast_table_name",
+        "team_forecast_evidence_table_name",
+        "team_forecast_outcome_table_name",
+    ):
+        table_name = getattr(db_config, field_name, None)
+        if table_name:
+            message = _redact_db_table_name_and_tail(message, table_name=table_name)
+    message = _redact_paper_research_packet_sensitive_fields(message)
+    if not message.strip():
+        message = exc.__class__.__name__
+    raise RuntimeError(message) from None
+
+
 def _raise_redacted_strategy_cycle_report_db_history_error(
     exc: Exception,
     *,
@@ -1569,6 +1693,9 @@ def main(
     probability_selection_scorer_agreement_trend_gate_runner: (
         ProbabilitySelectionScorerAgreementTrendGateRunner | None
     ) = None,
+    team_diagnostics_rows_loader: TeamDiagnosticsRowsLoader | None = None,
+    team_diagnostics_bundle_builder: TeamDiagnosticsBundleBuilder | None = None,
+    team_diagnostics_stdout_formatter: TeamDiagnosticsFormatter | None = None,
 ) -> int:
     parser = argparse.ArgumentParser(prog="polymarket-alpha-lab")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -1939,6 +2066,19 @@ def main(
         default=25,
         dest="limit",
     )
+    team_diagnostics = subparsers.add_parser(
+        "team-diagnostics",
+        allow_abbrev=False,
+        description=(
+            "Build a read-only, report-only diagnostics report from local "
+            "Supabase/Postgres team forecast rows."
+        ),
+        help="read-only report-only team diagnostics from local Supabase/Postgres",
+    )
+    team_diagnostics.add_argument("--team-id", default=None, dest="team_id")
+    team_diagnostics.add_argument("--market-slug", default=None, dest="market_slug")
+    team_diagnostics.add_argument("--forecast-id", default=None, dest="forecast_id")
+    team_diagnostics.add_argument("--limit", type=int, default=100, dest="limit")
 
     strategy_evidence = subparsers.add_parser("strategy-evidence")
     strategy_evidence.add_argument(
@@ -2874,6 +3014,23 @@ def main(
             return 0
         except Exception as exc:
             print(f"strategy-cycle failed: {exc}", file=sys.stderr)
+            return 1
+
+    if args.command == "team-diagnostics":
+        try:
+            stdout = _run_team_diagnostics(
+                team_id=args.team_id,
+                market_slug=args.market_slug,
+                forecast_id=args.forecast_id,
+                limit=args.limit,
+                rows_loader=team_diagnostics_rows_loader,
+                bundle_builder=team_diagnostics_bundle_builder,
+                stdout_formatter=team_diagnostics_stdout_formatter,
+            )
+            print(stdout, end="")
+            return 0
+        except Exception as exc:
+            print(f"team-diagnostics failed: {exc}", file=sys.stderr)
             return 1
 
     if args.command == "portfolio-nav":

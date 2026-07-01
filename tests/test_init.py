@@ -89,6 +89,12 @@ from polymarket_alpha_lab.team_forecast_packet import (
     TeamForecastPacket,
     team_forecast_to_side_edge_input,
 )
+from polymarket_alpha_lab.team_diagnostics import (
+    TeamDiagnosticsConfig,
+    TeamDiagnosticsReport,
+    TeamDiagnosticsRow,
+    build_team_diagnostics_report,
+)
 from polymarket_alpha_lab.team_performance_summary import (
     TeamPerformanceSummaryReport,
     build_team_performance_summary_report,
@@ -889,6 +895,9 @@ def test_team_public_api_exports():
         "SportsSoccerEvidenceInput",
         "SportsSoccerTeamConfig",
         "SupabaseTeamForecastConfig",
+        "TeamDiagnosticsConfig",
+        "TeamDiagnosticsReport",
+        "TeamDiagnosticsRow",
         "TeamForecastCostInterfaceInput",
         "TeamForecastEvidencePacket",
         "TeamForecastPacket",
@@ -908,6 +917,7 @@ def test_team_public_api_exports():
         "build_sports_basketball_team_forecast",
         "build_sports_other_team_forecast",
         "build_sports_soccer_team_forecast",
+        "build_team_diagnostics_report",
         "build_team_market_route_report",
         "build_team_performance_summary_report",
         "team_forecast_to_side_edge_input",
@@ -935,6 +945,9 @@ def test_team_public_api_exports():
     assert lab.SportsSoccerEvidenceInput is SportsSoccerEvidenceInput
     assert lab.SportsSoccerTeamConfig is SportsSoccerTeamConfig
     assert lab.SupabaseTeamForecastConfig is SupabaseTeamForecastConfig
+    assert lab.TeamDiagnosticsConfig is TeamDiagnosticsConfig
+    assert lab.TeamDiagnosticsReport is TeamDiagnosticsReport
+    assert lab.TeamDiagnosticsRow is TeamDiagnosticsRow
     assert lab.TeamForecastCostInterfaceInput is TeamForecastCostInterfaceInput
     assert lab.TeamForecastEvidencePacket is TeamForecastEvidencePacket
     assert lab.TeamForecastPacket is TeamForecastPacket
@@ -963,6 +976,7 @@ def test_team_public_api_exports():
     )
     assert lab.build_sports_other_team_forecast is build_sports_other_team_forecast
     assert lab.build_sports_soccer_team_forecast is build_sports_soccer_team_forecast
+    assert lab.build_team_diagnostics_report is build_team_diagnostics_report
     assert lab.build_team_market_route_report is build_team_market_route_report
     assert (
         lab.build_team_performance_summary_report

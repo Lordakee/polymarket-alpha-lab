@@ -10,6 +10,7 @@ Scope constraints:
 - Do not bypass the local DSN validator boundary in `supabase_team_forecast_config`.
 - Do not add authentication, private-key handling, account reads, live trading, wallet operations, order signing, order submission, order cancellation, order replacement, or exchange/order mutation.
 - Verification commands in this runbook must be catalog reads only. They must not insert, modify, remove, or reshape data.
+- For the read-only diagnostics path over these tables, see [docs/team-diagnostics-readonly.md](team-diagnostics-readonly.md). Diagnostics are local Supabase/Postgres Phase 1 paper/report-only reads; live trading, auth, wallet, account, order, and exchange mutation surfaces remain forbidden.
 
 Local facts:
 

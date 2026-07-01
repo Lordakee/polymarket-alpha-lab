@@ -18,6 +18,8 @@ This repository currently contains the project design, research notes, implement
 
 See [docs/team-agent-framework.md](docs/team-agent-framework.md) for the Phase 1 team-agent framework. The current runnable slice is only `crypto_btc`; it remains paper-only, report-only, and readonly, with local Supabase/Postgres persistence for team profiles, routes, forecasts, forecast evidence, and outcomes.
 
+For team diagnostics over those persisted rows, see [docs/team-diagnostics-readonly.md](docs/team-diagnostics-readonly.md). Diagnostics are a local Supabase/Postgres read-only Phase 1 paper/report-only path; live trading, auth, wallet, account, order, and exchange mutation surfaces remain forbidden.
+
 ## Project Iron Rules
 
 - Persistent project data must use only the local Supabase/Postgres instance on this host. Do not add SQLite, Redis, Mongo, SQLAlchemy, hosted database assumptions, generic database abstraction layers, or file-backed database substitutes as durable persistence.

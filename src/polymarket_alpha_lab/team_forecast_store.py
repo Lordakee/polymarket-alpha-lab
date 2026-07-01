@@ -27,7 +27,10 @@ __all__ = (
     "insert_team_forecast_evidence",
     "insert_team_forecast_outcome",
     "load_team_forecast_evidence",
+    "load_team_forecast_evidence_rows",
+    "load_team_forecast_outcome_rows",
     "load_team_forecasts",
+    "load_team_forecast_rows",
     "load_team_forecast_outcomes",
 )
 
@@ -172,6 +175,24 @@ def load_team_forecasts(
     limit: int | None = None,
     table_name: str = _DEFAULT_FORECAST_TABLE_NAME,
 ) -> tuple[TeamForecastPacket, ...]:
+    rows = load_team_forecast_rows(
+        connection,
+        team_id=team_id,
+        market_slug=market_slug,
+        limit=limit,
+        table_name=table_name,
+    )
+    return tuple(team_forecast_from_db_row(row) for row in rows)
+
+
+def load_team_forecast_rows(
+    connection: Any,
+    *,
+    team_id: str | None = None,
+    market_slug: str | None = None,
+    limit: int | None = None,
+    table_name: str = _DEFAULT_FORECAST_TABLE_NAME,
+) -> tuple[TeamForecastDbRow, ...]:
     table_name = _validate_table_name(table_name)
     where_clause, params = _filter_params(
         team_id=team_id,
@@ -189,11 +210,10 @@ def load_team_forecasts(
         {limit_clause}
         """
     records = _execute_load(connection, sql, tuple(params))
-    rows = tuple(
+    return tuple(
         _db_row_from_record(record, TeamForecastDbRow, _FORECAST_COLUMNS)
         for record in records
     )
-    return tuple(team_forecast_from_db_row(row) for row in rows)
 
 
 def load_team_forecast_evidence(
@@ -205,6 +225,26 @@ def load_team_forecast_evidence(
     limit: int | None = None,
     table_name: str = _DEFAULT_EVIDENCE_TABLE_NAME,
 ) -> tuple[TeamForecastEvidencePacket, ...]:
+    rows = load_team_forecast_evidence_rows(
+        connection,
+        forecast_id=forecast_id,
+        team_id=team_id,
+        market_slug=market_slug,
+        limit=limit,
+        table_name=table_name,
+    )
+    return tuple(team_forecast_evidence_from_db_row(row) for row in rows)
+
+
+def load_team_forecast_evidence_rows(
+    connection: Any,
+    *,
+    forecast_id: str | None = None,
+    team_id: str | None = None,
+    market_slug: str | None = None,
+    limit: int | None = None,
+    table_name: str = _DEFAULT_EVIDENCE_TABLE_NAME,
+) -> tuple[TeamForecastEvidenceDbRow, ...]:
     table_name = _validate_table_name(table_name)
     where_clause, params = _filter_params(
         forecast_id=forecast_id,
@@ -223,11 +263,10 @@ def load_team_forecast_evidence(
         {limit_clause}
         """
     records = _execute_load(connection, sql, tuple(params))
-    rows = tuple(
+    return tuple(
         _db_row_from_record(record, TeamForecastEvidenceDbRow, _EVIDENCE_COLUMNS)
         for record in records
     )
-    return tuple(team_forecast_evidence_from_db_row(row) for row in rows)
 
 
 def load_team_forecast_outcomes(
@@ -238,6 +277,24 @@ def load_team_forecast_outcomes(
     limit: int | None = None,
     table_name: str = _DEFAULT_OUTCOME_TABLE_NAME,
 ) -> tuple[TeamForecastOutcome, ...]:
+    rows = load_team_forecast_outcome_rows(
+        connection,
+        team_id=team_id,
+        market_slug=market_slug,
+        limit=limit,
+        table_name=table_name,
+    )
+    return tuple(team_forecast_outcome_from_db_row(row) for row in rows)
+
+
+def load_team_forecast_outcome_rows(
+    connection: Any,
+    *,
+    team_id: str | None = None,
+    market_slug: str | None = None,
+    limit: int | None = None,
+    table_name: str = _DEFAULT_OUTCOME_TABLE_NAME,
+) -> tuple[TeamForecastOutcomeDbRow, ...]:
     table_name = _validate_table_name(table_name)
     where_clause, params = _filter_params(
         team_id=team_id,
@@ -255,11 +312,10 @@ def load_team_forecast_outcomes(
         {limit_clause}
         """
     records = _execute_load(connection, sql, tuple(params))
-    rows = tuple(
+    return tuple(
         _db_row_from_record(record, TeamForecastOutcomeDbRow, _OUTCOME_COLUMNS)
         for record in records
     )
-    return tuple(team_forecast_outcome_from_db_row(row) for row in rows)
 
 
 def _insert_sql(

@@ -709,10 +709,13 @@ def test_public_exports_include_all_team_forecast_psycopg_wrappers(
         "insert_team_market_route_with_psycopg",
         "insert_team_forecast_with_psycopg",
         "load_team_forecasts_with_psycopg",
+        "load_team_forecast_rows_with_psycopg",
         "insert_team_forecast_evidence_with_psycopg",
         "load_team_forecast_evidence_with_psycopg",
+        "load_team_forecast_evidence_rows_with_psycopg",
         "insert_team_forecast_outcome_with_psycopg",
         "load_team_forecast_outcomes_with_psycopg",
+        "load_team_forecast_outcome_rows_with_psycopg",
     }
 
 

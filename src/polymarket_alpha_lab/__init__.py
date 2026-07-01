@@ -96,6 +96,12 @@ from polymarket_alpha_lab.team_forecast_packet import (
     TeamForecastPacket,
     team_forecast_to_side_edge_input,
 )
+from polymarket_alpha_lab.team_diagnostics import (
+    TeamDiagnosticsConfig,
+    TeamDiagnosticsReport,
+    TeamDiagnosticsRow,
+    build_team_diagnostics_report,
+)
 from polymarket_alpha_lab.team_performance_summary import (
     TeamPerformanceSummaryReport,
     build_team_performance_summary_report,
@@ -593,6 +599,9 @@ __all__ = [
     "SportsSoccerEvidenceInput",
     "SportsSoccerTeamConfig",
     "SupabaseTeamForecastConfig",
+    "TeamDiagnosticsConfig",
+    "TeamDiagnosticsReport",
+    "TeamDiagnosticsRow",
     "TeamForecastCostInterfaceInput",
     "PaperAnalyticsLog",
     "PaperAnalyticsReport",
@@ -811,6 +820,7 @@ __all__ = [
     "build_sports_other_team_forecast",
     "build_sports_soccer_team_forecast",
     "build_team_market_route_report",
+    "build_team_diagnostics_report",
     "build_team_performance_summary_report",
     "build_trade_proposal_evidence_comparison_history_batch_health_report",
     "build_trade_proposal_evidence_comparison_history_batch_health_trend_report",

@@ -32,7 +32,10 @@ try:
         insert_team_forecast_evidence,
         insert_team_forecast_outcome,
         load_team_forecast_evidence,
+        load_team_forecast_evidence_rows,
         load_team_forecast_outcomes,
+        load_team_forecast_outcome_rows,
+        load_team_forecast_rows,
         load_team_forecasts,
     )
 except ModuleNotFoundError as exc:
@@ -81,6 +84,16 @@ except ModuleNotFoundError as exc:
     ) -> tuple[Any, ...]:
         raise RuntimeError("team forecast store module is required")
 
+    def load_team_forecast_rows(
+        connection: Any,
+        *,
+        team_id: str | None = None,
+        market_slug: str | None = None,
+        limit: int | None = None,
+        table_name: str,
+    ) -> tuple[Any, ...]:
+        raise RuntimeError("team forecast store module is required")
+
     def load_team_forecast_evidence(
         connection: Any,
         *,
@@ -92,7 +105,28 @@ except ModuleNotFoundError as exc:
     ) -> tuple[Any, ...]:
         raise RuntimeError("team forecast store module is required")
 
+    def load_team_forecast_evidence_rows(
+        connection: Any,
+        *,
+        forecast_id: str | None = None,
+        team_id: str | None = None,
+        market_slug: str | None = None,
+        limit: int | None = None,
+        table_name: str,
+    ) -> tuple[Any, ...]:
+        raise RuntimeError("team forecast store module is required")
+
     def load_team_forecast_outcomes(
+        connection: Any,
+        *,
+        team_id: str | None = None,
+        market_slug: str | None = None,
+        limit: int | None = None,
+        table_name: str,
+    ) -> tuple[Any, ...]:
+        raise RuntimeError("team forecast store module is required")
+
+    def load_team_forecast_outcome_rows(
         connection: Any,
         *,
         team_id: str | None = None,
@@ -160,6 +194,26 @@ def load_team_forecasts_with_psycopg(
     )
 
 
+def load_team_forecast_rows_with_psycopg(
+    dsn: str,
+    *,
+    team_id: str | None = None,
+    market_slug: str | None = None,
+    limit: int | None = None,
+    table_name: str,
+) -> tuple[TeamForecastDbRow, ...]:
+    return _with_owned_connection(
+        dsn,
+        lambda connection: load_team_forecast_rows(
+            connection,
+            team_id=team_id,
+            market_slug=market_slug,
+            limit=limit,
+            table_name=table_name,
+        ),
+    )
+
+
 def insert_team_forecast_evidence_with_psycopg(
     dsn: str,
     packet: TeamForecastEvidencePacket,
@@ -207,6 +261,28 @@ def load_team_forecast_evidence_with_psycopg(
     )
 
 
+def load_team_forecast_evidence_rows_with_psycopg(
+    dsn: str,
+    *,
+    forecast_id: str | None = None,
+    team_id: str | None = None,
+    market_slug: str | None = None,
+    limit: int | None = None,
+    table_name: str,
+) -> tuple[TeamForecastEvidenceDbRow, ...]:
+    return _with_owned_connection(
+        dsn,
+        lambda connection: load_team_forecast_evidence_rows(
+            connection,
+            forecast_id=forecast_id,
+            team_id=team_id,
+            market_slug=market_slug,
+            limit=limit,
+            table_name=table_name,
+        ),
+    )
+
+
 def insert_team_forecast_outcome_with_psycopg(
     dsn: str,
     outcome: TeamForecastOutcome,
@@ -241,6 +317,26 @@ def load_team_forecast_outcomes_with_psycopg(
     return _with_owned_connection(
         dsn,
         lambda connection: load_team_forecast_outcomes(
+            connection,
+            team_id=team_id,
+            market_slug=market_slug,
+            limit=limit,
+            table_name=table_name,
+        ),
+    )
+
+
+def load_team_forecast_outcome_rows_with_psycopg(
+    dsn: str,
+    *,
+    team_id: str | None = None,
+    market_slug: str | None = None,
+    limit: int | None = None,
+    table_name: str,
+) -> tuple[TeamForecastOutcomeDbRow, ...]:
+    return _with_owned_connection(
+        dsn,
+        lambda connection: load_team_forecast_outcome_rows(
             connection,
             team_id=team_id,
             market_slug=market_slug,
@@ -357,6 +453,9 @@ __all__ = (
     "insert_team_forecast_outcome_with_psycopg",
     "insert_team_forecast_with_psycopg",
     "load_team_forecast_evidence_with_psycopg",
+    "load_team_forecast_evidence_rows_with_psycopg",
     "load_team_forecast_outcomes_with_psycopg",
+    "load_team_forecast_outcome_rows_with_psycopg",
+    "load_team_forecast_rows_with_psycopg",
     "load_team_forecasts_with_psycopg",
 )

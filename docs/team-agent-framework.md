@@ -93,6 +93,8 @@ All durable team-framework data in this slice uses local Supabase/Postgres only.
 
 The persistence boundary is local by design. Raw DSNs must be validated through the local Postgres DSN validator before psycopg connection setup. The team framework does not introduce SQLite, Redis, MongoDB, hosted database assumptions, or SQLAlchemy persistence.
 
+For team diagnostics over these persisted rows, see [docs/team-diagnostics-readonly.md](team-diagnostics-readonly.md). Diagnostics are a local Supabase/Postgres read-only Phase 1 paper/report-only path; live trading, auth, wallet, account, order, and exchange mutation surfaces remain forbidden.
+
 Durable JSON payloads must be JSON-ready without floats. Decimal values are serialized as strings, safety flags remain explicit, and unsafe live-surface field names are rejected before persistence.
 
 ## Sample-Count Gates
