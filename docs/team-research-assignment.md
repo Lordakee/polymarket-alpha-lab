@@ -84,11 +84,21 @@ The report can be built from caller-supplied in-memory typed reports. When persi
 
 Durable project data for this surface must not move to SQLite, Redis, MongoDB, SQLAlchemy-managed durable engines, JSONL durable substitutes, file-backed caches, hosted database assumptions, or a generic durable-store abstraction.
 
-Configuration for any persisted read path stays in existing environment modules. Do not add DSN, table, wallet, auth, order, live, execution, account, or key-material CLI flags for this report. Error output should avoid printing DSNs, table names, raw payloads, hashes, market questions, market slugs, credentials, account identifiers, wallet material, auth material, key material, or order-like data.
+Configuration for any persisted read path stays in existing environment modules. Do not add DSN, table, wallet, auth, order, live, execution, account, or key-material CLI flags for this report. After the required env gates pass, runtime source/runner errors are wrapped by the CLI redaction path for DSNs, table names, raw payloads, hashes, market questions, market slugs, credentials, account identifiers, wallet material, auth material, key material, and order-like data. Argparse usage errors and env-gate failures are fail-closed validation surfaces, not a supported way to pass secrets.
 
 The assignment report is a read-only composition. It should not create, alter, repair, delete, backfill, upsert, or refresh source rows.
 
-A composed team-research-assignment DB source and CLI are deferred until env-scoped local Supabase/Postgres `team_market_routes` readback exists; see [team-research-assignment-db-source-gap.md](team-research-assignment-db-source-gap.md).
+This node adds the composed team-research-assignment DB-source and CLI path over those existing sources. It is an env-only local Supabase/Postgres read-only composition: the CLI loads queue reports, persisted one-row route reports, and the memory readiness digest through existing env config modules, then passes typed source reports to the assignment reducer. It does not add a durable assignment table, persistence toggle, generic DB abstraction, JSONL durable substitute, or direct DB configuration flags.
+
+The CLI fails closed before source loading when any required DB family is disabled or lacks a DSN: strategy candidate research queue, team forecast route, or team diagnostics snapshot. CLI limits must be positive and are validated before env reads. The default limits are `--queue-limit 1`, `--route-limit 500`, and `--memory-limit 100`; omitting `--team-id` selects all known teams.
+
+Relevant env config families:
+
+- Queue reports: `POLYMARKET_ALPHA_LAB_STRATEGY_CANDIDATE_RESEARCH_QUEUE_DB_ENABLED`, `POLYMARKET_ALPHA_LAB_STRATEGY_CANDIDATE_RESEARCH_QUEUE_DB_DSN`, and `POLYMARKET_ALPHA_LAB_STRATEGY_CANDIDATE_RESEARCH_QUEUE_DB_TABLE`.
+- Team route readback: `POLYMARKET_ALPHA_LAB_TEAM_FORECAST_DB_ENABLED`, `POLYMARKET_ALPHA_LAB_TEAM_FORECAST_DB_DSN`, and `POLYMARKET_ALPHA_LAB_TEAM_ROUTE_DB_TABLE` for the `team_market_routes` source. Other team forecast tables remain part of the broader team forecast config family but are not assignment output tables.
+- Team-memory readiness: `POLYMARKET_ALPHA_LAB_TEAM_DIAGNOSTICS_SNAPSHOT_DB_ENABLED`, `POLYMARKET_ALPHA_LAB_TEAM_DIAGNOSTICS_SNAPSHOT_DB_DSN`, and `POLYMARKET_ALPHA_LAB_TEAM_DIAGNOSTICS_SNAPSHOT_DB_TABLE`, consumed through the existing diagnostics snapshot history and memory-readiness digest read path.
+
+The operator CLI is `polymarket-alpha-lab team-research-assignment`. Its report-scoped options are `--team-id`, `--queue-source-config-version`, `--memory-config-version`, `--queue-limit`, `--route-limit`, and `--memory-limit`. `--queue-source-config-version` filters the queue source readback, and `--memory-config-version` is passed to the memory-readiness source. There is no generic assignment `--config-version`, `--market-slug`, or `--forecast-id` option. It must not expose `--dsn`, `--table`, `--persist`, `--live`, `--auth`, `--wallet`, `--private-key`, `--api-key`, `--account`, `--order`, `--trade`, `--execute`, or `--submit`.
 
 ## Operator Output
 
@@ -97,11 +107,11 @@ The useful operator fields are aggregate and assignment-oriented:
 - report assignment status and recommended next step,
 - total assignment, assigned, watch, and blocked counts,
 - per-team summary counts,
-- per-row market slug, selected side, assigned team, category id, assignment status, memory use policy, evidence gaps, and reason codes,
+- per-row market slug, assigned team, category id, assignment status, memory use policy, evidence gaps, and reason codes,
 - source config versions,
 - hard `paper_only`, `report_only`, and `readonly` flags.
 
-If a queue row has no matching route, the report uses `team_id=unassigned` with `memory_readiness_status=missing` and `memory_use_policy=block`; this is an operator-visible blocked-routing sentinel, not a specialist team.
+If a queue row has no matching route inside an otherwise nonempty route readback, the report uses `team_id=unassigned` with `memory_readiness_status=missing` and `memory_use_policy=block`; this is an operator-visible blocked-routing sentinel, not a specialist team. If the DB-source route readback itself is empty, or if any persisted route report is not a one-row `TeamMarketRouteReport`, the DB-source fails closed before memory loading and assignment composition.
 
 Output should make blocked and watch reasons visible enough for operators to route follow-up work, while avoiding source payloads, credentials, DB internals, wallet/account details, and order-like data.
 

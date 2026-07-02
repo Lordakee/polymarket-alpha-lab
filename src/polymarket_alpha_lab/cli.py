@@ -407,8 +407,25 @@ TeamDiagnosticsSnapshotDbSink = Callable[..., object]
 TeamDiagnosticsSnapshotHistoryRunner = Callable[..., object]
 TeamDiagnosticsSnapshotHistoryGateRunner = Callable[..., object]
 TeamMemoryReadinessDigestRunner = Callable[..., object]
+TeamResearchAssignmentRunner = Callable[..., object]
 MAX_PAPER_AUTONOMOUS_READINESS_DIGEST_READ_LIMIT = 500
 _MISSING = object()
+_TEAM_RESEARCH_ASSIGNMENT_ALLOWED_OPTIONS = frozenset(
+    (
+        "--help",
+        "--team-id",
+        "--queue-source-config-version",
+        "--memory-config-version",
+        "--queue-limit",
+        "--route-limit",
+        "--memory-limit",
+    ),
+)
+_TEAM_RESEARCH_ASSIGNMENT_VALUE_OPTIONS = frozenset(
+    option
+    for option in _TEAM_RESEARCH_ASSIGNMENT_ALLOWED_OPTIONS
+    if option != "--help"
+)
 STRATEGY_CYCLE_HISTORY_GATE_DB_DSN_ENV_VAR = (
     "POLYMARKET_ALPHA_LAB_STRATEGY_CYCLE_HISTORY_GATE_DB_DSN"
 )
@@ -526,7 +543,15 @@ def _redact_paper_research_packet_sensitive_fields(text: str) -> str:
     )
     message = _redact_keyed_sensitive_fields(
         message,
-        field_names=("market_slug", "marketSlug", "raw_filter"),
+        field_names=(
+            "market",
+            "market_id",
+            "marketId",
+            "market_slug",
+            "marketSlug",
+            "raw_filter",
+            "rawFilter",
+        ),
         replacement="<redacted-market-slug>",
     )
     message = _redact_keyed_sensitive_fields(
@@ -551,12 +576,12 @@ def _redact_paper_research_packet_sensitive_fields(text: str) -> str:
     )
     message = _redact_keyed_sensitive_fields(
         message,
-        field_names=("account", "account_id"),
+        field_names=("account", "account_id", "accountId"),
         replacement="<redacted-account>",
     )
     message = _redact_keyed_sensitive_fields(
         message,
-        field_names=("wallet", "wallet_address"),
+        field_names=("wallet", "wallet_address", "walletAddress"),
         replacement="<redacted-wallet>",
     )
     message = _redact_keyed_sensitive_fields(
@@ -564,9 +589,15 @@ def _redact_paper_research_packet_sensitive_fields(text: str) -> str:
         field_names=(
             "order",
             "order_id",
+            "orderId",
+            "order_hash",
+            "orderHash",
             "order_identifier",
             "order_payload",
             "order_request",
+            "trade",
+            "trade_id",
+            "tradeId",
         ),
         replacement="<redacted-order>",
     )
@@ -581,11 +612,20 @@ def _redact_paper_research_packet_sensitive_fields(text: str) -> str:
         ),
         replacement="<redacted-market-detail>",
     )
+    message = _redact_keyed_hash_fields(
+        message,
+        field_names=(
+            "hash",
+            "payload_hash",
+            "report_hash",
+        ),
+    )
     message = _redact_keyed_sensitive_fields(
         message,
         field_names=(
             "secret",
             "secret_key",
+            "secretKey",
             "client_secret",
             "password",
             "token",
@@ -596,9 +636,16 @@ def _redact_paper_research_packet_sensitive_fields(text: str) -> str:
             "bearer_token",
             "jwt_token",
             "api_key",
+            "apiKey",
+            "apiSecret",
             "private_key",
+            "privateKey",
+            # Some upstream clients report generic key material as key=<value>.
+            "key",
             "authorization",
             "credential",
+            "credential_id",
+            "credentials",
         ),
         replacement="<redacted-secret>",
     )
@@ -639,6 +686,58 @@ def _redact_keyed_sensitive_fields(
             replacement=replacement,
         )
     return message
+
+
+def _redact_keyed_hash_fields(
+    text: str,
+    *,
+    field_names: tuple[str, ...],
+) -> str:
+    message = text
+    for field_name in field_names:
+        message = _redact_sensitive_hash_equals_field(message, field_name=field_name)
+        message = _redact_sensitive_colon_field(
+            message,
+            field_name=field_name,
+            replacement="<redacted-hash>",
+        )
+        message = _redact_sensitive_json_field(
+            message,
+            field_name=field_name,
+            replacement="<redacted-hash>",
+        )
+        message = _redact_sensitive_python_repr_field(
+            message,
+            field_name=field_name,
+            replacement="<redacted-hash>",
+        )
+    return message
+
+
+def _redact_sensitive_hash_equals_field(text: str, *, field_name: str) -> str:
+    pattern = re.compile(rf"\b{re.escape(field_name)}=", re.IGNORECASE)
+    parts: list[str] = []
+    cursor = 0
+    while True:
+        match = pattern.search(text, cursor)
+        if match is None:
+            parts.append(text[cursor:])
+            break
+        parts.append(text[cursor : match.start()])
+        value_end = _sensitive_field_value_end(text, match.end())
+        value = text[match.end() : value_end].strip("\"'")
+        replacement = (
+            value
+            if value in ("<redacted-sha256>", "<redacted-hash>")
+            else (
+                "<redacted-sha256>"
+                if re.fullmatch(r"[A-Fa-f0-9]{64}", value) is not None
+                else "<redacted-hash>"
+            )
+        )
+        parts.append(f"{field_name}={replacement}")
+        cursor = value_end
+    return "".join(parts)
 
 
 def _redact_sensitive_values(
@@ -1785,6 +1884,385 @@ def _run_team_memory_readiness_digest(
         )
 
 
+def _run_team_research_assignment(
+    *,
+    team_ids: list[str] | tuple[str, ...] | None,
+    queue_source_config_version: str | None,
+    memory_config_version: str | None,
+    queue_limit: int,
+    route_limit: int,
+    memory_limit: int,
+    runner: TeamResearchAssignmentRunner | None,
+) -> str:
+    for field_name, limit in (
+        ("queue-limit", queue_limit),
+        ("route-limit", route_limit),
+        ("memory-limit", memory_limit),
+    ):
+        if isinstance(limit, bool) or type(limit) is not int or limit <= 0:
+            raise ValueError(f"team-research-assignment {field_name} must be positive")
+
+    queue_db_config = _team_research_assignment_queue_db_config()
+    if not queue_db_config.enabled:
+        raise ValueError(
+            "team-research-assignment requires strategy candidate research queue "
+            "DB to be enabled; strategy candidate research queue DB is disabled",
+        )
+    queue_dsn = queue_db_config.dsn
+    if queue_dsn is None:
+        raise ValueError(
+            "team-research-assignment requires a strategy candidate research "
+            "queue DB DSN",
+        )
+
+    route_db_config = _team_research_assignment_route_db_config()
+    if not route_db_config.enabled:
+        raise ValueError(
+            "team-research-assignment requires team forecast DB to be enabled; "
+            "team forecast DB is disabled",
+        )
+    route_dsn = route_db_config.dsn
+    if route_dsn is None:
+        raise ValueError("team-research-assignment requires a team forecast DB DSN")
+
+    snapshot_db_config = _team_research_assignment_snapshot_db_config()
+    if not snapshot_db_config.enabled:
+        raise ValueError(
+            "team-research-assignment requires team diagnostics snapshot DB "
+            "to be enabled; team diagnostics snapshot DB is disabled",
+        )
+    snapshot_dsn = snapshot_db_config.dsn
+    if snapshot_dsn is None:
+        raise ValueError(
+            "team-research-assignment requires a team diagnostics snapshot DB DSN",
+        )
+
+    from polymarket_alpha_lab.team_diagnostics_snapshot_history import (
+        TeamDiagnosticsSnapshotHistoryConfig,
+        build_team_diagnostics_snapshot_history_report,
+    )
+    from polymarket_alpha_lab.team_diagnostics_snapshot_history_gate import (
+        TeamDiagnosticsSnapshotHistoryGateConfig,
+        build_team_diagnostics_snapshot_history_gate_report,
+    )
+    from polymarket_alpha_lab.team_memory_readiness_digest import (
+        TeamMemoryReadinessDigestConfig,
+        build_team_memory_readiness_digest_report,
+    )
+    from polymarket_alpha_lab.team_research_assignment import (
+        TeamResearchAssignmentConfig,
+        build_team_research_assignment_report,
+    )
+    from polymarket_alpha_lab.team_research_assignment_cli_format import (
+        format_team_research_assignment_cli_stdout,
+    )
+    from polymarket_alpha_lab.team_taxonomy import TEAM_IDS
+
+    selected_team_ids = tuple(TEAM_IDS if team_ids is None else team_ids)
+    generated_at = datetime.now(UTC)
+    assignment_config = TeamResearchAssignmentConfig()
+    history_config = TeamDiagnosticsSnapshotHistoryConfig()
+    gate_config = TeamDiagnosticsSnapshotHistoryGateConfig()
+    digest_config = TeamMemoryReadinessDigestConfig()
+    queue_table_name = queue_db_config.table_name
+    route_table_name = route_db_config.team_route_table_name
+    snapshot_table_name = snapshot_db_config.table_name
+    snapshot_env = _team_research_assignment_snapshot_env(
+        dsn=snapshot_dsn,
+        table_name=snapshot_table_name,
+    )
+    try:
+        if runner is not None:
+            report = runner(
+                queue_dsn=queue_dsn,
+                queue_table_name=queue_table_name,
+                route_dsn=route_dsn,
+                route_table_name=route_table_name,
+                snapshot_dsn=snapshot_dsn,
+                snapshot_table_name=snapshot_table_name,
+                team_ids=selected_team_ids,
+                queue_source_config_version=queue_source_config_version,
+                memory_config_version=memory_config_version,
+                queue_limit=queue_limit,
+                route_limit=route_limit,
+                memory_limit=memory_limit,
+                assignment_config=assignment_config,
+                history_config=history_config,
+                gate_config=gate_config,
+                digest_config=digest_config,
+                generated_at=generated_at,
+            )
+        else:
+            from polymarket_alpha_lab.strategy_candidate_research_queue_psycopg_read import (
+                PaperStrategyCandidateResearchQueueReadOptions,
+                load_paper_strategy_candidate_research_queue_reports_with_psycopg,
+            )
+            from polymarket_alpha_lab.team_diagnostics_snapshot_history_db_source import (
+                load_team_diagnostics_snapshot_history_report,
+            )
+            from polymarket_alpha_lab.team_diagnostics_snapshot_history_gate_db_source import (
+                load_team_diagnostics_snapshot_history_gate_report,
+            )
+            from polymarket_alpha_lab.team_diagnostics_snapshot_psycopg import (
+                load_team_diagnostics_snapshot_reports_from_env,
+            )
+            from polymarket_alpha_lab.team_forecast_psycopg import (
+                load_team_market_routes_with_psycopg,
+            )
+            from polymarket_alpha_lab.team_memory_readiness_digest_db_source import (
+                load_team_memory_readiness_digest_report,
+            )
+            from polymarket_alpha_lab.team_research_assignment_db_source import (
+                load_team_research_assignment_report,
+            )
+
+            def queue_loader(
+                *,
+                source_config_version: str | None = None,
+                action_status: str | None = None,
+                research_status: str | None = None,
+                limit: int = 1,
+            ) -> object:
+                read_options = PaperStrategyCandidateResearchQueueReadOptions(
+                    source_config_version=source_config_version,
+                    action_status=action_status,
+                    research_status=research_status,
+                    limit=limit,
+                    table_name=queue_table_name,
+                )
+                return load_paper_strategy_candidate_research_queue_reports_with_psycopg(
+                    queue_dsn,
+                    options=read_options,
+                )
+
+            def route_loader(
+                *,
+                limit: int | None = None,
+                team_id: str | None = None,
+                market_slug: str | None = None,
+            ) -> object:
+                return load_team_market_routes_with_psycopg(
+                    route_dsn,
+                    team_id=team_id,
+                    market_slug=market_slug,
+                    limit=limit,
+                    table_name=route_table_name,
+                )
+
+            def history_loader(
+                *,
+                config: TeamDiagnosticsSnapshotHistoryConfig | None = None,
+                history_config: TeamDiagnosticsSnapshotHistoryConfig | None = None,
+                generated_at: datetime,
+                team_id: str | None = None,
+                market_slug: str | None = None,
+                forecast_id: str | None = None,
+                config_version: str | None = None,
+                limit: int | None = None,
+            ) -> object:
+                selected_history_config = (
+                    history_config if history_config is not None else config
+                )
+                if selected_history_config is None:
+                    raise ValueError("history_config must be provided")
+
+                def load_snapshots(**kwargs: object) -> object:
+                    return load_team_diagnostics_snapshot_reports_from_env(
+                        env=snapshot_env,
+                        **kwargs,
+                    )
+
+                return load_team_diagnostics_snapshot_history_report(
+                    load_snapshots=load_snapshots,
+                    history_builder=build_team_diagnostics_snapshot_history_report,
+                    config=selected_history_config,
+                    generated_at=generated_at,
+                    team_id=team_id,
+                    market_slug=market_slug,
+                    forecast_id=forecast_id,
+                    config_version=config_version,
+                    limit=limit,
+                )
+
+            def gate_loader(
+                *,
+                team_id: str,
+                history_config: TeamDiagnosticsSnapshotHistoryConfig,
+                gate_config: TeamDiagnosticsSnapshotHistoryGateConfig,
+                generated_at: datetime,
+                config_version: str | None = None,
+                limit: int | None = None,
+            ) -> object:
+                return load_team_diagnostics_snapshot_history_gate_report(
+                    history_loader=history_loader,
+                    gate_builder=build_team_diagnostics_snapshot_history_gate_report,
+                    history_config=history_config,
+                    gate_config=gate_config,
+                    generated_at=generated_at,
+                    team_id=team_id,
+                    market_slug=None,
+                    forecast_id=None,
+                    config_version=config_version,
+                    limit=limit,
+                )
+
+            def memory_loader(
+                *,
+                team_ids: tuple[str, ...],
+                config_version: str | None = None,
+                limit: int | None = None,
+            ) -> object:
+                return load_team_memory_readiness_digest_report(
+                    team_ids=team_ids,
+                    gate_loader=gate_loader,
+                    digest_builder=build_team_memory_readiness_digest_report,
+                    digest_config=digest_config,
+                    history_config=history_config,
+                    gate_config=gate_config,
+                    generated_at=generated_at,
+                    config_version=config_version,
+                    limit=limit,
+                )
+
+            report = load_team_research_assignment_report(
+                queue_loader=queue_loader,
+                route_loader=route_loader,
+                memory_loader=memory_loader,
+                assignment_builder=build_team_research_assignment_report,
+                assignment_config=assignment_config,
+                generated_at=generated_at,
+                team_ids=selected_team_ids,
+                queue_source_config_version=queue_source_config_version,
+                queue_limit=queue_limit,
+                route_limit=route_limit,
+                memory_config_version=memory_config_version,
+                memory_limit=memory_limit,
+            )
+        _require_hard_flags("team research assignment", report)
+        return format_team_research_assignment_cli_stdout(report)
+    except Exception as exc:
+        _raise_redacted_team_research_assignment_error(
+            exc,
+            queue_dsn=queue_dsn,
+            queue_table_name=queue_table_name,
+            route_dsn=route_dsn,
+            route_table_name=route_table_name,
+            snapshot_dsn=snapshot_dsn,
+            snapshot_table_name=snapshot_table_name,
+        )
+
+
+def _team_research_assignment_queue_db_config() -> object:
+    from polymarket_alpha_lab.supabase_strategy_candidate_research_queue_config import (
+        from_strategy_candidate_research_queue_db_env,
+    )
+
+    try:
+        return from_strategy_candidate_research_queue_db_env()
+    except ValueError as exc:
+        raise ValueError(
+            "team-research-assignment requires strategy candidate research queue "
+            f"DB config: {exc}",
+        ) from exc
+
+
+def _team_research_assignment_route_db_config() -> object:
+    from polymarket_alpha_lab.supabase_team_forecast_config import (
+        from_team_forecast_db_env,
+    )
+
+    try:
+        return from_team_forecast_db_env()
+    except ValueError as exc:
+        raise ValueError(
+            f"team-research-assignment requires team forecast DB config: {exc}",
+        ) from exc
+
+
+def _team_research_assignment_snapshot_db_config() -> object:
+    from polymarket_alpha_lab.supabase_team_diagnostics_snapshot_config import (
+        from_team_diagnostics_snapshot_db_env,
+    )
+
+    try:
+        return from_team_diagnostics_snapshot_db_env()
+    except ValueError as exc:
+        raise ValueError(
+            "team-research-assignment requires team diagnostics snapshot DB "
+            f"config: {exc}",
+        ) from exc
+
+
+def _team_research_assignment_snapshot_env(
+    *,
+    dsn: str,
+    table_name: str,
+) -> dict[str, str]:
+    from polymarket_alpha_lab.supabase_team_diagnostics_snapshot_config import (
+        TEAM_DIAGNOSTICS_SNAPSHOT_DB_DSN_ENV_VAR,
+        TEAM_DIAGNOSTICS_SNAPSHOT_DB_ENABLED_ENV_VAR,
+        TEAM_DIAGNOSTICS_SNAPSHOT_DB_TABLE_ENV_VAR,
+    )
+
+    return {
+        TEAM_DIAGNOSTICS_SNAPSHOT_DB_ENABLED_ENV_VAR: "true",
+        TEAM_DIAGNOSTICS_SNAPSHOT_DB_DSN_ENV_VAR: dsn,
+        TEAM_DIAGNOSTICS_SNAPSHOT_DB_TABLE_ENV_VAR: table_name,
+    }
+
+
+def _guard_team_research_assignment_argv(
+    parser: argparse.ArgumentParser,
+    argv: list[str] | None,
+) -> None:
+    raw_argv = sys.argv[1:] if argv is None else argv
+    if not raw_argv or raw_argv[0] != "team-research-assignment":
+        return
+
+    skip_value = False
+    for token in raw_argv[1:]:
+        if skip_value:
+            skip_value = False
+            continue
+        if token == "--":
+            parser.error("team-research-assignment does not accept positional arguments")
+        if token == "-h":
+            continue
+        if token.startswith("--"):
+            option, separator, _value = token.partition("=")
+            if option not in _TEAM_RESEARCH_ASSIGNMENT_ALLOWED_OPTIONS:
+                parser.error(f"team-research-assignment does not accept {option}")
+            if option in _TEAM_RESEARCH_ASSIGNMENT_VALUE_OPTIONS and not separator:
+                skip_value = True
+            continue
+        if token.startswith("-"):
+            parser.error(f"team-research-assignment does not accept {token}")
+        parser.error("team-research-assignment does not accept positional arguments")
+
+
+def _raise_redacted_team_research_assignment_error(
+    exc: Exception,
+    *,
+    queue_dsn: str,
+    queue_table_name: str,
+    route_dsn: str,
+    route_table_name: str,
+    snapshot_dsn: str,
+    snapshot_table_name: str,
+) -> NoReturn:
+    message = str(exc)
+    for dsn in (queue_dsn, route_dsn, snapshot_dsn):
+        message = _redact_db_dsn(message, dsn=dsn)
+    for dsn in (queue_dsn, route_dsn, snapshot_dsn):
+        message = _redact_db_dsn_host(message, dsn=dsn)
+    for table_name in (queue_table_name, route_table_name, snapshot_table_name):
+        message = _redact_db_table_name_and_tail(message, table_name=table_name)
+    message = _redact_paper_research_packet_sensitive_fields(message)
+    if not message.strip():
+        message = exc.__class__.__name__
+    raise RuntimeError(message) from None
+
+
 def _build_team_diagnostics_snapshot(
     bundle: object,
     *,
@@ -2050,6 +2528,16 @@ def _cli_decimal(value: str) -> Decimal:
     if not decimal.is_finite():
         raise argparse.ArgumentTypeError("must be a finite decimal value")
     return decimal
+
+
+def _team_research_assignment_positive_int(value: str) -> int:
+    try:
+        parsed = int(value, 10)
+    except (TypeError, ValueError) as exc:
+        raise argparse.ArgumentTypeError("must be a positive integer") from exc
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return parsed
 
 
 def _require_paper_trade_journal_db_for_paper_execute(
@@ -2356,6 +2844,7 @@ def main(
     team_memory_readiness_digest_runner: (
         TeamMemoryReadinessDigestRunner | None
     ) = None,
+    team_research_assignment_runner: TeamResearchAssignmentRunner | None = None,
 ) -> int:
     parser = argparse.ArgumentParser(prog="polymarket-alpha-lab")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -2872,6 +3361,52 @@ def main(
         type=int,
         default=100,
         dest="limit",
+    )
+    team_research_assignment = subparsers.add_parser(
+        "team-research-assignment",
+        allow_abbrev=False,
+        description=(
+            "Build a read-only, report-only team research assignment report "
+            "from local Supabase/Postgres queue, route, and memory sources."
+        ),
+        help=(
+            "read-only report-only team research assignment from local "
+            "Supabase/Postgres"
+        ),
+    )
+    team_research_assignment.add_argument(
+        "--team-id",
+        action="append",
+        default=None,
+        dest="team_ids",
+    )
+    team_research_assignment.add_argument(
+        "--queue-source-config-version",
+        default=None,
+        dest="queue_source_config_version",
+    )
+    team_research_assignment.add_argument(
+        "--memory-config-version",
+        default=None,
+        dest="memory_config_version",
+    )
+    team_research_assignment.add_argument(
+        "--queue-limit",
+        type=_team_research_assignment_positive_int,
+        default=1,
+        dest="queue_limit",
+    )
+    team_research_assignment.add_argument(
+        "--route-limit",
+        type=_team_research_assignment_positive_int,
+        default=500,
+        dest="route_limit",
+    )
+    team_research_assignment.add_argument(
+        "--memory-limit",
+        type=_team_research_assignment_positive_int,
+        default=100,
+        dest="memory_limit",
     )
 
     strategy_evidence = subparsers.add_parser("strategy-evidence")
@@ -3679,6 +4214,7 @@ def main(
         dest="config",
     )
 
+    _guard_team_research_assignment_argv(parser, argv)
     args = parser.parse_args(argv)
     _apply_json_config(args)
     if args.command == "run" and args.strategy_audit_preflight is None:
@@ -3893,6 +4429,26 @@ def main(
         except Exception as exc:
             print(
                 f"team-memory-readiness-digest failed: {exc}",
+                file=sys.stderr,
+            )
+            return 1
+
+    if args.command == "team-research-assignment":
+        try:
+            stdout = _run_team_research_assignment(
+                team_ids=args.team_ids,
+                queue_source_config_version=args.queue_source_config_version,
+                memory_config_version=args.memory_config_version,
+                queue_limit=args.queue_limit,
+                route_limit=args.route_limit,
+                memory_limit=args.memory_limit,
+                runner=team_research_assignment_runner,
+            )
+            print(stdout, end="")
+            return 0
+        except Exception as exc:
+            print(
+                f"team-research-assignment failed: {exc}",
                 file=sys.stderr,
             )
             return 1
