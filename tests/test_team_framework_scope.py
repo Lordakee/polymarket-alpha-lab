@@ -13,6 +13,8 @@ PSYCOPG_MODULE_NAMES = frozenset(
     (
         "team_forecast_psycopg.py",
         "team_diagnostics_snapshot_psycopg.py",
+        "team_memory_readiness_digest_psycopg.py",
+        "team_research_assignment_psycopg.py",
     ),
 )
 PAPER_GUARD_MODULE_NAME = "team_paper_guard.py"
@@ -221,7 +223,7 @@ def test_team_modules_do_not_import_live_trading_auth_or_order_surfaces():
     assert not failures
 
 
-def test_only_team_forecast_and_diagnostics_snapshot_psycopg_import_psycopg():
+def test_only_allowlisted_team_psycopg_adapters_import_psycopg():
     failures = []
     for path in _team_module_paths():
         tree = _parse_module(path)

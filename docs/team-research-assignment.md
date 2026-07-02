@@ -2,7 +2,7 @@
 
 Purpose: the team research assignment report is a Phase 1 read-only operations report for assigning existing strategy candidate research queue rows to specialist research teams. It answers one operator question: which specialist team is responsible for researching each queued market, and what long-term memory policy applies to that team for this assignment?
 
-This document defines the report boundary only. It does not define a live strategy, an execution path, an investment recommendation, or a new durable store.
+This document defines the report boundary only. It does not define a live strategy, an execution path, or an investment recommendation; durable assignment evidence is limited to internal local Supabase/Postgres report persistence and history readback.
 
 ## Phase 1 Boundary
 
@@ -88,7 +88,7 @@ Configuration for any persisted read path stays in existing environment modules.
 
 The assignment report is a read-only composition. It should not create, alter, repair, delete, backfill, upsert, or refresh source rows.
 
-This node adds the composed team-research-assignment DB-source and CLI path over those existing sources. It is an env-only local Supabase/Postgres read-only composition: the CLI loads queue reports, persisted one-row route reports, and the memory readiness digest through existing env config modules, then passes typed source reports to the assignment reducer. It does not add a durable assignment table, persistence toggle, generic DB abstraction, JSONL durable substitute, or direct DB configuration flags.
+This node adds the composed team-research-assignment DB-source and CLI path over those existing sources. It is an env-only local Supabase/Postgres read-only composition: the CLI loads queue reports, persisted one-row route reports, and the memory readiness digest through existing env config modules, then passes typed source reports to the assignment reducer. It does not add a generic DB abstraction, JSONL durable substitute, or direct DB configuration flags.
 
 The CLI fails closed before source loading when any required DB family is disabled or lacks a DSN: strategy candidate research queue, team forecast route, or team diagnostics snapshot. CLI limits must be positive and are validated before env reads. The default limits are `--queue-limit 1`, `--route-limit 500`, and `--memory-limit 100`; omitting `--team-id` selects all known teams.
 
@@ -99,6 +99,39 @@ Relevant env config families:
 - Team-memory readiness: `POLYMARKET_ALPHA_LAB_TEAM_DIAGNOSTICS_SNAPSHOT_DB_ENABLED`, `POLYMARKET_ALPHA_LAB_TEAM_DIAGNOSTICS_SNAPSHOT_DB_DSN`, and `POLYMARKET_ALPHA_LAB_TEAM_DIAGNOSTICS_SNAPSHOT_DB_TABLE`, consumed through the existing diagnostics snapshot history and memory-readiness digest read path.
 
 The operator CLI is `polymarket-alpha-lab team-research-assignment`. Its report-scoped options are `--team-id`, `--queue-source-config-version`, `--memory-config-version`, `--queue-limit`, `--route-limit`, and `--memory-limit`. `--queue-source-config-version` filters the queue source readback, and `--memory-config-version` is passed to the memory-readiness source. There is no generic assignment `--config-version`, `--market-slug`, or `--forecast-id` option. It must not expose `--dsn`, `--table`, `--persist`, `--live`, `--auth`, `--wallet`, `--private-key`, `--api-key`, `--account`, `--order`, `--trade`, `--execute`, or `--submit`.
+
+## Assignment Report Persistence
+
+The generated assignment report can be persisted as internal Phase 1 report evidence when the assignment DB env family is enabled:
+
+- `POLYMARKET_ALPHA_LAB_TEAM_RESEARCH_ASSIGNMENT_DB_ENABLED`
+- `POLYMARKET_ALPHA_LAB_TEAM_RESEARCH_ASSIGNMENT_DB_DSN`
+- `POLYMARKET_ALPHA_LAB_TEAM_RESEARCH_ASSIGNMENT_DB_TABLE`
+
+The default table is `team_research_assignment_reports`. The table is local Supabase/Postgres only and stores:
+
+- a canonical `payload_json` copy of the typed `TeamResearchAssignmentReport`,
+- `report_sha256`,
+- source config versions,
+- aggregate assignment status and counts,
+- reason codes,
+- top-level hard `paper_only`, `report_only`, and `readonly` flags.
+
+The table also enforces materialized-field checks against `payload_json`, JSON object/array checks, `ready`/`watch`/`blocked` report status values, count alignment, and hard flags. Lookup indexes follow the store's newest-first order: `generated_at desc`, `inserted_at desc`, and `report_sha256 desc`.
+
+Persistence is intentionally env-only. There is no `--persist`, `--dsn`, `--table`, `--live`, auth, wallet, account, order, trade, execute, or submit flag. If assignment DB persistence is disabled, `team-research-assignment` still builds and prints the report without opening that assignment DB connection. If persistence is enabled, the generated report is inserted with `ON CONFLICT (report_sha256) DO NOTHING`.
+
+## Assignment History Readback
+
+`polymarket-alpha-lab team-research-assignment-history --limit 100` reads persisted assignment reports through the assignment DB env family and builds a pure report-only history summary. Options are limited to:
+
+- `--assignment-status`
+- `--config-version`
+- `--limit`
+
+The history report is aggregate only. It prints `history_status`, report counts, `status_rows`, latest assignment counts, count deltas, duplicate-latest detection, reason codes, and hard flags. It does not print market slugs, questions, selected sides, scoring sides, routing confidence, source payloads, DB DSNs, or table names.
+
+History status is `blocked` when there is insufficient persisted history or duplicate latest timestamps; otherwise it is `observed`. This is observability for long-term team-memory operations, not investment ranking, recommendation generation, trade approval, execution readiness, or position sizing.
 
 ## Operator Output
 

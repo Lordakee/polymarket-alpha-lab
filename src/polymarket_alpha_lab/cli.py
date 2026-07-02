@@ -408,6 +408,8 @@ TeamDiagnosticsSnapshotHistoryRunner = Callable[..., object]
 TeamDiagnosticsSnapshotHistoryGateRunner = Callable[..., object]
 TeamMemoryReadinessDigestRunner = Callable[..., object]
 TeamResearchAssignmentRunner = Callable[..., object]
+TeamResearchAssignmentDbSink = Callable[..., object]
+TeamResearchAssignmentHistoryRunner = Callable[..., object]
 MAX_PAPER_AUTONOMOUS_READINESS_DIGEST_READ_LIMIT = 500
 _MISSING = object()
 _TEAM_RESEARCH_ASSIGNMENT_ALLOWED_OPTIONS = frozenset(
@@ -424,6 +426,19 @@ _TEAM_RESEARCH_ASSIGNMENT_ALLOWED_OPTIONS = frozenset(
 _TEAM_RESEARCH_ASSIGNMENT_VALUE_OPTIONS = frozenset(
     option
     for option in _TEAM_RESEARCH_ASSIGNMENT_ALLOWED_OPTIONS
+    if option != "--help"
+)
+_TEAM_RESEARCH_ASSIGNMENT_HISTORY_ALLOWED_OPTIONS = frozenset(
+    (
+        "--help",
+        "--assignment-status",
+        "--config-version",
+        "--limit",
+    ),
+)
+_TEAM_RESEARCH_ASSIGNMENT_HISTORY_VALUE_OPTIONS = frozenset(
+    option
+    for option in _TEAM_RESEARCH_ASSIGNMENT_HISTORY_ALLOWED_OPTIONS
     if option != "--help"
 )
 STRATEGY_CYCLE_HISTORY_GATE_DB_DSN_ENV_VAR = (
@@ -1893,6 +1908,7 @@ def _run_team_research_assignment(
     route_limit: int,
     memory_limit: int,
     runner: TeamResearchAssignmentRunner | None,
+    assignment_db_sink: TeamResearchAssignmentDbSink | None,
 ) -> str:
     for field_name, limit in (
         ("queue-limit", queue_limit),
@@ -1936,6 +1952,10 @@ def _run_team_research_assignment(
         raise ValueError(
             "team-research-assignment requires a team diagnostics snapshot DB DSN",
         )
+
+    assignment_db_config = _team_research_assignment_db_config()
+    assignment_dsn = assignment_db_config.dsn
+    assignment_table_name = assignment_db_config.table_name
 
     from polymarket_alpha_lab.team_diagnostics_snapshot_history import (
         TeamDiagnosticsSnapshotHistoryConfig,
@@ -2139,6 +2159,21 @@ def _run_team_research_assignment(
                 memory_limit=memory_limit,
             )
         _require_hard_flags("team research assignment", report)
+        if assignment_db_config.enabled:
+            if assignment_dsn is None:
+                raise ValueError(
+                    "team-research-assignment requires a team research "
+                    "assignment DB DSN",
+                )
+            if assignment_db_sink is None:
+                from polymarket_alpha_lab.team_research_assignment_psycopg import (
+                    insert_team_research_assignment_report_from_env,
+                )
+
+                resolved_sink = insert_team_research_assignment_report_from_env
+            else:
+                resolved_sink = assignment_db_sink
+            resolved_sink(report)
         return format_team_research_assignment_cli_stdout(report)
     except Exception as exc:
         _raise_redacted_team_research_assignment_error(
@@ -2149,7 +2184,97 @@ def _run_team_research_assignment(
             route_table_name=route_table_name,
             snapshot_dsn=snapshot_dsn,
             snapshot_table_name=snapshot_table_name,
+            assignment_dsn=assignment_dsn,
+            assignment_table_name=assignment_table_name,
         )
+
+
+def _run_team_research_assignment_history(
+    *,
+    assignment_status: str | None,
+    config_version: str | None,
+    limit: int,
+    runner: TeamResearchAssignmentHistoryRunner | None,
+) -> str:
+    if isinstance(limit, bool) or type(limit) is not int or limit <= 0:
+        raise ValueError("team-research-assignment-history limit must be positive")
+
+    assignment_db_config = _team_research_assignment_db_config(
+        command_name="team-research-assignment-history",
+    )
+    if not assignment_db_config.enabled:
+        raise ValueError(
+            "team-research-assignment-history requires team research assignment "
+            "DB to be enabled; team research assignment DB is disabled",
+        )
+    dsn = assignment_db_config.dsn
+    if dsn is None:
+        raise ValueError(
+            "team-research-assignment-history requires a team research "
+            "assignment DB DSN",
+        )
+
+    from polymarket_alpha_lab.team_research_assignment_history import (
+        TeamResearchAssignmentHistoryConfig,
+        build_team_research_assignment_history_report,
+    )
+    from polymarket_alpha_lab.team_research_assignment_history_cli_format import (
+        format_team_research_assignment_history_cli_stdout,
+    )
+
+    generated_at = datetime.now(UTC)
+    history_config = TeamResearchAssignmentHistoryConfig()
+    try:
+        if runner is not None:
+            report = runner(
+                dsn=dsn,
+                table_name=assignment_db_config.table_name,
+                assignment_status=assignment_status,
+                config_version=config_version,
+                limit=limit,
+                config=history_config,
+                generated_at=generated_at,
+            )
+        else:
+            from polymarket_alpha_lab.team_research_assignment_psycopg import (
+                load_team_research_assignment_reports,
+            )
+
+            reports = load_team_research_assignment_reports(
+                dsn=dsn,
+                table_name=assignment_db_config.table_name,
+                assignment_status=assignment_status,
+                config_version=config_version,
+                limit=limit,
+            )
+            report = build_team_research_assignment_history_report(
+                reports,
+                config=history_config,
+                generated_at=generated_at,
+            )
+        _require_hard_flags("team research assignment history", report)
+        return format_team_research_assignment_history_cli_stdout(report)
+    except Exception as exc:
+        _raise_redacted_team_research_assignment_history_error(
+            exc,
+            db_config=assignment_db_config,
+        )
+
+
+def _team_research_assignment_db_config(
+    *,
+    command_name: str = "team-research-assignment",
+) -> object:
+    from polymarket_alpha_lab.supabase_team_research_assignment_config import (
+        from_team_research_assignment_db_env,
+    )
+
+    try:
+        return from_team_research_assignment_db_env()
+    except ValueError as exc:
+        raise ValueError(
+            f"{command_name} requires team research assignment DB config: {exc}",
+        ) from exc
 
 
 def _team_research_assignment_queue_db_config() -> object:
@@ -2216,7 +2341,17 @@ def _guard_team_research_assignment_argv(
     argv: list[str] | None,
 ) -> None:
     raw_argv = sys.argv[1:] if argv is None else argv
-    if not raw_argv or raw_argv[0] != "team-research-assignment":
+    if not raw_argv:
+        return
+    if raw_argv[0] == "team-research-assignment":
+        command_name = "team-research-assignment"
+        allowed_options = _TEAM_RESEARCH_ASSIGNMENT_ALLOWED_OPTIONS
+        value_options = _TEAM_RESEARCH_ASSIGNMENT_VALUE_OPTIONS
+    elif raw_argv[0] == "team-research-assignment-history":
+        command_name = "team-research-assignment-history"
+        allowed_options = _TEAM_RESEARCH_ASSIGNMENT_HISTORY_ALLOWED_OPTIONS
+        value_options = _TEAM_RESEARCH_ASSIGNMENT_HISTORY_VALUE_OPTIONS
+    else:
         return
 
     skip_value = False
@@ -2225,19 +2360,19 @@ def _guard_team_research_assignment_argv(
             skip_value = False
             continue
         if token == "--":
-            parser.error("team-research-assignment does not accept positional arguments")
+            parser.error(f"{command_name} does not accept positional arguments")
         if token == "-h":
             continue
         if token.startswith("--"):
             option, separator, _value = token.partition("=")
-            if option not in _TEAM_RESEARCH_ASSIGNMENT_ALLOWED_OPTIONS:
-                parser.error(f"team-research-assignment does not accept {option}")
-            if option in _TEAM_RESEARCH_ASSIGNMENT_VALUE_OPTIONS and not separator:
+            if option not in allowed_options:
+                parser.error(f"{command_name} does not accept {option}")
+            if option in value_options and not separator:
                 skip_value = True
             continue
         if token.startswith("-"):
-            parser.error(f"team-research-assignment does not accept {token}")
-        parser.error("team-research-assignment does not accept positional arguments")
+            parser.error(f"{command_name} does not accept {token}")
+        parser.error(f"{command_name} does not accept positional arguments")
 
 
 def _raise_redacted_team_research_assignment_error(
@@ -2249,13 +2384,42 @@ def _raise_redacted_team_research_assignment_error(
     route_table_name: str,
     snapshot_dsn: str,
     snapshot_table_name: str,
+    assignment_dsn: str | None = None,
+    assignment_table_name: str | None = None,
 ) -> NoReturn:
     message = str(exc)
-    for dsn in (queue_dsn, route_dsn, snapshot_dsn):
+    for dsn in (queue_dsn, route_dsn, snapshot_dsn, assignment_dsn):
+        if dsn is not None:
+            message = _redact_db_dsn(message, dsn=dsn)
+    for dsn in (queue_dsn, route_dsn, snapshot_dsn, assignment_dsn):
+        if dsn is not None:
+            message = _redact_db_dsn_host(message, dsn=dsn)
+    for table_name in (
+        queue_table_name,
+        route_table_name,
+        snapshot_table_name,
+        assignment_table_name,
+    ):
+        if table_name:
+            message = _redact_db_table_name_and_tail(message, table_name=table_name)
+    message = _redact_paper_research_packet_sensitive_fields(message)
+    if not message.strip():
+        message = exc.__class__.__name__
+    raise RuntimeError(message) from None
+
+
+def _raise_redacted_team_research_assignment_history_error(
+    exc: Exception,
+    *,
+    db_config: Any,
+) -> NoReturn:
+    message = str(exc)
+    dsn = getattr(db_config, "dsn", None)
+    if dsn is not None:
         message = _redact_db_dsn(message, dsn=dsn)
-    for dsn in (queue_dsn, route_dsn, snapshot_dsn):
         message = _redact_db_dsn_host(message, dsn=dsn)
-    for table_name in (queue_table_name, route_table_name, snapshot_table_name):
+    table_name = getattr(db_config, "table_name", None)
+    if table_name:
         message = _redact_db_table_name_and_tail(message, table_name=table_name)
     message = _redact_paper_research_packet_sensitive_fields(message)
     if not message.strip():
@@ -2845,6 +3009,10 @@ def main(
         TeamMemoryReadinessDigestRunner | None
     ) = None,
     team_research_assignment_runner: TeamResearchAssignmentRunner | None = None,
+    team_research_assignment_db_sink: TeamResearchAssignmentDbSink | None = None,
+    team_research_assignment_history_runner: (
+        TeamResearchAssignmentHistoryRunner | None
+    ) = None,
 ) -> int:
     parser = argparse.ArgumentParser(prog="polymarket-alpha-lab")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -3407,6 +3575,34 @@ def main(
         type=_team_research_assignment_positive_int,
         default=100,
         dest="memory_limit",
+    )
+    team_research_assignment_history = subparsers.add_parser(
+        "team-research-assignment-history",
+        allow_abbrev=False,
+        description=(
+            "Build a read-only, report-only history summary from persisted "
+            "local Supabase/Postgres team research assignment reports."
+        ),
+        help=(
+            "read-only report-only team research assignment history from "
+            "local Supabase/Postgres"
+        ),
+    )
+    team_research_assignment_history.add_argument(
+        "--assignment-status",
+        default=None,
+        dest="assignment_status",
+    )
+    team_research_assignment_history.add_argument(
+        "--config-version",
+        default=None,
+        dest="config_version",
+    )
+    team_research_assignment_history.add_argument(
+        "--limit",
+        type=_team_research_assignment_positive_int,
+        default=100,
+        dest="limit",
     )
 
     strategy_evidence = subparsers.add_parser("strategy-evidence")
@@ -4443,12 +4639,30 @@ def main(
                 route_limit=args.route_limit,
                 memory_limit=args.memory_limit,
                 runner=team_research_assignment_runner,
+                assignment_db_sink=team_research_assignment_db_sink,
             )
             print(stdout, end="")
             return 0
         except Exception as exc:
             print(
                 f"team-research-assignment failed: {exc}",
+                file=sys.stderr,
+            )
+            return 1
+
+    if args.command == "team-research-assignment-history":
+        try:
+            stdout = _run_team_research_assignment_history(
+                assignment_status=args.assignment_status,
+                config_version=args.config_version,
+                limit=args.limit,
+                runner=team_research_assignment_history_runner,
+            )
+            print(stdout, end="")
+            return 0
+        except Exception as exc:
+            print(
+                f"team-research-assignment-history failed: {exc}",
                 file=sys.stderr,
             )
             return 1

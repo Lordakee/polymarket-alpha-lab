@@ -67,6 +67,7 @@ LOCAL_DB_ENV_FUNCTIONS = {
     "from_strategy_candidate_research_queue_history_db_env",
     "from_strategy_risk_audit_db_env",
     "from_team_diagnostics_snapshot_db_env",
+    "from_team_research_assignment_db_env",
 }
 
 FORBIDDEN_LIVE_TRADING_OPTIONS = {
@@ -339,6 +340,7 @@ def test_main_boundary_does_not_accept_live_auth_private_key_or_order_mutators()
         "strategy_cycle_history_gate",
         "strategy_risk_audit",
         "team_diagnostics_snapshot",
+        "team_research_assignment",
     }
     assert all(
         any(fragment in name for fragment in allowed_sink_name_fragments)
@@ -385,6 +387,7 @@ def test_db_persistence_surface_is_local_paper_report_sink_and_env_config_only()
         "strategy_cycle_history_gate",
         "strategy_risk_audit",
         "team_diagnostics_snapshot",
+        "team_research_assignment",
     }
     assert all(
         any(fragment in name for fragment in allowed_sink_name_fragments)

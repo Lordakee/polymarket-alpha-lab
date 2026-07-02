@@ -29,6 +29,11 @@ from polymarket_alpha_lab.supabase_team_forecast_config import (
     TEAM_FORECAST_DB_ENABLED_ENV_VAR,
     TEAM_ROUTE_DB_TABLE_ENV_VAR,
 )
+from polymarket_alpha_lab.supabase_team_research_assignment_config import (
+    TEAM_RESEARCH_ASSIGNMENT_DB_DSN_ENV_VAR,
+    TEAM_RESEARCH_ASSIGNMENT_DB_ENABLED_ENV_VAR,
+    TEAM_RESEARCH_ASSIGNMENT_DB_TABLE_ENV_VAR,
+)
 from polymarket_alpha_lab.team_diagnostics_snapshot_history import (
     TeamDiagnosticsSnapshotHistoryConfig,
 )
@@ -52,9 +57,11 @@ FORMATTER_MODULE = "polymarket_alpha_lab.team_research_assignment_cli_format"
 QUEUE_DSN = "host=localhost port=54322 dbname=queue user=postgres"
 ROUTE_DSN = "host=127.0.0.1 port=54323 dbname=routes user=postgres"
 SNAPSHOT_DSN = "host=localhost port=54324 dbname=snapshots user=postgres"
+ASSIGNMENT_DB_DSN = "host=localhost port=54325 dbname=assignments user=postgres"
 QUEUE_TABLE = "paper_strategy_candidate_research_queue_reports_archive"
 ROUTE_TABLE = "team_market_routes_archive"
 SNAPSHOT_TABLE = "team_diagnostics_snapshot_archive"
+ASSIGNMENT_DB_TABLE = "team_research_assignment_reports_archive"
 REPORT_HASH = "a" * 64
 PAYLOAD_HASH = "sensitive-payload-hash"
 
@@ -72,6 +79,11 @@ SNAPSHOT_ENV_VARS = (
     TEAM_DIAGNOSTICS_SNAPSHOT_DB_ENABLED_ENV_VAR,
     TEAM_DIAGNOSTICS_SNAPSHOT_DB_DSN_ENV_VAR,
     TEAM_DIAGNOSTICS_SNAPSHOT_DB_TABLE_ENV_VAR,
+)
+ASSIGNMENT_DB_ENV_VARS = (
+    TEAM_RESEARCH_ASSIGNMENT_DB_ENABLED_ENV_VAR,
+    TEAM_RESEARCH_ASSIGNMENT_DB_DSN_ENV_VAR,
+    TEAM_RESEARCH_ASSIGNMENT_DB_TABLE_ENV_VAR,
 )
 
 
@@ -134,6 +146,16 @@ def test_team_research_assignment_help_is_env_scoped_read_only_surface(
 
 def test_team_research_assignment_main_exposes_runner_injection_parameter() -> None:
     parameter = inspect.signature(main).parameters.get("team_research_assignment_runner")
+
+    assert parameter is not None
+    assert parameter.kind is inspect.Parameter.KEYWORD_ONLY
+    assert parameter.default is None
+
+
+def test_team_research_assignment_main_exposes_optional_db_sink_injection_parameter() -> None:
+    parameter = inspect.signature(main).parameters.get(
+        "team_research_assignment_db_sink",
+    )
 
     assert parameter is not None
     assert parameter.kind is inspect.Parameter.KEYWORD_ONLY
@@ -345,6 +367,157 @@ def test_team_research_assignment_injected_runner_receives_env_config_objects_te
     assert "readonly=True" in out
     for secret in (QUEUE_DSN, ROUTE_DSN, SNAPSHOT_DSN, QUEUE_TABLE, ROUTE_TABLE, SNAPSHOT_TABLE):
         assert secret not in out
+
+
+def test_team_research_assignment_assignment_db_disabled_does_not_write(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _install_or_get_gate_api(monkeypatch)
+    _install_or_get_formatter(monkeypatch)
+    _enable_all_env(monkeypatch)
+    monkeypatch.setenv(TEAM_RESEARCH_ASSIGNMENT_DB_ENABLED_ENV_VAR, "false")
+    monkeypatch.setenv(TEAM_RESEARCH_ASSIGNMENT_DB_DSN_ENV_VAR, ASSIGNMENT_DB_DSN)
+    monkeypatch.setenv(TEAM_RESEARCH_ASSIGNMENT_DB_TABLE_ENV_VAR, ASSIGNMENT_DB_TABLE)
+    report = _assignment_report()
+    runner_calls: list[dict[str, object]] = []
+    sink_calls: list[object] = []
+
+    def runner(**kwargs: object) -> object:
+        runner_calls.append(kwargs)
+        return report
+
+    def forbidden_sink(*args: object, **kwargs: object) -> object:
+        sink_calls.append((args, kwargs))
+        raise AssertionError("disabled team research assignment DB must not write")
+
+    exit_code = _invoke_main(
+        [COMMAND, "--team-id", "crypto_btc"],
+        team_research_assignment_runner=runner,
+        team_research_assignment_db_sink=forbidden_sink,
+    )
+
+    assert exit_code == 0
+    assert len(runner_calls) == 1
+    assert sink_calls == []
+    out = capsys.readouterr().out
+    assert out.startswith(f"{COMMAND}:")
+    for secret in (
+        QUEUE_DSN,
+        ROUTE_DSN,
+        SNAPSHOT_DSN,
+        ASSIGNMENT_DB_DSN,
+        QUEUE_TABLE,
+        ROUTE_TABLE,
+        SNAPSHOT_TABLE,
+        ASSIGNMENT_DB_TABLE,
+    ):
+        assert secret not in out
+
+
+def test_team_research_assignment_assignment_db_enabled_writes_report_to_injected_sink(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _install_or_get_gate_api(monkeypatch)
+    _install_or_get_formatter(monkeypatch)
+    _enable_all_env(monkeypatch)
+    _enable_assignment_db_env(monkeypatch)
+    report = _assignment_report()
+    sink_calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    def sink(*args: object, **kwargs: object) -> object:
+        sink_calls.append((args, kwargs))
+        return SimpleNamespace(inserted=True, report_sha256=REPORT_HASH)
+
+    exit_code = _invoke_main(
+        [COMMAND, "--team-id", "crypto_btc"],
+        team_research_assignment_runner=lambda **_kwargs: report,
+        team_research_assignment_db_sink=sink,
+    )
+
+    assert exit_code == 0
+    assert sink_calls == [((report,), {})]
+    out = capsys.readouterr().out
+    assert out.startswith(f"{COMMAND}:")
+    for secret in (ASSIGNMENT_DB_DSN, ASSIGNMENT_DB_TABLE, REPORT_HASH):
+        assert secret not in out
+
+
+def test_team_research_assignment_assignment_db_sink_failure_redacts_sensitive_fields(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _install_or_get_gate_api(monkeypatch)
+    _install_or_get_formatter(monkeypatch)
+    _enable_all_env(monkeypatch)
+    _enable_assignment_db_env(monkeypatch)
+    failure_message = (
+        f"assignment_dsn={ASSIGNMENT_DB_DSN} assignment_table={ASSIGNMENT_DB_TABLE} "
+        f"queue_dsn={QUEUE_DSN} queue_table={QUEUE_TABLE} "
+        f"route_dsn={ROUTE_DSN} route_table={ROUTE_TABLE} "
+        f"snapshot_dsn={SNAPSHOT_DSN} snapshot_table={SNAPSHOT_TABLE} "
+        "assignment_host=localhost market_slug=bitcoin-above-120k "
+        "question='secret market question' "
+        "payload_json={'marketSlug': 'nested-market', 'question': 'nested question'} "
+        f"report_sha256={REPORT_HASH} payload_hash={PAYLOAD_HASH} "
+        "account=acct-123 wallet=wallet-abc auth=Bearer-secret "
+        "private_key=private-secret api_key=api-secret order=order-secret "
+        "trade_id=trade-id-secret"
+    )
+
+    def sink(*_args: object, **_kwargs: object) -> object:
+        raise RuntimeError(failure_message)
+
+    exit_code = _invoke_main(
+        [COMMAND, "--team-id", "crypto_btc"],
+        team_research_assignment_runner=lambda **_kwargs: _assignment_report(),
+        team_research_assignment_db_sink=sink,
+    )
+
+    assert exit_code == 1
+    combined = _combined_output(capsys)
+    assert f"{COMMAND} failed:" in combined
+    for secret in (
+        ASSIGNMENT_DB_DSN,
+        ASSIGNMENT_DB_TABLE,
+        QUEUE_DSN,
+        ROUTE_DSN,
+        SNAPSHOT_DSN,
+        QUEUE_TABLE,
+        ROUTE_TABLE,
+        SNAPSHOT_TABLE,
+        "localhost",
+        "bitcoin-above-120k",
+        "secret market question",
+        "nested-market",
+        "nested question",
+        REPORT_HASH,
+        PAYLOAD_HASH,
+        "acct-123",
+        "wallet-abc",
+        "Bearer-secret",
+        "private-secret",
+        "api-secret",
+        "order-secret",
+        "trade-id-secret",
+    ):
+        assert secret not in combined
+    for replacement in (
+        "<redacted-dsn>",
+        "<redacted-host>",
+        "<redacted-table>",
+        "<redacted-market-slug>",
+        "<redacted-question>",
+        "<redacted-payload>",
+        "<redacted-sha256>",
+        "<redacted-hash>",
+        "<redacted-account>",
+        "<redacted-wallet>",
+        "<redacted-secret>",
+        "<redacted-order>",
+    ):
+        assert replacement in combined
 
 
 def test_team_research_assignment_omitted_team_ids_default_to_all_known_teams(
@@ -1118,7 +1291,12 @@ def _combined_output(capsys: pytest.CaptureFixture[str]) -> str:
 
 
 def _clear_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    for name in QUEUE_ENV_VARS + ROUTE_ENV_VARS + SNAPSHOT_ENV_VARS:
+    for name in (
+        QUEUE_ENV_VARS
+        + ROUTE_ENV_VARS
+        + SNAPSHOT_ENV_VARS
+        + ASSIGNMENT_DB_ENV_VARS
+    ):
         monkeypatch.delenv(name, raising=False)
 
 
@@ -1136,6 +1314,12 @@ def _enable_all_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(TEAM_DIAGNOSTICS_SNAPSHOT_DB_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(TEAM_DIAGNOSTICS_SNAPSHOT_DB_DSN_ENV_VAR, SNAPSHOT_DSN)
     monkeypatch.setenv(TEAM_DIAGNOSTICS_SNAPSHOT_DB_TABLE_ENV_VAR, SNAPSHOT_TABLE)
+
+
+def _enable_assignment_db_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(TEAM_RESEARCH_ASSIGNMENT_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(TEAM_RESEARCH_ASSIGNMENT_DB_DSN_ENV_VAR, ASSIGNMENT_DB_DSN)
+    monkeypatch.setenv(TEAM_RESEARCH_ASSIGNMENT_DB_TABLE_ENV_VAR, ASSIGNMENT_DB_TABLE)
 
 
 def _forbidden_client_factory(calls: list[str]):
