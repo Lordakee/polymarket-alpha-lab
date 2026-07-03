@@ -138,6 +138,137 @@ def test_consistency_db_row_serializes_canonical_payload_and_round_trips():
     assert codec.paper_recommendation_consistency_from_db_row(row) == report
 
 
+def test_consistency_db_row_normalizes_generated_at_to_utc_in_row_and_payload():
+    codec = _codec_module()
+    report = _report()
+    naive_generated_at = datetime(2026, 6, 21, 15, 30)
+    object.__setattr__(report, "generated_at", naive_generated_at)
+
+    row = codec.to_db_row(report)
+
+    assert row.generated_at == GENERATED_AT
+    assert row.payload_json["generated_at"] == "2026-06-21T15:30:00+00:00"
+    assert codec.from_db_row(row).generated_at == GENERATED_AT
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value"),
+    (
+        ("max_edge_spread", "0.020000"),
+        ("max_score_spread", 0.05),
+    ),
+)
+def test_consistency_db_row_requires_materialized_decimal_fields_to_be_raw_decimals(
+    field_name: str,
+    value: object,
+):
+    codec = _codec_module()
+    row = codec.to_db_row(_report())
+
+    with pytest.raises(ValueError, match=field_name):
+        codec.PaperRecommendationConsistencyDbRow(
+            **{**_row_values(row), field_name: value},
+        )
+
+
+def test_consistency_db_row_rejects_raw_runtime_payload_values():
+    codec = _codec_module()
+    row = codec.to_db_row(_report())
+    payload_json = {**row.payload_json, "generated_at": GENERATED_AT}
+
+    with pytest.raises(ValueError, match="payload_json"):
+        codec.PaperRecommendationConsistencyDbRow(
+            **{**_row_values(row), "payload_json": payload_json},
+        )
+
+
+def test_consistency_db_row_redacts_secret_like_payload_values():
+    codec = _codec_module()
+    row = codec.to_db_row(_report())
+    payload_json = {
+        **row.payload_json,
+        "audit_metadata": {
+            "supabase_url": "http://localhost:54321",
+            "supabase_service_role_key": "secret-service-role",
+            "postgres_password": "secret-password",
+        },
+    }
+    redacted_payload_json = {
+        **row.payload_json,
+        "audit_metadata": {
+            "supabase_url": "http://localhost:54321",
+            "supabase_service_role_key": "[REDACTED]",
+            "postgres_password": "[REDACTED]",
+        },
+    }
+
+    sanitized = codec.PaperRecommendationConsistencyDbRow(
+        **{
+            **_row_values(row),
+            "report_sha256": _canonical_payload_sha256(redacted_payload_json),
+            "payload_json": payload_json,
+        },
+    )
+
+    assert sanitized.payload_json["audit_metadata"] == redacted_payload_json[
+        "audit_metadata"
+    ]
+    assert "secret" not in json.dumps(sanitized.payload_json).lower()
+
+
+@pytest.mark.parametrize(
+    "storage_value",
+    (
+        "https://project.supabase.co",
+        "http://localhost.evil.com/project.supabase.co",
+        "postgres://user:pass@db.example.com:5432/postgres",
+        "postgres://localhost.evil.com/db",
+    ),
+)
+def test_consistency_db_row_rejects_remote_supabase_and_postgres_payload_assumptions(
+    storage_value: str,
+):
+    codec = _codec_module()
+    row = codec.to_db_row(_report())
+    payload_json = {**row.payload_json, "storage_assumption": storage_value}
+
+    with pytest.raises(ValueError, match="local|Supabase|Postgres"):
+        codec.PaperRecommendationConsistencyDbRow(
+            **{
+                **_row_values(row),
+                "report_sha256": _canonical_payload_sha256(payload_json),
+                "payload_json": payload_json,
+            },
+        )
+
+
+@pytest.mark.parametrize(
+    "storage_value",
+    (
+        "http://localhost:54321/project.supabase.local",
+        "http://127.0.0.1:54321/project.supabase.local",
+        "postgres://localhost:5432/postgres",
+        "postgresql://127.0.0.1:5432/postgres",
+    ),
+)
+def test_consistency_db_row_accepts_local_supabase_and_postgres_payload_assumptions(
+    storage_value: str,
+):
+    codec = _codec_module()
+    row = codec.to_db_row(_report())
+    payload_json = {**row.payload_json, "storage_assumption": storage_value}
+
+    sanitized = codec.PaperRecommendationConsistencyDbRow(
+        **{
+            **_row_values(row),
+            "report_sha256": _canonical_payload_sha256(payload_json),
+            "payload_json": payload_json,
+        },
+    )
+
+    assert sanitized.payload_json["storage_assumption"] == storage_value
+
+
 def test_consistency_db_row_hash_is_deterministic_for_equivalent_reports():
     codec = _codec_module()
     report = _report()

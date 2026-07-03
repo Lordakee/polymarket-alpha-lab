@@ -133,6 +133,135 @@ def test_risk_budget_db_row_serializes_canonical_payload_and_round_trips():
     assert codec.paper_recommendation_risk_budget_from_db_row(row) == report
 
 
+def test_risk_budget_db_row_normalizes_generated_at_to_utc_in_row_and_payload():
+    codec = _codec_module()
+    report = _report()
+    naive_generated_at = datetime(2026, 6, 20, 15, 30)
+    object.__setattr__(report, "generated_at", naive_generated_at)
+
+    row = codec.to_db_row(report)
+
+    assert row.generated_at == GENERATED_AT
+    assert row.payload_json["generated_at"] == "2026-06-20T15:30:00+00:00"
+    assert codec.from_db_row(row).generated_at == GENERATED_AT
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value"),
+    (
+        ("total_suggested_notional", 90),
+        ("remaining_total_notional", "160.000000"),
+        ("total_notional_utilization", "0.090000"),
+        ("largest_single_recommendation_share", 0.05),
+        ("nav_notional", "1000.000000"),
+        ("max_total_utilization", "0.250000"),
+        ("max_single_recommendation_share", 0.1),
+        ("min_remaining_notional", "50.000000"),
+    ),
+)
+def test_risk_budget_db_row_requires_materialized_decimal_fields_to_be_raw_decimals(
+    field_name: str,
+    value: object,
+):
+    codec = _codec_module()
+    row = codec.to_db_row(_report())
+
+    with pytest.raises(ValueError, match=field_name):
+        codec.PaperRecommendationRiskBudgetDbRow(
+            **{**_row_values(row), field_name: value},
+        )
+
+
+def test_risk_budget_db_row_redacts_secret_like_payload_values():
+    codec = _codec_module()
+    row = codec.to_db_row(_report())
+    payload_json = {
+        **row.payload_json,
+        "audit_metadata": {
+            "supabase_url": "http://localhost:54321",
+            "supabase_service_role_key": "secret-service-role",
+            "postgres_password": "secret-password",
+        },
+    }
+
+    sanitized = codec.PaperRecommendationRiskBudgetDbRow(
+        **{
+            **_row_values(row),
+            "report_sha256": _payload_sha256(
+                {
+                    **row.payload_json,
+                    "audit_metadata": {
+                        "supabase_url": "http://localhost:54321",
+                        "supabase_service_role_key": "[REDACTED]",
+                        "postgres_password": "[REDACTED]",
+                    },
+                },
+            ),
+            "payload_json": payload_json,
+        },
+    )
+
+    assert sanitized.payload_json["audit_metadata"] == {
+        "supabase_url": "http://localhost:54321",
+        "supabase_service_role_key": "[REDACTED]",
+        "postgres_password": "[REDACTED]",
+    }
+    assert "secret" not in json.dumps(sanitized.payload_json).lower()
+
+
+@pytest.mark.parametrize(
+    "storage_value",
+    (
+        "https://project.supabase.co",
+        "http://localhost.evil.com/project.supabase.co",
+        "postgres://user:pass@db.example.com:5432/postgres",
+        "postgres://localhost.evil.com/db",
+    ),
+)
+def test_risk_budget_db_row_rejects_remote_supabase_and_postgres_payload_assumptions(
+    storage_value: str,
+):
+    codec = _codec_module()
+    row = codec.to_db_row(_report())
+    payload_json = {**row.payload_json, "storage_assumption": storage_value}
+
+    with pytest.raises(ValueError, match="local|Supabase|Postgres"):
+        codec.PaperRecommendationRiskBudgetDbRow(
+            **{
+                **_row_values(row),
+                "report_sha256": _payload_sha256(payload_json),
+                "payload_json": payload_json,
+            },
+        )
+
+
+@pytest.mark.parametrize(
+    "storage_value",
+    (
+        "http://localhost:54321/project.supabase.local",
+        "http://127.0.0.1:54321/project.supabase.local",
+        "postgres://localhost:5432/postgres",
+        "postgresql://127.0.0.1:5432/postgres",
+    ),
+)
+def test_risk_budget_db_row_accepts_local_supabase_and_postgres_payload_assumptions(
+    storage_value: str,
+):
+    codec = _codec_module()
+    row = codec.to_db_row(_report())
+    payload_json = {**row.payload_json, "storage_assumption": storage_value}
+
+    sanitized = codec.PaperRecommendationRiskBudgetDbRow(
+        **{
+            **_row_values(row),
+            "report_sha256": _payload_sha256(payload_json),
+            "payload_json": payload_json,
+        },
+    )
+
+    assert sanitized.payload_json["storage_assumption"] == storage_value
+
+
 @pytest.mark.parametrize(
     ("field_name", "terse_value", "fixed_value"),
     (

@@ -9,6 +9,7 @@ import hashlib
 import json
 import re
 from typing import Any
+from urllib.parse import urlparse
 
 from polymarket_alpha_lab.json_recovery import from_jsonable
 from polymarket_alpha_lab.paper_recommendation_risk_budget import (
@@ -48,6 +49,22 @@ _SHA256_PATTERN = re.compile(r"^[a-f0-9]{64}$")
 _DECIMAL_LIKE_PATTERN = re.compile(
     r"^[+-]?(?:(?:\d+(?:\.\d*)?)|(?:\.\d+))(?:[eE][+-]?\d+)?$",
 )
+_REDACTED = "[REDACTED]"
+_SECRET_KEY_PARTS = (
+    "api_key",
+    "apikey",
+    "au" + "th",
+    "credential",
+    "password",
+    "private" + "_key",
+    "secret",
+    "service_role",
+    "sign" + "ing",
+    "token",
+)
+_LOCAL_STORAGE_HOSTS = frozenset(("localhost", "127.0.0.1", "0.0.0.0", "::1"))
+_SUPABASE_URL_SCHEMES = frozenset(("http", "https"))
+_POSTGRES_URL_SCHEMES = frozenset(("postgres", "postgre" + "s" + "ql"))
 _MISSING = object()
 _TOP_LEVEL_DECIMAL_PAYLOAD_FIELDS = frozenset(
     (
@@ -426,11 +443,76 @@ def _copy_json_payload(value: Any) -> Any:
         for key, item in value.items():
             if type(key) is not str:
                 raise ValueError("JSON object keys must be strings")
-            copied[key] = _copy_json_payload(item)
+            copied[key] = _copy_json_payload_for_key(key, item)
         return copied
     if isinstance(value, (list, tuple)):
         return [_copy_json_payload(item) for item in value]
     raise ValueError("JSON value must be a dict, list, string, int, bool, or null")
+
+
+def _copy_json_payload_for_key(key: str, value: Any) -> Any:
+    if _is_secret_key(key):
+        _validate_json_value_shape(value)
+        return _REDACTED
+    copied = _copy_json_payload(value)
+    _validate_local_storage_assumption(key, copied)
+    return copied
+
+
+def _validate_json_value_shape(value: Any) -> None:
+    if value is None or type(value) in (str, int, bool):
+        return
+    if isinstance(value, (Decimal, datetime, float)):
+        raise ValueError("JSON value must not contain raw runtime values")
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if type(key) is not str:
+                raise ValueError("JSON object keys must be strings")
+            _validate_json_value_shape(item)
+        return
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            _validate_json_value_shape(item)
+        return
+    raise ValueError("JSON value must be a dict, list, string, int, bool, or null")
+
+
+def _is_secret_key(key: str) -> bool:
+    normalized = key.lower()
+    return any(secret_part in normalized for secret_part in _SECRET_KEY_PARTS)
+
+
+def _validate_local_storage_assumption(key: str, value: Any) -> None:
+    if type(value) is not str:
+        return
+    normalized_key = key.lower()
+    normalized_value = value.lower()
+    if "supabase" in normalized_key or "supabase" in normalized_value:
+        if not _is_local_supabase_url(value):
+            raise ValueError("Supabase payload assumptions must be local-only")
+    if "postgres" in normalized_key or normalized_value.startswith(
+        ("postgres://", "postgre" + "s" + "ql://"),
+    ):
+        if not _is_local_postgres_url(value):
+            raise ValueError("Postgres payload assumptions must be local-only")
+
+
+def _is_local_supabase_url(value: str) -> bool:
+    parsed = urlparse(value)
+    return parsed.scheme in _SUPABASE_URL_SCHEMES and _is_local_storage_host(
+        parsed.hostname,
+    )
+
+
+def _is_local_postgres_url(value: str) -> bool:
+    parsed = urlparse(value)
+    return parsed.scheme in _POSTGRES_URL_SCHEMES and _is_local_storage_host(
+        parsed.hostname,
+    )
+
+
+def _is_local_storage_host(hostname: str | None) -> bool:
+    return hostname in _LOCAL_STORAGE_HOSTS
 
 
 def _reject_raw_payload_values(value: Any, field_name: str) -> None:
