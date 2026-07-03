@@ -2,15 +2,19 @@
 
 This note defines the safety policy for `supabase/migrations/20260701000000_team_forecast_tables.sql` and later Team Forecast migration work.
 
+Polymarket is a probability event market. Phase 1 supports automatic screening, research, and paper execution only; no live trading, no investment advice, no trade instruction, no position advice, and no position sizing. Costs and fees are research factors only, including spread, slippage, liquidity, settlement timing, and paper cost evidence.
+
 ## Policy
 
 - Applied migrations are append-only.
 - Do not edit an applied migration after it has been shared, reviewed, or applied to a local Supabase/Postgres database.
 - Use local Supabase/Postgres only.
+- Local Supabase/Postgres is the only durable persistence target.
 - Make no hosted DB assumptions.
 - Include no raw DSN examples.
 - Do no auth/RLS/role policy work in Phase 1.
 - Keep Team Forecast persistence paper-only/report-only/readonly.
+- Keep costs and fees as research factors only.
 - Corrective changes must ship through new migrations.
 
 ## Current Migration Surface
@@ -50,6 +54,23 @@ Do not:
 - Add Phase 1 auth/RLS/role policy work.
 - Add application behavior that depends on account, wallet, live trading, or order permissions.
 - Move Team Forecast durable data to SQLite, Redis, Mongo, SQLAlchemy-managed engines, hosted Postgres, or any hosted database target.
+
+## Durable-Only Audit
+
+Local Supabase/Postgres is the only durable persistence target for new migration
+work. SQLite, Redis, Mongo, SQLAlchemy-managed engines, file journals, and hosted database targets remain disallowed.
+
+Legacy Phase 1 payload/report tables that predate the Team Forecast surface must
+finish with table-scoped `paper_only`, `report_only`, and `readonly` hard flags
+when later corrective migrations backfill missing columns or constraints. Guard
+tests should verify each required table's final schema state directly, not just
+that hard-flag tokens appear somewhere in the migration corpus.
+
+Public CLI output must not expose DSN values, table names, or payload JSON. It
+also must not expose market slugs, market questions, secrets, tokens, private keys,
+wallet/account identifiers, and order-like fields. Failure paths must redact those
+fields before writing to stdout or stderr, and operator documentation should keep
+connection values in environment injection rather than examples.
 
 ## Correction Procedure
 

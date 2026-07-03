@@ -24,6 +24,23 @@ FORBIDDEN_IMPORT_ROOTS = frozenset(
 )
 FORBIDDEN_DYNAMIC_IMPORTS = FORBIDDEN_IMPORT_ROOTS
 FORBIDDEN_CALL_NAMES = frozenset(("create_engine",))
+FORBIDDEN_BACKEND_SCOPE_NEEDLES = tuple(
+    sorted(
+        {
+            "__import__",
+            "import_module",
+            *FORBIDDEN_CALL_NAMES,
+            *(
+                f"import {backend}"
+                for backend in FORBIDDEN_IMPORT_ROOTS
+            ),
+            *(
+                f"from {backend}"
+                for backend in FORBIDDEN_IMPORT_ROOTS
+            ),
+        },
+    )
+)
 SRC_ROOT = REPO_ROOT / "src"
 SMOKE_TEST_PATH_FRAGMENT = "_supabase_smoke"
 LOCAL_DSN_VALIDATOR = "validate_local_postgres_dsn"
@@ -46,6 +63,13 @@ DURABLE_FILE_WRITE_CONTEXT_TOKENS = frozenset(
         "data",
         "raw",
     ),
+)
+DURABLE_FILE_PERSISTENCE_NEEDLES = (
+    "def append",
+    ".open(",
+    "open(",
+    "write_bytes",
+    "write_text",
 )
 LEGACY_DURABLE_FILE_PERSISTENCE_ALLOWLIST = frozenset(
     (
@@ -277,11 +301,16 @@ class _DurableFilePersistenceVisitor(ast.NodeVisitor):
         return bool(_identifier_tokens(context) & DURABLE_FILE_WRITE_CONTEXT_TOKENS)
 
 def _append_open_mode(node: ast.Call) -> str | None:
-    if not isinstance(node.func, ast.Attribute):
+    if isinstance(node.func, ast.Name):
+        if node.func.id != "open":
+            return None
+        mode = _builtin_open_mode(node)
+    elif isinstance(node.func, ast.Attribute):
+        if node.func.attr != "open":
+            return None
+        mode = _constant_open_mode(node)
+    else:
         return None
-    if node.func.attr != "open":
-        return None
-    mode = _constant_open_mode(node)
     if mode is None or "a" not in mode:
         return None
     return mode
@@ -292,6 +321,19 @@ def _constant_open_mode(node: ast.Call) -> str | None:
         first_arg = node.args[0]
         if isinstance(first_arg, ast.Constant) and isinstance(first_arg.value, str):
             return first_arg.value
+    for keyword in node.keywords:
+        if keyword.arg == "mode":
+            value = keyword.value
+            if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                return value.value
+    return None
+
+
+def _builtin_open_mode(node: ast.Call) -> str | None:
+    if len(node.args) >= 2:
+        second_arg = node.args[1]
+        if isinstance(second_arg, ast.Constant) and isinstance(second_arg.value, str):
+            return second_arg.value
     for keyword in node.keywords:
         if keyword.arg == "mode":
             value = keyword.value
@@ -392,7 +434,55 @@ def _iter_immediate_function_calls(function_node: ast.FunctionDef) -> tuple[ast.
     return tuple(calls)
 
 
-def _local_dsn_validation_lines(function_node: ast.FunctionDef) -> tuple[int, ...]:
+def _iter_function_direct_calls(
+    function_node: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> tuple[ast.Call, ...]:
+    calls: list[ast.Call] = []
+
+    def visit(node: ast.AST) -> None:
+        if node is not function_node and isinstance(
+            node,
+            (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda),
+        ):
+            return
+        if isinstance(node, ast.Call):
+            calls.append(node)
+        for child in ast.iter_child_nodes(node):
+            visit(child)
+
+    for statement in function_node.body:
+        visit(statement)
+    return tuple(calls)
+
+
+def _nested_functions_with_prior_validation(
+    function_node: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> set[ast.FunctionDef | ast.AsyncFunctionDef]:
+    validated: set[ast.FunctionDef | ast.AsyncFunctionDef] = set()
+    validator_lines = tuple(
+        node.lineno
+        for node in _iter_function_direct_calls(function_node)
+        if (
+            _call_name(node.func) in (LOCAL_DSN_VALIDATOR, "_validate_local_dsn")
+            and _contains_dsn_reference(node)
+        )
+    )
+    if not validator_lines:
+        return validated
+    first_validator_line = min(validator_lines)
+
+    for statement in function_node.body:
+        if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if any(arg.arg == "dsn" for arg in statement.args.args):
+                continue
+            if statement.lineno > first_validator_line:
+                validated.add(statement)
+    return validated
+
+
+def _local_dsn_validation_lines(
+    function_node: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> tuple[int, ...]:
     return tuple(
         node.lineno
         for node in _iter_immediate_function_calls(function_node)
@@ -414,7 +504,7 @@ def _is_psycopg_setup_call_requiring_dsn_validation(node: ast.Call) -> bool:
     return _contains_dsn_reference(node) or call_name == "connection_factory"
 
 
-def _is_connection_wrapper(function_node: ast.FunctionDef) -> bool:
+def _is_connection_wrapper(function_node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
     return function_node.name.startswith("_with_") and any(
         arg.arg == "dsn" for arg in function_node.args.args
     )
@@ -433,11 +523,12 @@ def _is_wrapper_connector_call_requiring_dsn_validation(node: ast.Call) -> bool:
 
 def _psycopg_setup_validation_violations(
     path: Path,
-    function_node: ast.FunctionDef,
+    function_node: ast.FunctionDef | ast.AsyncFunctionDef,
 ) -> tuple[StaticViolation, ...]:
     validator_lines = _local_dsn_validation_lines(function_node)
     violations: list[StaticViolation] = []
     guard_wrapper_connectors = _is_connection_wrapper(function_node)
+    prior_validated_nested_functions = _nested_functions_with_prior_validation(function_node)
     for node in _iter_immediate_function_calls(function_node):
         call_name = _call_name(node.func)
         requires_validation = _is_psycopg_setup_call_requiring_dsn_validation(node)
@@ -447,6 +538,12 @@ def _psycopg_setup_validation_violations(
                 or _is_wrapper_connector_call_requiring_dsn_validation(node)
             )
         if not requires_validation:
+            continue
+        if any(
+            nested_function.lineno < node.lineno < nested_function.end_lineno
+            for nested_function in prior_validated_nested_functions
+            if nested_function.end_lineno is not None
+        ):
             continue
         if not validator_lines or min(validator_lines) > node.lineno:
             violations.append(
@@ -465,8 +562,10 @@ def _psycopg_adapter_validation_violations(
     tree: ast.Module,
 ) -> tuple[StaticViolation, ...]:
     violations: list[StaticViolation] = []
-    for node in tree.body:
-        if isinstance(node, ast.FunctionDef):
+    # Walk all scopes intentionally: psycopg setup in class methods and async
+    # helpers must satisfy the same local-DSN validation rule as top-level code.
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             violations.extend(_psycopg_setup_validation_violations(path, node))
     return tuple(violations)
 
@@ -474,7 +573,11 @@ def _psycopg_adapter_validation_violations(
 def test_src_and_tests_do_not_import_or_create_nonlocal_persistence_backends() -> None:
     violations: list[StaticViolation] = []
     for path in _python_files():
-        violations.extend(_forbidden_backend_violations(path, _parse_file(path)))
+        source_text = path.read_text(encoding="utf-8")
+        lowered_source_text = source_text.lower()
+        if not any(needle in lowered_source_text for needle in FORBIDDEN_BACKEND_SCOPE_NEEDLES):
+            continue
+        violations.extend(_forbidden_backend_violations(path, ast.parse(source_text, filename=str(path))))
 
     assert violations == [], _format_violations(tuple(violations))
 
@@ -482,7 +585,10 @@ def test_src_and_tests_do_not_import_or_create_nonlocal_persistence_backends() -
 def test_src_durable_file_backed_persistence_stays_on_legacy_allowlist() -> None:
     violations: list[StaticViolation] = []
     for path in sorted(SRC_ROOT.rglob("*.py")):
-        violations.extend(_durable_file_persistence_violations(path, _parse_file(path)))
+        source_text = path.read_text(encoding="utf-8")
+        if not any(needle in source_text for needle in DURABLE_FILE_PERSISTENCE_NEEDLES):
+            continue
+        violations.extend(_durable_file_persistence_violations(path, ast.parse(source_text, filename=str(path))))
 
     unexpected = tuple(
         violation
@@ -537,6 +643,8 @@ class PaperThingLog:
     def append(self, report):
         with self.path.open("a", encoding="utf-8") as handle:
             handle.write("durable jsonl")
+        with open(self.path, "a", encoding="utf-8") as handle:
+            handle.write("durable jsonl")
 
 def persist_artifact(artifacts_dir, raw_dir):
     (artifacts_dir / "packet.json").write_text("{}", encoding="utf-8")
@@ -551,6 +659,7 @@ def persist_artifact(artifacts_dir, raw_dir):
 
     assert [violation.name for violation in violations] == [
         "PaperThingLog.append",
+        "open(a)",
         "open(a)",
         "write_text",
         "write_bytes",
@@ -615,6 +724,17 @@ def _with_owned_connection(dsn, operation, connection_factory):
     wrapped = _PsycopgJsonConnection(_connect(dsn), jsonb_adapter)
     validate_local_postgres_dsn(dsn, env_var_name="EXAMPLE_DSN")
     return operation(connection, first, second, third, wrapped)
+
+class Store:
+    def _with_owned_connection(self, dsn, connection_factory):
+        connection = connection_factory()
+        validate_local_postgres_dsn(dsn, env_var_name="EXAMPLE_DSN")
+        return connection
+
+async def _with_async_connection(dsn, connection_factory):
+    connection = connection_factory()
+    validate_local_postgres_dsn(dsn, env_var_name="EXAMPLE_DSN")
+    return connection
 """,
     )
 
@@ -631,7 +751,30 @@ def _with_owned_connection(dsn, operation, connection_factory):
         "_jsonb_adapter",
         "_PsycopgJsonConnection",
         "_connect",
+        "connection_factory",
+        "connection_factory",
     ]
+
+
+def test_psycopg_adapter_validation_guard_does_not_exempt_nested_dsn_parameters() -> None:
+    fixture_tree = ast.parse(
+        """
+def _with_owned_connection(dsn, operation):
+    validate_local_postgres_dsn(dsn, env_var_name="EXAMPLE_DSN")
+
+    def nested_accepts_new_dsn(dsn):
+        return _connect(dsn)
+
+    return operation(nested_accepts_new_dsn)
+""",
+    )
+
+    violations = _psycopg_adapter_validation_violations(
+        REPO_ROOT / "src" / "fixture_psycopg.py",
+        fixture_tree,
+    )
+
+    assert [violation.name for violation in violations] == ["_connect"]
 
 
 def test_psycopg_adapter_validation_guard_allows_unrelated_connect_calls() -> None:
