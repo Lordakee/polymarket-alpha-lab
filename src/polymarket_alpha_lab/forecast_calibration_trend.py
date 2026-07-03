@@ -27,9 +27,13 @@ ONE = Decimal("1")
 @dataclass(frozen=True)
 class PaperForecastCalibrationTrendConfig:
     config_version: str
+    paper_only: bool = True
+    report_only: bool = True
+    readonly: bool = True
 
     def __post_init__(self) -> None:
         _require_canonical_string("config_version", self.config_version)
+        _require_hard_flags("config", self)
 
 
 @dataclass(frozen=True)
@@ -37,12 +41,16 @@ class PaperForecastCalibrationTrendStatusRow:
     calibration_status: str
     report_count: int
     report_ratio: Decimal | None
+    paper_only: bool = True
+    report_only: bool = True
+    readonly: bool = True
 
     def __post_init__(self) -> None:
         if self.calibration_status not in REPORT_STATUSES:
             raise ValueError("calibration_status must be a known calibration status")
         _require_nonnegative_int("report_count", self.report_count)
         _require_optional_probability_decimal("report_ratio", self.report_ratio)
+        _require_hard_flags("status row", self)
 
 
 @dataclass(frozen=True)
@@ -127,6 +135,7 @@ def build_paper_forecast_calibration_trend_report(
 
     if type(config) is not PaperForecastCalibrationTrendConfig:
         raise ValueError("config must be a PaperForecastCalibrationTrendConfig")
+    _require_hard_flags("config", config)
     if not isinstance(generated_at, datetime):
         raise ValueError("generated_at must be a datetime")
     generated_at = _as_utc(generated_at)
@@ -462,6 +471,9 @@ def _clone_status_rows(
                 calibration_status=row.calibration_status,
                 report_count=row.report_count,
                 report_ratio=row.report_ratio,
+                paper_only=row.paper_only,
+                report_only=row.report_only,
+                readonly=row.readonly,
             )
         )
         for row in items
@@ -473,6 +485,7 @@ def _require_status_row(row: Any) -> None:
         raise ValueError(
             "status_rows must contain PaperForecastCalibrationTrendStatusRow values",
         )
+    _require_hard_flags("status row", row)
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -525,6 +538,15 @@ def _require_none(field_name: str, value: Any) -> None:
 def _require_zero(field_name: str, value: int) -> None:
     if value != 0:
         raise ValueError(f"{field_name} must be zero when there are no reports")
+
+
+def _require_hard_flags(label: str, value: object) -> None:
+    if getattr(value, "paper_only", None) is not True:
+        raise ValueError(f"{label} paper_only must be True")
+    if getattr(value, "report_only", None) is not True:
+        raise ValueError(f"{label} report_only must be True")
+    if getattr(value, "readonly", None) is not True:
+        raise ValueError(f"{label} readonly must be True")
 
 
 __all__ = (

@@ -358,6 +358,11 @@ def test_calibration_gate_blocks_high_brier_and_calibration_error():
 
 
 def test_calibration_gate_rejects_wrong_scalar_types_exactly():
+    with pytest.raises(ValueError, match="config report_only must be True"):
+        PaperCalibrationGateConfig(
+            config_version="paper-calibration-gate-v0",
+            report_only=False,
+        )
     with pytest.raises(ValueError, match="min_observation_count"):
         PaperCalibrationGateConfig(
             config_version="paper-calibration-gate-v0",
@@ -375,6 +380,15 @@ def test_calibration_gate_rejects_wrong_scalar_types_exactly():
             "brier_score_within_limit",
             True,
             Decimal("0.250000"),
+        )
+    with pytest.raises(ValueError, match="gate row paper_only must be True"):
+        PaperCalibrationGateRow(
+            "brier_score",
+            "passed",
+            "brier_score_within_limit",
+            Decimal("0.120000"),
+            Decimal("0.250000"),
+            paper_only=False,
         )
     with pytest.raises(ValueError, match="source_report"):
         build_paper_calibration_gate_report(

@@ -34,6 +34,9 @@ class PaperForecastCalibrationConfig:
     min_observation_count: int = 30
     max_brier_score: Decimal = Decimal("0.250000")
     max_expected_calibration_error: Decimal = Decimal("0.100000")
+    paper_only: bool = True
+    report_only: bool = True
+    readonly: bool = True
 
     def __post_init__(self) -> None:
         _require_canonical_string("config_version", self.config_version)
@@ -52,6 +55,7 @@ class PaperForecastCalibrationConfig:
             "max_expected_calibration_error",
             self.max_expected_calibration_error,
         )
+        _require_hard_flags("config", self)
 
 
 @dataclass(frozen=True)
@@ -64,6 +68,9 @@ class PaperForecastCalibrationBucket:
     observed_frequency: Decimal
     bucket_error: Decimal
     bucket_weight: Decimal
+    paper_only: bool = True
+    report_only: bool = True
+    readonly: bool = True
 
     def __post_init__(self) -> None:
         _require_canonical_string("bucket_label", self.bucket_label)
@@ -98,6 +105,7 @@ class PaperForecastCalibrationBucket:
             self.upper_probability,
         ):
             raise ValueError("bucket_label must match bucket bounds")
+        _require_hard_flags("bucket", self)
 
 
 @dataclass(frozen=True)
@@ -160,7 +168,7 @@ class PaperForecastCalibrationReport:
         object.__setattr__(
             self,
             "buckets",
-            _normalize_buckets(self.buckets),
+            _clone_buckets(self.buckets),
         )
         if self.bucket_count != len(self.buckets):
             raise ValueError("bucket_count must equal buckets length")
@@ -246,8 +254,9 @@ def build_paper_forecast_calibration_report(
 ) -> PaperForecastCalibrationReport:
     if isinstance(observations, (str, bytes)):
         raise ValueError("observations must be an iterable")
-    if not isinstance(config, PaperForecastCalibrationConfig):
+    if type(config) is not PaperForecastCalibrationConfig:
         raise ValueError("config must be a PaperForecastCalibrationConfig")
+    _require_hard_flags("config", config)
     if not isinstance(generated_at, datetime):
         raise ValueError("generated_at must be a datetime")
     try:
@@ -462,7 +471,7 @@ def _max_or_none(values: Iterable[Decimal]) -> Decimal | None:
     return _quantize_ratio(max(items))
 
 
-def _normalize_buckets(
+def _clone_buckets(
     value: tuple[PaperForecastCalibrationBucket, ...],
 ) -> tuple[PaperForecastCalibrationBucket, ...]:
     if isinstance(value, (str, bytes)):
@@ -471,9 +480,25 @@ def _normalize_buckets(
         items = tuple(value)
     except TypeError as exc:
         raise ValueError("buckets must be an iterable") from exc
-    if not all(isinstance(item, PaperForecastCalibrationBucket) for item in items):
-        raise ValueError("buckets must contain PaperForecastCalibrationBucket values")
-    return items
+    for item in items:
+        if type(item) is not PaperForecastCalibrationBucket:
+            raise ValueError("buckets must contain PaperForecastCalibrationBucket values")
+    return tuple(
+        PaperForecastCalibrationBucket(
+            bucket_label=bucket.bucket_label,
+            lower_probability=bucket.lower_probability,
+            upper_probability=bucket.upper_probability,
+            observation_count=bucket.observation_count,
+            mean_predicted_probability=bucket.mean_predicted_probability,
+            observed_frequency=bucket.observed_frequency,
+            bucket_error=bucket.bucket_error,
+            bucket_weight=bucket.bucket_weight,
+            paper_only=bucket.paper_only,
+            report_only=bucket.report_only,
+            readonly=bucket.readonly,
+        )
+        for bucket in items
+    )
 
 
 def _require_bucket_ranges(
@@ -587,6 +612,15 @@ def _require_bucket_width(field_name: str, value: Decimal) -> None:
         raise ValueError(f"{field_name} must be at least {BUCKET_QUANTUM}")
     if value != value.quantize(BUCKET_QUANTUM):
         raise ValueError(f"{field_name} must align to {BUCKET_QUANTUM}")
+
+
+def _require_hard_flags(label: str, value: object) -> None:
+    if getattr(value, "paper_only", None) is not True:
+        raise ValueError(f"{label} paper_only must be True")
+    if getattr(value, "report_only", None) is not True:
+        raise ValueError(f"{label} report_only must be True")
+    if getattr(value, "readonly", None) is not True:
+        raise ValueError(f"{label} readonly must be True")
 
 
 def _quantize_ratio(value: Decimal) -> Decimal:

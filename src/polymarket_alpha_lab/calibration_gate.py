@@ -49,6 +49,9 @@ class PaperCalibrationGateConfig:
     min_observation_count: int = 30
     max_brier_score: Decimal = Decimal("0.250000")
     max_calibration_error: Decimal = Decimal("0.100000")
+    paper_only: bool = True
+    report_only: bool = True
+    readonly: bool = True
 
     def __post_init__(self) -> None:
         _require_canonical_string("config_version", self.config_version)
@@ -62,6 +65,7 @@ class PaperCalibrationGateConfig:
             "max_calibration_error",
             self.max_calibration_error,
         )
+        _require_hard_flags("config", self)
 
 
 @dataclass(frozen=True)
@@ -71,6 +75,9 @@ class PaperCalibrationGateRow:
     reason_code: str
     observed_value: Decimal | int | None
     threshold: Decimal | int
+    paper_only: bool = True
+    report_only: bool = True
+    readonly: bool = True
 
     def __post_init__(self) -> None:
         _require_canonical_string("gate_name", self.gate_name)
@@ -82,6 +89,7 @@ class PaperCalibrationGateRow:
         _require_canonical_string("reason_code", self.reason_code)
         _require_gate_scalar("observed_value", self.observed_value, allow_none=True)
         _require_gate_scalar("threshold", self.threshold, allow_none=False)
+        _require_hard_flags("gate row", self)
 
 
 @dataclass(frozen=True)
@@ -155,6 +163,7 @@ def build_paper_calibration_gate_report(
 
     if type(config) is not PaperCalibrationGateConfig:
         raise ValueError("config must be a PaperCalibrationGateConfig")
+    _require_hard_flags("config", config)
     if type(generated_at) is not datetime:
         raise ValueError("generated_at must be a datetime")
     source = _source_view(source_report)
@@ -361,6 +370,9 @@ def _clone_gate_rows(
             reason_code=row.reason_code,
             observed_value=row.observed_value,
             threshold=row.threshold,
+            paper_only=row.paper_only,
+            report_only=row.report_only,
+            readonly=row.readonly,
         )
         for row in _normalize_typed_tuple("gate_rows", rows, PaperCalibrationGateRow)
     )
@@ -402,6 +414,15 @@ def _require_source_flags(value: object) -> None:
         raise ValueError("source_report report_only must be True")
     if getattr(value, "readonly", None) is not True:
         raise ValueError("source_report readonly must be True")
+
+
+def _require_hard_flags(label: str, value: object) -> None:
+    if getattr(value, "paper_only", None) is not True:
+        raise ValueError(f"{label} paper_only must be True")
+    if getattr(value, "report_only", None) is not True:
+        raise ValueError(f"{label} report_only must be True")
+    if getattr(value, "readonly", None) is not True:
+        raise ValueError(f"{label} readonly must be True")
 
 
 def _as_utc(value: datetime) -> datetime:

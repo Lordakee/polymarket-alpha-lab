@@ -605,8 +605,20 @@ def test_forecast_calibration_trend_config_rows_and_all_are_exact():
 
     with pytest.raises(ValueError, match="config_version"):
         PaperForecastCalibrationTrendConfig(config_version=" forecast-calibration-trend-v0 ")
+    with pytest.raises(ValueError, match="config paper_only must be True"):
+        PaperForecastCalibrationTrendConfig(
+            config_version="forecast-calibration-trend-v0",
+            paper_only=False,
+        )
     with pytest.raises(ValueError, match="calibration_status"):
         PaperForecastCalibrationTrendStatusRow("unknown", 0, None)
+    with pytest.raises(ValueError, match="status row readonly must be True"):
+        PaperForecastCalibrationTrendStatusRow(
+            "calibration_evidence_observed",
+            1,
+            Decimal("1.000000"),
+            readonly=False,
+        )
     with pytest.raises(ValueError, match="report_ratio"):
         PaperForecastCalibrationTrendStatusRow(
             "calibration_evidence_observed",

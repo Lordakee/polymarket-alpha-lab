@@ -269,6 +269,21 @@ def test_build_paper_forecast_calibration_report_uses_utc_bounds_and_final_one_b
 def test_forecast_calibration_dataclasses_reject_invalid_inputs_and_flags():
     with pytest.raises(ValueError, match="config_version"):
         PaperForecastCalibrationConfig(config_version=" ")
+    with pytest.raises(ValueError, match="config paper_only must be True"):
+        PaperForecastCalibrationConfig(
+            config_version="calibration-test",
+            paper_only=False,
+        )
+    with pytest.raises(ValueError, match="config report_only must be True"):
+        PaperForecastCalibrationConfig(
+            config_version="calibration-test",
+            report_only=False,
+        )
+    with pytest.raises(ValueError, match="config readonly must be True"):
+        PaperForecastCalibrationConfig(
+            config_version="calibration-test",
+            readonly=False,
+        )
     with pytest.raises(ValueError, match="probability_bucket_width"):
         PaperForecastCalibrationConfig(
             config_version="calibration-test",
@@ -369,6 +384,18 @@ def test_forecast_calibration_report_rejects_duplicate_bucket_identity():
         )
 
 
+@pytest.mark.parametrize("flag_name", ("paper_only", "report_only", "readonly"))
+def test_forecast_calibration_report_rejects_bucket_with_tampered_hard_flag(
+    flag_name: str,
+):
+    report = valid_calibration_report()
+    tampered_bucket = report.buckets[0]
+    object.__setattr__(tampered_bucket, flag_name, False)
+
+    with pytest.raises(ValueError, match=flag_name):
+        replace(report, buckets=(tampered_bucket, report.buckets[1]))
+
+
 def test_forecast_calibration_report_rejects_overlapping_buckets():
     report = valid_calibration_report()
     overlapping_first = replace(
@@ -432,6 +459,18 @@ def test_forecast_calibration_report_rejects_near_exact_bucket_weight_sum():
 
 
 def test_forecast_calibration_bucket_rejects_complementary_subquantum_weights():
+    with pytest.raises(ValueError, match="bucket paper_only must be True"):
+        PaperForecastCalibrationBucket(
+            bucket_label="0.0000-0.5000",
+            lower_probability=Decimal("0.0000"),
+            upper_probability=Decimal("0.5000"),
+            observation_count=1,
+            mean_predicted_probability=Decimal("0.200000"),
+            observed_frequency=Decimal("0.000000"),
+            bucket_error=Decimal("0.200000"),
+            bucket_weight=Decimal("1.000000"),
+            paper_only=False,
+        )
     with pytest.raises(ValueError, match="bucket_weight"):
         PaperForecastCalibrationBucket(
             bucket_label="0.0000-0.5000",
