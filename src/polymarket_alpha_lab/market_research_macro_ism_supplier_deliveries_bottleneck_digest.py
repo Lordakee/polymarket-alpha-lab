@@ -1,0 +1,1005 @@
+"""Pure Phase 1 macro ISM supplier-deliveries bottleneck digest reducer."""
+
+from __future__ import annotations
+
+from collections.abc import Iterable
+from dataclasses import dataclass, fields, is_dataclass
+from datetime import UTC, datetime
+from decimal import Context, Decimal, ROUND_HALF_EVEN, localcontext
+import re
+from typing import Any
+
+
+DEFAULT_MACRO_ISM_SUPPLIER_DELIVERIES_BOTTLENECK_DIGEST_CONFIG_VERSION = (
+    "market-research-macro-ism-supplier-deliveries-bottleneck-digest-v0"
+)
+
+BOTTLENECK_STATUSES = ("pass", "watch", "blocked")
+ROW_REASON_CODES = (
+    "macro_ism_supplier_deliveries_blocked_surprise",
+    "macro_ism_supplier_deliveries_watch_surprise",
+    "macro_ism_supplier_deliveries_inline",
+    "macro_ism_supplier_deliveries_new_orders_confirmation",
+    "macro_ism_supplier_deliveries_prices_paid_pressure",
+    "macro_ism_supplier_deliveries_backlog_pressure",
+    "macro_ism_supplier_deliveries_source_stale",
+    "macro_ism_supplier_deliveries_quorum_missing",
+    "macro_ism_supplier_deliveries_source_disagreement",
+    "macro_ism_supplier_deliveries_upstream_reasons",
+)
+REPORT_REASON_CODES = (
+    "macro_ism_supplier_deliveries_bottleneck_blocked_present",
+    "macro_ism_supplier_deliveries_bottleneck_watch_present",
+    "macro_ism_supplier_deliveries_new_orders_confirmed_present",
+    "macro_ism_supplier_deliveries_prices_paid_pressure_present",
+    "macro_ism_supplier_deliveries_backlog_pressure_present",
+    "macro_ism_supplier_deliveries_source_stale_present",
+    "macro_ism_supplier_deliveries_quorum_gap_present",
+    "macro_ism_supplier_deliveries_source_disagreement_present",
+    "macro_ism_supplier_deliveries_upstream_reasons_present",
+    "macro_ism_supplier_deliveries_bottleneck_digest_clear",
+    "macro_ism_supplier_deliveries_bottleneck_digest_empty",
+)
+
+QUANTUM = Decimal("0.000001")
+ZERO = Decimal("0.000000")
+ONE = Decimal("1.000000")
+WATCH_RISK_SCORE = Decimal("0.500000")
+DECIMAL_CONTEXT = Context(prec=64, rounding=ROUND_HALF_EVEN)
+STATUS_RANK = {
+    "blocked": Decimal("0.000000"),
+    "watch": Decimal("1.000000"),
+    "pass": Decimal("2.000000"),
+}
+_CANONICAL_RE = re.compile(r"^[a-z0-9][a-z0-9_.-]*$")
+
+
+__all__ = (
+    "DEFAULT_MACRO_ISM_SUPPLIER_DELIVERIES_BOTTLENECK_DIGEST_CONFIG_VERSION",
+    "MacroIsmSupplierDeliveriesBottleneckDigestConfig",
+    "MacroIsmSupplierDeliveriesBottleneckObservation",
+    "MacroIsmSupplierDeliveriesBottleneckDigestRow",
+    "MacroIsmSupplierDeliveriesBottleneckReasonCodeCount",
+    "MacroIsmSupplierDeliveriesBottleneckDigestReport",
+    "build_market_research_macro_ism_supplier_deliveries_bottleneck_digest",
+    "market_research_macro_ism_supplier_deliveries_bottleneck_digest_payload",
+)
+
+
+@dataclass(frozen=True)
+class MacroIsmSupplierDeliveriesBottleneckDigestConfig:
+    config_version: str = (
+        DEFAULT_MACRO_ISM_SUPPLIER_DELIVERIES_BOTTLENECK_DIGEST_CONFIG_VERSION
+    )
+    watch_supplier_deliveries_surprise: Decimal = Decimal("2.000000")
+    blocked_supplier_deliveries_surprise: Decimal = Decimal("4.000000")
+    new_orders_confirmation_threshold: Decimal = Decimal("1.000000")
+    prices_paid_pressure_threshold: Decimal = Decimal("3.000000")
+    backlog_pressure_threshold: Decimal = Decimal("2.000000")
+    stale_source_age_hours: Decimal = Decimal("48.000000")
+    min_source_quorum_count: Decimal = Decimal("2.000000")
+    source_disagreement_threshold: Decimal = Decimal("3.000000")
+    paper_only: bool = True
+    report_only: bool = True
+    readonly: bool = True
+
+    def __post_init__(self) -> None:
+        _require_exact_type(
+            self,
+            MacroIsmSupplierDeliveriesBottleneckDigestConfig,
+            "config",
+        )
+        _require_canonical_string("config_version", self.config_version)
+        if (
+            self.config_version
+            != DEFAULT_MACRO_ISM_SUPPLIER_DELIVERIES_BOTTLENECK_DIGEST_CONFIG_VERSION
+        ):
+            raise ValueError("config_version must be the supported config version")
+        for field_name in (
+            "watch_supplier_deliveries_surprise",
+            "blocked_supplier_deliveries_surprise",
+            "new_orders_confirmation_threshold",
+            "prices_paid_pressure_threshold",
+            "backlog_pressure_threshold",
+            "stale_source_age_hours",
+            "min_source_quorum_count",
+            "source_disagreement_threshold",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _require_positive_decimal(field_name, getattr(self, field_name)),
+            )
+        if self.watch_supplier_deliveries_surprise > (
+            self.blocked_supplier_deliveries_surprise
+        ):
+            raise ValueError(
+                "watch_supplier_deliveries_surprise must not exceed "
+                "blocked_supplier_deliveries_surprise",
+            )
+        _require_hard_flags("config", self)
+
+
+@dataclass(frozen=True)
+class MacroIsmSupplierDeliveriesBottleneckObservation:
+    source_id: str
+    release_id: str
+    sector: str
+    market_slug: str
+    supplier_deliveries_index_surprise: Decimal
+    new_orders_confirmation: Decimal
+    prices_paid_pressure: Decimal
+    backlog_pressure: Decimal
+    source_age_hours: Decimal
+    source_quorum_count: Decimal
+    source_disagreement: Decimal
+    source_timestamp: datetime
+    upstream_reason_codes: tuple[str, ...]
+    paper_only: bool = True
+    report_only: bool = True
+    readonly: bool = True
+
+    def __post_init__(self) -> None:
+        _require_exact_type(
+            self,
+            MacroIsmSupplierDeliveriesBottleneckObservation,
+            "observation",
+        )
+        for field_name in ("source_id", "release_id", "sector", "market_slug"):
+            _require_canonical_string(field_name, getattr(self, field_name))
+        for field_name in (
+            "supplier_deliveries_index_surprise",
+            "new_orders_confirmation",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _require_decimal(field_name, getattr(self, field_name)),
+            )
+        for field_name in (
+            "prices_paid_pressure",
+            "backlog_pressure",
+            "source_age_hours",
+            "source_quorum_count",
+            "source_disagreement",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _require_nonnegative_decimal(field_name, getattr(self, field_name)),
+            )
+        object.__setattr__(
+            self,
+            "source_timestamp",
+            _as_utc("source_timestamp", self.source_timestamp),
+        )
+        object.__setattr__(
+            self,
+            "upstream_reason_codes",
+            _normalize_open_reason_codes(
+                "upstream_reason_codes",
+                self.upstream_reason_codes,
+            ),
+        )
+        _require_hard_flags("observation", self)
+
+
+@dataclass(frozen=True)
+class MacroIsmSupplierDeliveriesBottleneckDigestRow:
+    source_id: str
+    release_id: str
+    sector: str
+    market_slug: str
+    supplier_deliveries_index_surprise: Decimal
+    positive_supplier_deliveries_surprise: Decimal
+    new_orders_confirmation: Decimal
+    prices_paid_pressure: Decimal
+    backlog_pressure: Decimal
+    source_age_hours: Decimal
+    source_quorum_count: Decimal
+    source_disagreement: Decimal
+    source_timestamp: datetime
+    upstream_reason_codes: tuple[str, ...]
+    bottleneck_status: str
+    reason_codes: tuple[str, ...]
+    paper_only: bool = True
+    report_only: bool = True
+    readonly: bool = True
+
+    def __post_init__(self) -> None:
+        _require_exact_type(
+            self,
+            MacroIsmSupplierDeliveriesBottleneckDigestRow,
+            "row",
+        )
+        for field_name in ("source_id", "release_id", "sector", "market_slug"):
+            _require_canonical_string(field_name, getattr(self, field_name))
+        for field_name in (
+            "supplier_deliveries_index_surprise",
+            "new_orders_confirmation",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _require_decimal(field_name, getattr(self, field_name)),
+            )
+        for field_name in (
+            "positive_supplier_deliveries_surprise",
+            "prices_paid_pressure",
+            "backlog_pressure",
+            "source_age_hours",
+            "source_quorum_count",
+            "source_disagreement",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _require_nonnegative_decimal(field_name, getattr(self, field_name)),
+            )
+        object.__setattr__(
+            self,
+            "source_timestamp",
+            _as_utc("source_timestamp", self.source_timestamp),
+        )
+        object.__setattr__(
+            self,
+            "upstream_reason_codes",
+            _normalize_open_reason_codes(
+                "upstream_reason_codes",
+                self.upstream_reason_codes,
+            ),
+        )
+        _require_member("bottleneck_status", self.bottleneck_status, BOTTLENECK_STATUSES)
+        object.__setattr__(
+            self,
+            "reason_codes",
+            _normalize_reason_codes("reason_codes", self.reason_codes, ROW_REASON_CODES),
+        )
+        _validate_row(self)
+        _require_hard_flags("row", self)
+
+
+@dataclass(frozen=True)
+class MacroIsmSupplierDeliveriesBottleneckReasonCodeCount:
+    reason_code: str
+    count: Decimal
+    row_ratio: Decimal
+    paper_only: bool = True
+    report_only: bool = True
+    readonly: bool = True
+
+    def __post_init__(self) -> None:
+        _require_exact_type(
+            self,
+            MacroIsmSupplierDeliveriesBottleneckReasonCodeCount,
+            "reason code count",
+        )
+        _require_member("reason_code", self.reason_code, REPORT_REASON_CODES)
+        object.__setattr__(self, "count", _require_nonnegative_decimal("count", self.count))
+        object.__setattr__(
+            self,
+            "row_ratio",
+            _require_ratio("row_ratio", self.row_ratio),
+        )
+        _require_hard_flags("reason code count", self)
+
+
+@dataclass(frozen=True)
+class MacroIsmSupplierDeliveriesBottleneckDigestReport:
+    generated_at: datetime
+    config_version: str
+    input_count: Decimal
+    row_count: Decimal
+    blocked_count: Decimal
+    watch_count: Decimal
+    pass_count: Decimal
+    bottleneck_count: Decimal
+    inflation_pressure_count: Decimal
+    quorum_disagreement_count: Decimal
+    stale_source_count: Decimal
+    max_supplier_deliveries_surprise: Decimal
+    average_supplier_deliveries_surprise: Decimal
+    bottleneck_risk_score: Decimal
+    digest_status: str
+    recommended_next_step: str
+    rows: tuple[MacroIsmSupplierDeliveriesBottleneckDigestRow, ...]
+    reason_code_counts: tuple[MacroIsmSupplierDeliveriesBottleneckReasonCodeCount, ...]
+    reason_codes: tuple[str, ...]
+    paper_only: bool = True
+    report_only: bool = True
+    readonly: bool = True
+
+    def __post_init__(self) -> None:
+        _require_exact_type(
+            self,
+            MacroIsmSupplierDeliveriesBottleneckDigestReport,
+            "report",
+        )
+        object.__setattr__(self, "generated_at", _as_utc("generated_at", self.generated_at))
+        _require_canonical_string("config_version", self.config_version)
+        if (
+            self.config_version
+            != DEFAULT_MACRO_ISM_SUPPLIER_DELIVERIES_BOTTLENECK_DIGEST_CONFIG_VERSION
+        ):
+            raise ValueError("config_version must be the supported config version")
+        for field_name in (
+            "input_count",
+            "row_count",
+            "blocked_count",
+            "watch_count",
+            "pass_count",
+            "bottleneck_count",
+            "inflation_pressure_count",
+            "quorum_disagreement_count",
+            "stale_source_count",
+            "max_supplier_deliveries_surprise",
+            "average_supplier_deliveries_surprise",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _require_nonnegative_decimal(field_name, getattr(self, field_name)),
+            )
+        object.__setattr__(
+            self,
+            "bottleneck_risk_score",
+            _require_ratio("bottleneck_risk_score", self.bottleneck_risk_score),
+        )
+        _require_member("digest_status", self.digest_status, BOTTLENECK_STATUSES)
+        _require_canonical_string("recommended_next_step", self.recommended_next_step)
+        object.__setattr__(self, "rows", _normalize_rows(self.rows))
+        object.__setattr__(
+            self,
+            "reason_code_counts",
+            _normalize_reason_code_counts(self.reason_code_counts),
+        )
+        object.__setattr__(
+            self,
+            "reason_codes",
+            _normalize_reason_codes("reason_codes", self.reason_codes, REPORT_REASON_CODES),
+        )
+        _validate_report(self)
+        _require_hard_flags("report", self)
+
+
+def build_market_research_macro_ism_supplier_deliveries_bottleneck_digest(
+    observations: Iterable[MacroIsmSupplierDeliveriesBottleneckObservation],
+    *,
+    config: MacroIsmSupplierDeliveriesBottleneckDigestConfig,
+    generated_at: datetime,
+) -> MacroIsmSupplierDeliveriesBottleneckDigestReport:
+    if type(config) is not MacroIsmSupplierDeliveriesBottleneckDigestConfig:
+        raise ValueError(
+            "config must be exactly MacroIsmSupplierDeliveriesBottleneckDigestConfig",
+        )
+    generated_at_utc = _as_utc("generated_at", generated_at)
+    _require_hard_flags("config", config)
+    normalized = _normalize_observations(observations)
+    rows = tuple(
+        sorted(
+            (
+                _row_from_observation(observation, config=config)
+                for observation in normalized
+            ),
+            key=_row_sort_key,
+        ),
+    )
+    row_count = _count_decimal(len(rows))
+    reason_codes = _report_reason_codes(rows)
+    digest_status = _digest_status(rows)
+
+    return MacroIsmSupplierDeliveriesBottleneckDigestReport(
+        generated_at=generated_at_utc,
+        config_version=config.config_version,
+        input_count=_count_decimal(len(normalized)),
+        row_count=row_count,
+        blocked_count=_status_count(rows, "blocked"),
+        watch_count=_status_count(rows, "watch"),
+        pass_count=_status_count(rows, "pass"),
+        bottleneck_count=_bottleneck_count(rows),
+        inflation_pressure_count=_inflation_pressure_count(rows),
+        quorum_disagreement_count=_quorum_disagreement_count(rows),
+        stale_source_count=_reason_count(
+            rows,
+            "macro_ism_supplier_deliveries_source_stale",
+        ),
+        max_supplier_deliveries_surprise=_max_row_decimal(
+            rows,
+            "positive_supplier_deliveries_surprise",
+        ),
+        average_supplier_deliveries_surprise=_ratio(
+            _sum_decimal(row.positive_supplier_deliveries_surprise for row in rows),
+            row_count,
+        ),
+        bottleneck_risk_score=_bottleneck_risk_score(rows),
+        digest_status=digest_status,
+        recommended_next_step=_recommended_next_step(digest_status),
+        rows=rows,
+        reason_code_counts=_reason_code_counts(reason_codes, rows),
+        reason_codes=reason_codes,
+    )
+
+
+def market_research_macro_ism_supplier_deliveries_bottleneck_digest_payload(
+    report: MacroIsmSupplierDeliveriesBottleneckDigestReport,
+) -> dict[str, Any]:
+    if type(report) is not MacroIsmSupplierDeliveriesBottleneckDigestReport:
+        raise ValueError(
+            "report must be exactly MacroIsmSupplierDeliveriesBottleneckDigestReport",
+        )
+    return _payload_value(report)
+
+
+def _row_from_observation(
+    observation: MacroIsmSupplierDeliveriesBottleneckObservation,
+    *,
+    config: MacroIsmSupplierDeliveriesBottleneckDigestConfig,
+) -> MacroIsmSupplierDeliveriesBottleneckDigestRow:
+    positive_surprise = _positive_decimal(observation.supplier_deliveries_index_surprise)
+    status = _row_status(observation, positive_surprise=positive_surprise, config=config)
+    return MacroIsmSupplierDeliveriesBottleneckDigestRow(
+        source_id=observation.source_id,
+        release_id=observation.release_id,
+        sector=observation.sector,
+        market_slug=observation.market_slug,
+        supplier_deliveries_index_surprise=observation.supplier_deliveries_index_surprise,
+        positive_supplier_deliveries_surprise=positive_surprise,
+        new_orders_confirmation=observation.new_orders_confirmation,
+        prices_paid_pressure=observation.prices_paid_pressure,
+        backlog_pressure=observation.backlog_pressure,
+        source_age_hours=observation.source_age_hours,
+        source_quorum_count=observation.source_quorum_count,
+        source_disagreement=observation.source_disagreement,
+        source_timestamp=observation.source_timestamp,
+        upstream_reason_codes=observation.upstream_reason_codes,
+        bottleneck_status=status,
+        reason_codes=_row_reason_codes(
+            observation,
+            positive_surprise=positive_surprise,
+            config=config,
+        ),
+    )
+
+
+def _row_status(
+    observation: MacroIsmSupplierDeliveriesBottleneckObservation,
+    *,
+    positive_surprise: Decimal,
+    config: MacroIsmSupplierDeliveriesBottleneckDigestConfig,
+) -> str:
+    if _has_blocking_source_quality_risk(observation, config=config):
+        return "blocked"
+    if positive_surprise >= config.blocked_supplier_deliveries_surprise:
+        return "blocked"
+    if positive_surprise >= config.watch_supplier_deliveries_surprise:
+        return "watch"
+    return "pass"
+
+
+def _row_reason_codes(
+    observation: MacroIsmSupplierDeliveriesBottleneckObservation,
+    *,
+    positive_surprise: Decimal,
+    config: MacroIsmSupplierDeliveriesBottleneckDigestConfig,
+) -> tuple[str, ...]:
+    reason_codes: list[str] = []
+    if positive_surprise >= config.blocked_supplier_deliveries_surprise:
+        reason_codes.append("macro_ism_supplier_deliveries_blocked_surprise")
+    elif positive_surprise >= config.watch_supplier_deliveries_surprise:
+        reason_codes.append("macro_ism_supplier_deliveries_watch_surprise")
+    else:
+        reason_codes.append("macro_ism_supplier_deliveries_inline")
+
+    if observation.new_orders_confirmation >= config.new_orders_confirmation_threshold:
+        reason_codes.append("macro_ism_supplier_deliveries_new_orders_confirmation")
+    if observation.prices_paid_pressure >= config.prices_paid_pressure_threshold:
+        reason_codes.append("macro_ism_supplier_deliveries_prices_paid_pressure")
+    if observation.backlog_pressure >= config.backlog_pressure_threshold:
+        reason_codes.append("macro_ism_supplier_deliveries_backlog_pressure")
+    if observation.source_age_hours >= config.stale_source_age_hours:
+        reason_codes.append("macro_ism_supplier_deliveries_source_stale")
+    if observation.source_quorum_count < config.min_source_quorum_count:
+        reason_codes.append("macro_ism_supplier_deliveries_quorum_missing")
+    if observation.source_disagreement >= config.source_disagreement_threshold:
+        reason_codes.append("macro_ism_supplier_deliveries_source_disagreement")
+    if observation.upstream_reason_codes:
+        reason_codes.append("macro_ism_supplier_deliveries_upstream_reasons")
+    return _normalize_reason_codes("reason_codes", tuple(reason_codes), ROW_REASON_CODES)
+
+
+def _report_reason_codes(
+    rows: tuple[MacroIsmSupplierDeliveriesBottleneckDigestRow, ...],
+) -> tuple[str, ...]:
+    if not rows:
+        return ("macro_ism_supplier_deliveries_bottleneck_digest_empty",)
+    reason_codes: list[str] = []
+    if _reason_count(rows, "macro_ism_supplier_deliveries_blocked_surprise") > ZERO:
+        reason_codes.append("macro_ism_supplier_deliveries_bottleneck_blocked_present")
+    if _reason_count(rows, "macro_ism_supplier_deliveries_watch_surprise") > ZERO:
+        reason_codes.append("macro_ism_supplier_deliveries_bottleneck_watch_present")
+    if _reason_count(
+        rows,
+        "macro_ism_supplier_deliveries_new_orders_confirmation",
+    ) > ZERO:
+        reason_codes.append(
+            "macro_ism_supplier_deliveries_new_orders_confirmed_present",
+        )
+    if _reason_count(rows, "macro_ism_supplier_deliveries_prices_paid_pressure") > ZERO:
+        reason_codes.append("macro_ism_supplier_deliveries_prices_paid_pressure_present")
+    if _reason_count(rows, "macro_ism_supplier_deliveries_backlog_pressure") > ZERO:
+        reason_codes.append("macro_ism_supplier_deliveries_backlog_pressure_present")
+    if _reason_count(rows, "macro_ism_supplier_deliveries_source_stale") > ZERO:
+        reason_codes.append("macro_ism_supplier_deliveries_source_stale_present")
+    if _reason_count(rows, "macro_ism_supplier_deliveries_quorum_missing") > ZERO:
+        reason_codes.append("macro_ism_supplier_deliveries_quorum_gap_present")
+    if _reason_count(rows, "macro_ism_supplier_deliveries_source_disagreement") > ZERO:
+        reason_codes.append("macro_ism_supplier_deliveries_source_disagreement_present")
+    if _reason_count(rows, "macro_ism_supplier_deliveries_upstream_reasons") > ZERO:
+        reason_codes.append("macro_ism_supplier_deliveries_upstream_reasons_present")
+    if not reason_codes:
+        reason_codes.append("macro_ism_supplier_deliveries_bottleneck_digest_clear")
+    return tuple(reason for reason in REPORT_REASON_CODES if reason in reason_codes)
+
+
+def _reason_code_counts(
+    reason_codes: tuple[str, ...],
+    rows: tuple[MacroIsmSupplierDeliveriesBottleneckDigestRow, ...],
+) -> tuple[MacroIsmSupplierDeliveriesBottleneckReasonCodeCount, ...]:
+    row_count = _count_decimal(len(rows))
+    if reason_codes == ("macro_ism_supplier_deliveries_bottleneck_digest_empty",):
+        return (
+            MacroIsmSupplierDeliveriesBottleneckReasonCodeCount(
+                reason_code="macro_ism_supplier_deliveries_bottleneck_digest_empty",
+                count=ONE,
+                row_ratio=ZERO,
+            ),
+        )
+    return tuple(
+        MacroIsmSupplierDeliveriesBottleneckReasonCodeCount(
+            reason_code=reason_code,
+            count=_report_reason_row_count(reason_code, rows),
+            row_ratio=_ratio(_report_reason_row_count(reason_code, rows), row_count),
+        )
+        for reason_code in reason_codes
+    )
+
+
+def _report_reason_row_count(
+    reason_code: str,
+    rows: tuple[MacroIsmSupplierDeliveriesBottleneckDigestRow, ...],
+) -> Decimal:
+    row_reason_code = {
+        "macro_ism_supplier_deliveries_bottleneck_blocked_present": (
+            "macro_ism_supplier_deliveries_blocked_surprise"
+        ),
+        "macro_ism_supplier_deliveries_bottleneck_watch_present": (
+            "macro_ism_supplier_deliveries_watch_surprise"
+        ),
+        "macro_ism_supplier_deliveries_new_orders_confirmed_present": (
+            "macro_ism_supplier_deliveries_new_orders_confirmation"
+        ),
+        "macro_ism_supplier_deliveries_prices_paid_pressure_present": (
+            "macro_ism_supplier_deliveries_prices_paid_pressure"
+        ),
+        "macro_ism_supplier_deliveries_backlog_pressure_present": (
+            "macro_ism_supplier_deliveries_backlog_pressure"
+        ),
+        "macro_ism_supplier_deliveries_source_stale_present": (
+            "macro_ism_supplier_deliveries_source_stale"
+        ),
+        "macro_ism_supplier_deliveries_quorum_gap_present": (
+            "macro_ism_supplier_deliveries_quorum_missing"
+        ),
+        "macro_ism_supplier_deliveries_source_disagreement_present": (
+            "macro_ism_supplier_deliveries_source_disagreement"
+        ),
+        "macro_ism_supplier_deliveries_upstream_reasons_present": (
+            "macro_ism_supplier_deliveries_upstream_reasons"
+        ),
+        "macro_ism_supplier_deliveries_bottleneck_digest_clear": (
+            "macro_ism_supplier_deliveries_inline"
+        ),
+    }[reason_code]
+    return _reason_count(rows, row_reason_code)
+
+
+def _digest_status(rows: tuple[MacroIsmSupplierDeliveriesBottleneckDigestRow, ...]) -> str:
+    if not rows:
+        return "blocked"
+    if any(row.bottleneck_status == "blocked" for row in rows):
+        return "blocked"
+    if any(row.bottleneck_status == "watch" for row in rows):
+        return "watch"
+    return "pass"
+
+
+def _recommended_next_step(status: str) -> str:
+    if status == "pass":
+        return "allow_report_only_macro_ism_supplier_deliveries_bottleneck_screening"
+    if status == "watch":
+        return "monitor_report_only_macro_ism_supplier_deliveries_bottleneck_screening"
+    return "block_report_only_macro_ism_supplier_deliveries_bottleneck_screening"
+
+
+def _bottleneck_risk_score(
+    rows: tuple[MacroIsmSupplierDeliveriesBottleneckDigestRow, ...],
+) -> Decimal:
+    digest_status = _digest_status(rows)
+    if digest_status == "blocked":
+        return ONE if rows else ZERO
+    if digest_status == "watch":
+        return WATCH_RISK_SCORE
+    return ZERO
+
+
+def _has_blocking_source_quality_risk(
+    observation: MacroIsmSupplierDeliveriesBottleneckObservation,
+    *,
+    config: MacroIsmSupplierDeliveriesBottleneckDigestConfig,
+) -> bool:
+    return (
+        observation.source_age_hours >= config.stale_source_age_hours
+        or observation.source_quorum_count < config.min_source_quorum_count
+        or observation.source_disagreement >= config.source_disagreement_threshold
+    )
+
+
+def _bottleneck_count(
+    rows: tuple[MacroIsmSupplierDeliveriesBottleneckDigestRow, ...],
+) -> Decimal:
+    return _count_decimal(
+        sum(
+            1
+            for row in rows
+            if "macro_ism_supplier_deliveries_blocked_surprise" in row.reason_codes
+            or "macro_ism_supplier_deliveries_watch_surprise" in row.reason_codes
+        ),
+    )
+
+
+def _inflation_pressure_count(
+    rows: tuple[MacroIsmSupplierDeliveriesBottleneckDigestRow, ...],
+) -> Decimal:
+    return _count_decimal(
+        sum(
+            1
+            for row in rows
+            if "macro_ism_supplier_deliveries_prices_paid_pressure" in row.reason_codes
+            or "macro_ism_supplier_deliveries_backlog_pressure" in row.reason_codes
+        ),
+    )
+
+
+def _quorum_disagreement_count(
+    rows: tuple[MacroIsmSupplierDeliveriesBottleneckDigestRow, ...],
+) -> Decimal:
+    return _count_decimal(
+        sum(
+            1
+            for row in rows
+            if "macro_ism_supplier_deliveries_quorum_missing" in row.reason_codes
+            or "macro_ism_supplier_deliveries_source_disagreement" in row.reason_codes
+        ),
+    )
+
+
+def _validate_row(row: MacroIsmSupplierDeliveriesBottleneckDigestRow) -> None:
+    if row.positive_supplier_deliveries_surprise != _positive_decimal(
+        row.supplier_deliveries_index_surprise,
+    ):
+        raise ValueError(
+            "positive_supplier_deliveries_surprise must match "
+            "supplier_deliveries_index_surprise",
+        )
+    has_blocked_surprise = (
+        "macro_ism_supplier_deliveries_blocked_surprise" in row.reason_codes
+    )
+    has_watch_surprise = "macro_ism_supplier_deliveries_watch_surprise" in row.reason_codes
+    has_inline = "macro_ism_supplier_deliveries_inline" in row.reason_codes
+    has_source_quality_risk = any(
+        reason_code in row.reason_codes
+        for reason_code in (
+            "macro_ism_supplier_deliveries_source_stale",
+            "macro_ism_supplier_deliveries_quorum_missing",
+            "macro_ism_supplier_deliveries_source_disagreement",
+        )
+    )
+    if sum((has_blocked_surprise, has_watch_surprise, has_inline)) != 1:
+        raise ValueError("reason_codes must match supplier delivery surprise state")
+    if has_blocked_surprise and row.bottleneck_status != "blocked":
+        raise ValueError("reason_codes must match bottleneck_status")
+    if has_watch_surprise and row.bottleneck_status != "watch":
+        raise ValueError("reason_codes must match bottleneck_status")
+    if row.bottleneck_status == "blocked" and not (
+        has_blocked_surprise or has_source_quality_risk
+    ):
+        raise ValueError("reason_codes must match bottleneck_status")
+    if row.bottleneck_status == "watch" and not has_watch_surprise:
+        raise ValueError("reason_codes must match bottleneck_status")
+    if row.bottleneck_status == "pass" and not has_inline:
+        raise ValueError("reason_codes must match bottleneck_status")
+    if (
+        bool(row.upstream_reason_codes)
+        != ("macro_ism_supplier_deliveries_upstream_reasons" in row.reason_codes)
+    ):
+        raise ValueError("reason_codes must match upstream_reason_codes")
+
+
+def _validate_report(report: MacroIsmSupplierDeliveriesBottleneckDigestReport) -> None:
+    if report.row_count != _count_decimal(len(report.rows)):
+        raise ValueError("row_count must match rows")
+    if report.input_count != report.row_count:
+        raise ValueError("input_count must match rows")
+    if report.blocked_count != _status_count(report.rows, "blocked"):
+        raise ValueError("blocked_count must match rows")
+    if report.watch_count != _status_count(report.rows, "watch"):
+        raise ValueError("watch_count must match rows")
+    if report.pass_count != _status_count(report.rows, "pass"):
+        raise ValueError("pass_count must match rows")
+    if report.blocked_count + report.watch_count + report.pass_count != report.row_count:
+        raise ValueError("status counts must match rows")
+    if report.bottleneck_count != _bottleneck_count(report.rows):
+        raise ValueError("bottleneck_count must match rows")
+    if report.inflation_pressure_count != _inflation_pressure_count(report.rows):
+        raise ValueError("inflation_pressure_count must match rows")
+    if report.quorum_disagreement_count != _quorum_disagreement_count(report.rows):
+        raise ValueError("quorum_disagreement_count must match rows")
+    if report.stale_source_count != _reason_count(
+        report.rows,
+        "macro_ism_supplier_deliveries_source_stale",
+    ):
+        raise ValueError("stale_source_count must match rows")
+    if report.max_supplier_deliveries_surprise != _max_row_decimal(
+        report.rows,
+        "positive_supplier_deliveries_surprise",
+    ):
+        raise ValueError("max_supplier_deliveries_surprise must match rows")
+    if report.average_supplier_deliveries_surprise != _ratio(
+        _sum_decimal(row.positive_supplier_deliveries_surprise for row in report.rows),
+        report.row_count,
+    ):
+        raise ValueError("average_supplier_deliveries_surprise must match rows")
+    if report.digest_status != _digest_status(report.rows):
+        raise ValueError("digest_status must match rows")
+    if report.bottleneck_risk_score != _bottleneck_risk_score(report.rows):
+        raise ValueError("bottleneck_risk_score must match rows")
+    if report.recommended_next_step != _recommended_next_step(report.digest_status):
+        raise ValueError("recommended_next_step must match digest_status")
+    if report.reason_codes != _report_reason_codes(report.rows):
+        raise ValueError("reason_codes must match rows")
+    if report.reason_code_counts != _reason_code_counts(report.reason_codes, report.rows):
+        raise ValueError("reason_code_counts must match reason_codes")
+
+
+def _normalize_observations(
+    observations: Iterable[MacroIsmSupplierDeliveriesBottleneckObservation],
+) -> tuple[MacroIsmSupplierDeliveriesBottleneckObservation, ...]:
+    if isinstance(observations, (str, bytes)) or not isinstance(observations, Iterable):
+        raise ValueError(
+            "observations must contain MacroIsmSupplierDeliveriesBottleneckObservation",
+        )
+    normalized = tuple(observations)
+    seen_source_ids: set[str] = set()
+    for observation in normalized:
+        if type(observation) is not MacroIsmSupplierDeliveriesBottleneckObservation:
+            raise ValueError(
+                "observations must contain "
+                "MacroIsmSupplierDeliveriesBottleneckObservation",
+            )
+        _require_hard_flags("observation", observation)
+        if observation.source_id in seen_source_ids:
+            raise ValueError("observations must not contain duplicate source_id values")
+        seen_source_ids.add(observation.source_id)
+    return normalized
+
+
+def _normalize_rows(
+    rows: Iterable[MacroIsmSupplierDeliveriesBottleneckDigestRow],
+) -> tuple[MacroIsmSupplierDeliveriesBottleneckDigestRow, ...]:
+    if isinstance(rows, (str, bytes)) or not isinstance(rows, Iterable):
+        raise ValueError("rows must contain MacroIsmSupplierDeliveriesBottleneckDigestRow")
+    normalized = tuple(rows)
+    seen_source_ids: set[str] = set()
+    for row in normalized:
+        if type(row) is not MacroIsmSupplierDeliveriesBottleneckDigestRow:
+            raise ValueError(
+                "rows must contain MacroIsmSupplierDeliveriesBottleneckDigestRow",
+            )
+        _require_hard_flags("row", row)
+        if row.source_id in seen_source_ids:
+            raise ValueError("rows must not contain duplicate source_id values")
+        seen_source_ids.add(row.source_id)
+    return tuple(sorted(normalized, key=_row_sort_key))
+
+
+def _normalize_reason_code_counts(
+    values: Iterable[MacroIsmSupplierDeliveriesBottleneckReasonCodeCount],
+) -> tuple[MacroIsmSupplierDeliveriesBottleneckReasonCodeCount, ...]:
+    if isinstance(values, (str, bytes)) or not isinstance(values, Iterable):
+        raise ValueError("reason_code_counts must contain reason code counts")
+    normalized = tuple(values)
+    for value in normalized:
+        if type(value) is not MacroIsmSupplierDeliveriesBottleneckReasonCodeCount:
+            raise ValueError(
+                "reason_code_counts must contain "
+                "MacroIsmSupplierDeliveriesBottleneckReasonCodeCount",
+            )
+        _require_hard_flags("reason code count", value)
+    return tuple(
+        sorted(normalized, key=lambda value: REPORT_REASON_CODES.index(value.reason_code)),
+    )
+
+
+def _normalize_open_reason_codes(
+    field_name: str,
+    values: Iterable[str],
+) -> tuple[str, ...]:
+    if isinstance(values, (str, bytes)) or not isinstance(values, Iterable):
+        raise ValueError(f"{field_name} must contain reason code strings")
+    normalized: list[str] = []
+    for value in values:
+        _require_canonical_string("reason_code", value)
+        if value not in normalized:
+            normalized.append(value)
+    return tuple(sorted(normalized))
+
+
+def _normalize_reason_codes(
+    field_name: str,
+    values: Iterable[str],
+    allowed: tuple[str, ...],
+) -> tuple[str, ...]:
+    if isinstance(values, (str, bytes)) or not isinstance(values, Iterable):
+        raise ValueError(f"{field_name} must contain reason code strings")
+    normalized = tuple(values)
+    for value in normalized:
+        _require_member("reason_code", value, allowed)
+    if len(set(normalized)) != len(normalized):
+        raise ValueError(f"{field_name} must be unique")
+    return tuple(sorted(normalized, key=lambda value: allowed.index(value)))
+
+
+def _row_sort_key(
+    row: MacroIsmSupplierDeliveriesBottleneckDigestRow,
+) -> tuple[Decimal, Decimal, str, str]:
+    return (
+        STATUS_RANK[row.bottleneck_status],
+        -row.positive_supplier_deliveries_surprise,
+        row.market_slug,
+        row.source_id,
+    )
+
+
+def _status_count(
+    rows: tuple[MacroIsmSupplierDeliveriesBottleneckDigestRow, ...],
+    status: str,
+) -> Decimal:
+    return _count_decimal(sum(1 for row in rows if row.bottleneck_status == status))
+
+
+def _reason_count(
+    rows: tuple[MacroIsmSupplierDeliveriesBottleneckDigestRow, ...],
+    reason_code: str,
+) -> Decimal:
+    return _count_decimal(sum(1 for row in rows if reason_code in row.reason_codes))
+
+
+def _max_row_decimal(
+    rows: tuple[MacroIsmSupplierDeliveriesBottleneckDigestRow, ...],
+    field_name: str,
+) -> Decimal:
+    if not rows:
+        return ZERO
+    return max(getattr(row, field_name) for row in rows)
+
+
+def _sum_decimal(values: Iterable[Decimal]) -> Decimal:
+    total = ZERO
+    for value in values:
+        if type(value) is not Decimal:
+            raise ValueError("values must be Decimals")
+        total += value
+    return _quantize_decimal(total)
+
+
+def _ratio(numerator: Decimal, denominator: Decimal) -> Decimal:
+    if denominator == ZERO:
+        return ZERO
+    with localcontext(DECIMAL_CONTEXT):
+        return _quantize_decimal(numerator / denominator)
+
+
+def _count_decimal(value: int) -> Decimal:
+    return _quantize_decimal(Decimal(value))
+
+
+def _positive_decimal(value: Decimal) -> Decimal:
+    if type(value) is not Decimal:
+        raise ValueError("value must be a Decimal")
+    if value <= ZERO:
+        return ZERO
+    return _quantize_decimal(value)
+
+
+def _require_ratio(field_name: str, value: object) -> Decimal:
+    decimal_value = _require_nonnegative_decimal(field_name, value)
+    if decimal_value > ONE:
+        raise ValueError(f"{field_name} must be between zero and one")
+    return decimal_value
+
+
+def _require_positive_decimal(field_name: str, value: object) -> Decimal:
+    decimal_value = _require_decimal(field_name, value)
+    if decimal_value <= ZERO:
+        raise ValueError(f"{field_name} must be positive")
+    return decimal_value
+
+
+def _require_nonnegative_decimal(field_name: str, value: object) -> Decimal:
+    decimal_value = _require_decimal(field_name, value)
+    if decimal_value < ZERO:
+        raise ValueError(f"{field_name} must be nonnegative")
+    return decimal_value
+
+
+def _require_decimal(field_name: str, value: object) -> Decimal:
+    if type(value) is not Decimal:
+        raise ValueError(f"{field_name} must be a Decimal")
+    if not value.is_finite():
+        raise ValueError(f"{field_name} must be finite")
+    return _quantize_decimal(value)
+
+
+def _quantize_decimal(value: Decimal) -> Decimal:
+    with localcontext(DECIMAL_CONTEXT):
+        return value.quantize(QUANTUM)
+
+
+def _as_utc(field_name: str, value: object) -> datetime:
+    if type(value) is not datetime:
+        raise ValueError(f"{field_name} must be a datetime")
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError(f"{field_name} must be timezone-aware")
+    return value.astimezone(UTC)
+
+
+def _require_member(field_name: str, value: object, allowed: tuple[str, ...]) -> None:
+    _require_canonical_string(field_name, value)
+    if value not in allowed:
+        raise ValueError(f"{field_name} must be supported")
+
+
+def _require_canonical_string(field_name: str, value: object) -> None:
+    if type(value) is not str:
+        raise ValueError(f"{field_name} must be a string")
+    if not value or value.strip() != value or _CANONICAL_RE.fullmatch(value) is None:
+        raise ValueError(f"{field_name} must be a canonical nonblank string")
+
+
+def _require_hard_flags(field_name: str, value: object) -> None:
+    if getattr(value, "paper_only", None) is not True:
+        raise ValueError(f"{field_name} paper_only must be True")
+    if getattr(value, "report_only", None) is not True:
+        raise ValueError(f"{field_name} report_only must be True")
+    if getattr(value, "readonly", None) is not True:
+        raise ValueError(f"{field_name} readonly must be True")
+
+
+def _require_exact_type(value: object, expected_type: type[object], field_name: str) -> None:
+    if type(value) is not expected_type:
+        raise ValueError(f"{field_name} must be exactly {expected_type.__name__}")
+
+
+def _payload_value(value: object) -> Any:
+    if isinstance(value, Decimal):
+        return format(value, "f")
+    if type(value) is datetime:
+        return value.isoformat()
+    if is_dataclass(value) and not isinstance(value, type):
+        return {
+            field.name: _payload_value(getattr(value, field.name))
+            for field in fields(value)
+        }
+    if isinstance(value, tuple):
+        return [_payload_value(item) for item in value]
+    return value
