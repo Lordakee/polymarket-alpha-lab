@@ -963,7 +963,10 @@ def _require_ratio_decimal(field_name: str, value: Decimal) -> Decimal:
 def _require_decimal(field_name: str, value: Decimal) -> Decimal:
     if type(value) is not Decimal or not value.is_finite():
         raise ValueError(f"{field_name} must be a finite Decimal")
-    return _quantize(value)
+    decimal_value = _quantize(value)
+    if decimal_value != value or not value.same_quantum(QUANT):
+        raise ValueError(f"{field_name} must be quantized to six decimals")
+    return value
 
 
 def _as_utc(field_name: str, value: datetime) -> datetime:

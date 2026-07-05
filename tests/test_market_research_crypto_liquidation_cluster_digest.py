@@ -418,6 +418,24 @@ def test_liquidation_cluster_digest_public_numeric_fields_are_decimal_only() -> 
         )
 
 
+def test_liquidation_cluster_digest_rejects_non_canonical_decimal_inputs() -> None:
+    report = _report(_snapshot())
+    row = report.rows[0]
+
+    with pytest.raises(ValueError, match="six decimals"):
+        _config(min_confidence=d("0.7000001"))
+    with pytest.raises(ValueError, match="six decimals"):
+        _snapshot(long_liquidation_usd=d("6000000.0000001"))
+    with pytest.raises(ValueError, match="six decimals"):
+        replace(row, total_liquidation_usd=d("11000000.0000001"))
+    with pytest.raises(ValueError, match="six decimals"):
+        MarketResearchCryptoLiquidationClusterDigestReasonCodeCount(
+            reason_code="market_research_crypto_liquidation_cluster_digest_ready",
+            count=d("1.0000001"),
+            snapshot_ratio=d("1.000000"),
+        )
+
+
 def test_liquidation_cluster_digest_payload_is_immutable_redacted_and_report_only() -> None:
     payload = market_research_crypto_liquidation_cluster_digest_payload(
         _report(
