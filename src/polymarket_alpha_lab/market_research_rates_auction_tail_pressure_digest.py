@@ -888,6 +888,7 @@ def _revalidate_report_for_payload(report: RatesAuctionTailPressureDigestReport)
         _revalidate_row_for_payload(row)
     for count in report.reason_code_counts:
         _revalidate_reason_code_count_for_payload(count)
+    _rebuild_public_dataclass(report, RatesAuctionTailPressureDigestReport)
     _validate_report(report)
 
 
@@ -899,6 +900,7 @@ def _revalidate_row_for_payload(row: RatesAuctionTailPressureDigestRow) -> None:
     _require_member("pressure_status", row.pressure_status, PRESSURE_STATUSES)
     if _normalize_reason_codes(row.reason_codes) != row.reason_codes:
         raise ValueError("reason_codes must be canonical sorted unique reason codes")
+    _rebuild_public_dataclass(row, RatesAuctionTailPressureDigestRow)
     _validate_row(row)
     _require_hard_flags(row)
 
@@ -915,6 +917,7 @@ def _revalidate_reason_code_count_for_payload(
     _require_canonical_string("reason_code", count.reason_code)
     if count.count == ZERO:
         raise ValueError("count must be positive")
+    _rebuild_public_dataclass(count, RatesAuctionTailPressureReasonCodeCount)
     _require_hard_flags(count)
 
 
@@ -924,13 +927,19 @@ def _require_payload_direct_fields(value: object) -> None:
         if isinstance(field_value, Decimal):
             _require_six_decimal(field.name, field_value)
         elif isinstance(field_value, datetime):
-            _as_utc(field.name, field_value)
+            _require_normalized_utc_datetime(field.name, field_value)
         elif type(field_value) is int:
             raise ValueError(f"{field.name} must use Decimal values")
         elif isinstance(field_value, float):
             raise ValueError(f"{field.name} must not be a float")
         elif type(field_value) in (list, dict, set):
             raise ValueError(f"{field.name} must remain constructor-normalized")
+
+
+def _rebuild_public_dataclass(value: object, expected_type: type[object]) -> None:
+    expected_type(
+        **{field.name: getattr(value, field.name) for field in fields(value)},
+    )
 
 
 def _require_exact_type(value: object, expected_type: type[object], field_name: str) -> None:
@@ -1056,7 +1065,8 @@ def _payload_value(value: Any, *, field_name: str = "payload") -> Any:
     if isinstance(value, Decimal):
         raise ValueError(f"{field_name} must be a Decimal")
     if type(value) is datetime:
-        return _as_utc(field_name, value).isoformat()
+        _require_normalized_utc_datetime(field_name, value)
+        return value.isoformat()
     if isinstance(value, datetime):
         raise ValueError(f"{field_name} must be a datetime")
     if is_dataclass(value) and not isinstance(value, type):
@@ -1081,3 +1091,12 @@ def _payload_value(value: Any, *, field_name: str = "payload") -> Any:
     if type(value) is int:
         raise ValueError("payload must not contain raw integers")
     return value
+
+
+def _require_normalized_utc_datetime(field_name: str, value: object) -> None:
+    if type(value) is not datetime:
+        raise ValueError(f"{field_name} must be a datetime")
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError(f"{field_name} must be UTC-aware")
+    if value.tzinfo is not UTC:
+        raise ValueError(f"{field_name} must be normalized UTC")

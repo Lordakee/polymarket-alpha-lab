@@ -507,6 +507,43 @@ def test_payload_revalidates_nested_public_dataclasses_before_serialization() ->
             count_decimal_report,
         )
 
+    source_age_report = digest((observation("payload-row-source-age"),))
+    object.__setattr__(
+        source_age_report.rows[0],
+        "source_age_seconds",
+        d("-1.000000"),
+    )
+    with pytest.raises(ValueError, match="source_age_seconds.*nonnegative"):
+        module.market_research_rates_auction_tail_pressure_digest_payload(
+            source_age_report,
+        )
+
+
+def test_payload_rejects_non_utc_payload_times_without_normalizing() -> None:
+    module = api()
+
+    generated_at_report = digest((observation("payload-generated-time"),))
+    object.__setattr__(
+        generated_at_report,
+        "generated_at",
+        datetime(2026, 7, 5, 7, 0, tzinfo=timezone(timedelta(hours=-5))),
+    )
+    with pytest.raises(ValueError, match="generated_at.*normalized UTC"):
+        module.market_research_rates_auction_tail_pressure_digest_payload(
+            generated_at_report,
+        )
+
+    observed_at_report = digest((observation("payload-observed-time"),))
+    object.__setattr__(
+        observed_at_report.rows[0],
+        "observed_at",
+        datetime(2026, 7, 5, 6, 59, tzinfo=timezone(timedelta(hours=-5))),
+    )
+    with pytest.raises(ValueError, match="observed_at.*normalized UTC"):
+        module.market_research_rates_auction_tail_pressure_digest_payload(
+            observed_at_report,
+        )
+
 
 def test_module_scope_is_pure_and_unwired_to_io_storage_auth_or_trading_surfaces() -> None:
     module = api()
