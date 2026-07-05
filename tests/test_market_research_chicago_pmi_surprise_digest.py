@@ -1,0 +1,643 @@
+from __future__ import annotations
+
+import ast
+import json
+from dataclasses import FrozenInstanceError, fields, is_dataclass, replace
+from datetime import UTC, datetime, timedelta, timezone, tzinfo
+from decimal import Decimal
+from pathlib import Path
+
+import pytest
+
+from polymarket_alpha_lab.market_research_chicago_pmi_surprise_digest import (
+    DEFAULT_MARKET_RESEARCH_CHICAGO_PMI_SURPRISE_DIGEST_CONFIG_VERSION,
+    MarketResearchChicagoPmiSurpriseDigestConfig,
+    MarketResearchChicagoPmiSurpriseDigestReasonCodeCount,
+    MarketResearchChicagoPmiSurpriseDigestReport,
+    MarketResearchChicagoPmiSurpriseDigestRow,
+    MarketResearchChicagoPmiSurpriseDigestSignal,
+    build_market_research_chicago_pmi_surprise_digest,
+    market_research_chicago_pmi_surprise_digest_payload,
+)
+
+
+GENERATED_AT = datetime(2026, 7, 3, 14, 30, tzinfo=UTC)
+
+
+class _DecimalSubclass(Decimal):
+    pass
+
+
+class _NoneOffsetTz(tzinfo):
+    def utcoffset(self, dt: datetime | None) -> None:
+        return None
+
+    def dst(self, dt: datetime | None) -> None:
+        return None
+
+
+def d(value: str) -> Decimal:
+    return Decimal(value)
+
+
+def config(**overrides: object) -> MarketResearchChicagoPmiSurpriseDigestConfig:
+    values = {
+        "config_version": DEFAULT_MARKET_RESEARCH_CHICAGO_PMI_SURPRISE_DIGEST_CONFIG_VERSION,
+        "max_signal_age_seconds": d("7200.000000"),
+        "min_source_count": d("2.000000"),
+        "material_surprise_threshold": d("0.250000"),
+        "max_revision_ratio": d("0.200000"),
+        "min_confirmation_ratio": d("0.700000"),
+        "regional_single_source_decay": d("0.250000"),
+        "stale_confidence_decay": d("0.200000"),
+        "thin_source_confidence_decay": d("0.150000"),
+        "revision_confidence_decay": d("0.100000"),
+        "confirmation_confidence_decay": d("0.200000"),
+    }
+    values.update(overrides)
+    return MarketResearchChicagoPmiSurpriseDigestConfig(**values)
+
+
+def signal(
+    research_key: str = "research.chicago_pmi.official",
+    *,
+    condition_id: str = "condition_chicago_pmi_ready",
+    release_key: str = "chicago.business.barometer",
+    public_signal_reference: str = "chicago-pmi-public-release",
+    observed_at: datetime | None = None,
+    expected_pmi: Decimal = d("50.800000"),
+    actual_pmi: Decimal = d("51.100000"),
+    surprise_score: Decimal = d("0.060000"),
+    source_count: Decimal = d("3.000000"),
+    revision_ratio: Decimal = d("0.020000"),
+    confirmation_ratio: Decimal = d("0.820000"),
+    base_confidence: Decimal = d("0.900000"),
+    signal_config_version: str = "chicago-pmi-signal-v0",
+    paper_only: bool = True,
+    report_only: bool = True,
+    readonly: bool = True,
+) -> MarketResearchChicagoPmiSurpriseDigestSignal:
+    return MarketResearchChicagoPmiSurpriseDigestSignal(
+        condition_id=condition_id,
+        research_key=research_key,
+        release_key=release_key,
+        public_signal_reference=public_signal_reference,
+        observed_at=observed_at or GENERATED_AT - timedelta(minutes=45),
+        expected_pmi=expected_pmi,
+        actual_pmi=actual_pmi,
+        surprise_score=surprise_score,
+        source_count=source_count,
+        revision_ratio=revision_ratio,
+        confirmation_ratio=confirmation_ratio,
+        base_confidence=base_confidence,
+        signal_config_version=signal_config_version,
+        paper_only=paper_only,
+        report_only=report_only,
+        readonly=readonly,
+    )
+
+
+def report(
+    signals: tuple[MarketResearchChicagoPmiSurpriseDigestSignal, ...],
+    *,
+    cfg: MarketResearchChicagoPmiSurpriseDigestConfig | None = None,
+    generated_at: datetime = GENERATED_AT,
+) -> MarketResearchChicagoPmiSurpriseDigestReport:
+    return build_market_research_chicago_pmi_surprise_digest(
+        signals,
+        config=cfg or config(),
+        generated_at=generated_at,
+    )
+
+
+def _assert_public_numeric_fields_are_exact_decimals(instance: object) -> None:
+    for field in fields(instance):
+        value = getattr(instance, field.name)
+        if field.name.endswith(
+            (
+                "_count",
+                "_ratio",
+                "_score",
+                "_seconds",
+                "_threshold",
+                "_decay",
+                "_confidence",
+                "_pmi",
+                "_delta",
+            ),
+        ):
+            assert type(value) is Decimal, (field.name, value, type(value))
+
+
+def _walk_payload(value: object) -> None:
+    if isinstance(value, dict):
+        for key, child in value.items():
+            lowered = key.lower()
+            assert "private_key" not in lowered
+            assert "wallet" not in lowered
+            assert "order" not in lowered
+            assert "auth" not in lowered
+            _walk_payload(child)
+    elif isinstance(value, list):
+        for child in value:
+            _walk_payload(child)
+    else:
+        assert not isinstance(value, (Decimal, datetime, float))
+
+
+def _assert_six_decimal_string(value: object) -> None:
+    assert isinstance(value, str)
+    before, separator, after = value.partition(".")
+    assert before
+    assert separator == "."
+    assert len(after) == 6
+    Decimal(value)
+
+
+def test_chicago_pmi_surprise_digest_reduces_signals_with_utc_and_stable_reasons() -> None:
+    summary = report(
+        (
+            signal(
+                "research.chicago_pmi.ready",
+                condition_id="condition_ready",
+                release_key="chicago.pmi.official",
+                public_signal_reference="chicago-pmi-release",
+                observed_at=(GENERATED_AT - timedelta(minutes=45)).astimezone(
+                    timezone(timedelta(hours=2)),
+                ),
+            ),
+            signal(
+                "research.chicago_pmi.material_watch",
+                condition_id="condition_watch",
+                release_key="chicago.pmi.vendor_crosscheck",
+                public_signal_reference="https://vendor.example/chicago-pmi?token=secret-123",
+                observed_at=GENERATED_AT - timedelta(minutes=80),
+                expected_pmi=d("51.200000"),
+                actual_pmi=d("49.600000"),
+                surprise_score=d("0.320000"),
+                source_count=d("3.000000"),
+                revision_ratio=d("0.260000"),
+                confirmation_ratio=d("0.760000"),
+                base_confidence=d("0.850000"),
+                signal_config_version="chicago-pmi-signal-watch-v0",
+            ),
+            signal(
+                "research.chicago_pmi.blocked",
+                condition_id="condition_blocked",
+                release_key="chicago.pmi.private_feed",
+                public_signal_reference="private-chicago-pmi-feed",
+                observed_at=GENERATED_AT - timedelta(hours=5),
+                expected_pmi=d("50.500000"),
+                actual_pmi=d("46.800000"),
+                surprise_score=d("0.740000"),
+                source_count=d("1.000000"),
+                revision_ratio=d("0.100000"),
+                confirmation_ratio=d("0.500000"),
+                base_confidence=d("0.700000"),
+                signal_config_version="chicago-pmi-signal-private-v0",
+            ),
+        ),
+        generated_at=GENERATED_AT.astimezone(timezone(timedelta(hours=-4))),
+    )
+
+    assert isinstance(summary, MarketResearchChicagoPmiSurpriseDigestReport)
+    assert is_dataclass(summary)
+    assert summary.generated_at == GENERATED_AT
+    assert summary.generated_at.tzinfo is UTC
+    assert summary.config_version == (
+        DEFAULT_MARKET_RESEARCH_CHICAGO_PMI_SURPRISE_DIGEST_CONFIG_VERSION
+    )
+    assert summary.digest_status == "blocked"
+    assert summary.recommended_next_step == (
+        "block_report_only_market_research_chicago_pmi_surprise_digest"
+    )
+    assert summary.signal_count == d("3.000000")
+    assert summary.ready_signal_count == d("1.000000")
+    assert summary.watch_signal_count == d("1.000000")
+    assert summary.blocked_signal_count == d("1.000000")
+    assert summary.stale_signal_count == d("1.000000")
+    assert summary.material_surprise_count == d("2.000000")
+    assert summary.thin_source_count == d("1.000000")
+    assert summary.high_revision_count == d("1.000000")
+    assert summary.confirmation_gap_count == d("1.000000")
+    assert summary.regional_single_source_count == d("1.000000")
+    assert summary.average_surprise_score == d("0.373333")
+    assert summary.average_final_confidence == d("0.550000")
+    assert summary.max_observed_signal_age_seconds == d("18000.000000")
+    assert summary.paper_only is True
+    assert summary.report_only is True
+    assert summary.readonly is True
+
+    assert tuple((row.digest_status, row.release_key) for row in summary.rows) == (
+        ("blocked", "chicago.pmi.private_feed"),
+        ("watch", "chicago.pmi.vendor_crosscheck"),
+        ("ready", "chicago.pmi.official"),
+    )
+
+    blocked = summary.rows[0]
+    assert isinstance(blocked, MarketResearchChicagoPmiSurpriseDigestRow)
+    assert blocked.observed_at == GENERATED_AT - timedelta(hours=5)
+    assert blocked.observed_at.tzinfo is UTC
+    assert blocked.signal_age_seconds == d("18000.000000")
+    assert blocked.surprise_delta == d("-3.700000")
+    assert blocked.confidence_decay_factor == d("0.800000")
+    assert blocked.final_confidence == d("0.000000")
+    assert blocked.reason_codes == (
+        "market_research_chicago_pmi_surprise_digest_confirmation_gap",
+        "market_research_chicago_pmi_surprise_digest_material_surprise",
+        "market_research_chicago_pmi_surprise_digest_regional_single_source",
+        "market_research_chicago_pmi_surprise_digest_stale_signal",
+        "market_research_chicago_pmi_surprise_digest_thin_sources",
+    )
+
+    watched = summary.rows[1]
+    assert watched.redacted_public_signal_reference == "sha256:328bc2d5fa78"
+    assert watched.signal_age_seconds == d("4800.000000")
+    assert watched.surprise_delta == d("-1.600000")
+    assert watched.confidence_decay_factor == d("0.100000")
+    assert watched.final_confidence == d("0.750000")
+    assert watched.reason_codes == (
+        "market_research_chicago_pmi_surprise_digest_high_revision",
+        "market_research_chicago_pmi_surprise_digest_material_surprise",
+    )
+
+    ready = summary.rows[2]
+    assert ready.observed_at == GENERATED_AT - timedelta(minutes=45)
+    assert ready.reason_codes == (
+        "market_research_chicago_pmi_surprise_digest_ready",
+    )
+    assert ready.redacted_public_signal_reference == "chicago-pmi-release"
+    assert ready.final_confidence == d("0.900000")
+
+    assert summary.reason_code_counts == (
+        MarketResearchChicagoPmiSurpriseDigestReasonCodeCount(
+            reason_code="market_research_chicago_pmi_surprise_digest_material_surprise",
+            count=d("2.000000"),
+            signal_ratio=d("0.666667"),
+        ),
+        MarketResearchChicagoPmiSurpriseDigestReasonCodeCount(
+            reason_code="market_research_chicago_pmi_surprise_digest_confirmation_gap",
+            count=d("1.000000"),
+            signal_ratio=d("0.333333"),
+        ),
+        MarketResearchChicagoPmiSurpriseDigestReasonCodeCount(
+            reason_code="market_research_chicago_pmi_surprise_digest_high_revision",
+            count=d("1.000000"),
+            signal_ratio=d("0.333333"),
+        ),
+        MarketResearchChicagoPmiSurpriseDigestReasonCodeCount(
+            reason_code="market_research_chicago_pmi_surprise_digest_regional_single_source",
+            count=d("1.000000"),
+            signal_ratio=d("0.333333"),
+        ),
+        MarketResearchChicagoPmiSurpriseDigestReasonCodeCount(
+            reason_code="market_research_chicago_pmi_surprise_digest_stale_signal",
+            count=d("1.000000"),
+            signal_ratio=d("0.333333"),
+        ),
+        MarketResearchChicagoPmiSurpriseDigestReasonCodeCount(
+            reason_code="market_research_chicago_pmi_surprise_digest_thin_sources",
+            count=d("1.000000"),
+            signal_ratio=d("0.333333"),
+        ),
+        MarketResearchChicagoPmiSurpriseDigestReasonCodeCount(
+            reason_code="market_research_chicago_pmi_surprise_digest_ready",
+            count=d("1.000000"),
+            signal_ratio=d("0.333333"),
+        ),
+    )
+    assert summary.reason_codes == tuple(
+        item.reason_code for item in summary.reason_code_counts
+    )
+    assert summary.signal_config_versions == (
+        ("chicago.pmi.official", "chicago-pmi-signal-v0"),
+        ("chicago.pmi.private_feed", "chicago-pmi-signal-private-v0"),
+        ("chicago.pmi.vendor_crosscheck", "chicago-pmi-signal-watch-v0"),
+    )
+
+    for instance in (
+        summary,
+        summary.rows[0],
+        summary.reason_code_counts[0],
+        config(),
+        signal(),
+    ):
+        _assert_public_numeric_fields_are_exact_decimals(instance)
+
+
+def test_chicago_pmi_surprise_digest_empty_inputs_are_blocked_report_only() -> None:
+    summary = report(())
+
+    assert summary.digest_status == "blocked"
+    assert summary.recommended_next_step == (
+        "block_report_only_market_research_chicago_pmi_surprise_digest"
+    )
+    assert summary.signal_count == d("0.000000")
+    assert summary.ready_signal_count == d("0.000000")
+    assert summary.watch_signal_count == d("0.000000")
+    assert summary.blocked_signal_count == d("0.000000")
+    assert summary.rows == ()
+    assert summary.reason_codes == (
+        "market_research_chicago_pmi_surprise_digest_no_inputs",
+    )
+    assert summary.reason_code_counts == (
+        MarketResearchChicagoPmiSurpriseDigestReasonCodeCount(
+            reason_code="market_research_chicago_pmi_surprise_digest_no_inputs",
+            count=d("1.000000"),
+            signal_ratio=d("0.000000"),
+        ),
+    )
+    assert summary.paper_only is True
+    assert summary.report_only is True
+    assert summary.readonly is True
+
+
+def test_chicago_pmi_surprise_digest_frozen_payload_and_validation_guards() -> None:
+    summary = report((signal(),))
+
+    with pytest.raises(FrozenInstanceError):
+        summary.digest_status = "watch"  # type: ignore[misc]
+    with pytest.raises(FrozenInstanceError):
+        summary.rows[0].digest_status = "watch"  # type: ignore[misc]
+
+    payload = market_research_chicago_pmi_surprise_digest_payload(summary)
+    json.dumps(payload, sort_keys=True)
+    assert payload["generated_at"] == GENERATED_AT.isoformat()
+    assert payload["signal_count"] == "1.000000"
+    assert payload["rows"][0]["actual_pmi"] == "51.100000"  # type: ignore[index]
+    _walk_payload(payload)
+    _assert_six_decimal_string(payload["signal_count"])
+    _assert_six_decimal_string(payload["average_final_confidence"])
+    _assert_six_decimal_string(payload["rows"][0]["actual_pmi"])  # type: ignore[index]
+
+    with pytest.raises(ValueError, match="paper_only"):
+        signal(paper_only=False)
+    with pytest.raises(ValueError, match="readonly"):
+        config(readonly=False)
+    with pytest.raises(ValueError, match="aware datetime"):
+        signal(observed_at=datetime(2026, 7, 3, 14, 0))
+    with pytest.raises(ValueError, match="exact Decimal"):
+        signal(expected_pmi=_DecimalSubclass("50.000000"))
+    with pytest.raises(ValueError, match="unique"):
+        report(
+            (
+                signal(release_key="duplicate.chicago.pmi"),
+                signal(release_key="duplicate.chicago.pmi"),
+            ),
+        )
+
+
+def test_chicago_pmi_surprise_digest_rejects_false_hard_flags_explicitly() -> None:
+    summary = report((signal(),))
+
+    with pytest.raises(ValueError, match="config paper_only must be True"):
+        config(paper_only=False)
+    with pytest.raises(ValueError, match="config report_only must be True"):
+        config(report_only=False)
+    with pytest.raises(ValueError, match="config readonly must be True"):
+        config(readonly=False)
+
+    with pytest.raises(ValueError, match="signal paper_only must be True"):
+        signal(paper_only=False)
+    with pytest.raises(ValueError, match="signal report_only must be True"):
+        signal(report_only=False)
+    with pytest.raises(ValueError, match="signal readonly must be True"):
+        signal(readonly=False)
+
+    with pytest.raises(ValueError, match="row paper_only must be True"):
+        replace(summary.rows[0], paper_only=False)
+    with pytest.raises(ValueError, match="row report_only must be True"):
+        replace(summary.rows[0], report_only=False)
+    with pytest.raises(ValueError, match="row readonly must be True"):
+        replace(summary.rows[0], readonly=False)
+
+    with pytest.raises(ValueError, match="reason_code_count paper_only must be True"):
+        replace(summary.reason_code_counts[0], paper_only=False)
+    with pytest.raises(ValueError, match="reason_code_count report_only must be True"):
+        replace(summary.reason_code_counts[0], report_only=False)
+    with pytest.raises(ValueError, match="reason_code_count readonly must be True"):
+        replace(summary.reason_code_counts[0], readonly=False)
+
+    with pytest.raises(ValueError, match="report paper_only must be True"):
+        replace(summary, paper_only=False)
+    with pytest.raises(ValueError, match="report report_only must be True"):
+        replace(summary, report_only=False)
+    with pytest.raises(ValueError, match="report readonly must be True"):
+        replace(summary, readonly=False)
+
+
+def test_chicago_pmi_surprise_digest_public_dataclasses_reject_subclassing() -> None:
+    expected_message = "does not support subclassing"
+
+    def _noop_post_init(self: object) -> None:
+        return None
+
+    for base_type in (
+        MarketResearchChicagoPmiSurpriseDigestConfig,
+        MarketResearchChicagoPmiSurpriseDigestSignal,
+        MarketResearchChicagoPmiSurpriseDigestRow,
+        MarketResearchChicagoPmiSurpriseDigestReasonCodeCount,
+        MarketResearchChicagoPmiSurpriseDigestReport,
+    ):
+        with pytest.raises(TypeError, match=expected_message):
+            type(
+                f"{base_type.__name__}Subclass",
+                (base_type,),
+                {"__post_init__": _noop_post_init},
+            )
+
+
+def test_chicago_pmi_surprise_digest_rejects_bad_count_ratio_and_tzinfo_surfaces() -> None:
+    with pytest.raises(ValueError, match="source_count must be a whole-count Decimal"):
+        signal(source_count=d("1.500000"))
+
+    with pytest.raises(ValueError, match="min_source_count must be a whole-count Decimal"):
+        config(min_source_count=d("1.500000"))
+
+    with pytest.raises(ValueError, match="confirmation_ratio must be between 0 and 1"):
+        signal(confirmation_ratio=d("1.000001"))
+
+    with pytest.raises(ValueError, match="confirmation_ratio must be between 0 and 1"):
+        signal(confirmation_ratio=d("1.0000004"))
+
+    with pytest.raises(ValueError, match="surprise_score must be nonnegative"):
+        signal(surprise_score=d("-0.0000004"))
+
+    with pytest.raises(ValueError, match="source_count must be a whole-count Decimal"):
+        signal(source_count=d("1.0000004"))
+
+    with pytest.raises(ValueError, match="signal_ratio must be between 0 and 1"):
+        MarketResearchChicagoPmiSurpriseDigestReasonCodeCount(
+            reason_code="market_research_chicago_pmi_surprise_digest_ready",
+            count=d("1.000000"),
+            signal_ratio=d("1.000001"),
+        )
+
+    with pytest.raises(ValueError, match="count"):
+        MarketResearchChicagoPmiSurpriseDigestReasonCodeCount(
+            reason_code="market_research_chicago_pmi_surprise_digest_no_inputs",
+            count=d("0.000000"),
+            signal_ratio=d("0.000000"),
+        )
+
+    with pytest.raises(ValueError, match="aware datetime|timezone-aware"):
+        signal(observed_at=datetime(2026, 7, 3, 14, 0, tzinfo=_NoneOffsetTz()))
+
+    with pytest.raises(ValueError, match="aware datetime|timezone-aware"):
+        report((), generated_at=datetime(2026, 7, 3, 14, 0, tzinfo=_NoneOffsetTz()))
+
+
+def test_chicago_pmi_surprise_digest_rejects_noncanonical_public_constructor_ordering() -> None:
+    summary = report(
+        (
+            signal(
+                "research.chicago_pmi.ready",
+                condition_id="condition-ready",
+                release_key="z.release.ready",
+            ),
+            signal(
+                "research.chicago_pmi.watch",
+                condition_id="condition-watch",
+                release_key="m.release.watch",
+                surprise_score=d("0.500000"),
+                revision_ratio=d("0.260000"),
+            ),
+            signal(
+                "research.chicago_pmi.blocked",
+                condition_id="condition-blocked",
+                release_key="a.release.blocked",
+                source_count=d("1.000000"),
+                confirmation_ratio=d("0.500000"),
+            ),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="rows must be deterministic"):
+        replace(summary, rows=(summary.rows[2], summary.rows[0], summary.rows[1]))
+
+    with pytest.raises(ValueError, match="signal_config_versions must be deterministic"):
+        replace(summary, signal_config_versions=tuple(reversed(summary.signal_config_versions)))
+
+    with pytest.raises(ValueError, match="reason_code_counts must be deterministic"):
+        replace(
+            summary,
+            reason_code_counts=tuple(reversed(summary.reason_code_counts)),
+            reason_codes=tuple(reversed(summary.reason_codes)),
+        )
+
+    with pytest.raises(ValueError, match="reason_codes must be deterministic"):
+        replace(
+            summary.rows[1],
+            reason_codes=(
+                "market_research_chicago_pmi_surprise_digest_material_surprise",
+                "market_research_chicago_pmi_surprise_digest_high_revision",
+            ),
+        )
+
+    with pytest.raises(ValueError, match="reason_code is not valid for this scope"):
+        replace(
+            summary.rows[1],
+            reason_codes=("market_research_chicago_pmi_surprise_digest_no_inputs",),
+        )
+
+
+def test_chicago_pmi_surprise_digest_sorts_outputs_deterministically() -> None:
+    ready = signal(
+        "research.chicago_pmi.ready",
+        condition_id="condition-ready",
+        release_key="release.ready",
+    )
+    watched = signal(
+        "research.chicago_pmi.watch",
+        condition_id="condition-watch",
+        release_key="release.watch",
+        surprise_score=d("0.500000"),
+    )
+    blocked = signal(
+        "research.chicago_pmi.blocked",
+        condition_id="condition-blocked",
+        release_key="release.blocked",
+        source_count=d("1.000000"),
+        confirmation_ratio=d("0.500000"),
+    )
+
+    forward = report((ready, watched, blocked))
+    reverse = report((blocked, watched, ready))
+
+    assert forward == reverse
+    assert tuple(row.release_key for row in forward.rows) == (
+        "release.blocked",
+        "release.watch",
+        "release.ready",
+    )
+    assert forward.signal_config_versions == (
+        ("release.blocked", "chicago-pmi-signal-v0"),
+        ("release.ready", "chicago-pmi-signal-v0"),
+        ("release.watch", "chicago-pmi-signal-v0"),
+    )
+    for row in forward.rows:
+        assert row.reason_codes == tuple(
+            reason
+            for reason in (
+                "market_research_chicago_pmi_surprise_digest_confirmation_gap",
+                "market_research_chicago_pmi_surprise_digest_high_revision",
+                "market_research_chicago_pmi_surprise_digest_material_surprise",
+                "market_research_chicago_pmi_surprise_digest_regional_single_source",
+                "market_research_chicago_pmi_surprise_digest_stale_signal",
+                "market_research_chicago_pmi_surprise_digest_thin_sources",
+                "market_research_chicago_pmi_surprise_digest_ready",
+            )
+            if reason in row.reason_codes
+        )
+
+
+def test_chicago_pmi_surprise_digest_has_no_network_durable_store_or_live_trading_surface() -> None:
+    source_path = (
+        Path(__file__).parents[1]
+        / "src"
+        / "polymarket_alpha_lab"
+        / "market_research_chicago_pmi_surprise_digest.py"
+    )
+    source = source_path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    imported_roots: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, float):
+            raise AssertionError("module must not contain float literals")
+        if isinstance(node, ast.Import):
+            imported_roots.update(alias.name.split(".", 1)[0] for alias in node.names)
+        if isinstance(node, ast.ImportFrom) and node.module is not None:
+            imported_roots.add(node.module.split(".", 1)[0])
+
+    assert imported_roots.isdisjoint(
+        {
+            "ccxt",
+            "eth_account",
+            "httpx",
+            "psycopg",
+            "requests",
+            "socket",
+            "sqlalchemy",
+            "sqlite3",
+            "urllib",
+            "web3",
+        },
+    )
+    lowered = source.lower()
+    for forbidden_fragment in (
+        "auth",
+        "cancel_order",
+        "durable",
+        "file",
+        "live_trading",
+        "open(",
+        "order_placement",
+        "place_order",
+        "private_key",
+        "read_text",
+        "replace_order",
+        "submit_order",
+        "wallet",
+        "write_text",
+    ):
+        assert forbidden_fragment not in lowered
