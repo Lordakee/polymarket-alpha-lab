@@ -12,6 +12,10 @@ from polymarket_alpha_lab.paper_autonomous_candidate_selection import (
     PaperAutonomousCandidateSelectionReport,
     build_paper_autonomous_candidate_selection_report,
 )
+from polymarket_alpha_lab.strategy_candidate_decision_matrix import (
+    PaperStrategyCandidateDecisionMatrixReport,
+    PaperStrategyCandidateDecisionRow,
+)
 from polymarket_alpha_lab.strategy_candidate_research_queue import (
     PaperStrategyCandidateResearchQueueReport,
     PaperStrategyCandidateResearchQueueRow,
@@ -51,8 +55,15 @@ def test_selection_report_passes_clean_unique_candidates_without_rescaling() -> 
         config=PaperAutonomousCandidateSelectionConfig(),
         generated_at=GENERATED_AT,
     )
+    explicit_none_report = build_paper_autonomous_candidate_selection_report(
+        (source_report,),
+        config=PaperAutonomousCandidateSelectionConfig(),
+        generated_at=GENERATED_AT,
+        decision_matrix_report=None,
+    )
 
     assert isinstance(report, PaperAutonomousCandidateSelectionReport)
+    assert explicit_none_report == report
     assert report.config_version == DEFAULT_PAPER_AUTONOMOUS_CANDIDATE_SELECTION_CONFIG_VERSION
     assert report.selection_status == "pass"
     assert report.recommended_next_step == "review_paper_candidate_selection"
@@ -211,6 +222,168 @@ def test_selection_report_watches_when_selected_candidates_have_source_warnings(
     assert report.reason_codes == ("paper_autonomous_candidate_selection_source_warning",)
 
 
+def test_selection_report_uses_optional_decision_matrix_as_selection_gate() -> None:
+    rows = (
+        _source_row(research_rank=1, queue_rank=1, market_slug="market-a"),
+        _source_row(research_rank=2, queue_rank=2, market_slug="market-b"),
+        _source_row(research_rank=3, queue_rank=3, market_slug="market-c"),
+    )
+
+    report = build_paper_autonomous_candidate_selection_report(
+        (_source_report(rows),),
+        config=PaperAutonomousCandidateSelectionConfig(),
+        generated_at=GENERATED_AT,
+        decision_matrix_report=_decision_matrix_report(
+            _decision_matrix_row("market-a", "candidate"),
+            _decision_matrix_row("market-b", "research"),
+            _decision_matrix_row("market-c", "blocked"),
+        ),
+    )
+
+    assert report.selection_status == "watch"
+    assert report.selected_candidate_count == 1
+    assert tuple(row.selection_status for row in report.rows) == (
+        "selected",
+        "not_selected",
+        "not_selected",
+    )
+    assert report.rows[0].reason_codes == ("candidate_selection_selected",)
+    assert "candidate_selection_decision_matrix_suppressed" in report.rows[1].reason_codes
+    assert "candidate_selection_decision_matrix_research" in report.rows[1].reason_codes
+    assert "matrix_research_gap" in report.rows[1].reason_codes
+    assert "candidate_selection_decision_matrix_blocked" in report.rows[2].reason_codes
+    assert report.reason_codes == (
+        "paper_autonomous_candidate_selection_decision_matrix_suppressed",
+    )
+
+
+def test_selection_report_keeps_duplicate_and_max_count_logic_after_matrix_candidate_gate() -> None:
+    rows = (
+        _source_row(
+            research_rank=1,
+            queue_rank=1,
+            market_slug="market-a",
+            selected_side="yes",
+            suggested_notional=Decimal("12.000000"),
+        ),
+        _source_row(
+            research_rank=2,
+            queue_rank=2,
+            market_slug="market-a",
+            selected_side="yes",
+            suggested_notional=Decimal("13.000000"),
+        ),
+        _source_row(
+            research_rank=3,
+            queue_rank=3,
+            market_slug="market-b",
+            selected_side="no",
+            suggested_notional=Decimal("14.000000"),
+        ),
+    )
+
+    report = build_paper_autonomous_candidate_selection_report(
+        (_source_report(rows),),
+        config=PaperAutonomousCandidateSelectionConfig(max_selected_candidate_count=1),
+        generated_at=GENERATED_AT,
+        decision_matrix_report=_decision_matrix_report(
+            _decision_matrix_row("market-a", "candidate"),
+            _decision_matrix_row("market-b", "candidate"),
+        ),
+    )
+
+    assert report.selected_candidate_count == 1
+    assert tuple(row.selected_notional for row in report.rows) == (
+        Decimal("12.000000"),
+        Decimal("0.000000"),
+        Decimal("0.000000"),
+    )
+    assert "candidate_selection_duplicate_suppressed" in report.rows[1].reason_codes
+    assert "candidate_selection_max_selected_candidate_count_reached" in report.rows[2].reason_codes
+
+
+def test_selection_report_validates_optional_decision_matrix_slug_coverage() -> None:
+    source_report = _source_report((_source_row(market_slug="market-a"),))
+
+    with pytest.raises(ValueError, match="missing market_slug"):
+        build_paper_autonomous_candidate_selection_report(
+            (source_report,),
+            config=PaperAutonomousCandidateSelectionConfig(),
+            generated_at=GENERATED_AT,
+            decision_matrix_report=_decision_matrix_report(),
+        )
+
+    with pytest.raises(ValueError, match="extra market_slug"):
+        build_paper_autonomous_candidate_selection_report(
+            (source_report,),
+            config=PaperAutonomousCandidateSelectionConfig(),
+            generated_at=GENERATED_AT,
+            decision_matrix_report=_decision_matrix_report(
+                _decision_matrix_row("market-a", "candidate"),
+                _decision_matrix_row("market-extra", "candidate"),
+            ),
+        )
+
+    with pytest.raises(ValueError, match="duplicate market_slug"):
+        build_paper_autonomous_candidate_selection_report(
+            (source_report,),
+            config=PaperAutonomousCandidateSelectionConfig(),
+            generated_at=GENERATED_AT,
+            decision_matrix_report=_decision_matrix_report(
+                _decision_matrix_row("market-a", "candidate", rank=1),
+                _decision_matrix_row("market-a", "blocked", rank=2),
+            ),
+        )
+
+
+def test_selection_report_source_base_reasons_take_precedence_over_decision_matrix_gate() -> None:
+    source_report = _source_report(
+        (
+            _source_row(
+                market_slug="market-a",
+                net_edge_per_share=None,
+            ),
+        ),
+    )
+
+    report = build_paper_autonomous_candidate_selection_report(
+        (source_report,),
+        config=PaperAutonomousCandidateSelectionConfig(),
+        generated_at=GENERATED_AT,
+        decision_matrix_report=_decision_matrix_report(
+            _decision_matrix_row("market-a", "blocked"),
+        ),
+    )
+
+    assert report.selected_candidate_count == 0
+    assert report.rows[0].reason_codes == ("candidate_selection_missing_net_edge",)
+    assert "candidate_selection_decision_matrix_suppressed" not in report.rows[0].reason_codes
+
+
+def test_selection_report_blocks_when_decision_matrix_suppresses_all_candidates() -> None:
+    rows = (
+        _source_row(research_rank=1, queue_rank=1, market_slug="market-a"),
+        _source_row(research_rank=2, queue_rank=2, market_slug="market-b"),
+    )
+
+    report = build_paper_autonomous_candidate_selection_report(
+        (_source_report(rows),),
+        config=PaperAutonomousCandidateSelectionConfig(),
+        generated_at=GENERATED_AT,
+        decision_matrix_report=_decision_matrix_report(
+            _decision_matrix_row("market-a", "research"),
+            _decision_matrix_row("market-b", "watch"),
+        ),
+    )
+
+    assert report.selection_status == "blocked"
+    assert report.selected_candidate_count == 0
+    assert report.reason_codes == (
+        "paper_autonomous_candidate_selection_decision_matrix_suppressed",
+        "paper_autonomous_candidate_selection_no_selected_candidates",
+    )
+
+
 def test_builder_rejects_wrong_types_and_false_hard_flags() -> None:
     row = _source_row()
     source_report = _source_report((row,))
@@ -251,6 +424,14 @@ def test_builder_rejects_wrong_types_and_false_hard_flags() -> None:
 
         class SubConfig(PaperAutonomousCandidateSelectionConfig):
             pass
+
+    with pytest.raises(ValueError, match="decision_matrix_report must be exactly"):
+        build_paper_autonomous_candidate_selection_report(
+            (source_report,),
+            config=PaperAutonomousCandidateSelectionConfig(),
+            generated_at=GENERATED_AT,
+            decision_matrix_report="not-a-matrix-report",
+        )
 
 
 def test_config_rejects_float_thresholds_and_quantizes_decimals() -> None:
@@ -336,6 +517,79 @@ def _source_report(
         ),
         rows=rows,
         reason_codes=("candidate_research_queue_ready",),
+    )
+
+
+def _decision_matrix_report(
+    *rows: PaperStrategyCandidateDecisionRow,
+) -> PaperStrategyCandidateDecisionMatrixReport:
+    reason_code_counts = tuple(
+        sorted(
+            {
+                reason_code: Decimal(
+                    sum(
+                    1 for row in rows if reason_code in row.reason_codes
+                    ),
+                )
+                for row in rows
+                for reason_code in row.reason_codes
+            }.items(),
+            key=lambda item: item[0],
+        ),
+    )
+    return PaperStrategyCandidateDecisionMatrixReport(
+        generated_at=datetime(2026, 6, 30, 11, 30, tzinfo=UTC),
+        config_version="strategy-candidate-decision-matrix-v1",
+        candidate_count=Decimal(len(rows)),
+        select_count=Decimal(
+            sum(1 for row in rows if row.decision_status == "candidate"),
+        ),
+        research_count=Decimal(
+            sum(1 for row in rows if row.decision_status == "research"),
+        ),
+        watch_count=Decimal(sum(1 for row in rows if row.decision_status == "watch")),
+        blocked_count=Decimal(
+            sum(1 for row in rows if row.decision_status == "blocked"),
+        ),
+        decision_rows=rows,
+        reason_code_counts=reason_code_counts,
+    )
+
+
+def _decision_matrix_row(
+    market_slug: str,
+    decision_status: str,
+    *,
+    rank: int = 1,
+) -> PaperStrategyCandidateDecisionRow:
+    action_by_status = {
+        "candidate": "select_for_manual_review",
+        "research": "refresh_information",
+        "watch": "watch",
+        "blocked": "reject",
+    }
+    return PaperStrategyCandidateDecisionRow(
+        rank=Decimal(rank),
+        market_slug=market_slug,
+        question=f"Will {market_slug} resolve yes?",
+        team_id="macro_team",
+        category="macro",
+        decision_status=decision_status,
+        action=action_by_status[decision_status],
+        forecast_probability=Decimal("0.650000"),
+        market_probability=Decimal("0.560000"),
+        net_edge_per_share=Decimal("0.090000"),
+        total_cost_per_share=Decimal("0.020000"),
+        cost_adjusted_edge=Decimal("0.070000"),
+        liquidity_score=Decimal("0.800000"),
+        information_quality_score=Decimal("0.850000"),
+        source_count=Decimal("4"),
+        freshness_minutes=Decimal("20"),
+        resolution_risk_score=Decimal("0.120000"),
+        team_memory_score=Decimal("0.700000"),
+        calibration_score=Decimal("0.720000"),
+        composite_score=Decimal("0.815000"),
+        reason_codes=(f"matrix_{decision_status}_gap",),
     )
 
 

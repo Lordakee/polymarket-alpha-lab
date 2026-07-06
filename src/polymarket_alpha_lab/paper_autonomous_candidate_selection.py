@@ -10,6 +10,10 @@ from polymarket_alpha_lab.strategy_candidate_research_queue import (
     PaperStrategyCandidateResearchQueueReport,
     PaperStrategyCandidateResearchQueueRow,
 )
+from polymarket_alpha_lab.strategy_candidate_decision_matrix import (
+    PaperStrategyCandidateDecisionMatrixReport,
+    PaperStrategyCandidateDecisionRow,
+)
 
 
 DEFAULT_PAPER_AUTONOMOUS_CANDIDATE_SELECTION_CONFIG_VERSION = (
@@ -40,12 +44,19 @@ DUPLICATE_REASON_CODE = "paper_autonomous_candidate_selection_duplicate_suppress
 MAX_SELECTED_REASON_CODE = (
     "paper_autonomous_candidate_selection_max_selected_candidate_count_reached"
 )
+DECISION_MATRIX_SUPPRESSED_REASON_CODE = (
+    "paper_autonomous_candidate_selection_decision_matrix_suppressed"
+)
 
 ROW_SELECTED_REASON_CODE = "candidate_selection_selected"
 ROW_DUPLICATE_REASON_CODE = "candidate_selection_duplicate_suppressed"
 ROW_MAX_SELECTED_REASON_CODE = (
     "candidate_selection_max_selected_candidate_count_reached"
 )
+ROW_DECISION_MATRIX_SUPPRESSED_REASON_CODE = (
+    "candidate_selection_decision_matrix_suppressed"
+)
+ROW_DECISION_MATRIX_STATUS_REASON_PREFIX = "candidate_selection_decision_matrix_"
 
 
 @dataclass(frozen=True)
@@ -448,6 +459,7 @@ def build_paper_autonomous_candidate_selection_report(
     *,
     config: PaperAutonomousCandidateSelectionConfig,
     generated_at: datetime,
+    decision_matrix_report: object | None = None,
 ) -> PaperAutonomousCandidateSelectionReport:
     if type(source_reports) is not tuple:
         raise ValueError("source_reports must be a tuple")
@@ -457,6 +469,10 @@ def build_paper_autonomous_candidate_selection_report(
         )
     _require_hard_flags("config", config)
     generated_at_utc = _as_utc(generated_at)
+    decision_matrix_rows_by_slug = _decision_matrix_rows_by_slug(
+        decision_matrix_report,
+        source_reports,
+    )
 
     selected_keys: set[tuple[str, str]] = set()
     selected_count = 0
@@ -479,6 +495,7 @@ def build_paper_autonomous_candidate_selection_report(
                 config=config,
                 selected_keys=selected_keys,
                 selected_count=selected_count,
+                decision_matrix_rows_by_slug=decision_matrix_rows_by_slug,
             )
             if selected:
                 selected_count += 1
@@ -507,17 +524,23 @@ def build_paper_autonomous_candidate_selection_report(
     source_warning_count = sum(1 for item in summaries_tuple if item.source_warning)
     duplicate_count = _rows_with_reason(rows_tuple, ROW_DUPLICATE_REASON_CODE)
     max_count = _rows_with_reason(rows_tuple, ROW_MAX_SELECTED_REASON_CODE)
+    decision_matrix_suppressed_count = _rows_with_reason(
+        rows_tuple,
+        ROW_DECISION_MATRIX_SUPPRESSED_REASON_CODE,
+    )
     reason_codes = _report_reason_codes(
         selected_candidate_count=selected_count,
         source_warning_count=source_warning_count,
         duplicate_suppressed_count=duplicate_count,
         max_selected_candidate_count_suppressed_count=max_count,
+        decision_matrix_suppressed_count=decision_matrix_suppressed_count,
     )
     selection_status = _selection_status(
         selected_candidate_count=selected_count,
         source_warning_count=source_warning_count,
         duplicate_suppressed_count=duplicate_count,
         max_selected_candidate_count_suppressed_count=max_count,
+        decision_matrix_suppressed_count=decision_matrix_suppressed_count,
     )
 
     return PaperAutonomousCandidateSelectionReport(
@@ -549,16 +572,39 @@ def _row_selection_result(
     config: PaperAutonomousCandidateSelectionConfig,
     selected_keys: set[tuple[str, str]],
     selected_count: int,
+    decision_matrix_rows_by_slug: dict[str, PaperStrategyCandidateDecisionRow] | None,
 ) -> tuple[bool, tuple[str, ...]]:
     reason_codes = _base_not_selected_reason_codes(source_report, source_row, config)
     if reason_codes:
         return False, reason_codes
+    decision_matrix_reason_codes = _decision_matrix_not_selected_reason_codes(
+        source_row,
+        decision_matrix_rows_by_slug,
+    )
+    if decision_matrix_reason_codes:
+        return False, decision_matrix_reason_codes
     key = (source_row.market_slug, source_row.selected_side)
     if key in selected_keys:
         return False, (ROW_DUPLICATE_REASON_CODE,)
     if selected_count >= config.max_selected_candidate_count:
         return False, (ROW_MAX_SELECTED_REASON_CODE,)
     return True, (ROW_SELECTED_REASON_CODE,)
+
+
+def _decision_matrix_not_selected_reason_codes(
+    source_row: PaperStrategyCandidateResearchQueueRow,
+    decision_matrix_rows_by_slug: dict[str, PaperStrategyCandidateDecisionRow] | None,
+) -> tuple[str, ...]:
+    if decision_matrix_rows_by_slug is None:
+        return ()
+    decision_row = decision_matrix_rows_by_slug[source_row.market_slug]
+    if decision_row.decision_status == "candidate":
+        return ()
+    return (
+        ROW_DECISION_MATRIX_SUPPRESSED_REASON_CODE,
+        f"{ROW_DECISION_MATRIX_STATUS_REASON_PREFIX}{decision_row.decision_status}",
+        *decision_row.reason_codes,
+    )
 
 
 def _base_not_selected_reason_codes(
@@ -679,6 +725,7 @@ def _selection_status(
     source_warning_count: int,
     duplicate_suppressed_count: int,
     max_selected_candidate_count_suppressed_count: int,
+    decision_matrix_suppressed_count: int,
 ) -> str:
     if selected_candidate_count == 0:
         return "blocked"
@@ -686,6 +733,7 @@ def _selection_status(
         source_warning_count > 0
         or duplicate_suppressed_count > 0
         or max_selected_candidate_count_suppressed_count > 0
+        or decision_matrix_suppressed_count > 0
     ):
         return "watch"
     return "pass"
@@ -697,10 +745,14 @@ def _report_reason_codes(
     source_warning_count: int,
     duplicate_suppressed_count: int,
     max_selected_candidate_count_suppressed_count: int,
+    decision_matrix_suppressed_count: int,
 ) -> tuple[str, ...]:
-    if selected_candidate_count == 0:
-        return (NO_SELECTED_REASON_CODE,)
     reason_codes: list[str] = []
+    if decision_matrix_suppressed_count > 0:
+        reason_codes.append(DECISION_MATRIX_SUPPRESSED_REASON_CODE)
+    if selected_candidate_count == 0:
+        reason_codes.append(NO_SELECTED_REASON_CODE)
+        return tuple(sorted(reason_codes))
     if duplicate_suppressed_count > 0:
         reason_codes.append(DUPLICATE_REASON_CODE)
     if max_selected_candidate_count_suppressed_count > 0:
@@ -732,6 +784,67 @@ def _rows_with_reason(
     reason_code: str,
 ) -> int:
     return sum(1 for row in rows if reason_code in row.reason_codes)
+
+
+def _decision_matrix_rows_by_slug(
+    decision_matrix_report: object | None,
+    source_reports: tuple[PaperStrategyCandidateResearchQueueReport, ...],
+) -> dict[str, PaperStrategyCandidateDecisionRow] | None:
+    if decision_matrix_report is None:
+        return None
+    if type(decision_matrix_report) is not PaperStrategyCandidateDecisionMatrixReport:
+        raise ValueError(
+            "decision_matrix_report must be exactly "
+            "PaperStrategyCandidateDecisionMatrixReport",
+        )
+    _require_hard_flags("decision_matrix_report", decision_matrix_report)
+    source_market_slugs = _source_market_slugs(source_reports)
+    matrix_rows_by_slug: dict[str, PaperStrategyCandidateDecisionRow] = {}
+    for row in decision_matrix_report.decision_rows:
+        if type(row) is not PaperStrategyCandidateDecisionRow:
+            raise ValueError(
+                "decision_matrix_report rows must be exact "
+                "PaperStrategyCandidateDecisionRow values",
+            )
+        _require_hard_flags("decision_matrix_report row", row)
+        if row.market_slug in matrix_rows_by_slug:
+            raise ValueError("decision_matrix_report must not duplicate market_slug")
+        matrix_rows_by_slug[row.market_slug] = row
+    missing_market_slugs = tuple(
+        market_slug
+        for market_slug in source_market_slugs
+        if market_slug not in matrix_rows_by_slug
+    )
+    if missing_market_slugs:
+        raise ValueError("decision_matrix_report missing market_slug coverage")
+    extra_market_slugs = tuple(
+        market_slug
+        for market_slug in matrix_rows_by_slug
+        if market_slug not in source_market_slugs
+    )
+    if extra_market_slugs:
+        raise ValueError("decision_matrix_report has extra market_slug coverage")
+    return matrix_rows_by_slug
+
+
+def _source_market_slugs(
+    source_reports: tuple[PaperStrategyCandidateResearchQueueReport, ...],
+) -> tuple[str, ...]:
+    market_slugs: set[str] = set()
+    for source_report in source_reports:
+        if type(source_report) is not PaperStrategyCandidateResearchQueueReport:
+            raise ValueError(
+                "source_reports must contain exact "
+                "PaperStrategyCandidateResearchQueueReport values",
+            )
+        for source_row in source_report.rows:
+            if type(source_row) is not PaperStrategyCandidateResearchQueueRow:
+                raise ValueError(
+                    "source_report rows must contain exact "
+                    "PaperStrategyCandidateResearchQueueRow values",
+                )
+            market_slugs.add(source_row.market_slug)
+    return tuple(sorted(market_slugs))
 
 
 def _total_selected_notional(
@@ -883,6 +996,10 @@ def _validate_report_consistency(
         raise ValueError("total_selected_notional must match rows")
     if report.total_suggested_notional != _total_suggested_notional(report.rows):
         raise ValueError("total_suggested_notional must match rows")
+    decision_matrix_suppressed_count = _rows_with_reason(
+        report.rows,
+        ROW_DECISION_MATRIX_SUPPRESSED_REASON_CODE,
+    )
     expected_status = _selection_status(
         selected_candidate_count=report.selected_candidate_count,
         source_warning_count=report.source_warning_count,
@@ -890,6 +1007,7 @@ def _validate_report_consistency(
         max_selected_candidate_count_suppressed_count=(
             report.max_selected_candidate_count_suppressed_count
         ),
+        decision_matrix_suppressed_count=decision_matrix_suppressed_count,
     )
     if report.selection_status != expected_status:
         raise ValueError("selection_status must match diagnostics")
@@ -900,6 +1018,7 @@ def _validate_report_consistency(
         max_selected_candidate_count_suppressed_count=(
             report.max_selected_candidate_count_suppressed_count
         ),
+        decision_matrix_suppressed_count=decision_matrix_suppressed_count,
     )
     if report.reason_codes != expected_reason_codes:
         raise ValueError("reason_codes must match diagnostics")
