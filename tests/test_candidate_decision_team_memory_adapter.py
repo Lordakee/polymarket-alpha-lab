@@ -7,10 +7,12 @@ from pathlib import Path
 
 import pytest
 
+import polymarket_alpha_lab.candidate_decision_team_memory_adapter as adapter_module
 from polymarket_alpha_lab.candidate_decision_team_memory_adapter import (
     CandidateDecisionTeamMemoryAdapterConfig,
     CandidateDecisionTeamMemoryAdapterInput,
     build_candidate_decision_team_memory_adapter,
+    candidate_decision_team_memory_adapter_decision_fields,
     candidate_decision_team_memory_adapter_payload,
 )
 from polymarket_alpha_lab.candidate_decision_score import CandidateDecisionScoreInput
@@ -78,6 +80,83 @@ def test_allow_output_is_candidate_decision_score_compatible() -> None:
     )
     assert score_input.team_memory_score == Decimal("0.800000")
     assert score_input.team_memory_policy == "allow"
+
+
+def test_decision_fields_are_candidate_decision_score_input_compatible() -> None:
+    result = build_candidate_decision_team_memory_adapter(_input())
+
+    fields = candidate_decision_team_memory_adapter_decision_fields(result)
+
+    assert fields == {
+        "team_memory_score": Decimal("0.800000"),
+        "team_memory_policy": "allow",
+        "adapter_reason_codes": result.reason_codes,
+        "source_report_refs": result.source_report_refs,
+    }
+    assert type(fields["team_memory_score"]) is Decimal
+    assert type(fields["adapter_reason_codes"]) is tuple
+    assert type(fields["source_report_refs"]) is tuple
+
+    score_input = CandidateDecisionScoreInput(
+        candidate_id="candidate-1",
+        market_id="market-1",
+        normalized_market_question="Will candidate 1 win?",
+        primary_team_id=result.primary_team_id,
+        secondary_team_ids=result.secondary_team_ids,
+        selected_side="yes",
+        forecast_probability=Decimal("0.550000"),
+        executable_price=Decimal("0.500000"),
+        gross_edge=Decimal("0.050000"),
+        estimated_cost_drag=Decimal("0.005000"),
+        cost_score=Decimal("0.900000"),
+        liquidity_score=Decimal("0.900000"),
+        evidence_score=Decimal("0.900000"),
+        resolution_score=Decimal("0.900000"),
+        **fields,
+    )
+
+    assert score_input.team_memory_score == Decimal("0.800000")
+    assert set(score_input.adapter_reason_codes) == set(result.reason_codes)
+    assert score_input.source_report_refs == result.source_report_refs
+
+
+def test_decision_fields_require_exact_result_type_and_safe_flags() -> None:
+    result = build_candidate_decision_team_memory_adapter(_input())
+
+    with pytest.raises(
+        ValueError,
+        match="result must be exactly CandidateDecisionTeamMemoryAdapterResult",
+    ):
+        candidate_decision_team_memory_adapter_decision_fields(
+            candidate_decision_team_memory_adapter_payload(result),
+        )
+
+    unsafe_result = build_candidate_decision_team_memory_adapter(_input())
+    object.__setattr__(unsafe_result, "paper_only", False)
+    with pytest.raises(ValueError, match="paper_only must be True"):
+        candidate_decision_team_memory_adapter_decision_fields(unsafe_result)
+
+
+def test_decision_fields_revalidates_unsafe_result_surface(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result = build_candidate_decision_team_memory_adapter(_input())
+
+    def reject_unsafe_result_surface(label: str, value: object) -> None:
+        if label == "candidate decision team memory adapter result":
+            raise ValueError(
+                "unsafe live surface field in "
+                "candidate decision team memory adapter result: wallet_balance",
+            )
+
+    monkeypatch.setattr(
+        adapter_module,
+        "reject_unsafe_surface_fields",
+        reject_unsafe_result_surface,
+    )
+
+    with pytest.raises(ValueError, match="unsafe live surface field"):
+        candidate_decision_team_memory_adapter_decision_fields(result)
 
 
 def test_source_throttle_policy_throttles_and_caps_score() -> None:

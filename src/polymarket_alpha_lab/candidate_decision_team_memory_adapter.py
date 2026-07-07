@@ -287,6 +287,28 @@ def candidate_decision_team_memory_adapter_payload(
     return payload
 
 
+def candidate_decision_team_memory_adapter_decision_fields(
+    result: CandidateDecisionTeamMemoryAdapterResult,
+) -> dict[str, object]:
+    if type(result) is not CandidateDecisionTeamMemoryAdapterResult:
+        raise ValueError(
+            "result must be exactly CandidateDecisionTeamMemoryAdapterResult",
+        )
+    require_paper_only_flags("CandidateDecisionTeamMemoryAdapterResult", result)
+    reject_unsafe_surface_fields("candidate decision team memory adapter result", result)
+    fields: dict[str, object] = {
+        "team_memory_score": result.team_memory_score,
+        "team_memory_policy": result.team_memory_policy,
+        "adapter_reason_codes": result.reason_codes,
+        "source_report_refs": result.source_report_refs,
+    }
+    reject_unsafe_surface_fields(
+        "candidate decision team memory adapter decision fields",
+        fields,
+    )
+    return fields
+
+
 def _raw_team_memory_score(
     input_value: CandidateDecisionTeamMemoryAdapterInput | CandidateDecisionTeamMemoryAdapterResult,
 ) -> Decimal:
@@ -485,5 +507,6 @@ __all__ = (
     "CandidateDecisionTeamMemoryAdapterInput",
     "CandidateDecisionTeamMemoryAdapterResult",
     "build_candidate_decision_team_memory_adapter",
+    "candidate_decision_team_memory_adapter_decision_fields",
     "candidate_decision_team_memory_adapter_payload",
 )
