@@ -362,6 +362,7 @@ def validate_research_packet_resolution_source_preflight_v2_payload(
     if type(payload) is not dict:
         raise ValueError("payload must be an object")
     _reject_unsafe_public_payload("preflight payload", payload)
+    _require_payload_hard_flags("preflight payload", payload)
     digest = payload.get("derived_validation_digest")
     if digest is None:
         raise ValueError("derived_validation_digest is required")
@@ -665,6 +666,22 @@ def _require_hard_flags(label: str, value: object) -> None:
     for field_name in PHASE_FLAG_FIELDS:
         if getattr(value, field_name) is not True:
             raise ValueError(f"{field_name} must be True for {label}")
+
+
+def _require_payload_hard_flags(label: str, value: object, path: str = "") -> None:
+    if type(value) is dict:
+        for field_name in PHASE_FLAG_FIELDS:
+            if value.get(field_name) is not True:
+                item_path = field_name if not path else f"{path}.{field_name}"
+                raise ValueError(f"{item_path} must be True for {label}")
+        for key, item in value.items():
+            item_path = key if not path else f"{path}.{key}"
+            _require_payload_hard_flags(label, item, item_path)
+        return
+    if type(value) in (list, tuple):
+        current_path = path or label
+        for index, item in enumerate(value):
+            _require_payload_hard_flags(label, item, f"{current_path}[{index}]")
 
 
 def _reject_unsafe_public_payload(label: str, value: object, path: str = "") -> None:

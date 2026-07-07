@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import ast
+import hashlib
 import importlib
+import json
 from dataclasses import FrozenInstanceError, is_dataclass, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -101,6 +103,24 @@ def assert_no_float_or_int(value: Any) -> None:
     elif isinstance(value, list):
         for item in value:
             assert_no_float_or_int(item)
+
+
+def redigest_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    redigested = dict(payload)
+    canonical = json.dumps(
+        {
+            key: value
+            for key, value in redigested.items()
+            if key != "derived_validation_digest"
+        },
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    redigested["derived_validation_digest"] = hashlib.sha256(
+        canonical.encode("utf-8"),
+    ).hexdigest()
+    return redigested
 
 
 def clear_packet():
@@ -228,6 +248,29 @@ def test_frozen_flags_digest_tamper_and_unsafe_public_payload_rejection() -> Non
         module.validate_research_packet_resolution_source_preflight_v2_payload(
             unsafe_value_payload,
         )
+
+    for flag_name in ("paper_only", "report_only", "readonly"):
+        flagless_payload = redigest_payload(
+            {key: value for key, value in payload.items() if key != flag_name},
+        )
+        with pytest.raises(ValueError, match=f"{flag_name} must be True"):
+            module.validate_research_packet_resolution_source_preflight_v2_payload(
+                flagless_payload,
+            )
+
+        row_flagless_payload = dict(payload)
+        row_flagless_payload["anchor_rows"] = [
+            dict(row) for row in payload["anchor_rows"]
+        ]
+        row_flagless_payload["anchor_rows"][0].pop(flag_name)
+        row_flagless_payload = redigest_payload(row_flagless_payload)
+        with pytest.raises(
+            ValueError,
+            match=f"anchor_rows\\[0\\].{flag_name} must be True",
+        ):
+            module.validate_research_packet_resolution_source_preflight_v2_payload(
+                row_flagless_payload,
+            )
 
     with pytest.raises(ValueError, match="source_id has unsafe public value"):
         anchor(
