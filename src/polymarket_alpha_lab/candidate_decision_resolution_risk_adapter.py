@@ -492,7 +492,7 @@ def _adapter_reason_codes(
     resolution_risk_status: str,
     hard_blocker_codes: tuple[str, ...],
 ) -> tuple[str, ...]:
-    codes: list[str] = [f"resolution_adapter_{resolution_risk_status}"]
+    codes: list[str] = [_adapter_status_reason_code(resolution_risk_status)]
     codes.extend(hard_blocker_codes)
     if facts.specificity_status == "watch":
         codes.append("resolution_specificity_watch")
@@ -512,6 +512,16 @@ def _adapter_reason_codes(
         codes.append("resolution_no_unresolved_ambiguity")
     codes.extend(facts.reason_codes)
     return _normalize_reason_codes(tuple(codes))
+
+
+def _adapter_status_reason_code(resolution_risk_status: str) -> str:
+    if resolution_risk_status == "clear":
+        return "resolution_adapter_clear"
+    if resolution_risk_status == "watch":
+        return "resolution_adapter_watch"
+    if resolution_risk_status == "blocked":
+        return "resolution_adapter_blocked"
+    raise ValueError("resolution_risk_status must be known")
 
 
 def _close_readiness_score(close_readiness_status: str) -> Decimal:

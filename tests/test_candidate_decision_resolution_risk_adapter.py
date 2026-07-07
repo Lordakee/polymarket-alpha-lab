@@ -201,6 +201,12 @@ def test_validation_rejects_invalid_decimals_statuses_team_ids_and_flags() -> No
         frozen.close_readiness_status = "watch"  # type: ignore[misc]
     with pytest.raises(ValueError, match="resolution_score"):
         replace(report(), resolution_score=1)
+    with pytest.raises(ValueError, match="reason_codes"):
+        replace(
+            report(),
+            resolution_risk_status="blocked",
+            reason_codes=("resolution_adapter_blocked",),
+        )
 
 
 def test_payload_is_json_safe_and_contains_no_float_or_decimal_values() -> None:
