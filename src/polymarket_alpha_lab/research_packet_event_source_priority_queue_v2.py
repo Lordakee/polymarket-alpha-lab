@@ -20,7 +20,7 @@ ZERO = Decimal("0.000000")
 ONE = Decimal("1.000000")
 
 PRIORITY_TIERS = ("high", "medium", "low")
-REPORT_STATUSES = ("high_priority", "medium_priority", "low_priority")
+REPORT_STATUSES = ("empty", "high_priority", "medium_priority", "low_priority")
 ROW_REASON_CODES = (
     "source_priority_high",
     "source_priority_medium",
@@ -34,6 +34,7 @@ ROW_REASON_CODES = (
     "specialist_uncertainty_high",
 )
 REPORT_REASON_CODES = (
+    "empty_event_source_priority_queue_inputs",
     "source_priority_high_present",
     "source_priority_medium_present",
     "source_priority_low_only",
@@ -741,6 +742,8 @@ def _sort_rows(
 def _report_status(
     rows: tuple[ResearchPacketEventSourcePriorityQueueV2Row, ...],
 ) -> str:
+    if not rows:
+        return "empty"
     if any(row.priority_tier == "high" for row in rows):
         return "high_priority"
     if any(row.priority_tier == "medium" for row in rows):
@@ -751,6 +754,8 @@ def _report_status(
 def _report_reason_codes(
     rows: tuple[ResearchPacketEventSourcePriorityQueueV2Row, ...],
 ) -> tuple[str, ...]:
+    if not rows:
+        return ("empty_event_source_priority_queue_inputs",)
     if any(row.priority_tier == "high" for row in rows):
         reasons = ["source_priority_high_present"]
     elif any(row.priority_tier == "medium" for row in rows):
@@ -822,7 +827,7 @@ def _validate_row(row: ResearchPacketEventSourcePriorityQueueV2Row) -> None:
         raise ValueError("official_source_gap must be integral")
     if row.source_family_gap != row.source_family_gap.to_integral_value():
         raise ValueError("source_family_gap must be integral")
-    if row.priority_tier not in row.reason_codes[0]:
+    if row.reason_codes[0] != f"source_priority_{row.priority_tier}":
         raise ValueError("priority_tier must match reason_codes")
 
 
@@ -1129,7 +1134,7 @@ def _require_public_payload_fields(payload: dict[str, object]) -> None:
 
 def _copy_json_object(value: dict[str, object]) -> dict[str, object]:
     copied = json.loads(
-        json.dumps(value, allow_nan=False, separators=(",", ":"), sort_keys=True),
+        json.dumps(value, allow_nan=False, separators=(",", ":")),
     )
     if type(copied) is not dict:
         raise ValueError("payload must be a dict")

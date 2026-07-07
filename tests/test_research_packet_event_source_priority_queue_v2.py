@@ -58,6 +58,42 @@ def report(*packets):
     )
 
 
+def test_empty_input_returns_empty_readonly_report_with_decimal_zeroes() -> None:
+    queue = api()
+    priority_report = report()
+
+    assert type(priority_report) is queue.ResearchPacketEventSourcePriorityQueueV2Report
+    assert is_dataclass(priority_report)
+    assert priority_report.generated_at == GENERATED_AT
+    assert priority_report.config_version == (
+        "research-packet-event-source-priority-queue-v2"
+    )
+    assert priority_report.report_status == "empty"
+    assert priority_report.packet_count == d("0")
+    assert priority_report.high_priority_packet_count == d("0")
+    assert priority_report.medium_priority_packet_count == d("0")
+    assert priority_report.low_priority_packet_count == d("0")
+    assert priority_report.event_velocity_count == d("0")
+    assert priority_report.official_source_gap_count == d("0")
+    assert priority_report.source_family_gap_count == d("0")
+    assert priority_report.contradiction_severity_count == d("0")
+    assert priority_report.probability_movement_count == d("0")
+    assert priority_report.near_resolution_horizon_count == d("0")
+    assert priority_report.specialist_uncertainty_count == d("0")
+    assert priority_report.max_priority_score == d("0.000000")
+    assert priority_report.reason_codes == ("empty_event_source_priority_queue_inputs",)
+    assert priority_report.rows == ()
+    assert priority_report.paper_only is True
+    assert priority_report.report_only is True
+    assert priority_report.readonly is True
+
+    payload = queue.research_packet_event_source_priority_queue_v2_report_payload(
+        priority_report,
+    )
+    assert payload["report_status"] == "empty"
+    assert payload["reason_codes"] == ["empty_event_source_priority_queue_inputs"]
+
+
 def test_prioritizes_source_collection_pressure_with_decimal_rows() -> None:
     priority_report = report(
         packet("pkt-low", event_slug="routine-calendar-check"),
@@ -180,6 +216,17 @@ def test_payload_serializes_decimals_as_strings_and_rejects_tampering() -> None:
     )
     assert not any(type(value) in (float, int) for value in _walk_payload_values(payload))
 
+    copied_payload = queue.research_packet_event_source_priority_queue_v2_report_payload(
+        payload,
+    )
+    assert tuple(copied_payload.keys()) == tuple(payload.keys())
+    assert (
+        queue.research_packet_event_source_priority_queue_v2_report_payload(
+            copied_payload,
+        )
+        == copied_payload
+    )
+
     tampered = dict(payload)
     tampered["packet_count"] = "2"
     with pytest.raises(ValueError, match="derived_validation_digest mismatch"):
@@ -233,6 +280,24 @@ def test_inputs_are_decimal_only_frozen_unique_and_hard_flagged() -> None:
         queue.ResearchPacketEventSourcePriorityQueueV2Config(
             event_velocity_weight=d("0.100000"),
         )
+
+
+def test_row_reason_codes_must_start_with_matching_priority_tier() -> None:
+    high_row = report(
+        packet(
+            "pkt-high",
+            event_velocity_per_hour="12.000000",
+            official_source_count="0",
+            independent_source_family_count="0",
+            contradiction_severity_score="0.900000",
+            probability_movement_24h="0.120000",
+            resolution_horizon_minutes="30.000000",
+            specialist_uncertainty_score="0.800000",
+        ),
+    ).rows[0]
+
+    with pytest.raises(ValueError, match="priority_tier must match reason_codes"):
+        replace(high_row, reason_codes=("event_velocity_high",))
 
 
 def test_public_payload_rejects_unsafe_keys_and_values() -> None:
