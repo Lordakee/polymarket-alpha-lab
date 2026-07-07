@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import json
 import inspect
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -10,6 +11,8 @@ from typing import Any
 
 from polymarket_alpha_lab.cli import main
 import polymarket_alpha_lab.cli as cli_module
+from polymarket_alpha_lab.team_paper_guard import json_ready_no_floats
+from tests.test_paper_candidate_decision_engine_local_input import _bundle
 
 
 COMMAND = "paper-candidate-decision-engine-report"
@@ -123,6 +126,35 @@ def test_candidate_decision_engine_report_cli_rejects_bad_hard_flags_before_summ
     assert "readonly must be True" in captured.err
 
 
+def test_candidate_decision_engine_report_cli_uses_redacted_formatter(
+    tmp_path: Path,
+    capsys: Any,
+) -> None:
+    input_path = tmp_path / "candidate-bundles.jsonl"
+    input_path.write_text("", encoding="utf-8")
+    client_factory_calls = 0
+
+    def unsafe_runner(**_kwargs: object) -> object:
+        return _engine_report(candidate_count="candidate_id:secret")
+
+    def forbidden_client_factory() -> object:
+        nonlocal client_factory_calls
+        client_factory_calls += 1
+        raise AssertionError("client should not be constructed")
+
+    exit_code = main(
+        [COMMAND, "--input", str(input_path)],
+        paper_candidate_decision_engine_runner=unsafe_runner,
+        client_factory=forbidden_client_factory,
+    )
+
+    assert exit_code == 1
+    assert client_factory_calls == 0
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "unsafe public summary value" in captured.err
+
+
 def test_candidate_decision_engine_report_cli_reads_empty_local_input_without_client(
     tmp_path: Path,
     capsys: Any,
@@ -156,10 +188,74 @@ def test_candidate_decision_engine_report_cli_reads_empty_local_input_without_cl
     assert captured.err == ""
 
 
+def test_candidate_decision_engine_report_cli_reads_nonempty_jsonl_with_local_helper_without_client(
+    tmp_path: Path,
+    capsys: Any,
+    monkeypatch: Any,
+) -> None:
+    input_path = tmp_path / "candidate-bundles.jsonl"
+    payload = json_ready_no_floats(_bundle())
+    assert type(payload) is dict
+    input_path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+    client_factory_calls = 0
+    local_helper_calls: list[dict[str, object]] = []
+
+    from polymarket_alpha_lab import paper_candidate_decision_engine_local_input
+
+    real_local_helper = (
+        paper_candidate_decision_engine_local_input
+        .load_paper_candidate_decision_engine_report_from_local_input
+    )
+
+    def tracking_local_helper(**kwargs: object) -> object:
+        local_helper_calls.append(dict(kwargs))
+        return real_local_helper(**kwargs)
+
+    monkeypatch.setattr(
+        paper_candidate_decision_engine_local_input,
+        "load_paper_candidate_decision_engine_report_from_local_input",
+        tracking_local_helper,
+    )
+
+    def forbidden_client_factory() -> object:
+        nonlocal client_factory_calls
+        client_factory_calls += 1
+        raise AssertionError("client should not be constructed")
+
+    exit_code = main(
+        [COMMAND, "--input", str(input_path)],
+        client_factory=forbidden_client_factory,
+    )
+
+    assert exit_code == 0
+    assert client_factory_calls == 0
+    assert len(local_helper_calls) == 1
+    assert local_helper_calls[0]["candidate_bundle_path"] == input_path
+    assert local_helper_calls[0].get("candidate_bundle_rows") is None
+    assert local_helper_calls[0].get("candidate_bundle_text") is None
+    generated_at = local_helper_calls[0]["generated_at"]
+    assert type(generated_at) is datetime
+    assert generated_at.tzinfo is UTC
+
+    captured = capsys.readouterr()
+    assert f"{COMMAND}:" in captured.out
+    assert "candidate_count=1" in captured.out
+    assert "paper_recommend=1" in captured.out
+    assert "reason_code_counts:" in captured.out
+    assert "candidate-alpha" not in captured.out
+    assert "market-alpha" not in captured.out
+    assert "Will the alpha event resolve yes?" not in captured.out
+    assert "paper_only=True report_only=True readonly=True" in captured.out
+    assert captured.err == ""
+
+
 def test_candidate_decision_engine_report_cli_scope_has_no_live_or_db_surface() -> None:
     source = inspect.getsource(cli_module._run_paper_candidate_decision_engine_report)
     source += inspect.getsource(
         cli_module._read_paper_candidate_decision_engine_candidate_bundles,
+    )
+    source += inspect.getsource(
+        cli_module._format_paper_candidate_decision_engine_report_summary,
     )
     tree = ast.parse(source)
 

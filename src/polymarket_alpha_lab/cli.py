@@ -10294,61 +10294,48 @@ def _run_paper_candidate_decision_engine_report(
     generated_at = datetime.now(UTC)
     if runner is not None:
         return runner(input_path=input_path, generated_at=generated_at)
-    from polymarket_alpha_lab.paper_candidate_decision_engine_load import (
-        load_paper_candidate_decision_engine_report,
+    if not input_path.read_text(encoding="utf-8").strip():
+        from polymarket_alpha_lab.paper_candidate_decision_engine_load import (
+            load_paper_candidate_decision_engine_report,
+        )
+
+        return load_paper_candidate_decision_engine_report(
+            generated_at=generated_at,
+            candidate_bundles=(),
+        )
+    from polymarket_alpha_lab.paper_candidate_decision_engine_local_input import (
+        load_paper_candidate_decision_engine_report_from_local_input,
     )
 
-    candidate_bundles = _read_paper_candidate_decision_engine_candidate_bundles(
-        input_path,
-    )
-    return load_paper_candidate_decision_engine_report(
+    return load_paper_candidate_decision_engine_report_from_local_input(
         generated_at=generated_at,
-        candidate_bundles=candidate_bundles,
+        candidate_bundle_path=input_path,
     )
 
 
 def _read_paper_candidate_decision_engine_candidate_bundles(
     path: Path,
 ) -> tuple[object, ...]:
-    from polymarket_alpha_lab.json_recovery import from_jsonable
-    from polymarket_alpha_lab.paper_candidate_decision_engine_load import (
-        PaperCandidateDecisionEngineCandidateBundle,
+    text = path.read_text(encoding="utf-8")
+    if not text.strip():
+        return ()
+    from polymarket_alpha_lab.paper_candidate_decision_engine_local_input import (
+        paper_candidate_decision_engine_candidate_bundles_from_text,
     )
 
-    rows = _read_paper_probability_side_edge_row_payloads(path)
-    bundles: list[object] = []
-    for row_number, row in enumerate(rows, start=1):
-        if not isinstance(row, dict):
-            raise ValueError(f"input row {row_number} must be a JSON object")
-        try:
-            bundles.append(from_jsonable(PaperCandidateDecisionEngineCandidateBundle, row))
-        except (AttributeError, KeyError, TypeError, ValueError) as exc:
-            raise ValueError(
-                "input row "
-                f"{row_number} is not a valid "
-                f"PaperCandidateDecisionEngineCandidateBundle: {exc}",
-            ) from exc
-    return tuple(bundles)
+    return paper_candidate_decision_engine_candidate_bundles_from_text(text)
 
 
 def _print_paper_candidate_decision_engine_report_summary(report: object) -> None:
-    _require_hard_flags("paper candidate decision engine report", report)
-    reason_counts = " ".join(
-        f"{item.reason_code}:{item.count}"
-        for item in getattr(report, "reason_counts", ())
+    print(_format_paper_candidate_decision_engine_report_summary(report), end="")
+
+
+def _format_paper_candidate_decision_engine_report_summary(report: object) -> str:
+    from polymarket_alpha_lab.paper_candidate_decision_engine_cli_format import (
+        format_paper_candidate_decision_engine_report_cli_stdout,
     )
-    print(
-        "paper-candidate-decision-engine-report: "
-        f"candidate_count={report.candidate_count} "
-        f"reject={report.reject_count} "
-        f"watch={report.watch_count} "
-        f"research_more={report.research_more_count} "
-        f"paper_recommend={report.paper_recommend_count} "
-        f"paper_only={report.paper_only} "
-        f"report_only={report.report_only} "
-        f"readonly={report.readonly}",
-    )
-    print(f"reason_code_counts: {reason_counts or 'none'}")
+
+    return format_paper_candidate_decision_engine_report_cli_stdout(report)
 
 
 def _read_paper_probability_side_edge_row_payloads(
