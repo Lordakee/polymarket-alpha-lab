@@ -6,6 +6,7 @@ import json
 from dataclasses import FrozenInstanceError, fields, is_dataclass, replace
 from datetime import UTC, datetime, timedelta, timezone
 from decimal import Decimal
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
@@ -105,6 +106,18 @@ def assert_no_float_values(value: Any) -> None:
     if isinstance(value, (list, tuple)):
         for item in value:
             assert_no_float_values(item)
+
+
+def payload_digest(payload: dict[str, Any]) -> str:
+    digest_input = dict(payload)
+    digest_input.pop("derived_validation_digest", None)
+    encoded = json.dumps(
+        digest_input,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    ).encode("utf-8")
+    return sha256(encoded).hexdigest()
 
 
 def test_report_derives_promote_watch_and_block_thresholds_from_all_risk_inputs() -> None:
@@ -272,6 +285,11 @@ def test_payload_revalidates_digest_flags_and_rejects_unsafe_public_content() ->
     with pytest.raises(ValueError, match="Decimal string"):
         module.strategy_calibrated_recommendation_thresholds_v2_payload(decimal_drift)
 
+    numeric_count = {**payload, "candidate_count": 2}
+    numeric_count["derived_validation_digest"] = payload_digest(numeric_count)
+    with pytest.raises(ValueError, match="Decimal string"):
+        module.strategy_calibrated_recommendation_thresholds_v2_payload(numeric_count)
+
 
 def test_frozen_dataclasses_decimal_only_canonical_inputs_and_public_safety() -> None:
     module = api()
@@ -303,6 +321,19 @@ def test_frozen_dataclasses_decimal_only_canonical_inputs_and_public_safety() ->
         build_report(candidate(), candidate())
     with pytest.raises(ValueError, match="ordered"):
         candidate(reason_codes={"alpha_reason", "beta_reason"})
+    with pytest.raises(ValueError, match="rows must contain"):
+        module.StrategyCalibratedRecommendationThresholdsV2Report(
+            generated_at=GENERATED_AT,
+            config_version=CONFIG_VERSION,
+            candidate_count=d("1.000000"),
+            row_count=d("1.000000"),
+            promote_count=d("0.000000"),
+            watch_count=d("1.000000"),
+            block_count=d("0.000000"),
+            status="watch",
+            reason_codes=("empty_calibrated_recommendation_set",),
+            rows=(object(),),  # type: ignore[arg-type]
+        )
 
 
 def test_reconstructing_with_stale_digest_rejects_tampered_derived_values() -> None:

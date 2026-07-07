@@ -590,9 +590,6 @@ def _normalize_rows(
         normalized = tuple(rows)
     except TypeError as exc:
         raise ValueError("rows must be an iterable") from exc
-    candidate_ids = tuple(row.candidate_id for row in normalized)
-    if len(set(candidate_ids)) != len(candidate_ids):
-        raise ValueError("rows must not contain duplicate candidate_id values")
     for row in normalized:
         if type(row) is not StrategyCalibratedRecommendationThresholdsV2Row:
             raise ValueError(
@@ -600,6 +597,9 @@ def _normalize_rows(
             )
         _require_hard_flags("row", row)
         _verify_digest(row)
+    candidate_ids = tuple(row.candidate_id for row in normalized)
+    if len(set(candidate_ids)) != len(candidate_ids):
+        raise ValueError("rows must not contain duplicate candidate_id values")
     return normalized
 
 
@@ -958,7 +958,11 @@ def _reject_unsafe_public_payload(
             raise ValueError(f"{current_path} must be an ISO datetime string")
         _as_utc(current_path, value)
         return
-    if value is None or type(value) in (bool, int):
+    if value is None or type(value) is bool:
+        return
+    if type(value) is int:
+        if public_payload:
+            raise ValueError(f"{current_path} must be a Decimal string")
         return
     if isinstance(value, float):
         raise ValueError(f"{current_path} must not be a float")
