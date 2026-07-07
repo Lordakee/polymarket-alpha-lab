@@ -210,6 +210,50 @@ def test_watch_and_blocked_statuses_have_deterministic_reason_codes() -> None:
     )
 
 
+def test_custom_freshness_thresholds_drive_row_reason_codes_and_validation() -> None:
+    config = ResearchSourceIndependenceDigestConfig(
+        pass_freshness_quality=d("0.900000"),
+        blocked_freshness_quality=d("0.500000"),
+    )
+
+    digest_report = report(
+        (
+            fact(1, freshness_quality=d("0.800000")),
+            fact(2, freshness_quality=d("0.400000")),
+        ),
+        config=config,
+    )
+
+    assert digest_report.rows[0].reason_codes == (
+        "source_group_independent",
+        "source_group_secondary",
+        "source_group_freshness_watch",
+    )
+    assert digest_report.rows[1].reason_codes == (
+        "source_group_independent",
+        "source_group_secondary",
+        "source_group_freshness_blocked",
+    )
+    assert digest_report.pass_freshness_quality == d("0.900000")
+    assert digest_report.blocked_freshness_quality == d("0.500000")
+
+    bad_row = replace(
+        digest_report.rows[0],
+        reason_codes=(
+            "source_group_independent",
+            "source_group_secondary",
+            "source_group_freshness_pass",
+        ),
+    )
+    bad_values = _report_values_without_digest(digest_report)
+    bad_values["rows"] = (bad_row, digest_report.rows[1])
+    with pytest.raises(ValueError, match="row reason_codes"):
+        ResearchSourceIndependenceDigestReport(
+            **bad_values,
+            derived_validation_digest=api._report_digest_from_values(bad_values),
+        )
+
+
 def test_payload_serializes_decimal_values_as_strings_and_rejects_tampering() -> None:
     digest_report = report(
         (

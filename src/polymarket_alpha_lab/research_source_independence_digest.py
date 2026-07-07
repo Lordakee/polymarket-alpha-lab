@@ -344,6 +344,8 @@ class ResearchSourceIndependenceDigestRow:
 class ResearchSourceIndependenceDigestReport:
     generated_at: datetime
     config_version: str
+    pass_freshness_quality: Decimal
+    blocked_freshness_quality: Decimal
     status: str
     source_group_count: Decimal
     correlation_group_count: Decimal
@@ -380,6 +382,16 @@ class ResearchSourceIndependenceDigestReport:
             _as_utc("generated_at", self.generated_at),
         )
         _require_config_version(self.config_version)
+        for field_name in ("pass_freshness_quality", "blocked_freshness_quality"):
+            object.__setattr__(
+                self,
+                field_name,
+                _require_ratio_decimal(field_name, getattr(self, field_name)),
+            )
+        if self.pass_freshness_quality <= self.blocked_freshness_quality:
+            raise ValueError(
+                "pass_freshness_quality must exceed blocked_freshness_quality",
+            )
         object.__setattr__(self, "status", _require_status("status", self.status))
         for field_name in ("source_group_count", "correlation_group_count"):
             object.__setattr__(
@@ -467,6 +479,7 @@ def build_research_source_independence_digest(
         total_weight=total_weight,
         correlation_weights=correlation_weights,
         correlation_counts=correlation_counts,
+        config=config,
     )
     independent_weight = _sum_decimal(tuple(row.independent_weight for row in rows))
     independent_source_coverage = _ratio(independent_weight, total_weight)
@@ -498,6 +511,8 @@ def build_research_source_independence_digest(
     values: dict[str, object] = {
         "generated_at": generated_at,
         "config_version": config.config_version,
+        "pass_freshness_quality": config.pass_freshness_quality,
+        "blocked_freshness_quality": config.blocked_freshness_quality,
         "status": _report_status(report_reason_codes),
         "source_group_count": _decimal_count(len(rows)),
         "correlation_group_count": correlation_group_count,
@@ -565,6 +580,7 @@ def _build_rows(
     total_weight: Decimal,
     correlation_weights: Mapping[str, Decimal],
     correlation_counts: Mapping[str, Decimal],
+    config: ResearchSourceIndependenceDigestConfig,
 ) -> tuple[ResearchSourceIndependenceDigestRow, ...]:
     rows: list[ResearchSourceIndependenceDigestRow] = []
     for fact in facts:
@@ -590,6 +606,8 @@ def _build_rows(
                     source_role=fact.source_role,
                     stance=fact.stance,
                     freshness_quality=fact.freshness_quality,
+                    pass_freshness_quality=config.pass_freshness_quality,
+                    blocked_freshness_quality=config.blocked_freshness_quality,
                 ),
             ),
         )
@@ -602,6 +620,8 @@ def _row_reason_codes(
     source_role: str,
     stance: str,
     freshness_quality: Decimal,
+    pass_freshness_quality: Decimal,
+    blocked_freshness_quality: Decimal,
 ) -> tuple[str, ...]:
     reason_codes: list[str] = [
         (
@@ -617,9 +637,9 @@ def _row_reason_codes(
     ]
     if stance == "contradicting":
         reason_codes.append("source_group_contradicting")
-    if freshness_quality >= Decimal("0.700000"):
+    if freshness_quality >= pass_freshness_quality:
         reason_codes.append("source_group_freshness_pass")
-    elif freshness_quality >= Decimal("0.250000"):
+    elif freshness_quality >= blocked_freshness_quality:
         reason_codes.append("source_group_freshness_watch")
     else:
         reason_codes.append("source_group_freshness_blocked")
@@ -808,7 +828,12 @@ def _validate_report_consistency(report: ResearchSourceIndependenceDigestReport)
     )
     if report.freshness_quality != expected_freshness_quality:
         raise ValueError("freshness_quality must match rows")
-    _validate_row_consistency(report.rows, report.total_weight)
+    _validate_row_consistency(
+        report.rows,
+        report.total_weight,
+        pass_freshness_quality=report.pass_freshness_quality,
+        blocked_freshness_quality=report.blocked_freshness_quality,
+    )
     _validate_report_reason_code_surface(report)
     if report.status != _report_status(report.reason_codes):
         raise ValueError("status must match reason_codes")
@@ -817,6 +842,9 @@ def _validate_report_consistency(report: ResearchSourceIndependenceDigestReport)
 def _validate_row_consistency(
     rows: tuple[ResearchSourceIndependenceDigestRow, ...],
     total_weight: Decimal,
+    *,
+    pass_freshness_quality: Decimal,
+    blocked_freshness_quality: Decimal,
 ) -> None:
     correlation_weights: dict[str, Decimal] = {}
     correlation_counts: dict[str, Decimal] = {}
@@ -849,6 +877,8 @@ def _validate_row_consistency(
             source_role=row.source_role,
             stance=row.stance,
             freshness_quality=row.freshness_quality,
+            pass_freshness_quality=pass_freshness_quality,
+            blocked_freshness_quality=blocked_freshness_quality,
         )
         if row.reason_codes != expected_reason_codes:
             raise ValueError("row reason_codes must match row fields")
