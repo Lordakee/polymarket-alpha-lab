@@ -867,6 +867,8 @@ def _require_supported_payload(
 
 def _config_version(value: object) -> None:
     _safe_text("config_version", value)
+    if value != DEFAULT_RESEARCH_PACKET_PROBABILITY_MOVE_SOURCE_ATTRIBUTION_V2_CONFIG_VERSION:
+        raise ValueError("config_version must be supported")
 
 
 def _reason_codes(value: object) -> tuple[str, ...]:

@@ -229,6 +229,9 @@ def test_validation_requires_decimal_inputs_flags_and_frozen_dataclasses() -> No
     with pytest.raises(ValueError, match="attribution weights must total 1"):
         config(specialist_uncertainty_weight=d("0.200000"))
 
+    with pytest.raises(ValueError, match="config_version must be supported"):
+        config(config_version="research-packet-probability-move-source-attribution-v1")
+
     with pytest.raises(ValueError, match="candidate rows"):
         module.build_research_packet_probability_move_source_attribution_v2(
             [object()],
