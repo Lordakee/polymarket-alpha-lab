@@ -7,7 +7,7 @@ import json
 from collections.abc import Iterable
 from dataclasses import dataclass, fields, is_dataclass
 from datetime import UTC, datetime
-from decimal import Decimal, ROUND_HALF_EVEN, localcontext
+from decimal import Decimal, InvalidOperation, ROUND_HALF_EVEN, localcontext
 from typing import Any
 
 
@@ -344,9 +344,10 @@ def research_packet_market_probability_move_explainer_v2_payload(
     if type(payload) is not dict:
         raise ValueError("report payload must be a JSON object")
     _reject_unsafe_public_payload(payload)
-    _require_supported_payload(payload)
+    _require_supported_payload(payload, validate_consistency=False)
     _require_hard_flags("payload", _DictFlags(payload))
     _require_payload_digest(payload)
+    _require_payload_consistency(payload)
     return payload
 
 
@@ -662,22 +663,244 @@ def _require_supported_payload(
     payload: dict[str, Any],
     *,
     digest_required: bool = True,
+    validate_consistency: bool = True,
 ) -> None:
+    expected_report_fields = set(REPORT_PAYLOAD_FIELDS)
+    if digest_required:
+        allowed_report_fields = expected_report_fields
+    else:
+        expected_report_fields.remove("derived_validation_digest")
+        allowed_report_fields = set(REPORT_PAYLOAD_FIELDS)
     for key in payload:
-        if key not in REPORT_PAYLOAD_FIELDS:
+        if key not in allowed_report_fields:
             raise ValueError("payload field is not supported")
+    if expected_report_fields - set(payload):
+        raise ValueError("payload field is missing")
+    _require_payload_report_values(payload, digest_required=digest_required)
     if digest_required and "derived_validation_digest" not in payload:
         raise ValueError("derived_validation_digest must be present")
     rows = payload.get("rows")
     if type(rows) is not list:
         raise ValueError("rows must be a list")
+    built_rows: list[ResearchPacketMarketProbabilityMoveExplainerV2Row] = []
     for row in rows:
         if type(row) is not dict:
             raise ValueError("rows must contain payload objects")
         for key in row:
             if key not in ROW_PAYLOAD_FIELDS:
                 raise ValueError("payload field is not supported")
+        if set(row) != set(ROW_PAYLOAD_FIELDS):
+            raise ValueError("payload field is missing")
+        _require_payload_row_values(row)
+        if validate_consistency:
+            built_rows.append(_row_from_payload(row))
         _require_hard_flags("row payload", _DictFlags(row))
+    if validate_consistency:
+        _require_payload_report_matches(payload, tuple(built_rows))
+
+
+def _require_payload_report_values(
+    payload: dict[str, Any],
+    *,
+    digest_required: bool,
+) -> None:
+    _payload_datetime(payload.get("generated_at"))
+    if (
+        payload.get("config_version")
+        != DEFAULT_RESEARCH_PACKET_MARKET_PROBABILITY_MOVE_EXPLAINER_V2_CONFIG_VERSION
+    ):
+        raise ValueError("config_version is not supported")
+    for name in ("market_count", "confirmed_count", "contradicted_count", "stale_count"):
+        _payload_count_decimal(name, payload.get(name))
+    _payload_ratio_decimal("largest_move_magnitude", payload.get("largest_move_magnitude"))
+    if digest_required:
+        _hex_digest("derived_validation_digest", payload.get("derived_validation_digest"))
+
+
+def _require_payload_row_values(row: dict[str, Any]) -> None:
+    _payload_count_decimal("rank", row.get("rank"))
+    _payload_text("market_id", row.get("market_id"))
+    _payload_text("market_title", row.get("market_title"))
+    _payload_ratio_decimal("before_price", row.get("before_price"))
+    _payload_ratio_decimal("after_price", row.get("after_price"))
+    _payload_ratio_decimal("move_magnitude", row.get("move_magnitude"))
+    _payload_member("move_direction", row.get("move_direction"), MOVE_DIRECTIONS)
+    _payload_member("move_band", row.get("move_band"), MOVE_BANDS)
+    source_events = row.get("source_events")
+    if type(source_events) is not list:
+        raise ValueError("source_events must be a list")
+    for source_event in source_events:
+        _checked_source_event(source_event)
+    _payload_count_decimal("source_event_count", row.get("source_event_count"))
+    _payload_member(
+        "official_confirmation_status",
+        row.get("official_confirmation_status"),
+        OFFICIAL_CONFIRMATION_STATUSES,
+    )
+    _payload_member(
+        "contradiction_status",
+        row.get("contradiction_status"),
+        CONTRADICTION_STATUSES,
+    )
+    _payload_nonnegative_decimal("liquidity_depth_usd", row.get("liquidity_depth_usd"))
+    _payload_member("liquidity_context", row.get("liquidity_context"), LIQUIDITY_CONTEXTS)
+    _payload_nonnegative_decimal("latest_source_age_hours", row.get("latest_source_age_hours"))
+    _payload_member("freshness_status", row.get("freshness_status"), FRESHNESS_STATUSES)
+    reason_codes = row.get("reason_codes")
+    if type(reason_codes) is not list:
+        raise ValueError("reason_codes must be a list")
+    _reason_codes(tuple(reason_codes))
+
+
+def _require_payload_consistency(payload: dict[str, Any]) -> None:
+    rows = payload.get("rows")
+    if type(rows) is not list:
+        raise ValueError("rows must be a list")
+    _require_payload_report_matches(
+        payload,
+        tuple(_row_from_payload(row) for row in rows),
+    )
+
+
+def _row_from_payload(
+    row: dict[str, Any],
+) -> ResearchPacketMarketProbabilityMoveExplainerV2Row:
+    source_events = row.get("source_events")
+    if type(source_events) is not list:
+        raise ValueError("source_events must be a list")
+    reason_codes = row.get("reason_codes")
+    if type(reason_codes) is not list:
+        raise ValueError("reason_codes must be a list")
+    built = ResearchPacketMarketProbabilityMoveExplainerV2Row(
+        rank=_payload_count_decimal("rank", row.get("rank")),
+        market_id=_payload_text("market_id", row.get("market_id")),
+        market_title=_payload_text("market_title", row.get("market_title")),
+        before_price=_payload_ratio_decimal("before_price", row.get("before_price")),
+        after_price=_payload_ratio_decimal("after_price", row.get("after_price")),
+        move_magnitude=_payload_ratio_decimal("move_magnitude", row.get("move_magnitude")),
+        move_direction=_payload_member(
+            "move_direction",
+            row.get("move_direction"),
+            MOVE_DIRECTIONS,
+        ),
+        move_band=_payload_member("move_band", row.get("move_band"), MOVE_BANDS),
+        source_events=tuple(source_events),
+        source_event_count=_payload_count_decimal(
+            "source_event_count",
+            row.get("source_event_count"),
+        ),
+        official_confirmation_status=_payload_member(
+            "official_confirmation_status",
+            row.get("official_confirmation_status"),
+            OFFICIAL_CONFIRMATION_STATUSES,
+        ),
+        contradiction_status=_payload_member(
+            "contradiction_status",
+            row.get("contradiction_status"),
+            CONTRADICTION_STATUSES,
+        ),
+        liquidity_depth_usd=_payload_nonnegative_decimal(
+            "liquidity_depth_usd",
+            row.get("liquidity_depth_usd"),
+        ),
+        liquidity_context=_payload_member(
+            "liquidity_context",
+            row.get("liquidity_context"),
+            LIQUIDITY_CONTEXTS,
+        ),
+        latest_source_age_hours=_payload_nonnegative_decimal(
+            "latest_source_age_hours",
+            row.get("latest_source_age_hours"),
+        ),
+        freshness_status=_payload_member(
+            "freshness_status",
+            row.get("freshness_status"),
+            FRESHNESS_STATUSES,
+        ),
+        reason_codes=tuple(reason_codes),
+        paper_only=row.get("paper_only"),
+        report_only=row.get("report_only"),
+        readonly=row.get("readonly"),
+    )
+    if source_events != list(built.source_events):
+        raise ValueError("source_events must use deterministic sequence")
+    return built
+
+
+def _require_payload_report_matches(
+    payload: dict[str, Any],
+    rows: tuple[ResearchPacketMarketProbabilityMoveExplainerV2Row, ...],
+) -> None:
+    if _payload_count_decimal("market_count", payload.get("market_count")) != Decimal(len(rows)):
+        raise ValueError("market_count must match rows")
+    if _payload_count_decimal("confirmed_count", payload.get("confirmed_count")) != Decimal(
+        sum(COUNT_ONE for row in rows if row.official_confirmation_status == "confirmed"),
+    ):
+        raise ValueError("confirmed_count must match rows")
+    if _payload_count_decimal("contradicted_count", payload.get("contradicted_count")) != Decimal(
+        sum(COUNT_ONE for row in rows if row.contradiction_status != "none"),
+    ):
+        raise ValueError("contradicted_count must match rows")
+    if _payload_count_decimal("stale_count", payload.get("stale_count")) != Decimal(
+        sum(COUNT_ONE for row in rows if row.freshness_status == "stale"),
+    ):
+        raise ValueError("stale_count must match rows")
+    if _payload_ratio_decimal(
+        "largest_move_magnitude",
+        payload.get("largest_move_magnitude"),
+    ) != max((row.move_magnitude for row in rows), default=ZERO):
+        raise ValueError("largest_move_magnitude must match rows")
+    expected_ranks = tuple(Decimal(index) for index in range(1, len(rows) + 1))
+    if tuple(row.rank for row in rows) != expected_ranks:
+        raise ValueError("row ranks must be sequential")
+    if rows != tuple(sorted(rows, key=_row_key)):
+        raise ValueError("rows must use deterministic sequence")
+
+
+def _payload_datetime(value: object) -> None:
+    if type(value) is not str or not value.endswith("Z"):
+        raise ValueError("generated_at must be a UTC timestamp string")
+    try:
+        datetime.fromisoformat(value[:-1] + "+00:00")
+    except ValueError as exc:
+        raise ValueError("generated_at must be a UTC timestamp string") from exc
+
+
+def _payload_text(name: str, value: object) -> str:
+    _safe_text(name, value)
+    return value
+
+
+def _payload_member(name: str, value: object, allowed: frozenset[str]) -> str:
+    _member(name, value, allowed)
+    return value
+
+
+def _payload_decimal(name: str, value: object) -> Decimal:
+    if type(value) is not str:
+        raise ValueError(f"{name} must be a Decimal string")
+    try:
+        return Decimal(value)
+    except InvalidOperation as exc:
+        raise ValueError(f"{name} must be a Decimal string") from exc
+
+
+def _payload_count_decimal(name: str, value: object) -> Decimal:
+    return _count(name, _payload_decimal(name, value))
+
+
+def _payload_ratio_decimal(name: str, value: object) -> Decimal:
+    result = _ratio(name, _payload_decimal(name, value))
+    if str(result) != value:
+        raise ValueError(f"{name} must be a canonical Decimal string")
+    return result
+
+
+def _payload_nonnegative_decimal(name: str, value: object) -> Decimal:
+    result = _dec_nonnegative(name, _payload_decimal(name, value))
+    if str(result) != value:
+        raise ValueError(f"{name} must be a canonical Decimal string")
+    return result
 
 
 def _normalize_inputs(

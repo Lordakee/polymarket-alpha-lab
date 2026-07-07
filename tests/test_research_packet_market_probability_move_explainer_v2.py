@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib
 import json
 from dataclasses import FrozenInstanceError, is_dataclass, replace
@@ -90,6 +91,18 @@ def assert_no_float_values(value: Any) -> None:
     if isinstance(value, list):
         for item in value:
             assert_no_float_values(item)
+
+
+def resign_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    core = {
+        key: item
+        for key, item in payload.items()
+        if key != "derived_validation_digest"
+    }
+    payload["derived_validation_digest"] = hashlib.sha256(
+        json.dumps(core, sort_keys=True, separators=(",", ":")).encode("utf-8"),
+    ).hexdigest()
+    return payload
 
 
 def test_builds_deterministic_probability_move_explainer_rows_and_digest() -> None:
@@ -239,6 +252,34 @@ def test_validation_rejects_unsafe_payloads_and_digest_tampering() -> None:
                 "largest_move_magnitude": 0.1,
             },
         )
+
+
+def test_payload_validation_rejects_resigned_schema_and_consistency_drift() -> None:
+    built = report(move())
+
+    missing_report_field = built.payload
+    del missing_report_field["generated_at"]
+    resign_payload(missing_report_field)
+    with pytest.raises(ValueError, match="payload field is missing"):
+        api.research_packet_market_probability_move_explainer_v2_payload(
+            missing_report_field,
+        )
+    with pytest.raises(ValueError, match="payload field is missing"):
+        api.derive_research_packet_market_probability_move_explainer_v2_digest(
+            missing_report_field,
+        )
+
+    count_drift = built.payload
+    count_drift["market_count"] = "99"
+    resign_payload(count_drift)
+    with pytest.raises(ValueError, match="market_count"):
+        api.research_packet_market_probability_move_explainer_v2_payload(count_drift)
+
+    row_drift = built.payload
+    row_drift["rows"][0]["source_event_count"] = "9"
+    resign_payload(row_drift)
+    with pytest.raises(ValueError, match="source_event_count"):
+        api.research_packet_market_probability_move_explainer_v2_payload(row_drift)
 
 
 def test_static_module_surface_has_no_side_effect_imports() -> None:
