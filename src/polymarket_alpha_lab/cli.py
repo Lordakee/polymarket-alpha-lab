@@ -8241,7 +8241,7 @@ def _print_strategy_cycle_summary(report: PaperStrategyCycleReport) -> None:
     for item in screening.queue_items[:5]:
         print(
             f"  #{item.queue_position} [{item.research_bucket}] "
-            f"{item.market_slug} score={item.screening_score}",
+            f"<redacted-market> score={item.screening_score}",
         )
 
 
@@ -13413,7 +13413,7 @@ def _print_paper_research_packet_summary(
     print(
         "top_packet: "
         f"rank={top_row.packet_rank} "
-        f"market_slug={top_row.market_slug} "
+        "market_slug=<redacted-market> "
         f"side={top_row.side} "
         f"research_priority={top_row.research_priority} "
         f"recommendation_score={top_row.recommendation_score} "
@@ -14681,7 +14681,7 @@ def _print_paper_research_packet_db_history_summary(report: object) -> None:
     print(
         "top_packet: "
         f"rank={report.latest_top_packet_rank} "
-        f"market_slug={report.latest_top_packet_market_slug} "
+        "market_slug=<redacted-market> "
         f"side={report.latest_top_packet_side} "
         f"research_priority={report.latest_top_packet_research_priority} "
         f"recommendation_score={report.latest_top_packet_recommendation_score} "
