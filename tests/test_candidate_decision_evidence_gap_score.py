@@ -178,12 +178,13 @@ def test_missing_official_resolution_and_terms_block_support() -> None:
 
     assert result.evidence_gap_count == d("14")
     assert result.aggregate_evidence_score_bps == d("25.000000")
-    assert result.support_status == "blocked"
+    assert result.support_status == "block"
     assert result.support_decision == "block"
     assert result.blocker_codes == (
         "official_resolution_source_missing",
         "market_terms_rule_missing",
     )
+    assert "support_block" in result.reason_codes
     assert "score_below_watch_threshold" in result.reason_codes
 
 
@@ -200,7 +201,7 @@ def test_report_sorts_results_by_status_severity_score_and_candidate_ref() -> No
         minimum_watch_score_bps=d("300.000000"),
         reason_codes=(),
     )
-    blocked_fact = fact(
+    block_fact = fact(
         candidate_ref="redacted-candidate-a",
         official_resolution_source_count=d("0"),
         market_terms_rule_count=d("0"),
@@ -211,7 +212,7 @@ def test_report_sorts_results_by_status_severity_score_and_candidate_ref() -> No
         reason_codes=(),
     )
 
-    aggregate = report(pass_fact, watch_fact, blocked_fact)
+    aggregate = report(pass_fact, watch_fact, block_fact)
 
     assert aggregate == module.CandidateDecisionEvidenceGapReport(
         result_count=d("3"),
@@ -235,7 +236,7 @@ def test_report_sorts_results_by_status_severity_score_and_candidate_ref() -> No
         "redacted-candidate-c",
     )
     assert tuple(row.support_status for row in aggregate.results) == (
-        "blocked",
+        "block",
         "watch",
         "pass",
     )
@@ -326,6 +327,28 @@ def test_dataclasses_are_frozen_decimal_only_and_hard_flagged() -> None:
         score(object())
     with pytest.raises(ValueError, match="facts_list"):
         report(object())
+
+    block_result = score(
+        fact(
+            official_resolution_source_count=d("0"),
+            market_terms_rule_count=d("0"),
+            fresh_data_point_count=d("1"),
+            contradiction_check_count=d("0"),
+            base_rate_context_count=d("0"),
+            specialist_review_count=d("0"),
+            minimum_watch_score_bps=d("200.000000"),
+            reason_codes=(),
+        ),
+    )
+    with pytest.raises(ValueError, match="support_status"):
+        module.CandidateDecisionEvidenceGapResult(
+            **{
+                **public_field_values(block_result),
+                "support_status": "blocked",
+                "support_decision": "block",
+                "derived_validation_digest": "",
+            },
+        )
 
     rebuilt_result = module.CandidateDecisionEvidenceGapResult(
         **public_field_values(result),
@@ -452,6 +475,7 @@ def test_module_has_no_unsafe_runtime_surface_or_float_literals() -> None:
         "hashlib",
         "typing",
     }
+    assert module.SUPPORT_STATUSES == ("pass", "watch", "block")
     assert module.__all__ == (
         "SUPPORT_STATUSES",
         "SUPPORT_DECISIONS",

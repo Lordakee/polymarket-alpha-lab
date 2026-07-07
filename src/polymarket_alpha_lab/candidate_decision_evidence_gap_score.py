@@ -13,9 +13,9 @@ COUNT_QUANTUM = Decimal("1")
 ZERO = Decimal("0.000000")
 ONE = Decimal("1.000000")
 DIMENSION_SCORE_BPS = Decimal("100.000000")
-SUPPORT_STATUSES = ("pass", "watch", "blocked")
+SUPPORT_STATUSES = ("pass", "watch", "block")
 SUPPORT_DECISIONS = ("research_next", "watch", "block")
-_STATUS_RANK = {"blocked": 0, "watch": 1, "pass": 2}
+_STATUS_RANK = {"block": 0, "watch": 1, "pass": 2}
 _UNSAFE_TERM_PARTS = (
     ("li", "ve"),
     ("au", "th"),
@@ -425,7 +425,7 @@ def build_candidate_decision_evidence_gap_report(
     result_count = _count_from_length(results)
     pass_count = _count_status(results, "pass")
     watch_count = _count_status(results, "watch")
-    blocked_count = _count_status(results, "blocked")
+    blocked_count = _count_status(results, "block")
     score_sum = _sum_decimal(result.aggregate_evidence_score_bps for result in results)
     gap_values = tuple(result.evidence_gap_count for result in results)
 
@@ -512,9 +512,9 @@ def _support_status(
     blocker_codes: tuple[str, ...],
 ) -> str:
     if blocker_codes:
-        return "blocked"
+        return "block"
     if aggregate_score < minimum_watch_score_bps:
-        return "blocked"
+        return "block"
     if aggregate_score < minimum_pass_score_bps:
         return "watch"
     return "pass"
@@ -525,7 +525,7 @@ def _support_decision(support_status: str) -> str:
         return "research_next"
     if support_status == "watch":
         return "watch"
-    if support_status == "blocked":
+    if support_status == "block":
         return "block"
     raise ValueError("support_status must be supported")
 
@@ -630,7 +630,7 @@ def _validate_report_consistency(report: CandidateDecisionEvidenceGapReport) -> 
         raise ValueError("pass_count must match results")
     if report.watch_count != _count_status(report.results, "watch"):
         raise ValueError("watch_count must match results")
-    if report.blocked_count != _count_status(report.results, "blocked"):
+    if report.blocked_count != _count_status(report.results, "block"):
         raise ValueError("blocked_count must match results")
     score_sum = _sum_decimal(result.aggregate_evidence_score_bps for result in report.results)
     expected_average = (
