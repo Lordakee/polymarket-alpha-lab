@@ -399,6 +399,7 @@ ProbabilitySelectionScorerAgreementRunner = Callable[..., object]
 ProbabilitySelectionScorerAgreementDbSink = Callable[..., object]
 ProbabilitySelectionScorerAgreementTrendRunner = Callable[..., object]
 ProbabilitySelectionScorerAgreementTrendGateRunner = Callable[..., object]
+PaperCandidateDecisionEngineRunner = Callable[..., object]
 TeamDiagnosticsRowsLoader = Callable[..., object]
 TeamDiagnosticsBundleBuilder = Callable[..., object]
 TeamDiagnosticsFormatter = Callable[[object], str]
@@ -2994,6 +2995,9 @@ def main(
     probability_selection_scorer_agreement_trend_gate_runner: (
         ProbabilitySelectionScorerAgreementTrendGateRunner | None
     ) = None,
+    paper_candidate_decision_engine_runner: (
+        PaperCandidateDecisionEngineRunner | None
+    ) = None,
     team_diagnostics_rows_loader: TeamDiagnosticsRowsLoader | None = None,
     team_diagnostics_bundle_builder: TeamDiagnosticsBundleBuilder | None = None,
     team_diagnostics_stdout_formatter: TeamDiagnosticsFormatter | None = None,
@@ -3286,6 +3290,15 @@ def main(
         action="store_true",
         default=False,
         dest="persist",
+    )
+    paper_candidate_decision_engine_report = subparsers.add_parser(
+        "paper-candidate-decision-engine-report",
+    )
+    paper_candidate_decision_engine_report.add_argument(
+        "--input",
+        type=Path,
+        required=True,
+        dest="input_path",
     )
     paper_probability_selection_summary_history = subparsers.add_parser(
         "paper-probability-selection-summary-history",
@@ -5323,6 +5336,21 @@ def main(
         except Exception as exc:
             print(
                 f"paper-recommendation-risk-budget-report failed: {exc}",
+                file=sys.stderr,
+            )
+            return 1
+
+    if args.command == "paper-candidate-decision-engine-report":
+        try:
+            report = _run_paper_candidate_decision_engine_report(
+                input_path=args.input_path,
+                runner=paper_candidate_decision_engine_runner,
+            )
+            _print_paper_candidate_decision_engine_report_summary(report)
+            return 0
+        except Exception as exc:
+            print(
+                f"paper-candidate-decision-engine-report failed: {exc}",
                 file=sys.stderr,
             )
             return 1
@@ -10256,6 +10284,71 @@ def _run_paper_recommendation_risk_budget_report(
         if row.selected_position_notional == Decimal("0.000000")
     )
     return report, zero_allocation_count
+
+
+def _run_paper_candidate_decision_engine_report(
+    *,
+    input_path: Path,
+    runner: PaperCandidateDecisionEngineRunner | None,
+) -> object:
+    generated_at = datetime.now(UTC)
+    if runner is not None:
+        return runner(input_path=input_path, generated_at=generated_at)
+    from polymarket_alpha_lab.paper_candidate_decision_engine_load import (
+        load_paper_candidate_decision_engine_report,
+    )
+
+    candidate_bundles = _read_paper_candidate_decision_engine_candidate_bundles(
+        input_path,
+    )
+    return load_paper_candidate_decision_engine_report(
+        generated_at=generated_at,
+        candidate_bundles=candidate_bundles,
+    )
+
+
+def _read_paper_candidate_decision_engine_candidate_bundles(
+    path: Path,
+) -> tuple[object, ...]:
+    from polymarket_alpha_lab.json_recovery import from_jsonable
+    from polymarket_alpha_lab.paper_candidate_decision_engine_load import (
+        PaperCandidateDecisionEngineCandidateBundle,
+    )
+
+    rows = _read_paper_probability_side_edge_row_payloads(path)
+    bundles: list[object] = []
+    for row_number, row in enumerate(rows, start=1):
+        if not isinstance(row, dict):
+            raise ValueError(f"input row {row_number} must be a JSON object")
+        try:
+            bundles.append(from_jsonable(PaperCandidateDecisionEngineCandidateBundle, row))
+        except (AttributeError, KeyError, TypeError, ValueError) as exc:
+            raise ValueError(
+                "input row "
+                f"{row_number} is not a valid "
+                f"PaperCandidateDecisionEngineCandidateBundle: {exc}",
+            ) from exc
+    return tuple(bundles)
+
+
+def _print_paper_candidate_decision_engine_report_summary(report: object) -> None:
+    _require_hard_flags("paper candidate decision engine report", report)
+    reason_counts = " ".join(
+        f"{item.reason_code}:{item.count}"
+        for item in getattr(report, "reason_counts", ())
+    )
+    print(
+        "paper-candidate-decision-engine-report: "
+        f"candidate_count={report.candidate_count} "
+        f"reject={report.reject_count} "
+        f"watch={report.watch_count} "
+        f"research_more={report.research_more_count} "
+        f"paper_recommend={report.paper_recommend_count} "
+        f"paper_only={report.paper_only} "
+        f"report_only={report.report_only} "
+        f"readonly={report.readonly}",
+    )
+    print(f"reason_code_counts: {reason_counts or 'none'}")
 
 
 def _read_paper_probability_side_edge_row_payloads(
