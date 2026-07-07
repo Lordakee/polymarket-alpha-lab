@@ -4,6 +4,7 @@ import json
 from dataclasses import FrozenInstanceError, fields
 from datetime import UTC, datetime, timedelta, timezone
 from decimal import Decimal
+from hashlib import sha256
 from importlib import import_module
 from typing import Any
 
@@ -85,6 +86,20 @@ def _bypassed_row(row: object, **overrides: object) -> object:
     for key, value in overrides.items():
         object.__setattr__(malformed, key, value)
     return malformed
+
+
+def _with_recomputed_report_digest(payload: dict[str, Any]) -> dict[str, Any]:
+    without_digest = dict(payload)
+    without_digest.pop("derived_validation_digest")
+    payload["derived_validation_digest"] = sha256(
+        json.dumps(
+            without_digest,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+        ).encode("utf-8"),
+    ).hexdigest()
+    return payload
 
 
 def _assert_json_ready(value: object) -> None:
@@ -364,6 +379,60 @@ def test_dataclasses_are_frozen_decimal_only_and_digest_tamper_is_rejected() -> 
     tampered_payload["evidence_count"] = "99.000000"
     with pytest.raises(ValueError, match="derived_validation_digest mismatch"):
         api.research_packet_source_crosscheck_gate_v2_payload(tampered_payload)
+
+
+def test_public_payload_rejects_recomputed_report_digest_with_stale_row_digest() -> None:
+    api = _api()
+    payload = api.research_packet_source_crosscheck_gate_v2_payload(
+        _report(
+            (
+                _evidence("official-confirmation", official_confirmation=True),
+                _evidence(
+                    "contradiction-review",
+                    source_family="review-source-family",
+                    contradiction_reviewed=True,
+                ),
+                _evidence(
+                    "resolution-trace",
+                    source_family="resolution-source-family",
+                    resolution_source_traceable=True,
+                ),
+            ),
+        ),
+    )
+    payload["event_rows"][0]["oldest_evidence_age_seconds"] = "181.000000"
+
+    with pytest.raises(ValueError, match="derived_validation_digest mismatch"):
+        api.research_packet_source_crosscheck_gate_v2_payload(
+            _with_recomputed_report_digest(payload),
+        )
+
+
+def test_public_payload_rejects_recomputed_report_digest_with_bad_rollups() -> None:
+    api = _api()
+    payload = api.research_packet_source_crosscheck_gate_v2_payload(
+        _report(
+            (
+                _evidence("official-confirmation", official_confirmation=True),
+                _evidence(
+                    "contradiction-review",
+                    source_family="review-source-family",
+                    contradiction_reviewed=True,
+                ),
+                _evidence(
+                    "resolution-trace",
+                    source_family="resolution-source-family",
+                    resolution_source_traceable=True,
+                ),
+            ),
+        ),
+    )
+    payload["event_count"] = "2.000000"
+
+    with pytest.raises(ValueError, match="event_count must match event_rows"):
+        api.research_packet_source_crosscheck_gate_v2_payload(
+            _with_recomputed_report_digest(payload),
+        )
 
 
 def test_public_payload_is_json_ready_and_public_surface_is_safe() -> None:

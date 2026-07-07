@@ -352,6 +352,7 @@ def research_packet_source_crosscheck_gate_v2_payload(
     _require_hard_flags("payload", _DictFlags(payload))
     _reject_unsafe_public_payload("payload", payload)
     _validate_public_payload_digest(payload)
+    _validate_public_payload_contract(payload)
     return payload
 
 
@@ -915,6 +916,211 @@ def _validate_public_payload_digest(payload: dict[str, Any]) -> None:
     digest_payload.pop(DERIVED_VALIDATION_DIGEST_FIELD)
     if payload[DERIVED_VALIDATION_DIGEST_FIELD] != _digest_payload(digest_payload):
         raise ValueError("derived_validation_digest mismatch")
+
+
+def _validate_public_payload_contract(payload: dict[str, Any]) -> None:
+    event_rows_value = _payload_value(payload, "event_rows")
+    if type(event_rows_value) is not list:
+        raise ValueError("event_rows must be a list")
+    event_rows = tuple(
+        _event_row_from_public_payload(row_payload)
+        for row_payload in event_rows_value
+    )
+    ResearchPacketSourceCrosscheckGateV2Report(
+        generated_at=_public_datetime(
+            "generated_at",
+            _payload_value(payload, "generated_at"),
+        ),
+        config_version=_public_string(
+            "config_version",
+            _payload_value(payload, "config_version"),
+        ),
+        gate_status=_public_string(
+            "gate_status",
+            _payload_value(payload, "gate_status"),
+        ),
+        recommended_next_step=_public_string(
+            "recommended_next_step",
+            _payload_value(payload, "recommended_next_step"),
+        ),
+        event_count=_public_decimal(
+            "event_count",
+            _payload_value(payload, "event_count"),
+        ),
+        pass_event_count=_public_decimal(
+            "pass_event_count",
+            _payload_value(payload, "pass_event_count"),
+        ),
+        blocked_event_count=_public_decimal(
+            "blocked_event_count",
+            _payload_value(payload, "blocked_event_count"),
+        ),
+        evidence_count=_public_decimal(
+            "evidence_count",
+            _payload_value(payload, "evidence_count"),
+        ),
+        fresh_evidence_count=_public_decimal(
+            "fresh_evidence_count",
+            _payload_value(payload, "fresh_evidence_count"),
+        ),
+        stale_evidence_count=_public_decimal(
+            "stale_evidence_count",
+            _payload_value(payload, "stale_evidence_count"),
+        ),
+        reason_codes=_public_reason_codes(
+            "reason_codes",
+            _payload_value(payload, "reason_codes"),
+        ),
+        event_rows=event_rows,
+        derived_validation_digest=_public_string(
+            DERIVED_VALIDATION_DIGEST_FIELD,
+            _payload_value(payload, DERIVED_VALIDATION_DIGEST_FIELD),
+        ),
+        paper_only=_public_bool(
+            "paper_only",
+            _payload_value(payload, "paper_only"),
+        ),
+        report_only=_public_bool(
+            "report_only",
+            _payload_value(payload, "report_only"),
+        ),
+        readonly=_public_bool(
+            "readonly",
+            _payload_value(payload, "readonly"),
+        ),
+    )
+
+
+def _event_row_from_public_payload(
+    row_payload: object,
+) -> ResearchPacketSourceCrosscheckEventRow:
+    if type(row_payload) is not dict:
+        raise ValueError("event_rows must contain JSON objects")
+    return ResearchPacketSourceCrosscheckEventRow(
+        event_id=_public_string(
+            "event_id",
+            _payload_value(row_payload, "event_id"),
+        ),
+        gate_status=_public_string(
+            "gate_status",
+            _payload_value(row_payload, "gate_status"),
+        ),
+        eligible_for_strategy_review=_public_bool(
+            "eligible_for_strategy_review",
+            _payload_value(row_payload, "eligible_for_strategy_review"),
+        ),
+        evidence_count=_public_decimal(
+            "evidence_count",
+            _payload_value(row_payload, "evidence_count"),
+        ),
+        fresh_evidence_count=_public_decimal(
+            "fresh_evidence_count",
+            _payload_value(row_payload, "fresh_evidence_count"),
+        ),
+        stale_evidence_count=_public_decimal(
+            "stale_evidence_count",
+            _payload_value(row_payload, "stale_evidence_count"),
+        ),
+        independent_source_family_count=_public_decimal(
+            "independent_source_family_count",
+            _payload_value(row_payload, "independent_source_family_count"),
+        ),
+        official_confirmation_count=_public_decimal(
+            "official_confirmation_count",
+            _payload_value(row_payload, "official_confirmation_count"),
+        ),
+        contradiction_review_count=_public_decimal(
+            "contradiction_review_count",
+            _payload_value(row_payload, "contradiction_review_count"),
+        ),
+        resolution_source_trace_count=_public_decimal(
+            "resolution_source_trace_count",
+            _payload_value(row_payload, "resolution_source_trace_count"),
+        ),
+        contradicting_outcome_count=_public_decimal(
+            "contradicting_outcome_count",
+            _payload_value(row_payload, "contradicting_outcome_count"),
+        ),
+        latest_evidence_age_seconds=_public_optional_decimal(
+            "latest_evidence_age_seconds",
+            _payload_value(row_payload, "latest_evidence_age_seconds"),
+        ),
+        oldest_evidence_age_seconds=_public_optional_decimal(
+            "oldest_evidence_age_seconds",
+            _payload_value(row_payload, "oldest_evidence_age_seconds"),
+        ),
+        reason_codes=_public_reason_codes(
+            "reason_codes",
+            _payload_value(row_payload, "reason_codes"),
+        ),
+        derived_validation_digest=_public_string(
+            DERIVED_VALIDATION_DIGEST_FIELD,
+            _payload_value(row_payload, DERIVED_VALIDATION_DIGEST_FIELD),
+        ),
+        paper_only=_public_bool(
+            "paper_only",
+            _payload_value(row_payload, "paper_only"),
+        ),
+        report_only=_public_bool(
+            "report_only",
+            _payload_value(row_payload, "report_only"),
+        ),
+        readonly=_public_bool(
+            "readonly",
+            _payload_value(row_payload, "readonly"),
+        ),
+    )
+
+
+def _payload_value(payload: dict[str, Any], key: str) -> Any:
+    try:
+        return payload[key]
+    except KeyError as exc:
+        raise ValueError(f"{key} is required") from exc
+
+
+def _public_string(name: str, value: object) -> str:
+    if type(value) is not str:
+        raise ValueError(f"{name} must be a string")
+    _require_canonical_string(name, value)
+    return value
+
+
+def _public_bool(name: str, value: object) -> bool:
+    if type(value) is not bool:
+        raise ValueError(f"{name} must be a bool")
+    _require_bool(name, value)
+    return value
+
+
+def _public_decimal(name: str, value: object) -> Decimal:
+    if type(value) is not str:
+        raise ValueError(f"{name} must be a Decimal string")
+    try:
+        decimal_value = Decimal(value)
+    except InvalidOperation as exc:
+        raise ValueError(f"{name} must be a Decimal string") from exc
+    return _require_nonnegative_decimal(name, decimal_value)
+
+
+def _public_optional_decimal(name: str, value: object) -> Decimal | None:
+    if value is None:
+        return None
+    return _public_decimal(name, value)
+
+
+def _public_datetime(name: str, value: object) -> datetime:
+    if type(value) is not str:
+        raise ValueError(f"{name} must be an ISO datetime string")
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be an ISO datetime string") from exc
+    return _as_utc(name, parsed)
+
+
+def _public_reason_codes(name: str, value: object) -> tuple[str, ...]:
+    return _normalize_reason_codes(name, value)
 
 
 def _digest_payload(payload: dict[str, Any]) -> str:
