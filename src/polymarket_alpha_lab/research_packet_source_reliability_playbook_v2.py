@@ -691,6 +691,8 @@ def _validate_row_consistency(row: ResearchPacketSourceReliabilityPlaybookRow) -
         raise ValueError("contradiction_score must match contradiction_rate")
     if row.playbook_status != _row_status(row.reason_codes):
         raise ValueError("playbook_status must match reason_codes")
+    if EMPTY_REASON in row.reason_codes:
+        raise ValueError("empty reason must not be used for rows")
     if PASSED_REASON in row.reason_codes and row.reason_codes != (PASSED_REASON,):
         raise ValueError("passed reason must stand alone")
 

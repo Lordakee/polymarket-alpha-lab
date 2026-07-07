@@ -343,6 +343,32 @@ def test_frozen_decimal_only_contract_and_time_validation() -> None:
         _assert_decimal_public_metrics(item)
 
 
+def test_row_rejects_report_level_empty_reason_code() -> None:
+    api = _api()
+
+    with pytest.raises(ValueError, match="empty reason"):
+        api.ResearchPacketSourceReliabilityPlaybookRow(
+            team_id="politics",
+            rank=d("1"),
+            source_family_id="official_digest",
+            source_family_label="Official digest",
+            source_family_updated_at=GENERATED_AT,
+            source_family_age_seconds=d("0"),
+            historical_reliability_score=d("1"),
+            freshness_score=d("1"),
+            officialness_score=d("1"),
+            independence_score=d("1"),
+            latency_score=d("1"),
+            contradiction_rate=d("0"),
+            contradiction_score=d("1"),
+            resolution_usefulness_score=d("1"),
+            composite_reliability_score=d("1"),
+            evidence_count=d("12"),
+            playbook_status="watch",
+            reason_codes=("source_reliability_playbook_empty",),
+        )
+
+
 def test_unsafe_public_values_and_io_surfaces_are_rejected() -> None:
     api = _api()
 
