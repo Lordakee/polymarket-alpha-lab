@@ -1,0 +1,967 @@
+"""Readonly Decimal scorecard for specialist consensus drift."""
+
+from __future__ import annotations
+
+from collections.abc import Iterable
+from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
+from decimal import Context, Decimal, ROUND_HALF_EVEN, localcontext
+from hashlib import sha256
+import json
+
+
+DEFAULT_TEAM_SPECIALIST_CONSENSUS_DRIFT_SCORE_CONFIG_VERSION = (
+    "team-specialist-consensus-drift-score-v1"
+)
+
+DECIMAL_CONTEXT = Context(prec=64, rounding=ROUND_HALF_EVEN)
+SCORE_QUANT = Decimal("0.000001")
+COUNT_QUANT = Decimal("1")
+ZERO = Decimal("0.000000")
+ONE = Decimal("1.000000")
+
+CONSENSUS_DRIFT_STATUSES = ("pass", "watch", "block")
+ROW_REASON_CODES = (
+    "consensus_drift_pass",
+    "consensus_drift_watch",
+    "consensus_drift_block",
+    "consensus_stability_strong",
+    "consensus_stability_watch",
+    "consensus_stability_weak",
+    "dissent_low",
+    "dissent_watch",
+    "dissent_high",
+    "consensus_depth_full",
+    "consensus_depth_partial",
+    "consensus_depth_sparse",
+    "calibration_strong",
+    "calibration_watch",
+    "calibration_weak",
+    "source_quality_strong",
+    "source_quality_watch",
+    "source_quality_weak",
+)
+REPORT_REASON_CODES = (
+    "consensus_drift_scorecard_passed",
+    "consensus_drift_scorecard_watch_rows",
+    "consensus_drift_scorecard_block_rows",
+    "consensus_drift_scorecard_empty",
+)
+UNSAFE_PUBLIC_TEXT_FRAGMENTS = (
+    "market_id",
+    "market_ref",
+    "market_slug",
+    "candidate_id",
+    "candidate_ref",
+    "slug",
+    "question",
+    "url",
+    "source_ref",
+    "source_text",
+    "dsn",
+    "table",
+    "token",
+    "secret",
+    "auth",
+    "wallet",
+    "order",
+    "trade",
+    "buy",
+    "sell",
+    "recommendation",
+    "position_sizing",
+    "position-sizing",
+    "blocked",
+    "ready",
+    "matched",
+    "supported",
+    "live",
+    "network",
+    "database",
+    "persist",
+    "signing",
+    "mutation",
+)
+
+__all__ = (
+    "DEFAULT_TEAM_SPECIALIST_CONSENSUS_DRIFT_SCORE_CONFIG_VERSION",
+    "TeamSpecialistConsensusDriftScoreConfig",
+    "TeamSpecialistConsensusDriftScoreInput",
+    "TeamSpecialistConsensusDriftScoreRow",
+    "TeamSpecialistConsensusDriftScoreReport",
+    "build_team_specialist_consensus_drift_score",
+)
+
+
+@dataclass(frozen=True)
+class TeamSpecialistConsensusDriftScoreConfig:
+    config_version: str = DEFAULT_TEAM_SPECIALIST_CONSENSUS_DRIFT_SCORE_CONFIG_VERSION
+    stability_weight: Decimal = Decimal("0.350000")
+    dissent_weight: Decimal = Decimal("0.200000")
+    calibration_weight: Decimal = Decimal("0.200000")
+    source_quality_weight: Decimal = Decimal("0.150000")
+    depth_weight: Decimal = Decimal("0.100000")
+    full_consensus_case_count: Decimal = Decimal("20")
+    sharp_drift_threshold: Decimal = Decimal("0.300000")
+    moderate_drift_threshold: Decimal = Decimal("0.100000")
+    pass_score_floor: Decimal = Decimal("0.800000")
+    watch_score_floor: Decimal = Decimal("0.600000")
+    paper_only: bool = True
+    report_only: bool = True
+    readonly: bool = True
+
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        super().__init_subclass__(**kwargs)
+        if cls is not TeamSpecialistConsensusDriftScoreConfig:
+            raise TypeError(
+                "TeamSpecialistConsensusDriftScoreConfig does not support subclassing",
+            )
+
+    def __post_init__(self) -> None:
+        if type(self) is not TeamSpecialistConsensusDriftScoreConfig:
+            raise ValueError(
+                "config must be exactly TeamSpecialistConsensusDriftScoreConfig",
+            )
+        object.__setattr__(
+            self,
+            "config_version",
+            _require_non_empty_string("config_version", self.config_version),
+        )
+        if (
+            self.config_version
+            != DEFAULT_TEAM_SPECIALIST_CONSENSUS_DRIFT_SCORE_CONFIG_VERSION
+        ):
+            raise ValueError("config_version must be the supported config version")
+        for field_name in (
+            "stability_weight",
+            "dissent_weight",
+            "calibration_weight",
+            "source_quality_weight",
+            "depth_weight",
+            "sharp_drift_threshold",
+            "moderate_drift_threshold",
+            "pass_score_floor",
+            "watch_score_floor",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _normalize_ratio(field_name, getattr(self, field_name)),
+            )
+        object.__setattr__(
+            self,
+            "full_consensus_case_count",
+            _normalize_positive_integral_decimal(
+                "full_consensus_case_count",
+                self.full_consensus_case_count,
+            ),
+        )
+        _validate_config(self)
+        _require_hard_flags("TeamSpecialistConsensusDriftScoreConfig", self)
+        _reject_unsafe_public_payload(
+            "TeamSpecialistConsensusDriftScoreConfig",
+            _payload_value(asdict(self)),
+        )
+
+
+@dataclass(frozen=True)
+class TeamSpecialistConsensusDriftScoreInput:
+    team_id: str
+    specialist_id: str
+    consensus_case_count: Decimal
+    recent_consensus_score: Decimal
+    historical_consensus_score: Decimal
+    dissent_ratio: Decimal
+    calibration_score: Decimal
+    source_quality_score: Decimal
+    paper_only: bool = True
+    report_only: bool = True
+    readonly: bool = True
+
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        super().__init_subclass__(**kwargs)
+        if cls is not TeamSpecialistConsensusDriftScoreInput:
+            raise TypeError(
+                "TeamSpecialistConsensusDriftScoreInput does not support subclassing",
+            )
+
+    def __post_init__(self) -> None:
+        if type(self) is not TeamSpecialistConsensusDriftScoreInput:
+            raise ValueError(
+                "input must be exactly TeamSpecialistConsensusDriftScoreInput",
+            )
+        for field_name in ("team_id", "specialist_id"):
+            object.__setattr__(
+                self,
+                field_name,
+                _require_non_empty_string(field_name, getattr(self, field_name)),
+            )
+        object.__setattr__(
+            self,
+            "consensus_case_count",
+            _normalize_nonnegative_integral_decimal(
+                "consensus_case_count",
+                self.consensus_case_count,
+            ),
+        )
+        for field_name in (
+            "recent_consensus_score",
+            "historical_consensus_score",
+            "dissent_ratio",
+            "calibration_score",
+            "source_quality_score",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _normalize_ratio(field_name, getattr(self, field_name)),
+            )
+        _require_hard_flags("TeamSpecialistConsensusDriftScoreInput", self)
+        _reject_unsafe_public_payload(
+            "TeamSpecialistConsensusDriftScoreInput",
+            _payload_value(asdict(self)),
+        )
+
+
+@dataclass(frozen=True)
+class TeamSpecialistConsensusDriftScoreRow:
+    rank: Decimal
+    team_id: str
+    specialist_id: str
+    consensus_case_count: Decimal
+    recent_consensus_score: Decimal
+    historical_consensus_score: Decimal
+    absolute_consensus_drift: Decimal
+    consensus_stability_score: Decimal
+    dissent_ratio: Decimal
+    dissent_stability_score: Decimal
+    consensus_depth_score: Decimal
+    calibration_score: Decimal
+    source_quality_score: Decimal
+    consensus_drift_score: Decimal
+    consensus_drift_status: str
+    reason_codes: tuple[str, ...]
+    paper_only: bool = True
+    report_only: bool = True
+    readonly: bool = True
+
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        super().__init_subclass__(**kwargs)
+        if cls is not TeamSpecialistConsensusDriftScoreRow:
+            raise TypeError(
+                "TeamSpecialistConsensusDriftScoreRow does not support subclassing",
+            )
+
+    def __post_init__(self) -> None:
+        if type(self) is not TeamSpecialistConsensusDriftScoreRow:
+            raise ValueError("row must be exactly TeamSpecialistConsensusDriftScoreRow")
+        object.__setattr__(
+            self,
+            "rank",
+            _normalize_positive_integral_decimal("rank", self.rank),
+        )
+        for field_name in ("team_id", "specialist_id"):
+            object.__setattr__(
+                self,
+                field_name,
+                _require_non_empty_string(field_name, getattr(self, field_name)),
+            )
+        object.__setattr__(
+            self,
+            "consensus_case_count",
+            _normalize_nonnegative_integral_decimal(
+                "consensus_case_count",
+                self.consensus_case_count,
+            ),
+        )
+        for field_name in (
+            "recent_consensus_score",
+            "historical_consensus_score",
+            "absolute_consensus_drift",
+            "consensus_stability_score",
+            "dissent_ratio",
+            "dissent_stability_score",
+            "consensus_depth_score",
+            "calibration_score",
+            "source_quality_score",
+            "consensus_drift_score",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _normalize_ratio(field_name, getattr(self, field_name)),
+            )
+        _require_consensus_drift_status(
+            "consensus_drift_status",
+            self.consensus_drift_status,
+        )
+        object.__setattr__(
+            self,
+            "reason_codes",
+            _normalize_reason_codes(
+                "reason_codes",
+                self.reason_codes,
+                ROW_REASON_CODES,
+            ),
+        )
+        _require_hard_flags("TeamSpecialistConsensusDriftScoreRow", self)
+        _reject_unsafe_public_payload(
+            "TeamSpecialistConsensusDriftScoreRow",
+            _payload_value(asdict(self)),
+        )
+        _validate_row_consistency(self)
+
+
+@dataclass(frozen=True)
+class TeamSpecialistConsensusDriftScoreReport:
+    generated_at: datetime
+    config_version: str
+    consensus_drift_scorecard_status: str
+    candidate_count: Decimal
+    pass_candidate_count: Decimal
+    watch_candidate_count: Decimal
+    block_candidate_count: Decimal
+    average_consensus_drift_score: Decimal
+    top_consensus_drift_score: Decimal
+    bottom_consensus_drift_score: Decimal
+    rows: tuple[TeamSpecialistConsensusDriftScoreRow, ...]
+    reason_codes: tuple[str, ...]
+    derived_validation_digest: str
+    paper_only: bool = True
+    report_only: bool = True
+    readonly: bool = True
+
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        super().__init_subclass__(**kwargs)
+        if cls is not TeamSpecialistConsensusDriftScoreReport:
+            raise TypeError(
+                "TeamSpecialistConsensusDriftScoreReport does not support subclassing",
+            )
+
+    def __post_init__(self) -> None:
+        if type(self) is not TeamSpecialistConsensusDriftScoreReport:
+            raise ValueError(
+                "report must be exactly TeamSpecialistConsensusDriftScoreReport",
+            )
+        object.__setattr__(self, "generated_at", _as_utc("generated_at", self.generated_at))
+        object.__setattr__(
+            self,
+            "config_version",
+            _require_non_empty_string("config_version", self.config_version),
+        )
+        _require_consensus_drift_status(
+            "consensus_drift_scorecard_status",
+            self.consensus_drift_scorecard_status,
+        )
+        for field_name in (
+            "candidate_count",
+            "pass_candidate_count",
+            "watch_candidate_count",
+            "block_candidate_count",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _normalize_nonnegative_integral_decimal(
+                    field_name,
+                    getattr(self, field_name),
+                ),
+            )
+        for field_name in (
+            "average_consensus_drift_score",
+            "top_consensus_drift_score",
+            "bottom_consensus_drift_score",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _normalize_ratio(field_name, getattr(self, field_name)),
+            )
+        object.__setattr__(self, "rows", _normalize_rows(self.rows))
+        object.__setattr__(
+            self,
+            "reason_codes",
+            _normalize_reason_codes(
+                "reason_codes",
+                self.reason_codes,
+                REPORT_REASON_CODES,
+            ),
+        )
+        _require_sha256_digest(
+            "derived_validation_digest",
+            self.derived_validation_digest,
+        )
+        _require_hard_flags("TeamSpecialistConsensusDriftScoreReport", self)
+        _reject_unsafe_public_payload(
+            "TeamSpecialistConsensusDriftScoreReport",
+            _payload_value(asdict(self)),
+        )
+        _validate_report_consistency(self)
+
+    @property
+    def payload(self) -> dict[str, object]:
+        payload = _payload_value(asdict(self))
+        _reject_unsafe_public_payload(
+            "TeamSpecialistConsensusDriftScoreReport.payload",
+            payload,
+        )
+        if type(payload) is not dict:
+            raise ValueError("payload must be a dict")
+        return payload
+
+
+def build_team_specialist_consensus_drift_score(
+    consensus_inputs: object,
+    *,
+    config: TeamSpecialistConsensusDriftScoreConfig | None = None,
+    generated_at: datetime,
+) -> TeamSpecialistConsensusDriftScoreReport:
+    if config is None:
+        config = TeamSpecialistConsensusDriftScoreConfig()
+    if type(config) is not TeamSpecialistConsensusDriftScoreConfig:
+        raise ValueError("config must be a TeamSpecialistConsensusDriftScoreConfig")
+    _require_hard_flags("TeamSpecialistConsensusDriftScoreConfig", config)
+    generated_at_utc = _as_utc("generated_at", generated_at)
+    items = _normalize_consensus_inputs(consensus_inputs)
+
+    rows = tuple(
+        _row_for_consensus_input(rank=index, item=item, config=config)
+        for index, item in enumerate(_sorted_consensus_inputs(items, config), start=1)
+    )
+    status = _scorecard_status(rows)
+    values = {
+        "generated_at": generated_at_utc,
+        "config_version": config.config_version,
+        "consensus_drift_scorecard_status": status,
+        "candidate_count": Decimal(len(rows)).quantize(COUNT_QUANT),
+        "pass_candidate_count": _status_count(rows, "pass"),
+        "watch_candidate_count": _status_count(rows, "watch"),
+        "block_candidate_count": _status_count(rows, "block"),
+        "average_consensus_drift_score": _average_score(rows),
+        "top_consensus_drift_score": _top_score(rows),
+        "bottom_consensus_drift_score": _bottom_score(rows),
+        "rows": rows,
+        "reason_codes": _report_reason_codes(rows, status),
+        "paper_only": True,
+        "report_only": True,
+        "readonly": True,
+    }
+    values["derived_validation_digest"] = _derived_validation_digest(values)
+    return TeamSpecialistConsensusDriftScoreReport(**values)
+
+
+def _sorted_consensus_inputs(
+    items: tuple[TeamSpecialistConsensusDriftScoreInput, ...],
+    config: TeamSpecialistConsensusDriftScoreConfig,
+) -> tuple[TeamSpecialistConsensusDriftScoreInput, ...]:
+    return tuple(
+        sorted(
+            items,
+            key=lambda item: (
+                -_score_for_consensus_input(item, config),
+                item.team_id,
+                item.specialist_id,
+            ),
+        ),
+    )
+
+
+def _row_for_consensus_input(
+    *,
+    rank: int,
+    item: TeamSpecialistConsensusDriftScoreInput,
+    config: TeamSpecialistConsensusDriftScoreConfig,
+) -> TeamSpecialistConsensusDriftScoreRow:
+    absolute_drift = _absolute_consensus_drift(item)
+    stability_score = _consensus_stability_score(absolute_drift)
+    dissent_stability = _dissent_stability_score(item.dissent_ratio)
+    depth_score = _consensus_depth_score(item.consensus_case_count, config)
+    score = _score_for_consensus_input(item, config)
+    status = _consensus_drift_status(score, absolute_drift, config)
+    return TeamSpecialistConsensusDriftScoreRow(
+        rank=Decimal(rank).quantize(COUNT_QUANT),
+        team_id=item.team_id,
+        specialist_id=item.specialist_id,
+        consensus_case_count=item.consensus_case_count,
+        recent_consensus_score=item.recent_consensus_score,
+        historical_consensus_score=item.historical_consensus_score,
+        absolute_consensus_drift=absolute_drift,
+        consensus_stability_score=stability_score,
+        dissent_ratio=item.dissent_ratio,
+        dissent_stability_score=dissent_stability,
+        consensus_depth_score=depth_score,
+        calibration_score=item.calibration_score,
+        source_quality_score=item.source_quality_score,
+        consensus_drift_score=score,
+        consensus_drift_status=status,
+        reason_codes=_row_reason_codes(
+            status,
+            stability_score,
+            item.dissent_ratio,
+            depth_score,
+            item.calibration_score,
+            item.source_quality_score,
+        ),
+    )
+
+
+def _score_for_consensus_input(
+    item: TeamSpecialistConsensusDriftScoreInput,
+    config: TeamSpecialistConsensusDriftScoreConfig,
+) -> Decimal:
+    absolute_drift = _absolute_consensus_drift(item)
+    with localcontext(DECIMAL_CONTEXT):
+        score = (
+            _consensus_stability_score(absolute_drift) * config.stability_weight
+            + _dissent_stability_score(item.dissent_ratio) * config.dissent_weight
+            + item.calibration_score * config.calibration_weight
+            + item.source_quality_score * config.source_quality_weight
+            + _consensus_depth_score(item.consensus_case_count, config)
+            * config.depth_weight
+        )
+    return _clamp_ratio(score)
+
+
+def _absolute_consensus_drift(item: TeamSpecialistConsensusDriftScoreInput) -> Decimal:
+    with localcontext(DECIMAL_CONTEXT):
+        return _clamp_ratio(
+            abs(item.recent_consensus_score - item.historical_consensus_score),
+        )
+
+
+def _consensus_stability_score(absolute_drift: Decimal) -> Decimal:
+    return _clamp_ratio(ONE - absolute_drift)
+
+
+def _dissent_stability_score(dissent_ratio: Decimal) -> Decimal:
+    return _clamp_ratio(ONE - dissent_ratio)
+
+
+def _consensus_depth_score(
+    consensus_case_count: Decimal,
+    config: TeamSpecialistConsensusDriftScoreConfig,
+) -> Decimal:
+    with localcontext(DECIMAL_CONTEXT):
+        return _clamp_ratio(consensus_case_count / config.full_consensus_case_count)
+
+
+def _consensus_drift_status(
+    score: Decimal,
+    absolute_drift: Decimal,
+    config: TeamSpecialistConsensusDriftScoreConfig,
+) -> str:
+    if absolute_drift >= config.sharp_drift_threshold:
+        return "block"
+    if score < config.watch_score_floor:
+        return "block"
+    if absolute_drift >= config.moderate_drift_threshold:
+        return "watch"
+    if score < config.pass_score_floor:
+        return "watch"
+    return "pass"
+
+
+def _scorecard_status(
+    rows: tuple[TeamSpecialistConsensusDriftScoreRow, ...],
+) -> str:
+    if not rows:
+        return "block"
+    if any(row.consensus_drift_status == "block" for row in rows):
+        return "block"
+    if any(row.consensus_drift_status == "watch" for row in rows):
+        return "watch"
+    return "pass"
+
+
+def _row_reason_codes(
+    status: str,
+    stability_score: Decimal,
+    dissent_ratio: Decimal,
+    depth_score: Decimal,
+    calibration_score: Decimal,
+    source_quality_score: Decimal,
+) -> tuple[str, ...]:
+    return (
+        f"consensus_drift_{status}",
+        _tier_reason(
+            stability_score,
+            strong=Decimal("0.900000"),
+            watch=Decimal("0.700000"),
+            strong_reason="consensus_stability_strong",
+            watch_reason="consensus_stability_watch",
+            weak_reason="consensus_stability_weak",
+        ),
+        _dissent_reason(dissent_ratio),
+        _depth_reason(depth_score),
+        _tier_reason(
+            calibration_score,
+            strong=Decimal("0.800000"),
+            watch=Decimal("0.600000"),
+            strong_reason="calibration_strong",
+            watch_reason="calibration_watch",
+            weak_reason="calibration_weak",
+        ),
+        _tier_reason(
+            source_quality_score,
+            strong=Decimal("0.800000"),
+            watch=Decimal("0.600000"),
+            strong_reason="source_quality_strong",
+            watch_reason="source_quality_watch",
+            weak_reason="source_quality_weak",
+        ),
+    )
+
+
+def _report_reason_codes(
+    rows: tuple[TeamSpecialistConsensusDriftScoreRow, ...],
+    status: str,
+) -> tuple[str, ...]:
+    if not rows:
+        return ("consensus_drift_scorecard_empty",)
+    reasons: list[str] = []
+    if any(row.consensus_drift_status == "block" for row in rows):
+        reasons.append("consensus_drift_scorecard_block_rows")
+    if any(row.consensus_drift_status == "watch" for row in rows):
+        reasons.append("consensus_drift_scorecard_watch_rows")
+    if not reasons and status == "pass":
+        reasons.append("consensus_drift_scorecard_passed")
+    return tuple(reasons)
+
+
+def _tier_reason(
+    value: Decimal,
+    *,
+    strong: Decimal,
+    watch: Decimal,
+    strong_reason: str,
+    watch_reason: str,
+    weak_reason: str,
+) -> str:
+    if value >= strong:
+        return strong_reason
+    if value >= watch:
+        return watch_reason
+    return weak_reason
+
+
+def _dissent_reason(value: Decimal) -> str:
+    if value <= Decimal("0.100000"):
+        return "dissent_low"
+    if value <= Decimal("0.300000"):
+        return "dissent_watch"
+    return "dissent_high"
+
+
+def _depth_reason(value: Decimal) -> str:
+    if value >= Decimal("0.800000"):
+        return "consensus_depth_full"
+    if value >= Decimal("0.400000"):
+        return "consensus_depth_partial"
+    return "consensus_depth_sparse"
+
+
+def _status_count(
+    rows: tuple[TeamSpecialistConsensusDriftScoreRow, ...],
+    status: str,
+) -> Decimal:
+    return Decimal(
+        sum(1 for row in rows if row.consensus_drift_status == status),
+    ).quantize(COUNT_QUANT)
+
+
+def _average_score(
+    rows: tuple[TeamSpecialistConsensusDriftScoreRow, ...],
+) -> Decimal:
+    if not rows:
+        return ZERO
+    with localcontext(DECIMAL_CONTEXT):
+        return _clamp_ratio(
+            sum(row.consensus_drift_score for row in rows) / Decimal(len(rows)),
+        )
+
+
+def _top_score(rows: tuple[TeamSpecialistConsensusDriftScoreRow, ...]) -> Decimal:
+    if not rows:
+        return ZERO
+    return max(row.consensus_drift_score for row in rows)
+
+
+def _bottom_score(rows: tuple[TeamSpecialistConsensusDriftScoreRow, ...]) -> Decimal:
+    if not rows:
+        return ZERO
+    return min(row.consensus_drift_score for row in rows)
+
+
+def _normalize_consensus_inputs(
+    value: object,
+) -> tuple[TeamSpecialistConsensusDriftScoreInput, ...]:
+    if isinstance(value, (str, bytes)) or not isinstance(value, Iterable):
+        raise ValueError("consensus_inputs must be an iterable")
+    items = tuple(value)
+    for item in items:
+        if type(item) is not TeamSpecialistConsensusDriftScoreInput:
+            raise ValueError(
+                "consensus items must be TeamSpecialistConsensusDriftScoreInput",
+            )
+        _require_hard_flags("TeamSpecialistConsensusDriftScoreInput", item)
+    keys = tuple((item.team_id, item.specialist_id) for item in items)
+    if len(set(keys)) != len(keys):
+        raise ValueError("consensus items must not contain duplicate consensus keys")
+    return items
+
+
+def _normalize_rows(value: object) -> tuple[TeamSpecialistConsensusDriftScoreRow, ...]:
+    if type(value) is not tuple:
+        raise ValueError("rows must be a tuple")
+    for row in value:
+        if type(row) is not TeamSpecialistConsensusDriftScoreRow:
+            raise ValueError("rows must contain TeamSpecialistConsensusDriftScoreRow")
+    return value
+
+
+def _validate_config(config: TeamSpecialistConsensusDriftScoreConfig) -> None:
+    with localcontext(DECIMAL_CONTEXT):
+        weights_total = (
+            config.stability_weight
+            + config.dissent_weight
+            + config.calibration_weight
+            + config.source_quality_weight
+            + config.depth_weight
+        ).quantize(SCORE_QUANT)
+    if weights_total != ONE:
+        raise ValueError("consensus drift score weights must sum to 1.000000")
+    if config.watch_score_floor > config.pass_score_floor:
+        raise ValueError("watch_score_floor must not exceed pass_score_floor")
+    if config.moderate_drift_threshold > config.sharp_drift_threshold:
+        raise ValueError("moderate_drift_threshold must not exceed sharp_drift_threshold")
+
+
+def _validate_row_consistency(row: TeamSpecialistConsensusDriftScoreRow) -> None:
+    with localcontext(DECIMAL_CONTEXT):
+        expected_drift = _clamp_ratio(
+            abs(row.recent_consensus_score - row.historical_consensus_score),
+        )
+    if row.absolute_consensus_drift != expected_drift:
+        raise ValueError("absolute_consensus_drift must match consensus scores")
+    if row.consensus_stability_score != _consensus_stability_score(expected_drift):
+        raise ValueError("consensus_stability_score must match drift")
+    if row.dissent_stability_score != _dissent_stability_score(row.dissent_ratio):
+        raise ValueError("dissent_stability_score must match dissent_ratio")
+
+
+def _validate_report_consistency(report: TeamSpecialistConsensusDriftScoreReport) -> None:
+    rows = report.rows
+    if report.candidate_count != Decimal(len(rows)).quantize(COUNT_QUANT):
+        raise ValueError("candidate_count must match rows")
+    if (
+        report.pass_candidate_count != _status_count(rows, "pass")
+        or report.watch_candidate_count != _status_count(rows, "watch")
+        or report.block_candidate_count != _status_count(rows, "block")
+    ):
+        raise ValueError("status counts must match rows")
+    if (
+        report.pass_candidate_count
+        + report.watch_candidate_count
+        + report.block_candidate_count
+        != report.candidate_count
+    ):
+        raise ValueError("status counts must sum to candidate_count")
+    _validate_rows_sorted(rows)
+    expected_status = _scorecard_status(rows)
+    if report.consensus_drift_scorecard_status != expected_status:
+        raise ValueError("consensus_drift_scorecard_status must match rows")
+    if report.reason_codes != _report_reason_codes(
+        rows,
+        report.consensus_drift_scorecard_status,
+    ):
+        raise ValueError("reason_codes must match consensus_drift_scorecard_status")
+    if report.average_consensus_drift_score != _average_score(rows):
+        raise ValueError("average_consensus_drift_score must match rows")
+    if report.top_consensus_drift_score != _top_score(rows):
+        raise ValueError("top_consensus_drift_score must match rows")
+    if report.bottom_consensus_drift_score != _bottom_score(rows):
+        raise ValueError("bottom_consensus_drift_score must match rows")
+    if report.derived_validation_digest != _derived_validation_digest(asdict(report)):
+        raise ValueError("derived_validation_digest must match report fields")
+
+
+def _validate_rows_sorted(
+    rows: tuple[TeamSpecialistConsensusDriftScoreRow, ...],
+) -> None:
+    expected = tuple(
+        sorted(
+            rows,
+            key=lambda row: (
+                -row.consensus_drift_score,
+                row.team_id,
+                row.specialist_id,
+            ),
+        ),
+    )
+    expected_ranks = tuple(
+        Decimal(index).quantize(COUNT_QUANT) for index in range(1, len(rows) + 1)
+    )
+    actual_ranks = tuple(row.rank for row in rows)
+    if rows != expected or actual_ranks != expected_ranks:
+        raise ValueError("rows must be sorted by score and rank")
+
+
+def _as_utc(field_name: str, value: object) -> datetime:
+    if type(value) is not datetime:
+        raise ValueError(f"{field_name} must be a datetime")
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError(f"{field_name} must be timezone-aware")
+    return value.astimezone(UTC)
+
+
+def _require_non_empty_string(field_name: str, value: object) -> str:
+    if type(value) is not str or not value.strip():
+        raise ValueError(f"{field_name} must be a non-empty string")
+    if value.strip() != value:
+        raise ValueError(f"{field_name} must be a canonical string")
+    _reject_unsafe_public_payload(field_name, value)
+    return value
+
+
+def _require_consensus_drift_status(field_name: str, value: object) -> None:
+    _require_non_empty_string(field_name, value)
+    if value not in CONSENSUS_DRIFT_STATUSES:
+        raise ValueError(f"{field_name} must be pass, watch, or block")
+
+
+def _normalize_reason_codes(
+    field_name: str,
+    value: object,
+    allowed: tuple[str, ...],
+) -> tuple[str, ...]:
+    if type(value) is not tuple or not value:
+        raise ValueError(f"{field_name} must be a non-empty tuple")
+    normalized = tuple(_require_non_empty_string(field_name, item) for item in value)
+    if len(set(normalized)) != len(normalized):
+        raise ValueError(f"{field_name} must not contain duplicates")
+    if any(item not in allowed for item in normalized):
+        raise ValueError(f"{field_name} must contain known reason codes")
+    return normalized
+
+
+def _normalize_ratio(field_name: str, value: object) -> Decimal:
+    value = _require_decimal(field_name, value)
+    if value < ZERO:
+        raise ValueError(f"{field_name} must be >= 0.000000")
+    if value > ONE:
+        raise ValueError(f"{field_name} must be <= 1.000000")
+    with localcontext(DECIMAL_CONTEXT):
+        quantized = value.quantize(SCORE_QUANT)
+    if quantized != value:
+        raise ValueError(f"{field_name} must use six decimal places or fewer")
+    return quantized
+
+
+def _normalize_nonnegative_integral_decimal(field_name: str, value: object) -> Decimal:
+    value = _require_decimal(field_name, value)
+    if value < ZERO:
+        raise ValueError(f"{field_name} must be >= 0.000000")
+    if value != value.to_integral_value():
+        raise ValueError(f"{field_name} must be an integral Decimal")
+    return value.quantize(COUNT_QUANT)
+
+
+def _normalize_positive_integral_decimal(field_name: str, value: object) -> Decimal:
+    value = _normalize_nonnegative_integral_decimal(field_name, value)
+    if value <= ZERO:
+        raise ValueError(f"{field_name} must be positive")
+    return value
+
+
+def _require_decimal(field_name: str, value: object) -> Decimal:
+    if type(value) is not Decimal:
+        raise ValueError(f"{field_name} must be exactly Decimal")
+    if not value.is_finite():
+        raise ValueError(f"{field_name} must be finite")
+    return value
+
+
+def _clamp_ratio(value: Decimal) -> Decimal:
+    with localcontext(DECIMAL_CONTEXT):
+        return min(ONE, max(ZERO, value)).quantize(SCORE_QUANT)
+
+
+def _require_sha256_digest(field_name: str, value: object) -> None:
+    _require_non_empty_string(field_name, value)
+    if len(value) != 64 or any(char not in "0123456789abcdef" for char in value):
+        raise ValueError(f"{field_name} must be a sha256 digest")
+
+
+def _require_hard_flags(field_name: str, value: object) -> None:
+    if getattr(value, "paper_only", None) is not True:
+        raise ValueError(f"paper_only must be True for {field_name}")
+    if getattr(value, "report_only", None) is not True:
+        raise ValueError(f"report_only must be True for {field_name}")
+    if getattr(value, "readonly", None) is not True:
+        raise ValueError(f"readonly must be True for {field_name}")
+
+
+def _payload_value(value: object) -> object:
+    if hasattr(value, "__dataclass_fields__") and not isinstance(value, type):
+        return _payload_value(asdict(value))
+    if type(value) is Decimal:
+        if not value.is_finite():
+            raise ValueError("payload Decimal must be finite")
+        return str(value)
+    if type(value) is datetime:
+        return _as_utc("payload datetime", value).isoformat()
+    if type(value) is dict:
+        return {key: _payload_value(item) for key, item in value.items()}
+    if type(value) is tuple:
+        return [_payload_value(item) for item in value]
+    if type(value) is list:
+        return [_payload_value(item) for item in value]
+    if value is None or type(value) in (str, bool):
+        return value
+    if type(value) in (int, float):
+        raise ValueError("payload contains unsafe numeric value")
+    raise ValueError("payload contains unsupported value")
+
+
+def _derived_validation_digest(values: dict[str, object]) -> str:
+    digest_payload = {
+        key: _payload_value(item)
+        for key, item in values.items()
+        if key != "derived_validation_digest"
+    }
+    _reject_unsafe_public_payload("derived validation digest payload", digest_payload)
+    encoded = json.dumps(
+        digest_payload,
+        allow_nan=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return sha256(encoded).hexdigest()
+
+
+def _reject_unsafe_public_payload(label: str, value: object) -> None:
+    if type(value) is dict:
+        for key, item in value.items():
+            if type(key) is not str:
+                raise ValueError(f"unsafe public payload in {label}")
+            _reject_unsafe_public_text(label, key)
+            _reject_unsafe_public_payload(label, item)
+        return
+    if type(value) in (list, tuple):
+        for item in value:
+            _reject_unsafe_public_payload(label, item)
+        return
+    if value is None or type(value) is bool:
+        return
+    if type(value) in (int, float):
+        raise ValueError(f"unsafe public payload in {label}")
+    if type(value) is str:
+        _reject_unsafe_public_text(label, value)
+
+
+def _reject_unsafe_public_text(label: str, value: str) -> None:
+    normalized = value.lower()
+    if value.strip() != value:
+        raise ValueError(f"unsafe public payload in {label}")
+    if any(fragment in normalized for fragment in UNSAFE_PUBLIC_TEXT_FRAGMENTS):
+        raise ValueError(f"unsafe public payload in {label}")
