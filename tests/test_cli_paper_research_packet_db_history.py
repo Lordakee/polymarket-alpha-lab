@@ -250,7 +250,7 @@ def test_packet_db_history_cli_uses_injected_runner_and_prints_summary(
     assert "latest_high_priority_count=1" in captured.out
     assert "latest_medium_priority_count=1" in captured.out
     assert "latest_low_priority_count=0" in captured.out
-    assert "top_packet: rank=1 market_slug=market-alpha" in captured.out
+    assert "top_packet: rank=1 market_slug=<redacted-market>" in captured.out
     assert "side=yes" in captured.out
     assert "research_priority=high" in captured.out
     assert "recommendation_score=0.910000" in captured.out

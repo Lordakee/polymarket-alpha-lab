@@ -163,7 +163,7 @@ def test_paper_research_packet_cli_builds_latest_source_by_generated_at_without_
     assert "packet_row_count=2" in captured.out
     assert "high_priority_count=1" in captured.out
     assert "persisted=False" in captured.out
-    assert "top_packet: rank=1 market_slug=market-alpha" in captured.out
+    assert "top_packet: rank=1 market_slug=<redacted-market>" in captured.out
     assert "reason_codes=positive_edge,settlement_review" in captured.out
     assert source_dsn not in captured.out
     assert source_dsn not in captured.err
