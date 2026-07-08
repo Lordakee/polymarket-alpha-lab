@@ -39,34 +39,34 @@ def config(**overrides: object) -> Any:
         "config_version": (
             module.DEFAULT_RESEARCH_MARKET_SPREAD_VOLATILITY_WATCH_CONFIG_VERSION
         ),
-        "watch_spread_volatility_ratio": d("0.020000"),
-        "block_spread_volatility_ratio": d("0.060000"),
-        "watch_depth_instability_ratio": d("0.250000"),
-        "block_depth_instability_ratio": d("0.650000"),
-        "watch_fee_friction_ratio": d("0.015000"),
-        "block_fee_friction_ratio": d("0.040000"),
-        "watch_settlement_cost_pressure": d("0.300000"),
-        "block_settlement_cost_pressure": d("0.700000"),
+        "watch_spread_instability_ratio": d("0.020000"),
+        "block_spread_instability_ratio": d("0.060000"),
+        "watch_depth_decay_ratio": d("0.250000"),
+        "block_depth_decay_ratio": d("0.650000"),
+        "watch_quote_age_seconds": d("300.000000"),
+        "block_quote_age_seconds": d("900.000000"),
+        "watch_cost_risk_pressure_score": d("0.300000"),
+        "block_cost_risk_pressure_score": d("0.700000"),
         "watch_composite_pressure": d("0.300000"),
         "block_composite_pressure": d("0.700000"),
-        "spread_volatility_weight": d("0.350000"),
-        "depth_instability_weight": d("0.250000"),
-        "fee_friction_weight": d("0.200000"),
-        "settlement_cost_weight": d("0.200000"),
+        "spread_instability_weight": d("0.350000"),
+        "depth_decay_weight": d("0.250000"),
+        "quote_age_weight": d("0.200000"),
+        "cost_risk_weight": d("0.200000"),
     }
     values.update(overrides)
     return module.ResearchMarketSpreadVolatilityWatchConfig(**values)
 
 
 def observation(
-    public_bucket: str = "public-spread-volatility",
+    public_cohort: str = "public-spread-volatility",
     *,
     observed_at: datetime | None = None,
     sample_count: Decimal = d("5"),
-    aggregate_spread_volatility_ratio: Decimal = d("0.006000"),
-    depth_instability_ratio: Decimal = d("0.050000"),
-    fee_friction_ratio: Decimal = d("0.004000"),
-    settlement_cost_pressure_score: Decimal = d("0.100000"),
+    aggregate_spread_instability_ratio: Decimal = d("0.006000"),
+    depth_decay_ratio: Decimal = d("0.050000"),
+    quote_age_seconds: Decimal = d("120.000000"),
+    cost_risk_pressure_score: Decimal = d("0.100000"),
     reason_codes: tuple[str, ...] = (),
     paper_only: bool = True,
     report_only: bool = True,
@@ -74,13 +74,13 @@ def observation(
 ) -> Any:
     module = api()
     return module.ResearchMarketSpreadVolatilityWatchObservation(
-        public_bucket=public_bucket,
+        public_cohort=public_cohort,
         observed_at=observed_at or GENERATED_AT - timedelta(minutes=5),
         sample_count=sample_count,
-        aggregate_spread_volatility_ratio=aggregate_spread_volatility_ratio,
-        depth_instability_ratio=depth_instability_ratio,
-        fee_friction_ratio=fee_friction_ratio,
-        settlement_cost_pressure_score=settlement_cost_pressure_score,
+        aggregate_spread_instability_ratio=aggregate_spread_instability_ratio,
+        depth_decay_ratio=depth_decay_ratio,
+        quote_age_seconds=quote_age_seconds,
+        cost_risk_pressure_score=cost_risk_pressure_score,
         reason_codes=reason_codes,
         paper_only=paper_only,
         report_only=report_only,
@@ -109,89 +109,147 @@ def walk_payload_values(value: object) -> tuple[object, ...]:
     return (value,)
 
 
-def test_spread_volatility_watch_report_summarizes_pass_watch_and_block_rows() -> None:
+def walk_payload_keys(value: object) -> tuple[str, ...]:
+    if isinstance(value, dict):
+        return tuple(
+            item
+            for key, nested in value.items()
+            for item in (str(key), *walk_payload_keys(nested))
+        )
+    if isinstance(value, list):
+        return tuple(item for nested in value for item in walk_payload_keys(nested))
+    return ()
+
+
+def test_empty_report_blocks_with_public_digest_and_hard_flags() -> None:
+    module = api()
+    empty = report()
+
+    assert module.STATUSES == ("pass", "watch", "block")
+    assert module.__all__ == (
+        "DEFAULT_RESEARCH_MARKET_SPREAD_VOLATILITY_WATCH_CONFIG_VERSION",
+        "STATUSES",
+        "ResearchMarketSpreadVolatilityWatchConfig",
+        "ResearchMarketSpreadVolatilityWatchObservation",
+        "ResearchMarketSpreadVolatilityWatchReasonCodeCount",
+        "ResearchMarketSpreadVolatilityWatchReport",
+        "ResearchMarketSpreadVolatilityWatchRow",
+        "build_research_market_spread_volatility_watch_report",
+        "research_market_spread_volatility_watch_report_digest",
+        "research_market_spread_volatility_watch_report_payload",
+    )
+    assert type(empty) is module.ResearchMarketSpreadVolatilityWatchReport
+    assert is_dataclass(empty)
+    assert empty.status == "block"
+    assert empty.generated_at == GENERATED_AT
+    assert empty.observation_count == ZERO
+    assert empty.sample_count == ZERO
+    assert empty.row_count == ZERO
+    assert empty.pass_count == ZERO
+    assert empty.watch_count == ZERO
+    assert empty.block_count == ZERO
+    assert empty.spread_instability_watch_count == ZERO
+    assert empty.depth_decay_watch_count == ZERO
+    assert empty.quote_age_watch_count == ZERO
+    assert empty.cost_risk_pressure_count == ZERO
+    assert empty.mean_quote_age_seconds == ZERO
+    assert empty.max_composite_pressure == ZERO
+    assert empty.manual_review_required is True
+    assert empty.reason_codes == ("spread_volatility_watch_no_observations",)
+    assert empty.reason_code_counts == (
+        module.ResearchMarketSpreadVolatilityWatchReasonCodeCount(
+            reason_code="spread_volatility_watch_no_observations",
+            count=d("1.000000"),
+            row_ratio=ZERO,
+        ),
+    )
+    assert empty.rows == ()
+    assert len(empty.derived_validation_digest) == 64
+    int(empty.derived_validation_digest, 16)
+    assert empty.paper_only is True
+    assert empty.report_only is True
+    assert empty.readonly is True
+
+
+def test_spread_volatility_watch_summarizes_instability_decay_age_and_cost_risk() -> None:
     module = api()
     built = report(
-        observation("quiet-public-bucket"),
+        observation("quiet-public-cohort"),
         observation(
-            "watch-public-bucket",
-            aggregate_spread_volatility_ratio=d("0.030000"),
-            depth_instability_ratio=d("0.300000"),
-            fee_friction_ratio=d("0.020000"),
-            settlement_cost_pressure_score=d("0.350000"),
+            "watch-public-cohort",
+            aggregate_spread_instability_ratio=d("0.030000"),
+            depth_decay_ratio=d("0.300000"),
+            quote_age_seconds=d("420.000000"),
+            cost_risk_pressure_score=d("0.350000"),
             reason_codes=("manual_review",),
         ),
         observation(
-            "blocked-public-bucket",
+            "blocked-public-cohort",
             sample_count=d("7"),
-            aggregate_spread_volatility_ratio=d("0.080000"),
-            depth_instability_ratio=d("0.700000"),
-            fee_friction_ratio=d("0.050000"),
-            settlement_cost_pressure_score=d("0.800000"),
+            aggregate_spread_instability_ratio=d("0.080000"),
+            depth_decay_ratio=d("0.700000"),
+            quote_age_seconds=d("1200.000000"),
+            cost_risk_pressure_score=d("0.800000"),
         ),
     )
 
-    assert type(built) is module.ResearchMarketSpreadVolatilityWatchReport
-    assert is_dataclass(built)
-    assert module.STATUSES == ("pass", "watch", "block")
     assert built.status == "block"
-    assert built.generated_at == GENERATED_AT
     assert built.observation_count == d("3.000000")
     assert built.sample_count == d("17.000000")
     assert built.row_count == d("3.000000")
     assert built.pass_count == d("1.000000")
     assert built.watch_count == d("1.000000")
     assert built.block_count == d("1.000000")
-    assert built.spread_volatility_watch_count == d("2.000000")
-    assert built.depth_instability_watch_count == d("2.000000")
-    assert built.fee_friction_watch_count == d("2.000000")
-    assert built.settlement_cost_pressure_count == d("2.000000")
-    assert built.max_composite_pressure == d("1.000000")
+    assert built.spread_instability_watch_count == d("2.000000")
+    assert built.depth_decay_watch_count == d("2.000000")
+    assert built.quote_age_watch_count == d("2.000000")
+    assert built.cost_risk_pressure_count == d("2.000000")
+    assert built.mean_aggregate_spread_instability_ratio == d("0.038667")
+    assert built.mean_depth_decay_ratio == d("0.350000")
+    assert built.mean_quote_age_seconds == d("580.000000")
+    assert built.mean_cost_risk_pressure_score == d("0.416667")
     assert built.mean_composite_pressure == d("0.394583")
+    assert built.max_composite_pressure == d("1.000000")
     assert built.manual_review_required is True
 
     blocked, watched, passed = built.rows
     assert tuple(row.status for row in built.rows) == ("block", "watch", "pass")
-    assert blocked.public_bucket == "blocked-public-bucket"
+    assert blocked.public_cohort == "blocked-public-cohort"
     assert blocked.composite_pressure == d("1.000000")
     assert blocked.reason_codes == (
-        "spread_volatility_watch_aggregate_spread_volatility_block",
-        "spread_volatility_watch_depth_instability_block",
-        "spread_volatility_watch_fee_friction_block",
-        "spread_volatility_watch_settlement_cost_pressure_block",
         "spread_volatility_watch_composite_pressure_block",
+        "spread_volatility_watch_cost_risk_pressure_block",
+        "spread_volatility_watch_depth_decay_block",
+        "spread_volatility_watch_quote_age_block",
+        "spread_volatility_watch_spread_instability_block",
     )
-    assert watched.public_bucket == "watch-public-bucket"
-    assert watched.spread_volatility_pressure == d("0.250000")
-    assert watched.depth_instability_pressure == d("0.125000")
-    assert watched.fee_friction_pressure == d("0.200000")
-    assert watched.settlement_cost_pressure == d("0.125000")
+    assert watched.public_cohort == "watch-public-cohort"
+    assert watched.spread_instability_pressure == d("0.250000")
+    assert watched.depth_decay_pressure == d("0.125000")
+    assert watched.quote_age_pressure == d("0.200000")
+    assert watched.cost_risk_pressure == d("0.125000")
     assert watched.composite_pressure == d("0.183750")
-    assert watched.status == "watch"
     assert watched.reason_codes == (
         "input_manual_review",
-        "spread_volatility_watch_aggregate_spread_volatility_watch",
-        "spread_volatility_watch_depth_instability_watch",
-        "spread_volatility_watch_fee_friction_watch",
-        "spread_volatility_watch_settlement_cost_pressure_watch",
+        "spread_volatility_watch_cost_risk_pressure_watch",
+        "spread_volatility_watch_depth_decay_watch",
         "spread_volatility_watch_manual_review_watch",
+        "spread_volatility_watch_quote_age_watch",
+        "spread_volatility_watch_spread_instability_watch",
     )
     assert passed.reason_codes == ("spread_volatility_watch_clear",)
     assert all(row.paper_only and row.report_only and row.readonly for row in built.rows)
-    assert built.paper_only is True
-    assert built.report_only is True
-    assert built.readonly is True
 
 
-def test_composite_pressure_block_accepts_threshold_pressure_below_full() -> None:
+def test_composite_pressure_block_accepts_sub_block_component_pressure() -> None:
     module = api()
     built = report(
         observation(
-            "composite-block-public-bucket",
-            aggregate_spread_volatility_ratio=d("0.052000"),
-            depth_instability_ratio=d("0.570000"),
-            fee_friction_ratio=d("0.035000"),
-            settlement_cost_pressure_score=d("0.620000"),
+            "composite-block-public-cohort",
+            aggregate_spread_instability_ratio=d("0.052000"),
+            depth_decay_ratio=d("0.570000"),
+            quote_age_seconds=d("780.000000"),
+            cost_risk_pressure_score=d("0.620000"),
         ),
     )
 
@@ -199,77 +257,77 @@ def test_composite_pressure_block_accepts_threshold_pressure_below_full() -> Non
     assert row.status == "block"
     assert row.composite_pressure == d("0.800000")
     assert config().block_composite_pressure <= row.composite_pressure < d("1.000000")
-    assert (
-        "spread_volatility_watch_composite_pressure_block"
-        in row.reason_codes
-    )
-    assert (
-        "spread_volatility_watch_aggregate_spread_volatility_block"
-        not in row.reason_codes
-    )
+    assert "spread_volatility_watch_composite_pressure_block" in row.reason_codes
+    assert "spread_volatility_watch_spread_instability_block" not in row.reason_codes
     payload = module.research_market_spread_volatility_watch_report_payload(built)
-    assert payload["paper_only"] is True
-    assert payload["report_only"] is True
-    assert payload["readonly"] is True
+    assert payload["derived_validation_digest"] == built.derived_validation_digest
     assert not any(isinstance(value, float) for value in walk_payload_values(payload))
 
 
-def test_payload_and_digest_are_deterministic_decimal_strings_and_report_only() -> None:
+def test_payload_and_digest_are_deterministic_decimal_strings_and_public_safe() -> None:
     module = api()
     first = report(
-        observation("beta-public-bucket", aggregate_spread_volatility_ratio=d("0.030000")),
-        observation("alpha-public-bucket"),
+        observation(
+            "beta-public-cohort",
+            aggregate_spread_instability_ratio=d("0.030000"),
+            reason_codes=("zeta", "alpha"),
+        ),
+        observation("alpha-public-cohort"),
     )
     second = report(
-        observation("alpha-public-bucket"),
-        observation("beta-public-bucket", aggregate_spread_volatility_ratio=d("0.030000")),
+        observation("alpha-public-cohort"),
+        observation(
+            "beta-public-cohort",
+            aggregate_spread_instability_ratio=d("0.030000"),
+            reason_codes=("alpha", "zeta"),
+        ),
     )
     first_payload = module.research_market_spread_volatility_watch_report_payload(first)
     second_payload = module.research_market_spread_volatility_watch_report_payload(second)
-    digest = module.research_market_spread_volatility_watch_report_digest(first)
+    digest_payload = dict(first_payload)
+    digest_payload.pop("derived_validation_digest")
+    expected_digest = hashlib.sha256(
+        json.dumps(digest_payload, sort_keys=True, separators=(",", ":")).encode("utf-8"),
+    ).hexdigest()
 
     assert first == second
     assert first_payload == second_payload
-    assert json.dumps(first_payload, sort_keys=True)
-    assert digest == hashlib.sha256(
-        json.dumps(first_payload, sort_keys=True, separators=(",", ":")).encode("utf-8"),
-    ).hexdigest()
-    assert digest == module.research_market_spread_volatility_watch_report_digest(second)
+    assert module.research_market_spread_volatility_watch_report_digest(first) == expected_digest
+    assert first_payload["derived_validation_digest"] == expected_digest
     assert first_payload["generated_at"] == "2026-07-08T18:00:00+00:00"
     assert first_payload["observation_count"] == "2.000000"
-    assert first_payload["rows"][0]["public_bucket"] == "beta-public-bucket"
-    assert first_payload["rows"][0]["aggregate_spread_volatility_ratio"] == "0.030000"
+    assert first_payload["rows"][0]["public_cohort"] == "beta-public-cohort"
+    assert first_payload["rows"][0]["aggregate_spread_instability_ratio"] == "0.030000"
     assert first_payload["paper_only"] is True
     assert first_payload["report_only"] is True
     assert first_payload["readonly"] is True
     assert not any(isinstance(value, float) for value in walk_payload_values(first_payload))
     assert not any(isinstance(value, Decimal) for value in walk_payload_values(first_payload))
-    assert "order" not in json.dumps(first_payload).lower()
-    assert "trade" not in json.dumps(first_payload).lower()
-    assert "sizing" not in json.dumps(first_payload).lower()
-    assert "recommend" not in json.dumps(first_payload).lower()
+    assert not any(_has_forbidden_public_surface_key(key) for key in walk_payload_keys(first_payload))
+    encoded = json.dumps(first_payload, sort_keys=True).lower()
+    for fragment in (
+        "candidate_id",
+        "market_id",
+        "market_slug",
+        "slug",
+        "question",
+        "url",
+        "source_text",
+        "dsn",
+        "table",
+        "token",
+        "wallet",
+        "order",
+        "trade",
+        "buy",
+        "sell",
+        "sizing",
+        "recommendation",
+    ):
+        assert fragment not in encoded
 
 
-def test_empty_report_blocks_for_manual_review_with_public_reason() -> None:
-    module = api()
-    empty = report()
-
-    assert empty.status == "block"
-    assert empty.observation_count == ZERO
-    assert empty.row_count == ZERO
-    assert empty.rows == ()
-    assert empty.manual_review_required is True
-    assert empty.reason_codes == ("spread_volatility_watch_no_observations",)
-    assert empty.reason_code_counts == (
-        module.ResearchMarketSpreadVolatilityWatchReasonCodeCount(
-            reason_code="spread_volatility_watch_no_observations",
-            count=d("1.000000"),
-            sample_ratio=ZERO,
-        ),
-    )
-
-
-def test_validation_rejects_bad_numeric_types_flags_times_and_tampering() -> None:
+def test_validation_rejects_bad_numeric_types_flags_times_and_digest_tampering() -> None:
     module = api()
     good = report(observation())
 
@@ -277,21 +335,30 @@ def test_validation_rejects_bad_numeric_types_flags_times_and_tampering() -> Non
         good.status = "watch"  # type: ignore[misc]
     with pytest.raises(FrozenInstanceError):
         good.rows[0].composite_pressure = d("0.500000")  # type: ignore[misc]
-
-    with pytest.raises(ValueError, match="aggregate_spread_volatility_ratio"):
-        observation(aggregate_spread_volatility_ratio=0.006)  # type: ignore[arg-type]
-    with pytest.raises(ValueError, match="depth_instability_ratio"):
-        observation(depth_instability_ratio=_DecimalSubclass("0.100000"))
+    with pytest.raises(ValueError, match="aggregate_spread_instability_ratio"):
+        observation(aggregate_spread_instability_ratio=0.006)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="depth_decay_ratio"):
+        observation(depth_decay_ratio=_DecimalSubclass("0.100000"))
+    with pytest.raises(ValueError, match="quote_age_seconds"):
+        observation(quote_age_seconds=d("-1.000000"))
     with pytest.raises(ValueError, match="observed_at"):
         replace(observation(), observed_at=datetime(2026, 7, 8, 18, 0))
     with pytest.raises(ValueError, match="generated_at"):
         report(observation(), generated_at=_DatetimeSubclass(2026, 7, 8, 18, 0, tzinfo=UTC))
+    with pytest.raises(ValueError, match="observed_at"):
+        report(observation(observed_at=GENERATED_AT + timedelta(seconds=1)))
     with pytest.raises(ValueError, match="paper_only"):
         config(paper_only=False)
     with pytest.raises(ValueError, match="readonly"):
         observation(readonly=False)
-    with pytest.raises(ValueError, match="public_bucket"):
+    with pytest.raises(ValueError, match="public_cohort"):
         observation("market_slug:raw-source-id")
+    with pytest.raises(ValueError, match="reason_code"):
+        observation(reason_codes=("source_text",))
+    with pytest.raises(ValueError, match="derived_validation_digest"):
+        replace(good, derived_validation_digest="0" * 64)
+    with pytest.raises(ValueError, match="status"):
+        replace(good.rows[0], status="blocked")
 
     tampered = replace(good)
     object.__setattr__(tampered, "observation_count", d("2.000000"))
@@ -306,49 +373,94 @@ def test_validation_rejects_bad_numeric_types_flags_times_and_tampering() -> Non
         module.research_market_spread_volatility_watch_report_payload(bad_nested)
 
 
-def test_module_is_pure_report_only_without_side_effect_surfaces() -> None:
+def test_public_dataclasses_are_frozen_exact_types_without_side_effect_surfaces() -> None:
     module = api()
-    source = Path(module.__file__).read_text(encoding="utf-8")
-    forbidden_import_fragments = (
+    built = report(observation())
+    instances = (
+        config(),
+        observation(),
+        built.rows[0],
+        built.reason_code_counts[0],
+        built,
+    )
+    for instance in instances:
+        assert is_dataclass(instance)
+        assert type(instance).__dataclass_params__.frozen
+        assert instance.paper_only is True
+        assert instance.report_only is True
+        assert instance.readonly is True
+
+    with pytest.raises(TypeError):
+        type("BadConfig", (module.ResearchMarketSpreadVolatilityWatchConfig,), {})
+    with pytest.raises(TypeError):
+        type("BadObservation", (module.ResearchMarketSpreadVolatilityWatchObservation,), {})
+    with pytest.raises(TypeError):
+        type("BadRow", (module.ResearchMarketSpreadVolatilityWatchRow,), {})
+    with pytest.raises(TypeError):
+        type("BadReasonCount", (module.ResearchMarketSpreadVolatilityWatchReasonCodeCount,), {})
+    with pytest.raises(TypeError):
+        type("BadReport", (module.ResearchMarketSpreadVolatilityWatchReport,), {})
+
+    source = Path(module.__file__).read_text(encoding="utf-8").lower()
+    for fragment in (
         "requests",
         "urllib",
+        "httpx",
+        "aiohttp",
         "socket",
-        "psycopg",
+        "subprocess",
         "sqlite",
+        "postgres",
+        "psycopg",
         "sqlalchemy",
         "web3",
         "clob",
-    )
-    forbidden_text_fragments = (
         "place_order",
         "submit_order",
+        "cancel_order",
         "wallet",
         "private_key",
         "execute_trade",
         "trade_recommendation",
         "position_size",
-    )
-
-    for fragment in forbidden_import_fragments:
-        assert fragment not in source
-    for fragment in forbidden_text_fragments:
+        "live_trading",
+        "sizing",
+        "recommendation",
+        "buy_",
+        "sell_",
+        "connect(",
+        "open(",
+    ):
         assert fragment not in source
 
     for exported_name in module.__all__:
         exported = getattr(module, exported_name)
         if isinstance(exported, type) and is_dataclass(exported):
             names = {field.name for field in fields(exported)}
-            if {"paper_only", "report_only", "readonly"} <= names:
-                instance = (
-                    config()
-                    if exported_name.endswith("Config")
-                    else observation()
-                    if exported_name.endswith("Observation")
-                    else report()
-                    if exported_name.endswith("Report")
-                    else None
-                )
-                if instance is not None:
-                    assert instance.paper_only is True
-                    assert instance.report_only is True
-                    assert instance.readonly is True
+            assert {"paper_only", "report_only", "readonly"} <= names
+
+
+def _has_forbidden_public_surface_key(key: str) -> bool:
+    normalized = key.lower()
+    forbidden_fragments = (
+        "candidate_id",
+        "condition_id",
+        "market_id",
+        "market_slug",
+        "slug",
+        "question",
+        "url",
+        "source_text",
+        "dsn",
+        "table",
+        "token",
+        "wallet",
+        "order",
+        "trade",
+        "buy",
+        "sell",
+        "size",
+        "sizing",
+        "recommendation",
+    )
+    return any(fragment in normalized for fragment in forbidden_fragments)

@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Iterable, Mapping
-from dataclasses import asdict, dataclass, fields, is_dataclass
+from collections.abc import Iterable
+from dataclasses import dataclass, fields, is_dataclass
 from datetime import UTC, datetime
 from decimal import Context, Decimal, ROUND_HALF_EVEN, localcontext
 from hashlib import sha256
@@ -25,33 +25,25 @@ STATUSES = (STATUS_PASS, STATUS_WATCH, STATUS_BLOCK)
 REASON_PREFIX = "spread_volatility_watch_"
 NO_OBSERVATIONS_REASON = f"{REASON_PREFIX}no_observations"
 CLEAR_REASON = f"{REASON_PREFIX}clear"
-AGGREGATE_SPREAD_VOLATILITY_BLOCK_REASON = (
-    f"{REASON_PREFIX}aggregate_spread_volatility_block"
-)
-AGGREGATE_SPREAD_VOLATILITY_WATCH_REASON = (
-    f"{REASON_PREFIX}aggregate_spread_volatility_watch"
-)
 COMPOSITE_PRESSURE_BLOCK_REASON = f"{REASON_PREFIX}composite_pressure_block"
 COMPOSITE_PRESSURE_WATCH_REASON = f"{REASON_PREFIX}composite_pressure_watch"
-DEPTH_INSTABILITY_BLOCK_REASON = f"{REASON_PREFIX}depth_instability_block"
-DEPTH_INSTABILITY_WATCH_REASON = f"{REASON_PREFIX}depth_instability_watch"
-FEE_FRICTION_BLOCK_REASON = f"{REASON_PREFIX}fee_friction_block"
-FEE_FRICTION_WATCH_REASON = f"{REASON_PREFIX}fee_friction_watch"
+COST_RISK_PRESSURE_BLOCK_REASON = f"{REASON_PREFIX}cost_risk_pressure_block"
+COST_RISK_PRESSURE_WATCH_REASON = f"{REASON_PREFIX}cost_risk_pressure_watch"
+DEPTH_DECAY_BLOCK_REASON = f"{REASON_PREFIX}depth_decay_block"
+DEPTH_DECAY_WATCH_REASON = f"{REASON_PREFIX}depth_decay_watch"
 MANUAL_REVIEW_WATCH_REASON = f"{REASON_PREFIX}manual_review_watch"
-SETTLEMENT_COST_PRESSURE_BLOCK_REASON = (
-    f"{REASON_PREFIX}settlement_cost_pressure_block"
-)
-SETTLEMENT_COST_PRESSURE_WATCH_REASON = (
-    f"{REASON_PREFIX}settlement_cost_pressure_watch"
-)
+QUOTE_AGE_BLOCK_REASON = f"{REASON_PREFIX}quote_age_block"
+QUOTE_AGE_WATCH_REASON = f"{REASON_PREFIX}quote_age_watch"
+SPREAD_INSTABILITY_BLOCK_REASON = f"{REASON_PREFIX}spread_instability_block"
+SPREAD_INSTABILITY_WATCH_REASON = f"{REASON_PREFIX}spread_instability_watch"
 
 REPORT_CLEAR_REASON = f"{REASON_PREFIX}report_clear"
-REPORT_SPREAD_VOLATILITY_REASON = f"{REASON_PREFIX}spread_volatility_detected"
-REPORT_DEPTH_INSTABILITY_REASON = f"{REASON_PREFIX}depth_instability_detected"
-REPORT_FEE_FRICTION_REASON = f"{REASON_PREFIX}fee_friction_detected"
-REPORT_SETTLEMENT_COST_REASON = f"{REASON_PREFIX}settlement_cost_pressure_detected"
 REPORT_COMPOSITE_PRESSURE_REASON = f"{REASON_PREFIX}composite_pressure_detected"
+REPORT_COST_RISK_REASON = f"{REASON_PREFIX}cost_risk_pressure_detected"
+REPORT_DEPTH_DECAY_REASON = f"{REASON_PREFIX}depth_decay_detected"
 REPORT_MANUAL_REVIEW_REASON = f"{REASON_PREFIX}manual_review_required"
+REPORT_QUOTE_AGE_REASON = f"{REASON_PREFIX}quote_age_detected"
+REPORT_SPREAD_INSTABILITY_REASON = f"{REASON_PREFIX}spread_instability_detected"
 
 DECIMAL_CONTEXT = Context(prec=64, rounding=ROUND_HALF_EVEN)
 QUANT = Decimal("0.000001")
@@ -63,16 +55,25 @@ MICROSECONDS_PER_SECOND = Decimal("1000000")
 HARD_FLAG_FIELDS = ("paper_only", "report_only", "readonly")
 STATUS_SORT = {STATUS_BLOCK: 0, STATUS_WATCH: 1, STATUS_PASS: 2}
 PUBLIC_LABEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
+PUBLIC_REASON_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,191}$")
 
 PUBLIC_DENY_FRAGMENTS = (
+    "candidate_id",
+    "condition_id",
     "market_id",
     "market_slug",
-    "condition_id",
+    "slug",
+    "question",
+    "url",
     "source_id",
+    "source_text",
     "source_url",
     "raw",
     "://",
     "?",
+    "dsn",
+    "table",
+    "token",
     "api_key",
     "secret",
     "credential",
@@ -83,8 +84,8 @@ PUBLIC_DENY_FRAGMENTS = (
     "wal" + "let",
     "or" + "der",
     "tra" + "de",
-    "buy",
-    "sell",
+    "bu" + "y",
+    "se" + "ll",
     "recom" + "mend",
     "siz" + "ing",
 )
@@ -107,20 +108,20 @@ __all__ = (
 @dataclass(frozen=True)
 class ResearchMarketSpreadVolatilityWatchConfig:
     config_version: str = DEFAULT_RESEARCH_MARKET_SPREAD_VOLATILITY_WATCH_CONFIG_VERSION
-    watch_spread_volatility_ratio: Decimal = Decimal("0.020000")
-    block_spread_volatility_ratio: Decimal = Decimal("0.060000")
-    watch_depth_instability_ratio: Decimal = Decimal("0.250000")
-    block_depth_instability_ratio: Decimal = Decimal("0.650000")
-    watch_fee_friction_ratio: Decimal = Decimal("0.015000")
-    block_fee_friction_ratio: Decimal = Decimal("0.040000")
-    watch_settlement_cost_pressure: Decimal = Decimal("0.300000")
-    block_settlement_cost_pressure: Decimal = Decimal("0.700000")
+    watch_spread_instability_ratio: Decimal = Decimal("0.020000")
+    block_spread_instability_ratio: Decimal = Decimal("0.060000")
+    watch_depth_decay_ratio: Decimal = Decimal("0.250000")
+    block_depth_decay_ratio: Decimal = Decimal("0.650000")
+    watch_quote_age_seconds: Decimal = Decimal("300.000000")
+    block_quote_age_seconds: Decimal = Decimal("900.000000")
+    watch_cost_risk_pressure_score: Decimal = Decimal("0.300000")
+    block_cost_risk_pressure_score: Decimal = Decimal("0.700000")
     watch_composite_pressure: Decimal = Decimal("0.300000")
     block_composite_pressure: Decimal = Decimal("0.700000")
-    spread_volatility_weight: Decimal = Decimal("0.350000")
-    depth_instability_weight: Decimal = Decimal("0.250000")
-    fee_friction_weight: Decimal = Decimal("0.200000")
-    settlement_cost_weight: Decimal = Decimal("0.200000")
+    spread_instability_weight: Decimal = Decimal("0.350000")
+    depth_decay_weight: Decimal = Decimal("0.250000")
+    quote_age_weight: Decimal = Decimal("0.200000")
+    cost_risk_weight: Decimal = Decimal("0.200000")
     paper_only: bool = True
     report_only: bool = True
     readonly: bool = True
@@ -138,49 +139,53 @@ class ResearchMarketSpreadVolatilityWatchConfig:
         if self.config_version != DEFAULT_RESEARCH_MARKET_SPREAD_VOLATILITY_WATCH_CONFIG_VERSION:
             raise ValueError("config_version must be the supported config version")
         for field_name in (
-            "watch_spread_volatility_ratio",
-            "block_spread_volatility_ratio",
-            "watch_depth_instability_ratio",
-            "block_depth_instability_ratio",
-            "watch_fee_friction_ratio",
-            "block_fee_friction_ratio",
-            "watch_settlement_cost_pressure",
-            "block_settlement_cost_pressure",
+            "watch_spread_instability_ratio",
+            "block_spread_instability_ratio",
+            "watch_depth_decay_ratio",
+            "block_depth_decay_ratio",
+            "watch_cost_risk_pressure_score",
+            "block_cost_risk_pressure_score",
             "watch_composite_pressure",
             "block_composite_pressure",
-            "spread_volatility_weight",
-            "depth_instability_weight",
-            "fee_friction_weight",
-            "settlement_cost_weight",
+            "spread_instability_weight",
+            "depth_decay_weight",
+            "quote_age_weight",
+            "cost_risk_weight",
         ):
             object.__setattr__(
                 self,
                 field_name,
                 _require_ratio_decimal(field_name, getattr(self, field_name)),
             )
+        for field_name in ("watch_quote_age_seconds", "block_quote_age_seconds"):
+            object.__setattr__(
+                self,
+                field_name,
+                _require_positive_decimal(field_name, getattr(self, field_name)),
+            )
         _require_increasing_threshold(
-            "watch_spread_volatility_ratio",
-            self.watch_spread_volatility_ratio,
-            "block_spread_volatility_ratio",
-            self.block_spread_volatility_ratio,
+            "watch_spread_instability_ratio",
+            self.watch_spread_instability_ratio,
+            "block_spread_instability_ratio",
+            self.block_spread_instability_ratio,
         )
         _require_increasing_threshold(
-            "watch_depth_instability_ratio",
-            self.watch_depth_instability_ratio,
-            "block_depth_instability_ratio",
-            self.block_depth_instability_ratio,
+            "watch_depth_decay_ratio",
+            self.watch_depth_decay_ratio,
+            "block_depth_decay_ratio",
+            self.block_depth_decay_ratio,
         )
         _require_increasing_threshold(
-            "watch_fee_friction_ratio",
-            self.watch_fee_friction_ratio,
-            "block_fee_friction_ratio",
-            self.block_fee_friction_ratio,
+            "watch_quote_age_seconds",
+            self.watch_quote_age_seconds,
+            "block_quote_age_seconds",
+            self.block_quote_age_seconds,
         )
         _require_increasing_threshold(
-            "watch_settlement_cost_pressure",
-            self.watch_settlement_cost_pressure,
-            "block_settlement_cost_pressure",
-            self.block_settlement_cost_pressure,
+            "watch_cost_risk_pressure_score",
+            self.watch_cost_risk_pressure_score,
+            "block_cost_risk_pressure_score",
+            self.block_cost_risk_pressure_score,
         )
         _require_increasing_threshold(
             "watch_composite_pressure",
@@ -188,25 +193,26 @@ class ResearchMarketSpreadVolatilityWatchConfig:
             "block_composite_pressure",
             self.block_composite_pressure,
         )
-        if (
-            self.spread_volatility_weight
-            + self.depth_instability_weight
-            + self.fee_friction_weight
-            + self.settlement_cost_weight
-        ) != ONE:
+        weight_sum = _quantize(
+            self.spread_instability_weight
+            + self.depth_decay_weight
+            + self.quote_age_weight
+            + self.cost_risk_weight,
+        )
+        if weight_sum != ONE:
             raise ValueError("spread volatility weights must sum to 1.000000")
         _require_hard_flags("config", self)
 
 
 @dataclass(frozen=True)
 class ResearchMarketSpreadVolatilityWatchObservation:
-    public_bucket: str
+    public_cohort: str
     observed_at: datetime
     sample_count: Decimal
-    aggregate_spread_volatility_ratio: Decimal
-    depth_instability_ratio: Decimal
-    fee_friction_ratio: Decimal
-    settlement_cost_pressure_score: Decimal
+    aggregate_spread_instability_ratio: Decimal
+    depth_decay_ratio: Decimal
+    quote_age_seconds: Decimal
+    cost_risk_pressure_score: Decimal
     reason_codes: tuple[str, ...] = ()
     paper_only: bool = True
     report_only: bool = True
@@ -224,8 +230,8 @@ class ResearchMarketSpreadVolatilityWatchObservation:
         _require_exact_type(self, ResearchMarketSpreadVolatilityWatchObservation, "observation")
         object.__setattr__(
             self,
-            "public_bucket",
-            _require_public_label("public_bucket", self.public_bucket),
+            "public_cohort",
+            _require_public_label("public_cohort", self.public_cohort),
         )
         object.__setattr__(self, "observed_at", _as_utc("observed_at", self.observed_at))
         object.__setattr__(
@@ -234,16 +240,20 @@ class ResearchMarketSpreadVolatilityWatchObservation:
             _require_positive_whole_decimal("sample_count", self.sample_count),
         )
         for field_name in (
-            "aggregate_spread_volatility_ratio",
-            "depth_instability_ratio",
-            "fee_friction_ratio",
-            "settlement_cost_pressure_score",
+            "aggregate_spread_instability_ratio",
+            "depth_decay_ratio",
+            "cost_risk_pressure_score",
         ):
             object.__setattr__(
                 self,
                 field_name,
                 _require_ratio_decimal(field_name, getattr(self, field_name)),
             )
+        object.__setattr__(
+            self,
+            "quote_age_seconds",
+            _require_nonnegative_decimal("quote_age_seconds", self.quote_age_seconds),
+        )
         object.__setattr__(
             self,
             "reason_codes",
@@ -254,18 +264,18 @@ class ResearchMarketSpreadVolatilityWatchObservation:
 
 @dataclass(frozen=True)
 class ResearchMarketSpreadVolatilityWatchRow:
-    public_bucket: str
+    public_cohort: str
     observed_at: datetime
     age_seconds: Decimal
     sample_count: Decimal
-    aggregate_spread_volatility_ratio: Decimal
-    depth_instability_ratio: Decimal
-    fee_friction_ratio: Decimal
-    settlement_cost_pressure_score: Decimal
-    spread_volatility_pressure: Decimal
-    depth_instability_pressure: Decimal
-    fee_friction_pressure: Decimal
-    settlement_cost_pressure: Decimal
+    aggregate_spread_instability_ratio: Decimal
+    depth_decay_ratio: Decimal
+    quote_age_seconds: Decimal
+    cost_risk_pressure_score: Decimal
+    spread_instability_pressure: Decimal
+    depth_decay_pressure: Decimal
+    quote_age_pressure: Decimal
+    cost_risk_pressure: Decimal
     composite_pressure: Decimal
     status: str
     reason_codes: tuple[str, ...]
@@ -284,29 +294,29 @@ class ResearchMarketSpreadVolatilityWatchRow:
         _require_exact_type(self, ResearchMarketSpreadVolatilityWatchRow, "row")
         object.__setattr__(
             self,
-            "public_bucket",
-            _require_public_label("public_bucket", self.public_bucket),
+            "public_cohort",
+            _require_public_label("public_cohort", self.public_cohort),
         )
         object.__setattr__(self, "observed_at", _as_utc("observed_at", self.observed_at))
-        object.__setattr__(
-            self,
-            "age_seconds",
-            _require_nonnegative_decimal("age_seconds", self.age_seconds),
-        )
+        for field_name in ("age_seconds", "quote_age_seconds"):
+            object.__setattr__(
+                self,
+                field_name,
+                _require_nonnegative_decimal(field_name, getattr(self, field_name)),
+            )
         object.__setattr__(
             self,
             "sample_count",
             _require_positive_whole_decimal("sample_count", self.sample_count),
         )
         for field_name in (
-            "aggregate_spread_volatility_ratio",
-            "depth_instability_ratio",
-            "fee_friction_ratio",
-            "settlement_cost_pressure_score",
-            "spread_volatility_pressure",
-            "depth_instability_pressure",
-            "fee_friction_pressure",
-            "settlement_cost_pressure",
+            "aggregate_spread_instability_ratio",
+            "depth_decay_ratio",
+            "cost_risk_pressure_score",
+            "spread_instability_pressure",
+            "depth_decay_pressure",
+            "quote_age_pressure",
+            "cost_risk_pressure",
             "composite_pressure",
         ):
             object.__setattr__(
@@ -328,7 +338,7 @@ class ResearchMarketSpreadVolatilityWatchRow:
 class ResearchMarketSpreadVolatilityWatchReasonCodeCount:
     reason_code: str
     count: Decimal
-    sample_ratio: Decimal
+    row_ratio: Decimal
     paper_only: bool = True
     report_only: bool = True
     readonly: bool = True
@@ -355,8 +365,8 @@ class ResearchMarketSpreadVolatilityWatchReasonCodeCount:
         )
         object.__setattr__(
             self,
-            "sample_ratio",
-            _require_ratio_decimal("sample_ratio", self.sample_ratio),
+            "row_ratio",
+            _require_ratio_decimal("row_ratio", self.row_ratio),
         )
         _require_hard_flags("reason code count", self)
 
@@ -371,14 +381,14 @@ class ResearchMarketSpreadVolatilityWatchReport:
     pass_count: Decimal
     watch_count: Decimal
     block_count: Decimal
-    spread_volatility_watch_count: Decimal
-    depth_instability_watch_count: Decimal
-    fee_friction_watch_count: Decimal
-    settlement_cost_pressure_count: Decimal
-    mean_aggregate_spread_volatility_ratio: Decimal
-    mean_depth_instability_ratio: Decimal
-    mean_fee_friction_ratio: Decimal
-    mean_settlement_cost_pressure_score: Decimal
+    spread_instability_watch_count: Decimal
+    depth_decay_watch_count: Decimal
+    quote_age_watch_count: Decimal
+    cost_risk_pressure_count: Decimal
+    mean_aggregate_spread_instability_ratio: Decimal
+    mean_depth_decay_ratio: Decimal
+    mean_quote_age_seconds: Decimal
+    mean_cost_risk_pressure_score: Decimal
     mean_composite_pressure: Decimal
     max_composite_pressure: Decimal
     manual_review_required: bool
@@ -386,6 +396,7 @@ class ResearchMarketSpreadVolatilityWatchReport:
     reason_codes: tuple[str, ...]
     reason_code_counts: tuple[ResearchMarketSpreadVolatilityWatchReasonCodeCount, ...]
     rows: tuple[ResearchMarketSpreadVolatilityWatchRow, ...]
+    derived_validation_digest: str = ""
     paper_only: bool = True
     report_only: bool = True
     readonly: bool = True
@@ -408,14 +419,14 @@ class ResearchMarketSpreadVolatilityWatchReport:
             "pass_count",
             "watch_count",
             "block_count",
-            "spread_volatility_watch_count",
-            "depth_instability_watch_count",
-            "fee_friction_watch_count",
-            "settlement_cost_pressure_count",
-            "mean_aggregate_spread_volatility_ratio",
-            "mean_depth_instability_ratio",
-            "mean_fee_friction_ratio",
-            "mean_settlement_cost_pressure_score",
+            "spread_instability_watch_count",
+            "depth_decay_watch_count",
+            "quote_age_watch_count",
+            "cost_risk_pressure_count",
+            "mean_aggregate_spread_instability_ratio",
+            "mean_depth_decay_ratio",
+            "mean_quote_age_seconds",
+            "mean_cost_risk_pressure_score",
             "mean_composite_pressure",
             "max_composite_pressure",
         ):
@@ -431,25 +442,21 @@ class ResearchMarketSpreadVolatilityWatchReport:
             "reason_codes",
             _normalize_reason_codes(self.reason_codes, allow_empty=False),
         )
-        if type(self.reason_code_counts) is not tuple:
-            raise ValueError("reason_code_counts must be a tuple")
-        for reason_count in self.reason_code_counts:
-            if type(reason_count) is not ResearchMarketSpreadVolatilityWatchReasonCodeCount:
-                raise ValueError(
-                    "reason_code_counts must contain "
-                    "ResearchMarketSpreadVolatilityWatchReasonCodeCount",
-                )
-            _require_hard_flags("reason code count", reason_count)
-        if type(self.rows) is not tuple:
-            raise ValueError("rows must be a tuple")
-        for row in self.rows:
-            if type(row) is not ResearchMarketSpreadVolatilityWatchRow:
-                raise ValueError(
-                    "rows must contain ResearchMarketSpreadVolatilityWatchRow",
-                )
-            _require_hard_flags("row", row)
+        object.__setattr__(self, "rows", _normalize_rows(self.rows))
+        object.__setattr__(
+            self,
+            "reason_code_counts",
+            _normalize_reason_code_counts(self.reason_code_counts),
+        )
         _validate_report_consistency(self)
         _require_hard_flags("report", self)
+        expected_digest = _derived_report_digest(self)
+        if self.derived_validation_digest:
+            _require_hex_digest("derived_validation_digest", self.derived_validation_digest)
+            if self.derived_validation_digest != expected_digest:
+                raise ValueError("derived_validation_digest must match report fields")
+        else:
+            object.__setattr__(self, "derived_validation_digest", expected_digest)
 
 
 def build_research_market_spread_volatility_watch_report(
@@ -465,7 +472,14 @@ def build_research_market_spread_volatility_watch_report(
     input_rows = _normalize_observations(observations)
     rows = tuple(
         sorted(
-            (_row_from_observation(row, config=config, generated_at=generated_at_utc) for row in input_rows),
+            (
+                _row_from_observation(
+                    row,
+                    config=config,
+                    generated_at=generated_at_utc,
+                )
+                for row in input_rows
+            ),
             key=_row_sort_key,
         ),
     )
@@ -479,29 +493,29 @@ def build_research_market_spread_volatility_watch_report(
         pass_count=_count(_status_count(rows, STATUS_PASS)),
         watch_count=_count(_status_count(rows, STATUS_WATCH)),
         block_count=_count(_status_count(rows, STATUS_BLOCK)),
-        spread_volatility_watch_count=_count(
-            _reason_count(rows, AGGREGATE_SPREAD_VOLATILITY_WATCH_REASON)
-            + _reason_count(rows, AGGREGATE_SPREAD_VOLATILITY_BLOCK_REASON),
+        spread_instability_watch_count=_count(
+            _reason_count(rows, SPREAD_INSTABILITY_WATCH_REASON)
+            + _reason_count(rows, SPREAD_INSTABILITY_BLOCK_REASON),
         ),
-        depth_instability_watch_count=_count(
-            _reason_count(rows, DEPTH_INSTABILITY_WATCH_REASON)
-            + _reason_count(rows, DEPTH_INSTABILITY_BLOCK_REASON),
+        depth_decay_watch_count=_count(
+            _reason_count(rows, DEPTH_DECAY_WATCH_REASON)
+            + _reason_count(rows, DEPTH_DECAY_BLOCK_REASON),
         ),
-        fee_friction_watch_count=_count(
-            _reason_count(rows, FEE_FRICTION_WATCH_REASON)
-            + _reason_count(rows, FEE_FRICTION_BLOCK_REASON),
+        quote_age_watch_count=_count(
+            _reason_count(rows, QUOTE_AGE_WATCH_REASON)
+            + _reason_count(rows, QUOTE_AGE_BLOCK_REASON),
         ),
-        settlement_cost_pressure_count=_count(
-            _reason_count(rows, SETTLEMENT_COST_PRESSURE_WATCH_REASON)
-            + _reason_count(rows, SETTLEMENT_COST_PRESSURE_BLOCK_REASON),
+        cost_risk_pressure_count=_count(
+            _reason_count(rows, COST_RISK_PRESSURE_WATCH_REASON)
+            + _reason_count(rows, COST_RISK_PRESSURE_BLOCK_REASON),
         ),
-        mean_aggregate_spread_volatility_ratio=_mean(
-            tuple(row.aggregate_spread_volatility_ratio for row in rows),
+        mean_aggregate_spread_instability_ratio=_mean(
+            tuple(row.aggregate_spread_instability_ratio for row in rows),
         ),
-        mean_depth_instability_ratio=_mean(tuple(row.depth_instability_ratio for row in rows)),
-        mean_fee_friction_ratio=_mean(tuple(row.fee_friction_ratio for row in rows)),
-        mean_settlement_cost_pressure_score=_mean(
-            tuple(row.settlement_cost_pressure_score for row in rows),
+        mean_depth_decay_ratio=_mean(tuple(row.depth_decay_ratio for row in rows)),
+        mean_quote_age_seconds=_mean(tuple(row.quote_age_seconds for row in rows)),
+        mean_cost_risk_pressure_score=_mean(
+            tuple(row.cost_risk_pressure_score for row in rows),
         ),
         mean_composite_pressure=_mean(tuple(row.composite_pressure for row in rows)),
         max_composite_pressure=max((row.composite_pressure for row in rows), default=ZERO),
@@ -519,9 +533,12 @@ def research_market_spread_volatility_watch_report_payload(
     if type(report) is ResearchMarketSpreadVolatilityWatchReport:
         _require_hard_flags("report", report)
         _validate_report_consistency(report)
-        payload = _json_ready(report)
+        expected_digest = _derived_report_digest(report)
+        if report.derived_validation_digest != expected_digest:
+            raise ValueError("derived_validation_digest must match report fields")
+        payload = _payload_value(report)
     elif type(report) is dict:
-        payload = _json_ready(report)
+        payload = _payload_value(report)
     else:
         raise ValueError("report must be a ResearchMarketSpreadVolatilityWatchReport")
     if type(payload) is not dict:
@@ -535,8 +552,16 @@ def research_market_spread_volatility_watch_report_digest(
     report: ResearchMarketSpreadVolatilityWatchReport | dict[str, Any],
 ) -> str:
     payload = research_market_spread_volatility_watch_report_payload(report)
-    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
-    return sha256(encoded.encode("utf-8")).hexdigest()
+    digest_payload = dict(payload)
+    digest_payload.pop("derived_validation_digest", None)
+    encoded = json.dumps(digest_payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    digest = sha256(encoded.encode("utf-8")).hexdigest()
+    if (
+        "derived_validation_digest" in payload
+        and payload["derived_validation_digest"] != digest
+    ):
+        raise ValueError("derived_validation_digest must match report fields")
+    return digest
 
 
 @dataclass(frozen=True)
@@ -580,50 +605,46 @@ def _row_from_observation(
 ) -> ResearchMarketSpreadVolatilityWatchRow:
     age_seconds = _age_seconds(row.observed_at, generated_at)
     spread_pressure = _threshold_pressure(
-        row.aggregate_spread_volatility_ratio,
-        watch_value=config.watch_spread_volatility_ratio,
-        block_value=config.block_spread_volatility_ratio,
+        row.aggregate_spread_instability_ratio,
+        watch_value=config.watch_spread_instability_ratio,
+        block_value=config.block_spread_instability_ratio,
     )
     depth_pressure = _threshold_pressure(
-        row.depth_instability_ratio,
-        watch_value=config.watch_depth_instability_ratio,
-        block_value=config.block_depth_instability_ratio,
+        row.depth_decay_ratio,
+        watch_value=config.watch_depth_decay_ratio,
+        block_value=config.block_depth_decay_ratio,
     )
-    fee_pressure = _threshold_pressure(
-        row.fee_friction_ratio,
-        watch_value=config.watch_fee_friction_ratio,
-        block_value=config.block_fee_friction_ratio,
+    quote_pressure = _threshold_pressure(
+        row.quote_age_seconds,
+        watch_value=config.watch_quote_age_seconds,
+        block_value=config.block_quote_age_seconds,
     )
-    settlement_pressure = _threshold_pressure(
-        row.settlement_cost_pressure_score,
-        watch_value=config.watch_settlement_cost_pressure,
-        block_value=config.block_settlement_cost_pressure,
+    cost_pressure = _threshold_pressure(
+        row.cost_risk_pressure_score,
+        watch_value=config.watch_cost_risk_pressure_score,
+        block_value=config.block_cost_risk_pressure_score,
     )
     composite_pressure = _composite_pressure(
-        spread_volatility_pressure=spread_pressure,
-        depth_instability_pressure=depth_pressure,
-        fee_friction_pressure=fee_pressure,
-        settlement_cost_pressure=settlement_pressure,
+        spread_instability_pressure=spread_pressure,
+        depth_decay_pressure=depth_pressure,
+        quote_age_pressure=quote_pressure,
+        cost_risk_pressure=cost_pressure,
         config=config,
     )
-    status = _row_status(
-        row,
-        composite_pressure=composite_pressure,
-        config=config,
-    )
+    status = _row_status(row, composite_pressure=composite_pressure, config=config)
     return ResearchMarketSpreadVolatilityWatchRow(
-        public_bucket=row.public_bucket,
+        public_cohort=row.public_cohort,
         observed_at=row.observed_at,
         age_seconds=age_seconds,
         sample_count=row.sample_count,
-        aggregate_spread_volatility_ratio=row.aggregate_spread_volatility_ratio,
-        depth_instability_ratio=row.depth_instability_ratio,
-        fee_friction_ratio=row.fee_friction_ratio,
-        settlement_cost_pressure_score=row.settlement_cost_pressure_score,
-        spread_volatility_pressure=spread_pressure,
-        depth_instability_pressure=depth_pressure,
-        fee_friction_pressure=fee_pressure,
-        settlement_cost_pressure=settlement_pressure,
+        aggregate_spread_instability_ratio=row.aggregate_spread_instability_ratio,
+        depth_decay_ratio=row.depth_decay_ratio,
+        quote_age_seconds=row.quote_age_seconds,
+        cost_risk_pressure_score=row.cost_risk_pressure_score,
+        spread_instability_pressure=spread_pressure,
+        depth_decay_pressure=depth_pressure,
+        quote_age_pressure=quote_pressure,
+        cost_risk_pressure=cost_pressure,
         composite_pressure=composite_pressure,
         status=status,
         reason_codes=_row_reason_codes(
@@ -642,19 +663,19 @@ def _row_status(
     config: ResearchMarketSpreadVolatilityWatchConfig,
 ) -> str:
     if (
-        row.aggregate_spread_volatility_ratio >= config.block_spread_volatility_ratio
-        or row.depth_instability_ratio >= config.block_depth_instability_ratio
-        or row.fee_friction_ratio >= config.block_fee_friction_ratio
-        or row.settlement_cost_pressure_score >= config.block_settlement_cost_pressure
+        row.aggregate_spread_instability_ratio >= config.block_spread_instability_ratio
+        or row.depth_decay_ratio >= config.block_depth_decay_ratio
+        or row.quote_age_seconds >= config.block_quote_age_seconds
+        or row.cost_risk_pressure_score >= config.block_cost_risk_pressure_score
         or composite_pressure >= config.block_composite_pressure
     ):
         return STATUS_BLOCK
     if (
         row.reason_codes
-        or row.aggregate_spread_volatility_ratio >= config.watch_spread_volatility_ratio
-        or row.depth_instability_ratio >= config.watch_depth_instability_ratio
-        or row.fee_friction_ratio >= config.watch_fee_friction_ratio
-        or row.settlement_cost_pressure_score >= config.watch_settlement_cost_pressure
+        or row.aggregate_spread_instability_ratio >= config.watch_spread_instability_ratio
+        or row.depth_decay_ratio >= config.watch_depth_decay_ratio
+        or row.quote_age_seconds >= config.watch_quote_age_seconds
+        or row.cost_risk_pressure_score >= config.watch_cost_risk_pressure_score
         or composite_pressure >= config.watch_composite_pressure
     ):
         return STATUS_WATCH
@@ -669,22 +690,22 @@ def _row_reason_codes(
     config: ResearchMarketSpreadVolatilityWatchConfig,
 ) -> tuple[str, ...]:
     reason_codes: list[str] = list(row.reason_codes)
-    if row.aggregate_spread_volatility_ratio >= config.block_spread_volatility_ratio:
-        reason_codes.append(AGGREGATE_SPREAD_VOLATILITY_BLOCK_REASON)
-    elif row.aggregate_spread_volatility_ratio >= config.watch_spread_volatility_ratio:
-        reason_codes.append(AGGREGATE_SPREAD_VOLATILITY_WATCH_REASON)
-    if row.depth_instability_ratio >= config.block_depth_instability_ratio:
-        reason_codes.append(DEPTH_INSTABILITY_BLOCK_REASON)
-    elif row.depth_instability_ratio >= config.watch_depth_instability_ratio:
-        reason_codes.append(DEPTH_INSTABILITY_WATCH_REASON)
-    if row.fee_friction_ratio >= config.block_fee_friction_ratio:
-        reason_codes.append(FEE_FRICTION_BLOCK_REASON)
-    elif row.fee_friction_ratio >= config.watch_fee_friction_ratio:
-        reason_codes.append(FEE_FRICTION_WATCH_REASON)
-    if row.settlement_cost_pressure_score >= config.block_settlement_cost_pressure:
-        reason_codes.append(SETTLEMENT_COST_PRESSURE_BLOCK_REASON)
-    elif row.settlement_cost_pressure_score >= config.watch_settlement_cost_pressure:
-        reason_codes.append(SETTLEMENT_COST_PRESSURE_WATCH_REASON)
+    if row.aggregate_spread_instability_ratio >= config.block_spread_instability_ratio:
+        reason_codes.append(SPREAD_INSTABILITY_BLOCK_REASON)
+    elif row.aggregate_spread_instability_ratio >= config.watch_spread_instability_ratio:
+        reason_codes.append(SPREAD_INSTABILITY_WATCH_REASON)
+    if row.depth_decay_ratio >= config.block_depth_decay_ratio:
+        reason_codes.append(DEPTH_DECAY_BLOCK_REASON)
+    elif row.depth_decay_ratio >= config.watch_depth_decay_ratio:
+        reason_codes.append(DEPTH_DECAY_WATCH_REASON)
+    if row.quote_age_seconds >= config.block_quote_age_seconds:
+        reason_codes.append(QUOTE_AGE_BLOCK_REASON)
+    elif row.quote_age_seconds >= config.watch_quote_age_seconds:
+        reason_codes.append(QUOTE_AGE_WATCH_REASON)
+    if row.cost_risk_pressure_score >= config.block_cost_risk_pressure_score:
+        reason_codes.append(COST_RISK_PRESSURE_BLOCK_REASON)
+    elif row.cost_risk_pressure_score >= config.watch_cost_risk_pressure_score:
+        reason_codes.append(COST_RISK_PRESSURE_WATCH_REASON)
     if composite_pressure >= config.block_composite_pressure:
         reason_codes.append(COMPOSITE_PRESSURE_BLOCK_REASON)
     elif composite_pressure >= config.watch_composite_pressure:
@@ -703,36 +724,36 @@ def _report_reason_codes(
         return (NO_OBSERVATIONS_REASON,)
     reason_codes: list[str] = []
     if any(
-        AGGREGATE_SPREAD_VOLATILITY_WATCH_REASON in row.reason_codes
-        or AGGREGATE_SPREAD_VOLATILITY_BLOCK_REASON in row.reason_codes
+        SPREAD_INSTABILITY_WATCH_REASON in row.reason_codes
+        or SPREAD_INSTABILITY_BLOCK_REASON in row.reason_codes
         for row in rows
     ):
-        reason_codes.append(REPORT_SPREAD_VOLATILITY_REASON)
+        reason_codes.append(REPORT_SPREAD_INSTABILITY_REASON)
     if any(
-        DEPTH_INSTABILITY_WATCH_REASON in row.reason_codes
-        or DEPTH_INSTABILITY_BLOCK_REASON in row.reason_codes
+        DEPTH_DECAY_WATCH_REASON in row.reason_codes
+        or DEPTH_DECAY_BLOCK_REASON in row.reason_codes
         for row in rows
     ):
-        reason_codes.append(REPORT_DEPTH_INSTABILITY_REASON)
+        reason_codes.append(REPORT_DEPTH_DECAY_REASON)
     if any(
-        FEE_FRICTION_WATCH_REASON in row.reason_codes
-        or FEE_FRICTION_BLOCK_REASON in row.reason_codes
+        QUOTE_AGE_WATCH_REASON in row.reason_codes
+        or QUOTE_AGE_BLOCK_REASON in row.reason_codes
         for row in rows
     ):
-        reason_codes.append(REPORT_FEE_FRICTION_REASON)
+        reason_codes.append(REPORT_QUOTE_AGE_REASON)
     if any(
-        SETTLEMENT_COST_PRESSURE_WATCH_REASON in row.reason_codes
-        or SETTLEMENT_COST_PRESSURE_BLOCK_REASON in row.reason_codes
+        COST_RISK_PRESSURE_WATCH_REASON in row.reason_codes
+        or COST_RISK_PRESSURE_BLOCK_REASON in row.reason_codes
         for row in rows
     ):
-        reason_codes.append(REPORT_SETTLEMENT_COST_REASON)
+        reason_codes.append(REPORT_COST_RISK_REASON)
     if any(
         COMPOSITE_PRESSURE_WATCH_REASON in row.reason_codes
         or COMPOSITE_PRESSURE_BLOCK_REASON in row.reason_codes
         for row in rows
     ):
         reason_codes.append(REPORT_COMPOSITE_PRESSURE_REASON)
-    if any(row.status != STATUS_PASS or row.reason_codes[0].startswith("input_") for row in rows):
+    if any(row.status != STATUS_PASS for row in rows):
         reason_codes.append(REPORT_MANUAL_REVIEW_REASON)
     if not reason_codes:
         reason_codes.append(REPORT_CLEAR_REASON)
@@ -748,7 +769,7 @@ def _reason_code_counts(
             ResearchMarketSpreadVolatilityWatchReasonCodeCount(
                 reason_code=reason_code,
                 count=ONE,
-                sample_ratio=ZERO,
+                row_ratio=ZERO,
             )
             for reason_code in report_reason_codes
         )
@@ -760,7 +781,7 @@ def _reason_code_counts(
         ResearchMarketSpreadVolatilityWatchReasonCodeCount(
             reason_code=reason_code,
             count=_count(count),
-            sample_ratio=_quantize(Decimal(count) / row_count),
+            row_ratio=_quantize(Decimal(count) / row_count),
         )
         for reason_code, count in sorted(counter.items())
     )
@@ -771,6 +792,8 @@ def _validate_row_consistency(row: ResearchMarketSpreadVolatilityWatchRow) -> No
         raise ValueError("pass rows must contain only the clear reason")
     if COMPOSITE_PRESSURE_BLOCK_REASON in row.reason_codes and row.status != STATUS_BLOCK:
         raise ValueError("composite pressure block reason requires block status")
+    if COMPOSITE_PRESSURE_WATCH_REASON in row.reason_codes and row.status == STATUS_PASS:
+        raise ValueError("composite pressure watch reason requires review status")
 
 
 def _validate_report_consistency(report: ResearchMarketSpreadVolatilityWatchReport) -> None:
@@ -791,6 +814,38 @@ def _validate_report_consistency(report: ResearchMarketSpreadVolatilityWatchRepo
         raise ValueError("watch_count must match rows")
     if report.block_count != _count(_status_count(rows, STATUS_BLOCK)):
         raise ValueError("block_count must match rows")
+    if report.spread_instability_watch_count != _count(
+        _reason_count(rows, SPREAD_INSTABILITY_WATCH_REASON)
+        + _reason_count(rows, SPREAD_INSTABILITY_BLOCK_REASON),
+    ):
+        raise ValueError("spread_instability_watch_count must match rows")
+    if report.depth_decay_watch_count != _count(
+        _reason_count(rows, DEPTH_DECAY_WATCH_REASON)
+        + _reason_count(rows, DEPTH_DECAY_BLOCK_REASON),
+    ):
+        raise ValueError("depth_decay_watch_count must match rows")
+    if report.quote_age_watch_count != _count(
+        _reason_count(rows, QUOTE_AGE_WATCH_REASON)
+        + _reason_count(rows, QUOTE_AGE_BLOCK_REASON),
+    ):
+        raise ValueError("quote_age_watch_count must match rows")
+    if report.cost_risk_pressure_count != _count(
+        _reason_count(rows, COST_RISK_PRESSURE_WATCH_REASON)
+        + _reason_count(rows, COST_RISK_PRESSURE_BLOCK_REASON),
+    ):
+        raise ValueError("cost_risk_pressure_count must match rows")
+    if report.mean_aggregate_spread_instability_ratio != _mean(
+        tuple(row.aggregate_spread_instability_ratio for row in rows),
+    ):
+        raise ValueError("mean_aggregate_spread_instability_ratio must match rows")
+    if report.mean_depth_decay_ratio != _mean(tuple(row.depth_decay_ratio for row in rows)):
+        raise ValueError("mean_depth_decay_ratio must match rows")
+    if report.mean_quote_age_seconds != _mean(tuple(row.quote_age_seconds for row in rows)):
+        raise ValueError("mean_quote_age_seconds must match rows")
+    if report.mean_cost_risk_pressure_score != _mean(
+        tuple(row.cost_risk_pressure_score for row in rows),
+    ):
+        raise ValueError("mean_cost_risk_pressure_score must match rows")
     if report.mean_composite_pressure != _mean(tuple(row.composite_pressure for row in rows)):
         raise ValueError("mean_composite_pressure must match rows")
     if report.max_composite_pressure != max(
@@ -837,22 +892,22 @@ def _reason_count(
 
 
 def _row_sort_key(row: ResearchMarketSpreadVolatilityWatchRow) -> tuple[int, str, datetime]:
-    return (STATUS_SORT[row.status], row.public_bucket, row.observed_at)
+    return (STATUS_SORT[row.status], row.public_cohort, row.observed_at)
 
 
 def _composite_pressure(
     *,
-    spread_volatility_pressure: Decimal,
-    depth_instability_pressure: Decimal,
-    fee_friction_pressure: Decimal,
-    settlement_cost_pressure: Decimal,
+    spread_instability_pressure: Decimal,
+    depth_decay_pressure: Decimal,
+    quote_age_pressure: Decimal,
+    cost_risk_pressure: Decimal,
     config: ResearchMarketSpreadVolatilityWatchConfig,
 ) -> Decimal:
     return _clamp_ratio(
-        spread_volatility_pressure * config.spread_volatility_weight
-        + depth_instability_pressure * config.depth_instability_weight
-        + fee_friction_pressure * config.fee_friction_weight
-        + settlement_cost_pressure * config.settlement_cost_weight,
+        spread_instability_pressure * config.spread_instability_weight
+        + depth_decay_pressure * config.depth_decay_weight
+        + quote_age_pressure * config.quote_age_weight
+        + cost_risk_pressure * config.cost_risk_weight,
     )
 
 
@@ -888,9 +943,42 @@ def _mean(values: tuple[Decimal, ...]) -> Decimal:
 
 
 def _count(value: int) -> Decimal:
+    if type(value) is not int:
+        raise ValueError("count must be an int")
     if value < 0:
         raise ValueError("count must be nonnegative")
     return _quantize(Decimal(value))
+
+
+def _normalize_rows(
+    rows: tuple[ResearchMarketSpreadVolatilityWatchRow, ...],
+) -> tuple[ResearchMarketSpreadVolatilityWatchRow, ...]:
+    if type(rows) is not tuple:
+        raise ValueError("rows must be a tuple")
+    for row in rows:
+        if type(row) is not ResearchMarketSpreadVolatilityWatchRow:
+            raise ValueError("rows must contain ResearchMarketSpreadVolatilityWatchRow")
+        _require_hard_flags("row", row)
+    if rows != tuple(sorted(rows, key=_row_sort_key)):
+        raise ValueError("rows must be sorted by public cohort")
+    return rows
+
+
+def _normalize_reason_code_counts(
+    values: tuple[ResearchMarketSpreadVolatilityWatchReasonCodeCount, ...],
+) -> tuple[ResearchMarketSpreadVolatilityWatchReasonCodeCount, ...]:
+    if type(values) is not tuple:
+        raise ValueError("reason_code_counts must be a tuple")
+    for value in values:
+        if type(value) is not ResearchMarketSpreadVolatilityWatchReasonCodeCount:
+            raise ValueError(
+                "reason_code_counts must contain "
+                "ResearchMarketSpreadVolatilityWatchReasonCodeCount",
+            )
+        _require_hard_flags("reason code count", value)
+    if values != tuple(sorted(values, key=lambda value: value.reason_code)):
+        raise ValueError("reason_code_counts must be sorted by reason_code")
+    return values
 
 
 def _require_exact_type(value: object, expected_type: type[object], label: str) -> None:
@@ -914,7 +1002,7 @@ def _require_reason_code(field_name: str, value: object) -> str:
         raise ValueError(f"{field_name} must be a string")
     if value.strip() != value or not value:
         raise ValueError(f"{field_name} must be non-empty")
-    if not re.fullmatch(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,191}$", value):
+    if not PUBLIC_REASON_RE.fullmatch(value):
         raise ValueError(f"{field_name} must be public")
     _reject_unsafe_public_text(field_name, value)
     return value
@@ -945,12 +1033,10 @@ def _normalize_reason_codes(
         raise ValueError("reason_codes must be a tuple")
     if not reason_codes and not allow_empty:
         raise ValueError("reason_codes must not be empty")
-    normalized: list[str] = []
+    normalized: set[str] = set()
     for reason_code in reason_codes:
-        public_reason = _require_reason_code("reason_code", reason_code)
-        if public_reason not in normalized:
-            normalized.append(public_reason)
-    return tuple(normalized)
+        normalized.add(_require_reason_code("reason_code", reason_code))
+    return tuple(sorted(normalized))
 
 
 def _reject_unsafe_public_text(field_name: str, value: str) -> None:
@@ -977,6 +1063,13 @@ def _require_decimal(field_name: str, value: object) -> Decimal:
     if not value.is_finite():
         raise ValueError(f"{field_name} must be finite")
     return _quantize(value)
+
+
+def _require_positive_decimal(field_name: str, value: object) -> Decimal:
+    normalized = _require_decimal(field_name, value)
+    if normalized <= ZERO:
+        raise ValueError(f"{field_name} must be positive")
+    return normalized
 
 
 def _require_nonnegative_decimal(field_name: str, value: object) -> Decimal:
@@ -1015,7 +1108,7 @@ def _require_increasing_threshold(
 def _require_hard_flags(label: str, value: object) -> None:
     for field_name in HARD_FLAG_FIELDS:
         if getattr(value, field_name, None) is not True:
-            raise ValueError(f"{label} must be {field_name}")
+            raise ValueError(f"{label}.{field_name} must be True")
 
 
 def _as_utc(field_name: str, value: object) -> datetime:
@@ -1040,11 +1133,9 @@ def _quantize(value: Decimal) -> Decimal:
         return value.quantize(QUANT)
 
 
-def _json_ready(value: Any) -> Any:
+def _payload_value(value: Any) -> Any:
     if value is None:
         return None
-    if is_dataclass(value) and not isinstance(value, type):
-        return _json_ready(asdict(value))
     if type(value) is Decimal:
         if not value.is_finite():
             raise ValueError("Decimal payload value must be finite")
@@ -1055,15 +1146,35 @@ def _json_ready(value: Any) -> Any:
         return value
     if type(value) is int or isinstance(value, float):
         raise ValueError("numeric payload values must be Decimal strings")
-    if isinstance(value, Mapping):
-        return {key: _json_ready(item) for key, item in value.items()}
+    if is_dataclass(value) and not isinstance(value, type):
+        return {
+            field.name: _payload_value(getattr(value, field.name))
+            for field in fields(value)
+        }
+    if type(value) is dict:
+        return {str(key): _payload_value(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
-        return [_json_ready(item) for item in value]
+        return [_payload_value(item) for item in value]
     raise ValueError("payload value is not JSON serializable")
 
 
+def _derived_report_digest(report: ResearchMarketSpreadVolatilityWatchReport) -> str:
+    payload = _payload_value(report)
+    if type(payload) is not dict:
+        raise ValueError("report payload must be a JSON object")
+    digest_payload = dict(payload)
+    digest_payload.pop("derived_validation_digest", None)
+    encoded = json.dumps(
+        digest_payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    )
+    return sha256(encoded.encode("utf-8")).hexdigest()
+
+
 def _reject_unsafe_payload(label: str, value: object) -> None:
-    if isinstance(value, Mapping):
+    if type(value) is dict:
         for key, item in value.items():
             if type(key) is not str:
                 raise ValueError("payload keys must be strings")
@@ -1080,3 +1191,11 @@ def _reject_unsafe_payload(label: str, value: object) -> None:
     if value is None or type(value) is bool:
         return
     raise ValueError(f"{label} contains an unsupported payload value")
+
+
+def _require_hex_digest(field_name: str, value: object) -> None:
+    if type(value) is not str or len(value) != 64:
+        raise ValueError(f"{field_name} must be a 64-character hex string")
+    allowed = set("0123456789abcdef")
+    if any(character not in allowed for character in value):
+        raise ValueError(f"{field_name} must be a 64-character hex string")
