@@ -364,9 +364,7 @@ def build_research_source_claim_timeliness_score_report(
         "pass_count": _decimal_count(_status_count(rows, "pass")),
         "watch_count": _decimal_count(_status_count(rows, "watch")),
         "block_count": _decimal_count(_status_count(rows, "block")),
-        "average_claim_age_seconds": _average(
-            tuple(_claim_age_seconds(item, generated_at) for item in normalized),
-        ),
+        "average_claim_age_seconds": _weighted_average_claim_age(rows),
         "max_update_latency_seconds": max(
             (row.max_update_latency_seconds for row in rows),
             default=_ZERO,

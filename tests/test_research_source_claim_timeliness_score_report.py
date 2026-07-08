@@ -221,6 +221,59 @@ def test_public_payload_is_deterministic_decimal_only_and_digest_validated() -> 
         replace(score_report, derived_validation_digest="0" * 64)
 
 
+def test_average_claim_age_uses_row_weighted_quantized_average() -> None:
+    generated_at = datetime(2026, 7, 8, 12, 0, 0, 2, tzinfo=UTC)
+    one_microsecond_old = generated_at - timedelta(microseconds=1)
+    two_microseconds_old = generated_at - timedelta(microseconds=2)
+
+    score_report = report(
+        observation(
+            source_class="alpha",
+            claim_observed_at=one_microsecond_old,
+            source_updated_at=one_microsecond_old,
+            corroborated_at=one_microsecond_old,
+        ),
+        observation(
+            source_class="alpha",
+            claim_observed_at=one_microsecond_old,
+            source_updated_at=one_microsecond_old,
+            corroborated_at=one_microsecond_old,
+        ),
+        observation(
+            source_class="alpha",
+            claim_observed_at=one_microsecond_old,
+            source_updated_at=one_microsecond_old,
+            corroborated_at=one_microsecond_old,
+        ),
+        observation(
+            source_class="beta",
+            claim_observed_at=one_microsecond_old,
+            source_updated_at=one_microsecond_old,
+            corroborated_at=one_microsecond_old,
+        ),
+        observation(
+            source_class="beta",
+            claim_observed_at=two_microseconds_old,
+            source_updated_at=two_microseconds_old,
+            corroborated_at=two_microseconds_old,
+        ),
+        observation(
+            source_class="beta",
+            claim_observed_at=two_microseconds_old,
+            source_updated_at=two_microseconds_old,
+            corroborated_at=two_microseconds_old,
+        ),
+        generated_at=generated_at,
+    )
+
+    rows = {row.source_class: row for row in score_report.rows}
+
+    assert rows["alpha"].average_claim_age_seconds == d("0.000001")
+    assert rows["beta"].average_claim_age_seconds == d("0.000002")
+    assert score_report.average_claim_age_seconds == d("0.000002")
+    assert score_report.claim_count == d("6")
+
+
 def test_report_validates_inputs_flags_statuses_and_frozen_outputs() -> None:
     module = api()
     score_report = report(observation())
