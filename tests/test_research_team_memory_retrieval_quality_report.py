@@ -248,6 +248,15 @@ def test_quality_report_is_frozen_decimal_only_public_safe_and_readonly() -> Non
         item(_StringSubclass("ops-research"), "decision-brief")
     with pytest.raises(ValueError, match="public-safe"):
         item("wallet", "decision-brief")
+    for unsafe_label in (
+        "live-trading",
+        "token-review",
+        "https://source.example",
+        "database-table",
+        "execution-route",
+    ):
+        with pytest.raises(ValueError, match="public-safe"):
+            item(unsafe_label, "decision-brief")
     with pytest.raises(ValueError, match="redaction_confirmed"):
         item("ops-research", "decision-brief", redaction_confirmed=False)
     with pytest.raises(ValueError, match="generated_at"):
