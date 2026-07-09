@@ -1,4 +1,4 @@
-"""Public-safe report-only cross-domain review load summaries."""
+"""Public-safe report-only cross-domain specialist review load summaries."""
 
 from __future__ import annotations
 
@@ -15,6 +15,15 @@ DEFAULT_RESEARCH_TEAM_CROSS_DOMAIN_REVIEW_LOAD_REPORT_CONFIG_VERSION = (
     "research-team-cross-domain-review-load-report-v0"
 )
 PUBLIC_STATUSES = ("pass", "watch", "block")
+REVIEW_DOMAINS = (
+    "politics",
+    "crypto",
+    "equities",
+    "commodities",
+    "football",
+    "basketball",
+    "other",
+)
 
 _QUANT = Decimal("0.000001")
 _COUNT_QUANT = Decimal("1")
@@ -25,31 +34,23 @@ _PUBLIC_IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 _DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 _FLAG_NAMES = ("paper_only", "report_only", "readonly")
 
-_LOAD_WEIGHT = Decimal("0.272222")
-_OVERLAP_WEIGHT = Decimal("0.165556")
-_CATALYST_WEIGHT = Decimal("0.200000")
-_EVIDENCE_WEIGHT = Decimal("0.200000")
-_SLA_WEIGHT = Decimal("0.162222")
+_ACTIVE_QUEUE_WEIGHT = Decimal("0.247814")
+_STALE_MEMORY_WEIGHT = Decimal("0.362665")
+_CALIBRATION_BACKLOG_WEIGHT = Decimal("0.443234")
 
 _ROW_REASON_CODE_SEQUENCE = (
     "cross_domain_review_load_pass",
     "cross_domain_review_load_watch",
     "cross_domain_review_load_block",
-    "capacity_load_pass",
-    "capacity_load_watch",
-    "capacity_load_block",
-    "domain_overlap_pass",
-    "domain_overlap_watch",
-    "domain_overlap_block",
-    "catalyst_pressure_pass",
-    "catalyst_pressure_watch",
-    "catalyst_pressure_block",
-    "evidence_age_pass",
-    "evidence_age_watch",
-    "evidence_age_block",
-    "sla_pressure_pass",
-    "sla_pressure_watch",
-    "sla_pressure_block",
+    "active_queue_pressure_pass",
+    "active_queue_pressure_watch",
+    "active_queue_pressure_block",
+    "stale_memory_pressure_pass",
+    "stale_memory_pressure_watch",
+    "stale_memory_pressure_block",
+    "calibration_backlog_pressure_pass",
+    "calibration_backlog_pressure_watch",
+    "calibration_backlog_pressure_block",
 )
 _REPORT_REASON_CODE_SEQUENCE = (
     "cross_domain_review_load_report_pass",
@@ -58,6 +59,8 @@ _REPORT_REASON_CODE_SEQUENCE = (
 )
 _UNSAFE_PUBLIC_TERMS = (
     "raw",
+    "candidate_id",
+    "candidateid",
     "event_id",
     "eventid",
     "market_id",
@@ -77,6 +80,7 @@ _UNSAFE_PUBLIC_TERMS = (
     "postgresql://",
     "database_url",
     "dsn",
+    "table_name",
     "table",
     "token",
     "secret",
@@ -100,6 +104,7 @@ _UNSAFE_PUBLIC_TERMS = (
 __all__ = (
     "DEFAULT_RESEARCH_TEAM_CROSS_DOMAIN_REVIEW_LOAD_REPORT_CONFIG_VERSION",
     "PUBLIC_STATUSES",
+    "REVIEW_DOMAINS",
     "ResearchTeamCrossDomainReviewLoadConfig",
     "ResearchTeamCrossDomainReviewLoadObservation",
     "ResearchTeamCrossDomainReviewLoadRow",
@@ -117,9 +122,7 @@ class ResearchTeamCrossDomainReviewLoadConfig:
     )
     pass_review_load_score_threshold: Decimal = Decimal("0.350000")
     block_review_load_score_threshold: Decimal = Decimal("0.800000")
-    max_overlap_domain_count: Decimal = Decimal("4.000000")
-    stale_evidence_seconds: Decimal = Decimal("7200.000000")
-    sla_pressure_window_seconds: Decimal = Decimal("7200.000000")
+    stale_memory_age_seconds: Decimal = Decimal("86400.000000")
     paper_only: bool = True
     report_only: bool = True
     readonly: bool = True
@@ -155,16 +158,14 @@ class ResearchTeamCrossDomainReviewLoadConfig:
                 "block_review_load_score_threshold must be at least "
                 "pass_review_load_score_threshold",
             )
-        for field_name in (
-            "max_overlap_domain_count",
-            "stale_evidence_seconds",
-            "sla_pressure_window_seconds",
-        ):
-            object.__setattr__(
-                self,
-                field_name,
-                _require_positive_decimal(field_name, getattr(self, field_name)),
-            )
+        object.__setattr__(
+            self,
+            "stale_memory_age_seconds",
+            _require_positive_decimal(
+                "stale_memory_age_seconds",
+                self.stale_memory_age_seconds,
+            ),
+        )
         _require_hard_flags("config", self)
         _reject_unsafe_public_payload("config", self)
 
@@ -172,14 +173,12 @@ class ResearchTeamCrossDomainReviewLoadConfig:
 @dataclass(frozen=True)
 class ResearchTeamCrossDomainReviewLoadObservation:
     team_id: str
-    domain_id: str
-    active_review_count: Decimal
-    active_review_points: Decimal
+    domain: str
     capacity_points: Decimal
-    overlap_domain_count: Decimal
-    catalyst_pressure_score: Decimal
-    evidence_age_seconds: Decimal
-    sla_remaining_seconds: Decimal
+    active_queue_points: Decimal
+    stale_memory_count: Decimal
+    oldest_memory_age_seconds: Decimal
+    calibration_backlog_count: Decimal
     paper_only: bool = True
     report_only: bool = True
     readonly: bool = True
@@ -201,25 +200,7 @@ class ResearchTeamCrossDomainReviewLoadObservation:
             "team_id",
             _require_public_identifier("team_id", self.team_id),
         )
-        object.__setattr__(
-            self,
-            "domain_id",
-            _require_public_identifier("domain_id", self.domain_id),
-        )
-        for field_name in ("active_review_count", "overlap_domain_count"):
-            object.__setattr__(
-                self,
-                field_name,
-                _require_nonnegative_count_decimal(field_name, getattr(self, field_name)),
-            )
-        object.__setattr__(
-            self,
-            "active_review_points",
-            _require_nonnegative_decimal(
-                "active_review_points",
-                self.active_review_points,
-            ),
-        )
+        object.__setattr__(self, "domain", _require_domain("domain", self.domain))
         object.__setattr__(
             self,
             "capacity_points",
@@ -227,18 +208,26 @@ class ResearchTeamCrossDomainReviewLoadObservation:
         )
         object.__setattr__(
             self,
-            "catalyst_pressure_score",
-            _require_ratio_decimal(
-                "catalyst_pressure_score",
-                self.catalyst_pressure_score,
+            "active_queue_points",
+            _require_nonnegative_decimal(
+                "active_queue_points",
+                self.active_queue_points,
             ),
         )
-        for field_name in ("evidence_age_seconds", "sla_remaining_seconds"):
+        for field_name in ("stale_memory_count", "calibration_backlog_count"):
             object.__setattr__(
                 self,
                 field_name,
-                _require_nonnegative_decimal(field_name, getattr(self, field_name)),
+                _require_nonnegative_count_decimal(field_name, getattr(self, field_name)),
             )
+        object.__setattr__(
+            self,
+            "oldest_memory_age_seconds",
+            _require_nonnegative_decimal(
+                "oldest_memory_age_seconds",
+                self.oldest_memory_age_seconds,
+            ),
+        )
         _require_hard_flags("observation", self)
         _reject_unsafe_public_payload("observation", self)
 
@@ -246,18 +235,15 @@ class ResearchTeamCrossDomainReviewLoadObservation:
 @dataclass(frozen=True)
 class ResearchTeamCrossDomainReviewLoadRow:
     team_id: str
-    domain_id: str
-    active_review_count: Decimal
-    active_review_points: Decimal
+    domain: str
     capacity_points: Decimal
-    capacity_load_ratio: Decimal
-    overlap_domain_count: Decimal
-    domain_overlap_pressure: Decimal
-    catalyst_pressure_score: Decimal
-    evidence_age_seconds: Decimal
-    evidence_age_pressure: Decimal
-    sla_remaining_seconds: Decimal
-    sla_pressure: Decimal
+    active_queue_points: Decimal
+    active_queue_pressure: Decimal
+    stale_memory_count: Decimal
+    oldest_memory_age_seconds: Decimal
+    stale_memory_pressure: Decimal
+    calibration_backlog_count: Decimal
+    calibration_backlog_pressure: Decimal
     review_load_score: Decimal
     status: str
     reason_codes: tuple[str, ...]
@@ -280,36 +266,31 @@ class ResearchTeamCrossDomainReviewLoadRow:
             "team_id",
             _require_public_identifier("team_id", self.team_id),
         )
+        object.__setattr__(self, "domain", _require_domain("domain", self.domain))
         object.__setattr__(
             self,
-            "domain_id",
-            _require_public_identifier("domain_id", self.domain_id),
-        )
-        for field_name in ("active_review_count", "overlap_domain_count"):
-            object.__setattr__(
-                self,
-                field_name,
-                _require_nonnegative_count_decimal(field_name, getattr(self, field_name)),
-            )
-        for field_name in (
-            "active_review_points",
             "capacity_points",
-            "capacity_load_ratio",
-            "evidence_age_seconds",
-            "sla_remaining_seconds",
+            _require_positive_decimal("capacity_points", self.capacity_points),
+        )
+        for field_name in (
+            "active_queue_points",
+            "oldest_memory_age_seconds",
         ):
             object.__setattr__(
                 self,
                 field_name,
                 _require_nonnegative_decimal(field_name, getattr(self, field_name)),
             )
-        if self.capacity_points <= _ZERO:
-            raise ValueError("capacity_points must be positive")
+        for field_name in ("stale_memory_count", "calibration_backlog_count"):
+            object.__setattr__(
+                self,
+                field_name,
+                _require_nonnegative_count_decimal(field_name, getattr(self, field_name)),
+            )
         for field_name in (
-            "domain_overlap_pressure",
-            "catalyst_pressure_score",
-            "evidence_age_pressure",
-            "sla_pressure",
+            "active_queue_pressure",
+            "stale_memory_pressure",
+            "calibration_backlog_pressure",
             "review_load_score",
         ):
             object.__setattr__(
@@ -337,7 +318,9 @@ class ResearchTeamCrossDomainReviewLoadReport:
     watch_count: Decimal
     block_count: Decimal
     total_capacity_points: Decimal
-    total_active_review_points: Decimal
+    total_active_queue_points: Decimal
+    total_stale_memory_count: Decimal
+    total_calibration_backlog_count: Decimal
     max_review_load_score: Decimal
     average_review_load_score: Decimal
     rows: tuple[ResearchTeamCrossDomainReviewLoadRow, ...]
@@ -374,7 +357,7 @@ class ResearchTeamCrossDomainReviewLoadReport:
             )
         for field_name in (
             "total_capacity_points",
-            "total_active_review_points",
+            "total_active_queue_points",
             "max_review_load_score",
             "average_review_load_score",
         ):
@@ -382,6 +365,15 @@ class ResearchTeamCrossDomainReviewLoadReport:
                 self,
                 field_name,
                 _require_nonnegative_decimal(field_name, getattr(self, field_name)),
+            )
+        for field_name in (
+            "total_stale_memory_count",
+            "total_calibration_backlog_count",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _require_nonnegative_count_decimal(field_name, getattr(self, field_name)),
             )
         for field_name in ("max_review_load_score", "average_review_load_score"):
             object.__setattr__(
@@ -421,7 +413,9 @@ def build_research_team_cross_domain_review_load_report(
     _require_hard_flags("config", cfg)
     report_time = _as_utc("generated_at", generated_at)
     normalized = _normalize_observations(observations)
-    rows = tuple(sorted((_row_from_observation(row, cfg) for row in normalized), key=_row_sort_key))
+    rows = tuple(
+        sorted((_row_from_observation(row, cfg) for row in normalized), key=_row_sort_key),
+    )
     report_status = _report_status(rows)
     return ResearchTeamCrossDomainReviewLoadReport(
         generated_at=report_time,
@@ -432,8 +426,10 @@ def build_research_team_cross_domain_review_load_report(
         watch_count=_count(_status_count(rows, "watch")),
         block_count=_count(_status_count(rows, "block")),
         total_capacity_points=_sum_decimal(row.capacity_points for row in rows),
-        total_active_review_points=_sum_decimal(
-            row.active_review_points for row in rows
+        total_active_queue_points=_sum_decimal(row.active_queue_points for row in rows),
+        total_stale_memory_count=_sum_decimal(row.stale_memory_count for row in rows),
+        total_calibration_backlog_count=_sum_decimal(
+            row.calibration_backlog_count for row in rows
         ),
         max_review_load_score=max(
             (row.review_load_score for row in rows),
@@ -490,7 +486,9 @@ def format_research_team_cross_domain_review_load_digest(
         f"watch={report.watch_count} "
         f"block={report.block_count} "
         f"capacity={report.total_capacity_points} "
-        f"active_review_points={report.total_active_review_points} "
+        f"active_queue_points={report.total_active_queue_points} "
+        f"stale_memory_count={report.total_stale_memory_count} "
+        f"calibration_backlog_count={report.total_calibration_backlog_count} "
         f"max_score={report.max_review_load_score} "
         f"average_score={report.average_review_load_score} "
         f"reason_codes={','.join(report.reason_codes)} "
@@ -505,80 +503,63 @@ def _row_from_observation(
     observation: ResearchTeamCrossDomainReviewLoadObservation,
     config: ResearchTeamCrossDomainReviewLoadConfig,
 ) -> ResearchTeamCrossDomainReviewLoadRow:
-    capacity_load_ratio = _ratio_or_zero(
-        observation.active_review_points,
-        observation.capacity_points,
+    active_queue_pressure = _clamp_ratio(
+        _ratio_or_zero(observation.active_queue_points, observation.capacity_points),
     )
-    capacity_pressure = _clamp_ratio(capacity_load_ratio)
-    domain_overlap_pressure = _clamp_ratio(
-        observation.overlap_domain_count / config.max_overlap_domain_count,
+    stale_memory_pressure = _stale_memory_pressure(observation, config)
+    calibration_backlog_pressure = _clamp_ratio(
+        _ratio_or_zero(observation.calibration_backlog_count, observation.capacity_points),
     )
-    evidence_age_pressure = _clamp_ratio(
-        observation.evidence_age_seconds / config.stale_evidence_seconds,
-    )
-    sla_pressure = _sla_pressure(observation.sla_remaining_seconds, config)
     review_load_score = _review_load_score(
-        capacity_pressure=capacity_pressure,
-        domain_overlap_pressure=domain_overlap_pressure,
-        catalyst_pressure_score=observation.catalyst_pressure_score,
-        evidence_age_pressure=evidence_age_pressure,
-        sla_pressure=sla_pressure,
+        active_queue_pressure=active_queue_pressure,
+        stale_memory_pressure=stale_memory_pressure,
+        calibration_backlog_pressure=calibration_backlog_pressure,
     )
     status = _score_status(review_load_score, config)
     return ResearchTeamCrossDomainReviewLoadRow(
         team_id=observation.team_id,
-        domain_id=observation.domain_id,
-        active_review_count=observation.active_review_count,
-        active_review_points=observation.active_review_points,
+        domain=observation.domain,
         capacity_points=observation.capacity_points,
-        capacity_load_ratio=capacity_load_ratio,
-        overlap_domain_count=observation.overlap_domain_count,
-        domain_overlap_pressure=domain_overlap_pressure,
-        catalyst_pressure_score=observation.catalyst_pressure_score,
-        evidence_age_seconds=observation.evidence_age_seconds,
-        evidence_age_pressure=evidence_age_pressure,
-        sla_remaining_seconds=observation.sla_remaining_seconds,
-        sla_pressure=sla_pressure,
+        active_queue_points=observation.active_queue_points,
+        active_queue_pressure=active_queue_pressure,
+        stale_memory_count=observation.stale_memory_count,
+        oldest_memory_age_seconds=observation.oldest_memory_age_seconds,
+        stale_memory_pressure=stale_memory_pressure,
+        calibration_backlog_count=observation.calibration_backlog_count,
+        calibration_backlog_pressure=calibration_backlog_pressure,
         review_load_score=review_load_score,
         status=status,
         reason_codes=_row_reason_codes(
             status=status,
-            capacity_load_ratio=capacity_load_ratio,
-            domain_overlap_pressure=domain_overlap_pressure,
-            catalyst_pressure_score=observation.catalyst_pressure_score,
-            evidence_age_pressure=evidence_age_pressure,
-            sla_pressure=sla_pressure,
+            active_queue_pressure=active_queue_pressure,
+            stale_memory_pressure=stale_memory_pressure,
+            calibration_backlog_pressure=calibration_backlog_pressure,
             config=config,
         ),
     )
 
 
-def _review_load_score(
-    *,
-    capacity_pressure: Decimal,
-    domain_overlap_pressure: Decimal,
-    catalyst_pressure_score: Decimal,
-    evidence_age_pressure: Decimal,
-    sla_pressure: Decimal,
+def _stale_memory_pressure(
+    observation: ResearchTeamCrossDomainReviewLoadObservation,
+    config: ResearchTeamCrossDomainReviewLoadConfig,
 ) -> Decimal:
+    if observation.stale_memory_count == _ZERO:
+        return _ZERO
     return _clamp_ratio(
-        capacity_pressure * _LOAD_WEIGHT
-        + domain_overlap_pressure * _OVERLAP_WEIGHT
-        + catalyst_pressure_score * _CATALYST_WEIGHT
-        + evidence_age_pressure * _EVIDENCE_WEIGHT
-        + sla_pressure * _SLA_WEIGHT,
+        observation.oldest_memory_age_seconds / config.stale_memory_age_seconds,
     )
 
 
-def _sla_pressure(
-    sla_remaining_seconds: Decimal,
-    config: ResearchTeamCrossDomainReviewLoadConfig,
+def _review_load_score(
+    *,
+    active_queue_pressure: Decimal,
+    stale_memory_pressure: Decimal,
+    calibration_backlog_pressure: Decimal,
 ) -> Decimal:
-    if sla_remaining_seconds <= _ZERO:
-        return _ONE
     return _clamp_ratio(
-        (config.sla_pressure_window_seconds - sla_remaining_seconds)
-        / config.sla_pressure_window_seconds,
+        active_queue_pressure * _ACTIVE_QUEUE_WEIGHT
+        + stale_memory_pressure * _STALE_MEMORY_WEIGHT
+        + calibration_backlog_pressure * _CALIBRATION_BACKLOG_WEIGHT,
     )
 
 
@@ -596,26 +577,23 @@ def _score_status(
 def _row_reason_codes(
     *,
     status: str,
-    capacity_load_ratio: Decimal,
-    domain_overlap_pressure: Decimal,
-    catalyst_pressure_score: Decimal,
-    evidence_age_pressure: Decimal,
-    sla_pressure: Decimal,
+    active_queue_pressure: Decimal,
+    stale_memory_pressure: Decimal,
+    calibration_backlog_pressure: Decimal,
     config: ResearchTeamCrossDomainReviewLoadConfig,
 ) -> tuple[str, ...]:
-    codes = [
-        f"cross_domain_review_load_{status}",
-        _pressure_reason(
-            "capacity_load",
-            _clamp_ratio(capacity_load_ratio),
-            config,
+    return _normalize_row_reason_codes(
+        (
+            f"cross_domain_review_load_{status}",
+            _pressure_reason("active_queue_pressure", active_queue_pressure, config),
+            _pressure_reason("stale_memory_pressure", stale_memory_pressure, config),
+            _pressure_reason(
+                "calibration_backlog_pressure",
+                calibration_backlog_pressure,
+                config,
+            ),
         ),
-        _pressure_reason("domain_overlap", domain_overlap_pressure, config),
-        _pressure_reason("catalyst_pressure", catalyst_pressure_score, config),
-        _pressure_reason("evidence_age", evidence_age_pressure, config),
-        _pressure_reason("sla_pressure", sla_pressure, config),
-    ]
-    return _normalize_row_reason_codes(tuple(codes))
+    )
 
 
 def _pressure_reason(
@@ -641,7 +619,7 @@ def _normalize_observations(
             raise ValueError(
                 "observations must contain ResearchTeamCrossDomainReviewLoadObservation",
             )
-    return tuple(sorted(normalized, key=lambda item: (item.team_id, item.domain_id)))
+    return tuple(sorted(normalized, key=lambda item: (item.team_id, item.domain)))
 
 
 def _normalize_rows(
@@ -667,7 +645,7 @@ def _row_sort_key(
     row: ResearchTeamCrossDomainReviewLoadRow,
 ) -> tuple[int, Decimal, str, str]:
     status_rank = {"block": 0, "watch": 1, "pass": 2}
-    return (status_rank[row.status], -row.review_load_score, row.team_id, row.domain_id)
+    return (status_rank[row.status], -row.review_load_score, row.team_id, row.domain)
 
 
 def _report_status(rows: tuple[ResearchTeamCrossDomainReviewLoadRow, ...]) -> str:
@@ -700,10 +678,18 @@ def _validate_report(report: ResearchTeamCrossDomainReviewLoadReport) -> None:
         row.capacity_points for row in report.rows
     ):
         raise ValueError("total_capacity_points must match rows")
-    if report.total_active_review_points != _sum_decimal(
-        row.active_review_points for row in report.rows
+    if report.total_active_queue_points != _sum_decimal(
+        row.active_queue_points for row in report.rows
     ):
-        raise ValueError("total_active_review_points must match rows")
+        raise ValueError("total_active_queue_points must match rows")
+    if report.total_stale_memory_count != _sum_decimal(
+        row.stale_memory_count for row in report.rows
+    ):
+        raise ValueError("total_stale_memory_count must match rows")
+    if report.total_calibration_backlog_count != _sum_decimal(
+        row.calibration_backlog_count for row in report.rows
+    ):
+        raise ValueError("total_calibration_backlog_count must match rows")
     if report.max_review_load_score != max(
         (row.review_load_score for row in report.rows),
         default=_ZERO,
@@ -759,6 +745,13 @@ def _require_public_identifier(field_name: str, value: object) -> str:
         raise ValueError(f"{field_name} must be a canonical nonblank string")
     if _PUBLIC_IDENTIFIER_RE.fullmatch(value) is None:
         raise ValueError(f"{field_name} must be a public identifier")
+    _reject_unsafe_text(field_name, value)
+    return value
+
+
+def _require_domain(field_name: str, value: object) -> str:
+    if type(value) is not str or value not in REVIEW_DOMAINS:
+        raise ValueError(f"{field_name} must be one of {REVIEW_DOMAINS}")
     _reject_unsafe_text(field_name, value)
     return value
 
@@ -837,7 +830,9 @@ def _reject_unsafe_public_payload(label: str, value: object) -> None:
             _reject_unsafe_public_payload(f"{label}.{field.name}", getattr(value, field.name))
         return
     if isinstance(value, dict):
-        for item in value.values():
+        for key, item in value.items():
+            if key != "public_digest":
+                _reject_unsafe_text(label, str(key))
             _reject_unsafe_public_payload(label, item)
         return
     if isinstance(value, (list, tuple)):

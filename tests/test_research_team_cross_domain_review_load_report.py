@@ -4,18 +4,19 @@ import ast
 from dataclasses import FrozenInstanceError, asdict, fields, is_dataclass
 from datetime import UTC, datetime, timedelta, timezone
 from decimal import Decimal
+import json
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+import polymarket_alpha_lab.research_team_cross_domain_review_load_report as subject
 from polymarket_alpha_lab.research_team_cross_domain_review_load_report import (
     DEFAULT_RESEARCH_TEAM_CROSS_DOMAIN_REVIEW_LOAD_REPORT_CONFIG_VERSION,
     PUBLIC_STATUSES,
     ResearchTeamCrossDomainReviewLoadConfig,
     ResearchTeamCrossDomainReviewLoadObservation,
     ResearchTeamCrossDomainReviewLoadReport,
-    ResearchTeamCrossDomainReviewLoadRow,
     build_research_team_cross_domain_review_load_report,
     format_research_team_cross_domain_review_load_digest,
     research_team_cross_domain_review_load_payload,
@@ -37,29 +38,25 @@ def d(value: str) -> Decimal:
 
 def observation(
     team_id: str,
-    domain_id: str,
+    domain: str,
     *,
-    active_review_count: Decimal = d("1.000000"),
-    active_review_points: Decimal = d("1.000000"),
     capacity_points: Decimal = d("10.000000"),
-    overlap_domain_count: Decimal = d("1.000000"),
-    catalyst_pressure_score: Decimal = d("0.100000"),
-    evidence_age_seconds: Decimal = d("600.000000"),
-    sla_remaining_seconds: Decimal = d("7200.000000"),
+    active_queue_points: Decimal = d("1.000000"),
+    stale_memory_count: Decimal = ZERO,
+    oldest_memory_age_seconds: Decimal = d("1000.000000"),
+    calibration_backlog_count: Decimal = ZERO,
     paper_only: bool = True,
     report_only: bool = True,
     readonly: bool = True,
 ) -> ResearchTeamCrossDomainReviewLoadObservation:
     return ResearchTeamCrossDomainReviewLoadObservation(
         team_id=team_id,
-        domain_id=domain_id,
-        active_review_count=active_review_count,
-        active_review_points=active_review_points,
+        domain=domain,
         capacity_points=capacity_points,
-        overlap_domain_count=overlap_domain_count,
-        catalyst_pressure_score=catalyst_pressure_score,
-        evidence_age_seconds=evidence_age_seconds,
-        sla_remaining_seconds=sla_remaining_seconds,
+        active_queue_points=active_queue_points,
+        stale_memory_count=stale_memory_count,
+        oldest_memory_age_seconds=oldest_memory_age_seconds,
+        calibration_backlog_count=calibration_backlog_count,
         paper_only=paper_only,
         report_only=report_only,
         readonly=readonly,
@@ -103,46 +100,35 @@ def assert_decimal_numeric_fields(value: object) -> None:
         if isinstance(item, Decimal):
             assert type(item) is Decimal
             continue
-        if field.name.endswith(("_count", "_points", "_score", "_seconds", "_ratio")):
+        if field.name.endswith(("_count", "_points", "_score", "_seconds", "_pressure")):
             assert type(item) is Decimal
 
 
-def test_cross_domain_review_load_summarizes_public_safe_team_pressure() -> None:
+def test_cross_domain_review_load_reports_specialist_bottlenecks_by_domain() -> None:
     report = build(
         (
-            observation(
-                "macro_review",
-                "rates",
-                active_review_count=d("2.000000"),
-                active_review_points=d("2.000000"),
-                capacity_points=d("10.000000"),
-                overlap_domain_count=d("1.000000"),
-                catalyst_pressure_score=d("0.100000"),
-                evidence_age_seconds=d("600.000000"),
-                sla_remaining_seconds=d("7200.000000"),
-            ),
-            observation(
-                "sports_review",
-                "soccer",
-                active_review_count=d("5.000000"),
-                active_review_points=d("7.000000"),
-                capacity_points=d("10.000000"),
-                overlap_domain_count=d("2.000000"),
-                catalyst_pressure_score=d("0.500000"),
-                evidence_age_seconds=d("3600.000000"),
-                sla_remaining_seconds=d("1800.000000"),
-            ),
+            observation("politics_review", "politics"),
             observation(
                 "crypto_review",
-                "stablecoin_policy",
-                active_review_count=d("8.000000"),
-                active_review_points=d("11.000000"),
-                capacity_points=d("10.000000"),
-                overlap_domain_count=d("4.000000"),
-                catalyst_pressure_score=d("0.900000"),
-                evidence_age_seconds=d("9000.000000"),
-                sla_remaining_seconds=ZERO,
+                "crypto",
+                capacity_points=d("8.000000"),
+                active_queue_points=d("10.000000"),
+                stale_memory_count=d("4.000000"),
+                oldest_memory_age_seconds=d("172800.000000"),
+                calibration_backlog_count=d("5.000000"),
             ),
+            observation(
+                "equities_review",
+                "equities",
+                active_queue_points=d("6.000000"),
+                stale_memory_count=d("1.000000"),
+                oldest_memory_age_seconds=d("90000.000000"),
+                calibration_backlog_count=d("2.000000"),
+            ),
+            observation("commodities_review", "commodities"),
+            observation("football_review", "football"),
+            observation("basketball_review", "basketball"),
+            observation("general_review", "other"),
         ),
         generated_at=GENERATED_AT.astimezone(timezone(timedelta(hours=-4))),
     )
@@ -153,32 +139,48 @@ def test_cross_domain_review_load_summarizes_public_safe_team_pressure() -> None
     assert report.config_version == (
         DEFAULT_RESEARCH_TEAM_CROSS_DOMAIN_REVIEW_LOAD_REPORT_CONFIG_VERSION
     )
+    assert subject.REVIEW_DOMAINS == (
+        "politics",
+        "crypto",
+        "equities",
+        "commodities",
+        "football",
+        "basketball",
+        "other",
+    )
+    assert {row.domain for row in report.rows} == set(subject.REVIEW_DOMAINS)
     assert report.report_status == "block"
-    assert report.team_count == d("3.000000")
-    assert report.pass_count == d("1.000000")
+    assert report.team_count == d("7.000000")
+    assert report.pass_count == d("5.000000")
     assert report.watch_count == d("1.000000")
     assert report.block_count == d("1.000000")
-    assert report.total_capacity_points == d("30.000000")
-    assert report.total_active_review_points == d("20.000000")
-    assert report.max_review_load_score == d("0.980000")
-    assert report.average_review_load_score == d("0.569167")
+    assert report.total_capacity_points == d("68.000000")
+    assert report.total_active_queue_points == d("21.000000")
+    assert report.total_stale_memory_count == d("5.000000")
+    assert report.total_calibration_backlog_count == d("7.000000")
+    assert report.max_review_load_score == d("0.887500")
+    assert report.average_review_load_score == d("0.230201")
     assert report.reason_codes == ("cross_domain_review_load_report_block",)
     assert report.public_digest.startswith("sha256:")
     assert report.paper_only is True
     assert report.report_only is True
     assert report.readonly is True
 
-    assert tuple((row.team_id, row.domain_id, row.status) for row in report.rows) == (
-        ("crypto_review", "stablecoin_policy", "block"),
-        ("sports_review", "soccer", "watch"),
-        ("macro_review", "rates", "pass"),
+    assert tuple((row.team_id, row.domain, row.status) for row in report.rows)[:3] == (
+        ("crypto_review", "crypto", "block"),
+        ("equities_review", "equities", "watch"),
+        ("basketball_review", "basketball", "pass"),
     )
-    assert report.rows[0].capacity_load_ratio == d("1.100000")
-    assert report.rows[0].domain_overlap_pressure == d("1.000000")
-    assert report.rows[0].evidence_age_pressure == d("1.000000")
-    assert report.rows[0].sla_pressure == d("1.000000")
-    assert report.rows[1].review_load_score == d("0.595000")
-    assert report.rows[2].review_load_score == d("0.132500")
+    crypto = report.rows[0]
+    assert crypto.active_queue_pressure == d("1.000000")
+    assert crypto.stale_memory_pressure == d("1.000000")
+    assert crypto.calibration_backlog_pressure == d("0.625000")
+    assert crypto.review_load_score == d("0.887500")
+    equities = report.rows[1]
+    assert equities.active_queue_pressure == d("0.600000")
+    assert equities.stale_memory_pressure == d("1.000000")
+    assert equities.calibration_backlog_pressure == d("0.200000")
+    assert equities.review_load_score == d("0.600000")
 
     for row in report.rows:
         assert row.paper_only is True
@@ -189,29 +191,23 @@ def test_cross_domain_review_load_summarizes_public_safe_team_pressure() -> None
 
     digest = format_research_team_cross_domain_review_load_digest(report)
     assert "status=block" in digest
+    assert "active_queue_points=21.000000" in digest
+    assert "stale_memory_count=5.000000" in digest
+    assert "calibration_backlog_count=7.000000" in digest
     assert f"public_digest={report.public_digest}" in digest
 
 
 def test_cross_domain_review_load_payload_and_digest_are_deterministic() -> None:
     rows = (
         observation(
-            "sports_review",
-            "soccer",
-            active_review_points=d("7.000000"),
-            overlap_domain_count=d("2.000000"),
-            catalyst_pressure_score=d("0.500000"),
-            evidence_age_seconds=d("3600.000000"),
-            sla_remaining_seconds=d("1800.000000"),
+            "equities_review",
+            "equities",
+            active_queue_points=d("6.000000"),
+            stale_memory_count=d("1.000000"),
+            oldest_memory_age_seconds=d("90000.000000"),
+            calibration_backlog_count=d("2.000000"),
         ),
-        observation(
-            "macro_review",
-            "rates",
-            active_review_points=d("2.000000"),
-            overlap_domain_count=d("1.000000"),
-            catalyst_pressure_score=d("0.100000"),
-            evidence_age_seconds=d("600.000000"),
-            sla_remaining_seconds=d("7200.000000"),
-        ),
+        observation("politics_review", "politics"),
     )
 
     first = build(rows)
@@ -227,35 +223,29 @@ def test_cross_domain_review_load_payload_and_digest_are_deterministic() -> None
     assert payload["paper_only"] is True
     assert payload["report_only"] is True
     assert payload["readonly"] is True
-    assert "7.000000" in walk_values(payload)
+    assert "6.000000" in walk_values(payload)
     assert all(type(value) is not Decimal for value in walk_values(payload))
     assert research_team_cross_domain_review_load_payload(payload) == payload
+
+    tampered = dict(payload)
+    tampered["total_active_queue_points"] = "999.000000"
+    with pytest.raises(ValueError, match="public_digest"):
+        research_team_cross_domain_review_load_payload(tampered)
 
 
 def test_cross_domain_review_load_statuses_are_exactly_pass_watch_block() -> None:
     assert PUBLIC_STATUSES == ("pass", "watch", "block")
 
-    pass_report = build(
-        (
-            observation(
-                "macro_review",
-                "rates",
-                active_review_points=d("1.000000"),
-                catalyst_pressure_score=ZERO,
-                evidence_age_seconds=ZERO,
-                sla_remaining_seconds=d("7200.000000"),
-            ),
-        ),
-    )
+    pass_report = build((observation("politics_review", "politics"),))
     watch_report = build(
         (
             observation(
-                "sports_review",
-                "soccer",
-                active_review_points=d("7.000000"),
-                catalyst_pressure_score=d("0.500000"),
-                evidence_age_seconds=d("3600.000000"),
-                sla_remaining_seconds=d("1800.000000"),
+                "equities_review",
+                "equities",
+                active_queue_points=d("6.000000"),
+                stale_memory_count=d("1.000000"),
+                oldest_memory_age_seconds=d("90000.000000"),
+                calibration_backlog_count=d("2.000000"),
             ),
         ),
     )
@@ -263,12 +253,12 @@ def test_cross_domain_review_load_statuses_are_exactly_pass_watch_block() -> Non
         (
             observation(
                 "crypto_review",
-                "stablecoin_policy",
-                active_review_points=d("11.000000"),
-                overlap_domain_count=d("4.000000"),
-                catalyst_pressure_score=d("0.900000"),
-                evidence_age_seconds=d("9000.000000"),
-                sla_remaining_seconds=ZERO,
+                "crypto",
+                capacity_points=d("8.000000"),
+                active_queue_points=d("10.000000"),
+                stale_memory_count=d("4.000000"),
+                oldest_memory_age_seconds=d("172800.000000"),
+                calibration_backlog_count=d("5.000000"),
             ),
         ),
     )
@@ -277,29 +267,9 @@ def test_cross_domain_review_load_statuses_are_exactly_pass_watch_block() -> Non
     assert watch_report.report_status == "watch"
     assert block_report.report_status == "block"
 
-    with pytest.raises(ValueError, match="status"):
-        ResearchTeamCrossDomainReviewLoadRow(
-            team_id="macro_review",
-            domain_id="rates",
-            active_review_count=d("1.000000"),
-            active_review_points=d("1.000000"),
-            capacity_points=d("10.000000"),
-            capacity_load_ratio=d("0.100000"),
-            overlap_domain_count=d("1.000000"),
-            domain_overlap_pressure=d("0.333333"),
-            catalyst_pressure_score=ZERO,
-            evidence_age_seconds=ZERO,
-            evidence_age_pressure=ZERO,
-            sla_remaining_seconds=d("7200.000000"),
-            sla_pressure=ZERO,
-            review_load_score=d("0.035000"),
-            status="review",
-            reason_codes=("cross_domain_review_load_pass",),
-        )
-
 
 def test_cross_domain_review_load_requires_frozen_dataclasses_and_decimal_inputs() -> None:
-    report = build((observation("macro_review", "rates"),))
+    report = build((observation("politics_review", "politics"),))
 
     with pytest.raises(FrozenInstanceError):
         report.report_status = "watch"  # type: ignore[misc]
@@ -310,15 +280,41 @@ def test_cross_domain_review_load_requires_frozen_dataclasses_and_decimal_inputs
         assert_decimal_numeric_fields(value)
 
     with pytest.raises(ValueError, match="Decimal"):
-        observation("macro_review", "rates", active_review_points=1)  # type: ignore[arg-type]
+        observation("politics_review", "politics", active_queue_points=1)  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="Decimal"):
-        observation("macro_review", "rates", catalyst_pressure_score=0.2)  # type: ignore[arg-type]
+        observation("politics_review", "politics", stale_memory_count=1)  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="Decimal"):
         observation(
-            "macro_review",
-            "rates",
+            "politics_review",
+            "politics",
             capacity_points=_DecimalSubclass("10.000000"),
         )
+    with pytest.raises(ValueError, match="domain"):
+        observation("soccer_review", "soccer")
+    with pytest.raises(ValueError, match="paper_only"):
+        observation("politics_review", "politics", paper_only=False)
+
+
+def test_cross_domain_review_load_dataclasses_do_not_support_subclassing() -> None:
+    with pytest.raises(TypeError):
+
+        class DerivedConfig(ResearchTeamCrossDomainReviewLoadConfig):
+            pass
+
+    with pytest.raises(TypeError):
+
+        class DerivedObservation(ResearchTeamCrossDomainReviewLoadObservation):
+            pass
+
+    with pytest.raises(TypeError):
+
+        class DerivedReport(ResearchTeamCrossDomainReviewLoadReport):
+            pass
+
+    with pytest.raises(TypeError):
+
+        class DerivedRow(subject.ResearchTeamCrossDomainReviewLoadRow):
+            pass
 
 
 def test_cross_domain_review_load_rejects_raw_identifiers_and_unsafe_payloads() -> None:
@@ -326,27 +322,31 @@ def test_cross_domain_review_load_rejects_raw_identifiers_and_unsafe_payloads() 
         "raw_candidate_42",
         "event_id_42",
         "market_slug_alpha",
-        "source_ref_99",
+        "source_url_99",
         "https://example.test/ref",
+        "wallet_trade",
     )
     for value in unsafe_names:
         with pytest.raises(ValueError):
-            observation(value, "rates")
-        with pytest.raises(ValueError):
-            observation("macro_review", value)
+            observation(value, "politics")
 
-    report = build((observation("macro_review", "rates"),))
-    public = repr(asdict(report)).lower()
+    report = build((observation("politics_review", "politics"),))
+    public_json = json.dumps(research_team_cross_domain_review_load_payload(report)).lower()
     for value in unsafe_names:
-        assert value.lower() not in public
+        assert value.lower() not in public_json
     for field_name in fields(ResearchTeamCrossDomainReviewLoadObservation):
         assert field_name.name not in {
-            "event_id",
+            "candidate_id",
             "market_id",
             "market_slug",
+            "market_question",
             "source_id",
             "source_reference",
             "source_url",
+            "source_text",
+            "dsn",
+            "table_name",
+            "token",
         }
 
     tampered = research_team_cross_domain_review_load_payload(report)
@@ -354,8 +354,13 @@ def test_cross_domain_review_load_rejects_raw_identifiers_and_unsafe_payloads() 
     with pytest.raises(ValueError):
         research_team_cross_domain_review_load_payload(tampered)
 
+    tampered_key = research_team_cross_domain_review_load_payload(report)
+    tampered_key["market_id"] = "public-looking"
+    with pytest.raises(ValueError):
+        research_team_cross_domain_review_load_payload(tampered_key)
 
-def test_cross_domain_review_load_module_has_no_write_or_execution_surfaces() -> None:
+
+def test_cross_domain_review_load_module_has_no_db_network_execution_or_trading_surfaces() -> None:
     source = MODULE_PATH.read_text(encoding="utf-8")
     tree = ast.parse(source)
 
@@ -390,6 +395,9 @@ def test_cross_domain_review_load_module_has_no_write_or_execution_surfaces() ->
         "patch",
         "delete",
         "request",
+        "place_order",
+        "size_order",
+        "recommend",
     }
     for node in ast.walk(tree):
         if isinstance(node, ast.Call):
@@ -398,3 +406,19 @@ def test_cross_domain_review_load_module_has_no_write_or_execution_surfaces() ->
                 assert func.id not in banned_call_names
             elif isinstance(func, ast.Attribute):
                 assert func.attr not in banned_call_names
+
+    public_exports = set(getattr(subject, "__all__"))
+    assert not any("order" in name or "wallet" in name or "trade" in name for name in public_exports)
+    assert not any("recommend" in name or "sizing" in name or "live" in name for name in public_exports)
+
+
+def test_cross_domain_review_load_rejects_mismatched_public_digest() -> None:
+    report = build((observation("politics_review", "politics"),))
+    values = {
+        field.name: getattr(report, field.name)
+        for field in fields(ResearchTeamCrossDomainReviewLoadReport)
+    }
+    values["public_digest"] = "sha256:" + ("0" * 64)
+
+    with pytest.raises(ValueError, match="public_digest"):
+        ResearchTeamCrossDomainReviewLoadReport(**values)
