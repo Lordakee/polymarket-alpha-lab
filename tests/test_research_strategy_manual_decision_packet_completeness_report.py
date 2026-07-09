@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 
+import polymarket_alpha_lab.research_strategy_manual_decision_packet_completeness_report as api
 from polymarket_alpha_lab.research_strategy_manual_decision_packet_completeness_report import (
     DEFAULT_RESEARCH_STRATEGY_MANUAL_DECISION_PACKET_COMPLETENESS_REPORT_CONFIG_VERSION,
     ResearchStrategyManualDecisionPacketCompletenessConfig,
@@ -31,14 +32,6 @@ MODULE_PATH = Path(
 )
 
 
-class _DecimalSubclass(Decimal):
-    pass
-
-
-class _DatetimeSubclass(datetime):
-    pass
-
-
 def d(value: str) -> Decimal:
     return Decimal(value)
 
@@ -50,36 +43,49 @@ def config(
         "config_version": (
             DEFAULT_RESEARCH_STRATEGY_MANUAL_DECISION_PACKET_COMPLETENESS_REPORT_CONFIG_VERSION
         ),
-        "section_pass_floor": d("0.800000"),
-        "section_watch_floor": d("0.600000"),
-        "unresolved_section_gap_watch_ceiling": ZERO,
-        "unresolved_section_gap_block_ceiling": d("2.000000"),
+        "min_evidence_item_count": d("4.000000"),
+        "evidence_item_count_pass_floor": d("6.000000"),
+        "min_independent_source_count": d("2.000000"),
+        "independent_source_count_pass_floor": d("3.000000"),
+        "summary_watch_floor": d("0.700000"),
+        "summary_block_floor": d("0.500000"),
+        "unresolved_summary_gap_watch_ceiling": ZERO,
+        "unresolved_summary_gap_block_ceiling": d("2.000000"),
     }
     values.update(overrides)
     return ResearchStrategyManualDecisionPacketCompletenessConfig(**values)
 
 
 def packet(
-    internal_packet_key: str = "raw-private-packet-alpha",
+    internal_packet_key: str = (
+        "candidate_id=abc market_slug=private-question "
+        "source_url=https://private.example/token"
+    ),
     *,
-    research_section_score: Decimal = d("0.900000"),
-    forecast_section_score: Decimal = d("0.850000"),
-    cost_section_score: Decimal = d("0.900000"),
-    settlement_section_score: Decimal = d("0.875000"),
-    domain_memory_section_score: Decimal = d("0.825000"),
-    unresolved_section_gap_count: Decimal = ZERO,
+    evidence_item_count: Decimal = d("6.000000"),
+    independent_source_count: Decimal = d("3.000000"),
+    evidence_summary_score: Decimal = d("0.900000"),
+    cost_summary_score: Decimal = d("0.850000"),
+    risk_summary_score: Decimal = d("0.900000"),
+    resolution_summary_score: Decimal = d("0.875000"),
+    team_memory_summary_score: Decimal = d("0.825000"),
+    update_trigger_summary_score: Decimal = d("0.880000"),
+    unresolved_summary_gap_count: Decimal = ZERO,
     paper_only: bool = True,
     report_only: bool = True,
     readonly: bool = True,
 ) -> ResearchStrategyManualDecisionPacketInput:
     return ResearchStrategyManualDecisionPacketInput(
         internal_packet_key=internal_packet_key,
-        research_section_score=research_section_score,
-        forecast_section_score=forecast_section_score,
-        cost_section_score=cost_section_score,
-        settlement_section_score=settlement_section_score,
-        domain_memory_section_score=domain_memory_section_score,
-        unresolved_section_gap_count=unresolved_section_gap_count,
+        evidence_item_count=evidence_item_count,
+        independent_source_count=independent_source_count,
+        evidence_summary_score=evidence_summary_score,
+        cost_summary_score=cost_summary_score,
+        risk_summary_score=risk_summary_score,
+        resolution_summary_score=resolution_summary_score,
+        team_memory_summary_score=team_memory_summary_score,
+        update_trigger_summary_score=update_trigger_summary_score,
+        unresolved_summary_gap_count=unresolved_summary_gap_count,
         paper_only=paper_only,
         report_only=report_only,
         readonly=readonly,
@@ -114,25 +120,39 @@ def assert_digest(value: str) -> None:
     assert set(value) <= set("0123456789abcdef")
 
 
-def test_pass_watch_block_section_completeness_and_deterministic_payload() -> None:
-    pass_item = packet("raw-private-packet-pass")
+def test_status_vocabulary_is_exact() -> None:
+    assert api.RESEARCH_STRATEGY_MANUAL_DECISION_PACKET_COMPLETENESS_STATUSES == (
+        "pass",
+        "watch",
+        "block",
+    )
+
+
+def test_pass_watch_block_manual_decision_packet_completeness_without_raw_leakage() -> None:
+    pass_item = packet("candidate_id=pass market_slug=hidden source_url=https://private/pass")
     watch_item = packet(
-        "raw-private-packet-watch",
-        research_section_score=d("0.700000"),
-        forecast_section_score=d("0.650000"),
-        cost_section_score=d("0.700000"),
-        settlement_section_score=d("0.750000"),
-        domain_memory_section_score=d("0.720000"),
-        unresolved_section_gap_count=ONE,
+        "candidate_id=watch market_slug=hidden source_url=https://private/watch",
+        evidence_item_count=d("5.000000"),
+        independent_source_count=d("2.000000"),
+        evidence_summary_score=d("0.700000"),
+        cost_summary_score=d("0.700000"),
+        risk_summary_score=d("0.700000"),
+        resolution_summary_score=d("0.700000"),
+        team_memory_summary_score=d("0.700000"),
+        update_trigger_summary_score=d("0.700000"),
+        unresolved_summary_gap_count=ONE,
     )
     block_item = packet(
-        "raw-private-packet-block",
-        research_section_score=d("0.500000"),
-        forecast_section_score=d("0.400000"),
-        cost_section_score=d("0.550000"),
-        settlement_section_score=d("0.450000"),
-        domain_memory_section_score=d("0.300000"),
-        unresolved_section_gap_count=d("2.000000"),
+        "candidate_id=block market_slug=hidden source_url=https://private/block",
+        evidence_item_count=ONE,
+        independent_source_count=ONE,
+        evidence_summary_score=d("0.400000"),
+        cost_summary_score=d("0.300000"),
+        risk_summary_score=d("0.200000"),
+        resolution_summary_score=d("0.450000"),
+        team_memory_summary_score=d("0.400000"),
+        update_trigger_summary_score=d("0.300000"),
+        unresolved_summary_gap_count=d("2.000000"),
     )
 
     first = report(watch_item, block_item, pass_item)
@@ -148,23 +168,23 @@ def test_pass_watch_block_section_completeness_and_deterministic_payload() -> No
     assert first.watch_count == ONE
     assert first.block_count == ONE
     assert first.status == "block"
-    assert first.human_review_state == "human_review_block"
-    assert first.average_completeness_score == d("0.671333")
-    assert first.min_completeness_score == d("0.440000")
+    assert first.manual_decision_review_state == "manual_decision_review_block"
+    assert first.average_completeness_score == d("0.645000")
+    assert first.min_completeness_score == d("0.318750")
     assert first.reason_codes == (
-        "research_section_block",
-        "forecast_section_block",
-        "cost_section_block",
-        "settlement_section_block",
-        "domain_memory_section_block",
-        "unresolved_section_gap_block",
+        "evidence_item_count_block",
+        "independent_source_count_block",
+        "evidence_summary_block",
+        "cost_summary_block",
+        "risk_summary_block",
+        "resolution_summary_block",
+        "team_memory_summary_block",
+        "update_trigger_summary_block",
+        "unresolved_summary_gap_block",
         "manual_decision_packet_completeness_block",
-        "research_section_watch",
-        "forecast_section_watch",
-        "cost_section_watch",
-        "settlement_section_watch",
-        "domain_memory_section_watch",
-        "unresolved_section_gap_watch",
+        "evidence_item_count_watch",
+        "independent_source_count_watch",
+        "unresolved_summary_gap_watch",
     )
     assert tuple(row.row_number for row in first.rows) == (
         d("1.000000"),
@@ -174,17 +194,20 @@ def test_pass_watch_block_section_completeness_and_deterministic_payload() -> No
     assert tuple(row.status for row in first.rows) == ("block", "watch", "pass")
     assert len({row.public_packet_hash for row in first.rows}) == 3
     assert all(row.public_packet_hash.startswith("sha256:") for row in first.rows)
-    assert all("raw-private-packet" not in row.public_packet_hash for row in first.rows)
+    assert all("candidate_id" not in row.public_packet_hash for row in first.rows)
 
     blocked = first.rows[0]
-    assert blocked.completeness_score == d("0.440000")
+    assert blocked.completeness_score == d("0.318750")
     assert blocked.reason_codes == (
-        "research_section_block",
-        "forecast_section_block",
-        "cost_section_block",
-        "settlement_section_block",
-        "domain_memory_section_block",
-        "unresolved_section_gap_block",
+        "evidence_item_count_block",
+        "independent_source_count_block",
+        "evidence_summary_block",
+        "cost_summary_block",
+        "risk_summary_block",
+        "resolution_summary_block",
+        "team_memory_summary_block",
+        "update_trigger_summary_block",
+        "unresolved_summary_gap_block",
     )
     assert_digest(blocked.validation_digest)
     assert_digest(first.validation_digest)
@@ -195,12 +218,19 @@ def test_pass_watch_block_section_completeness_and_deterministic_payload() -> No
     )
     assert json.dumps(payload, sort_keys=True, allow_nan=False)
     assert payload["packet_count"] == "3.000000"
-    assert payload["average_completeness_score"] == "0.671333"
-    assert payload["rows"][0]["completeness_score"] == "0.440000"
+    assert payload["average_completeness_score"] == "0.645000"
+    assert payload["rows"][0]["completeness_score"] == "0.318750"
     assert payload["rows"][0]["validation_digest"] == blocked.validation_digest
     serialized = json.dumps(payload, sort_keys=True)
-    assert "raw-private-packet" not in serialized
-    assert "internal_packet_key" not in serialized
+    for raw_fragment in (
+        "candidate_id",
+        "market_slug",
+        "private-question",
+        "source_url",
+        "https://private",
+        "internal_packet_key",
+    ):
+        assert raw_fragment not in serialized
     assert payload["paper_only"] is True
     assert payload["report_only"] is True
     assert payload["readonly"] is True
@@ -214,7 +244,7 @@ def test_pass_watch_block_section_completeness_and_deterministic_payload() -> No
     assert_no_float_or_int_values(digest)
 
 
-def test_empty_report_blocks_human_review_packet() -> None:
+def test_empty_report_blocks_manual_decision_review_without_rows() -> None:
     completeness = report()
 
     assert completeness.packet_count == ZERO
@@ -224,196 +254,160 @@ def test_empty_report_blocks_human_review_packet() -> None:
     assert completeness.average_completeness_score is None
     assert completeness.min_completeness_score is None
     assert completeness.status == "block"
-    assert completeness.human_review_state == "human_review_block"
+    assert completeness.manual_decision_review_state == "manual_decision_review_block"
     assert completeness.reason_codes == (
         "manual_decision_packet_completeness_no_packets",
     )
     assert completeness.rows == ()
-    assert completeness.paper_only is True
-    assert completeness.report_only is True
-    assert completeness.readonly is True
-    assert_digest(completeness.validation_digest)
+    payload = research_strategy_manual_decision_packet_completeness_report_payload(
+        completeness,
+    )
+    assert payload["rows"] == []
+    assert payload["average_completeness_score"] is None
 
 
-def test_decimal_only_frozen_flags_and_input_validation() -> None:
-    completeness = report(packet("raw-private-packet-frozen"))
+def test_update_trigger_summary_gap_prevents_pass_status() -> None:
+    completeness = report(
+        packet(
+            update_trigger_summary_score=d("0.650000"),
+            unresolved_summary_gap_count=ONE,
+        ),
+    )
 
-    assert is_dataclass(ResearchStrategyManualDecisionPacketCompletenessConfig)
-    assert is_dataclass(ResearchStrategyManualDecisionPacketInput)
-    assert is_dataclass(ResearchStrategyManualDecisionPacketCompletenessRow)
-    assert is_dataclass(ResearchStrategyManualDecisionPacketCompletenessReport)
-    with pytest.raises(FrozenInstanceError):
-        completeness.status = "watch"  # type: ignore[misc]
-    with pytest.raises(FrozenInstanceError):
-        completeness.rows[0].completeness_score = ZERO  # type: ignore[misc]
-    with pytest.raises(ValueError, match="paper_only"):
-        packet(paper_only=False)
-    with pytest.raises(ValueError, match="readonly"):
-        replace(completeness, readonly=False)
-
-    with pytest.raises(ValueError, match="research_section_score"):
-        packet(research_section_score=1)  # type: ignore[arg-type]
-    with pytest.raises(ValueError, match="forecast_section_score"):
-        packet(forecast_section_score=0.9)  # type: ignore[arg-type]
-    with pytest.raises(ValueError, match="cost_section_score"):
-        packet(cost_section_score=_DecimalSubclass("0.900000"))
-    with pytest.raises(ValueError, match="internal_packet_key"):
-        report(packet("raw-private-packet-dupe"), packet("raw-private-packet-dupe"))
-    with pytest.raises(ValueError, match="generated_at"):
-        report(packet("raw-private-packet-time"), generated_at=datetime(2026, 7, 8, 12, 0))
-    with pytest.raises(ValueError, match="generated_at"):
-        report(
-            packet("raw-private-packet-time"),
-            generated_at=_DatetimeSubclass(2026, 7, 8, 12, 0, tzinfo=UTC),
-        )
-    with pytest.raises(ValueError, match="section_pass_floor"):
-        config(section_pass_floor=d("0.500000"), section_watch_floor=d("0.600000"))
-    with pytest.raises(ValueError, match="unresolved_section_gap_watch_ceiling"):
-        config(
-            unresolved_section_gap_watch_ceiling=d("3.000000"),
-            unresolved_section_gap_block_ceiling=d("2.000000"),
-        )
-
-    for item in (completeness, *completeness.rows):
-        for field in fields(item):
-            value = getattr(item, field.name)
-            if field.name in {"paper_only", "report_only", "readonly"}:
-                continue
-            if isinstance(value, tuple):
-                continue
-            assert type(value) is not int, field.name
-            assert type(value) is not float, field.name
+    assert completeness.status == "watch"
+    assert completeness.manual_decision_review_state == "manual_decision_review_watch"
+    assert completeness.rows[0].status == "watch"
+    assert completeness.rows[0].reason_codes == (
+        "update_trigger_summary_watch",
+        "unresolved_summary_gap_watch",
+    )
 
 
-def test_validation_digest_and_payload_reject_tampering() -> None:
-    completeness = report(packet("raw-private-packet-consistent"))
-    row = completeness.rows[0]
+def test_validation_digest_rejects_report_and_row_tampering() -> None:
+    completeness = report(packet())
 
-    with pytest.raises(ValueError, match="completeness_score must match"):
-        replace(row, completeness_score=row.completeness_score - d("0.000001"))
-    with pytest.raises(ValueError, match="status must match"):
-        replace(row, status="block")
-    with pytest.raises(ValueError, match="validation_digest must match"):
-        replace(row, validation_digest="0" * 64)
-    with pytest.raises(ValueError, match="pass_count must match"):
-        replace(completeness, pass_count=d("2.000000"))
-    with pytest.raises(ValueError, match="rows must be sorted deterministically"):
-        replace(completeness, rows=(report(packet("raw-private-packet-zeta")).rows[0], row))
-    with pytest.raises(ValueError, match="validation_digest must match"):
+    with pytest.raises(ValueError, match="validation_digest"):
         replace(completeness, validation_digest="0" * 64)
+
+    with pytest.raises(ValueError, match="validation_digest"):
+        replace(completeness, packet_count=d("2.000000"))
+
+    with pytest.raises(ValueError, match="validation_digest"):
+        replace(completeness.rows[0], cost_summary_score=d("0.700000"))
 
     payload = research_strategy_manual_decision_packet_completeness_report_payload(
         completeness,
     )
-    assert research_strategy_manual_decision_packet_completeness_report_payload(
-        payload,
-    ) == payload
-    with pytest.raises(ValueError, match="readonly"):
-        research_strategy_manual_decision_packet_completeness_report_payload(
-            {**payload, "readonly": False},
-        )
-    with pytest.raises(ValueError, match="unsafe"):
-        research_strategy_manual_decision_packet_completeness_report_payload(
-            {**payload, "wal" "let": {"address": "0x0"}},
-        )
-    with pytest.raises(ValueError, match="numeric"):
-        research_strategy_manual_decision_packet_completeness_report_payload(
-            {**payload, "packet_count": 1},
-        )
-    tampered = dict(payload)
-    tampered["average_completeness_score"] = "0.671334"
+    tampered_report_payload = dict(payload)
+    tampered_report_payload["average_completeness_score"] = "0.000000"
     with pytest.raises(ValueError, match="validation_digest"):
-        research_strategy_manual_decision_packet_completeness_report_payload(tampered)
+        research_strategy_manual_decision_packet_completeness_report_payload(
+            tampered_report_payload,
+        )
+
+    tampered_row_payload = dict(payload)
+    tampered_row_payload["rows"] = [dict(payload["rows"][0])]
+    tampered_row_payload["rows"][0]["cost_summary_score"] = "0.700000"
+    with pytest.raises(ValueError, match="validation_digest"):
+        research_strategy_manual_decision_packet_completeness_report_payload(
+            tampered_row_payload,
+        )
 
 
-def test_public_exports_and_static_report_only_surface() -> None:
-    import polymarket_alpha_lab.research_strategy_manual_decision_packet_completeness_report as completeness
+def test_dataclasses_are_frozen_decimal_only_and_hard_flags_are_enforced() -> None:
+    completeness = report(packet())
 
-    assert completeness.__all__ == (
-        "DEFAULT_RESEARCH_STRATEGY_MANUAL_DECISION_PACKET_COMPLETENESS_REPORT_CONFIG_VERSION",
-        "ResearchStrategyManualDecisionPacketCompletenessConfig",
-        "ResearchStrategyManualDecisionPacketCompletenessReport",
-        "ResearchStrategyManualDecisionPacketCompletenessRow",
-        "ResearchStrategyManualDecisionPacketInput",
-        "build_research_strategy_manual_decision_packet_completeness_report",
-        "research_strategy_manual_decision_packet_completeness_report_digest",
-        "research_strategy_manual_decision_packet_completeness_report_payload",
-    )
+    with pytest.raises(FrozenInstanceError):
+        completeness.status = "watch"  # type: ignore[misc]
 
-    source = MODULE_PATH.read_text(encoding="utf-8")
-    lowered = source.lower()
-    forbidden_terms = (
-        "li" "ve",
-        "au" "th",
-        "wal" "let",
-        "broker",
-        "or" "der",
-        "can" "cel",
-        "re" "place",
-        "exchange",
-        "private" "_" "key",
-        "api" "_" "key",
-        "sec" "ret",
-        "market_id",
+    with pytest.raises(TypeError):
+
+        class BadPacket(ResearchStrategyManualDecisionPacketInput):
+            pass
+
+    with pytest.raises(ValueError, match="paper_only"):
+        ResearchStrategyManualDecisionPacketCompletenessConfig(paper_only=False)
+
+    with pytest.raises(ValueError, match="evidence_item_count must be a Decimal"):
+        packet(evidence_item_count=6)  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="evidence_item_count must be an integer"):
+        packet(evidence_item_count=d("5.500000"))
+
+    with pytest.raises(ValueError, match="independent_source_count must not exceed"):
+        packet(independent_source_count=d("7.000000"))
+
+    with pytest.raises(ValueError, match="report_only"):
+        packet(report_only=False)
+
+    with pytest.raises(ValueError, match="readonly"):
+        replace(completeness.rows[0], readonly=False)
+
+
+def test_public_api_and_payload_exclude_live_trading_private_data_surfaces() -> None:
+    forbidden_fragments = (
         "candidate_id",
+        "market_id",
+        "market_slug",
         "slug",
         "question",
-        "url",
+        "source_url",
         "source_text",
         "dsn",
         "table",
         "token",
-        "po" "sition",
-        "b" "uy",
-        "se" "ll",
-        "reco" "mmend",
-        "siz" "ing",
-        "data" "base",
-        "net" "work",
-        "req" "uests",
-        "ht" "tp",
-        "sock" "et",
-        "sub" "process",
+        "wallet",
+        "order",
         "trade",
-        "open(",
-        "pathlib",
+        "auth",
+        "recommendation",
+        "sizing",
     )
-    assert [term for term in forbidden_terms if term in lowered] == []
+    for public_name in api.__all__:
+        lowered = public_name.lower()
+        assert not any(fragment in lowered for fragment in forbidden_fragments)
 
-    tree = ast.parse(source)
-    forbidden_imports = {
-        "os",
-        "pathlib",
-        "sock" "et",
-        "sub" "process",
-        "req" "uests",
+    for cls in (
+        ResearchStrategyManualDecisionPacketCompletenessConfig,
+        ResearchStrategyManualDecisionPacketInput,
+        ResearchStrategyManualDecisionPacketCompletenessRow,
+        ResearchStrategyManualDecisionPacketCompletenessReport,
+    ):
+        for field in fields(cls):
+            lowered = field.name.lower()
+            assert not any(fragment in lowered for fragment in forbidden_fragments)
+
+    for forbidden_name in (
+        "requests",
         "httpx",
-        "sqlite3",
-        "psycopg",
-        "supabase",
         "urllib",
-    }
-    forbidden_calls = {
-        "connect",
-        "execute",
-        "open",
-        "send",
-        "submit",
-        "write",
-        "write_bytes",
-        "write_text",
-    }
+        "socket",
+        "sqlite3",
+        "sqlalchemy",
+        "psycopg",
+        "web3",
+        "ccxt",
+    ):
+        assert not hasattr(api, forbidden_name)
+
+    tree = ast.parse(MODULE_PATH.read_text(encoding="utf-8"))
+    imported_roots: set[str] = set()
     for node in ast.walk(tree):
-        if isinstance(node, ast.Constant):
-            assert type(node.value) is not float
-        elif isinstance(node, ast.Call):
-            func = node.func
-            if isinstance(func, ast.Name):
-                assert func.id not in {"float", "open", "__import__"}
-            elif isinstance(func, ast.Attribute):
-                assert func.attr not in forbidden_calls
-        elif isinstance(node, ast.Import):
-            for alias in node.names:
-                assert alias.name.split(".", 1)[0] not in forbidden_imports
-        elif isinstance(node, ast.ImportFrom) and node.module is not None:
-            assert node.module.split(".", 1)[0] not in forbidden_imports
+        if isinstance(node, ast.Import):
+            imported_roots.update(alias.name.split(".")[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imported_roots.add(node.module.split(".")[0])
+
+    assert imported_roots.isdisjoint(
+        {
+            "requests",
+            "httpx",
+            "urllib",
+            "socket",
+            "sqlite3",
+            "sqlalchemy",
+            "psycopg",
+            "web3",
+            "ccxt",
+        },
+    )

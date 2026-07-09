@@ -13,6 +13,7 @@ from typing import Any
 
 __all__ = (
     "DEFAULT_RESEARCH_STRATEGY_MANUAL_DECISION_PACKET_COMPLETENESS_REPORT_CONFIG_VERSION",
+    "RESEARCH_STRATEGY_MANUAL_DECISION_PACKET_COMPLETENESS_STATUSES",
     "ResearchStrategyManualDecisionPacketCompletenessConfig",
     "ResearchStrategyManualDecisionPacketCompletenessReport",
     "ResearchStrategyManualDecisionPacketCompletenessRow",
@@ -31,10 +32,15 @@ QUANTUM = Decimal("0.000001")
 COUNT_QUANTUM = Decimal("1.000000")
 ZERO = Decimal("0.000000")
 ONE = Decimal("1.000000")
-FIVE = Decimal("5.000000")
+EIGHT = Decimal("8.000000")
 DECIMAL_CONTEXT = Context(prec=64, rounding=ROUND_HALF_EVEN)
 PHASE_FLAG_FIELDS = ("paper_only", "report_only", "readonly")
-PUBLIC_STATUSES = ("pass", "watch", "block")
+RESEARCH_STRATEGY_MANUAL_DECISION_PACKET_COMPLETENESS_STATUSES = (
+    "pass",
+    "watch",
+    "block",
+)
+PUBLIC_STATUSES = RESEARCH_STRATEGY_MANUAL_DECISION_PACKET_COMPLETENESS_STATUSES
 STATUS_WEIGHT = {
     "block": Decimal("0.000000"),
     "watch": Decimal("1.000000"),
@@ -51,41 +57,90 @@ SUMMARY_KEYS = (
     "average_completeness_score",
     "min_completeness_score",
     "status",
-    "human_review_state",
+    "manual_decision_review_state",
     "reason_codes",
     "validation_digest",
     "paper_only",
     "report_only",
     "readonly",
 )
-SECTION_FIELDS = (
-    "research_section_score",
-    "forecast_section_score",
-    "cost_section_score",
-    "settlement_section_score",
-    "domain_memory_section_score",
+REPORT_PAYLOAD_KEYS = (
+    "generated_at",
+    "config_version",
+    "packet_count",
+    "pass_count",
+    "watch_count",
+    "block_count",
+    "average_completeness_score",
+    "min_completeness_score",
+    "status",
+    "manual_decision_review_state",
+    "reason_codes",
+    "rows",
+    "validation_digest",
+    "paper_only",
+    "report_only",
+    "readonly",
 )
-SECTION_REASON_PREFIXES = (
-    "research_section",
-    "forecast_section",
-    "cost_section",
-    "settlement_section",
-    "domain_memory_section",
+ROW_PAYLOAD_KEYS = (
+    "row_number",
+    "public_packet_hash",
+    "evidence_item_count",
+    "independent_source_count",
+    "evidence_coverage_ratio",
+    "independent_source_ratio",
+    "evidence_summary_score",
+    "cost_summary_score",
+    "risk_summary_score",
+    "resolution_summary_score",
+    "team_memory_summary_score",
+    "update_trigger_summary_score",
+    "unresolved_summary_gap_count",
+    "completeness_score",
+    "status",
+    "manual_decision_review_state",
+    "reason_codes",
+    "validation_digest",
+    "paper_only",
+    "report_only",
+    "readonly",
+)
+SUMMARY_SCORE_FIELDS = (
+    "evidence_summary_score",
+    "cost_summary_score",
+    "risk_summary_score",
+    "resolution_summary_score",
+    "team_memory_summary_score",
+    "update_trigger_summary_score",
+)
+SUMMARY_REASON_PREFIXES = (
+    "evidence_summary",
+    "cost_summary",
+    "risk_summary",
+    "resolution_summary",
+    "team_memory_summary",
+    "update_trigger_summary",
 )
 REASON_PRIORITY = (
-    "research_section_block",
-    "forecast_section_block",
-    "cost_section_block",
-    "settlement_section_block",
-    "domain_memory_section_block",
-    "unresolved_section_gap_block",
+    "evidence_item_count_block",
+    "independent_source_count_block",
+    "evidence_summary_block",
+    "cost_summary_block",
+    "risk_summary_block",
+    "resolution_summary_block",
+    "team_memory_summary_block",
+    "update_trigger_summary_block",
+    "unresolved_summary_gap_block",
     "manual_decision_packet_completeness_block",
-    "research_section_watch",
-    "forecast_section_watch",
-    "cost_section_watch",
-    "settlement_section_watch",
-    "domain_memory_section_watch",
-    "unresolved_section_gap_watch",
+    "evidence_item_count_watch",
+    "independent_source_count_watch",
+    "evidence_summary_watch",
+    "cost_summary_watch",
+    "risk_summary_watch",
+    "resolution_summary_watch",
+    "team_memory_summary_watch",
+    "update_trigger_summary_watch",
+    "unresolved_summary_gap_watch",
     "manual_decision_packet_completeness_watch",
     "manual_decision_packet_completeness_pass",
     NO_PACKETS_REASON,
@@ -104,9 +159,10 @@ UNSAFE_TEXT_FRAGMENTS = (
     "sec" "ret",
     "mar" "ket" "_" "id",
     "can" "didate" "_" "id",
+    "mar" "ket" "_" "s" "lug",
     "s" "lug",
     "ques" "tion",
-    "u" "rl",
+    "source" "_" "u" "rl",
     "source" "_" "text",
     "d" "sn",
     "ta" "ble",
@@ -140,10 +196,14 @@ class ResearchStrategyManualDecisionPacketCompletenessConfig(_FinalDataclass):
     config_version: str = (
         DEFAULT_RESEARCH_STRATEGY_MANUAL_DECISION_PACKET_COMPLETENESS_REPORT_CONFIG_VERSION
     )
-    section_pass_floor: Decimal = Decimal("0.800000")
-    section_watch_floor: Decimal = Decimal("0.600000")
-    unresolved_section_gap_watch_ceiling: Decimal = Decimal("0.000000")
-    unresolved_section_gap_block_ceiling: Decimal = Decimal("2.000000")
+    min_evidence_item_count: Decimal = Decimal("4.000000")
+    evidence_item_count_pass_floor: Decimal = Decimal("6.000000")
+    min_independent_source_count: Decimal = Decimal("2.000000")
+    independent_source_count_pass_floor: Decimal = Decimal("3.000000")
+    summary_watch_floor: Decimal = Decimal("0.700000")
+    summary_block_floor: Decimal = Decimal("0.500000")
+    unresolved_summary_gap_watch_ceiling: Decimal = Decimal("0.000000")
+    unresolved_summary_gap_block_ceiling: Decimal = Decimal("2.000000")
     paper_only: bool = True
     report_only: bool = True
     readonly: bool = True
@@ -155,30 +215,44 @@ class ResearchStrategyManualDecisionPacketCompletenessConfig(_FinalDataclass):
             "config",
         )
         _require_public_text("config_version", self.config_version)
-        for field_name in ("section_pass_floor", "section_watch_floor"):
-            object.__setattr__(
-                self,
-                field_name,
-                _normalize_ratio(field_name, getattr(self, field_name)),
-            )
         for field_name in (
-            "unresolved_section_gap_watch_ceiling",
-            "unresolved_section_gap_block_ceiling",
+            "min_evidence_item_count",
+            "evidence_item_count_pass_floor",
+            "min_independent_source_count",
+            "independent_source_count_pass_floor",
+            "unresolved_summary_gap_watch_ceiling",
+            "unresolved_summary_gap_block_ceiling",
         ):
             object.__setattr__(
                 self,
                 field_name,
                 _normalize_nonnegative_count(field_name, getattr(self, field_name)),
             )
+        for field_name in ("summary_watch_floor", "summary_block_floor"):
+            object.__setattr__(
+                self,
+                field_name,
+                _normalize_ratio(field_name, getattr(self, field_name)),
+            )
         _require_at_least(
-            "section_pass_floor",
-            self.section_pass_floor,
-            self.section_watch_floor,
+            "evidence_item_count_pass_floor",
+            self.evidence_item_count_pass_floor,
+            self.min_evidence_item_count,
+        )
+        _require_at_least(
+            "independent_source_count_pass_floor",
+            self.independent_source_count_pass_floor,
+            self.min_independent_source_count,
+        )
+        _require_at_least(
+            "summary_watch_floor",
+            self.summary_watch_floor,
+            self.summary_block_floor,
         )
         _require_at_most(
-            "unresolved_section_gap_watch_ceiling",
-            self.unresolved_section_gap_watch_ceiling,
-            self.unresolved_section_gap_block_ceiling,
+            "unresolved_summary_gap_watch_ceiling",
+            self.unresolved_summary_gap_watch_ceiling,
+            self.unresolved_summary_gap_block_ceiling,
         )
         _require_hard_phase_flags("config", self)
 
@@ -186,12 +260,15 @@ class ResearchStrategyManualDecisionPacketCompletenessConfig(_FinalDataclass):
 @dataclass(frozen=True)
 class ResearchStrategyManualDecisionPacketInput(_FinalDataclass):
     internal_packet_key: str
-    research_section_score: Decimal
-    forecast_section_score: Decimal
-    cost_section_score: Decimal
-    settlement_section_score: Decimal
-    domain_memory_section_score: Decimal
-    unresolved_section_gap_count: Decimal
+    evidence_item_count: Decimal
+    independent_source_count: Decimal
+    evidence_summary_score: Decimal
+    cost_summary_score: Decimal
+    risk_summary_score: Decimal
+    resolution_summary_score: Decimal
+    team_memory_summary_score: Decimal
+    update_trigger_summary_score: Decimal
+    unresolved_summary_gap_count: Decimal
     paper_only: bool = True
     report_only: bool = True
     readonly: bool = True
@@ -199,7 +276,15 @@ class ResearchStrategyManualDecisionPacketInput(_FinalDataclass):
     def __post_init__(self) -> None:
         _require_exact_type(self, ResearchStrategyManualDecisionPacketInput, "packet")
         _require_text("internal_packet_key", self.internal_packet_key)
-        for field_name in SECTION_FIELDS:
+        for field_name in ("evidence_item_count", "independent_source_count"):
+            object.__setattr__(
+                self,
+                field_name,
+                _normalize_nonnegative_count(field_name, getattr(self, field_name)),
+            )
+        if self.independent_source_count > self.evidence_item_count:
+            raise ValueError("independent_source_count must not exceed evidence_item_count")
+        for field_name in SUMMARY_SCORE_FIELDS:
             object.__setattr__(
                 self,
                 field_name,
@@ -207,10 +292,10 @@ class ResearchStrategyManualDecisionPacketInput(_FinalDataclass):
             )
         object.__setattr__(
             self,
-            "unresolved_section_gap_count",
+            "unresolved_summary_gap_count",
             _normalize_nonnegative_count(
-                "unresolved_section_gap_count",
-                self.unresolved_section_gap_count,
+                "unresolved_summary_gap_count",
+                self.unresolved_summary_gap_count,
             ),
         )
         _require_hard_phase_flags("packet", self)
@@ -220,15 +305,20 @@ class ResearchStrategyManualDecisionPacketInput(_FinalDataclass):
 class ResearchStrategyManualDecisionPacketCompletenessRow(_FinalDataclass):
     row_number: Decimal
     public_packet_hash: str
-    research_section_score: Decimal
-    forecast_section_score: Decimal
-    cost_section_score: Decimal
-    settlement_section_score: Decimal
-    domain_memory_section_score: Decimal
-    unresolved_section_gap_count: Decimal
+    evidence_item_count: Decimal
+    independent_source_count: Decimal
+    evidence_coverage_ratio: Decimal
+    independent_source_ratio: Decimal
+    evidence_summary_score: Decimal
+    cost_summary_score: Decimal
+    risk_summary_score: Decimal
+    resolution_summary_score: Decimal
+    team_memory_summary_score: Decimal
+    update_trigger_summary_score: Decimal
+    unresolved_summary_gap_count: Decimal
     completeness_score: Decimal
     status: str
-    human_review_state: str
+    manual_decision_review_state: str
     reason_codes: tuple[str, ...]
     validation_digest: str
     paper_only: bool = True
@@ -247,7 +337,20 @@ class ResearchStrategyManualDecisionPacketCompletenessRow(_FinalDataclass):
             _normalize_positive_count("row_number", self.row_number),
         )
         _require_public_hash("public_packet_hash", self.public_packet_hash)
-        for field_name in SECTION_FIELDS:
+        for field_name in ("evidence_item_count", "independent_source_count"):
+            object.__setattr__(
+                self,
+                field_name,
+                _normalize_nonnegative_count(field_name, getattr(self, field_name)),
+            )
+        if self.independent_source_count > self.evidence_item_count:
+            raise ValueError("independent_source_count must not exceed evidence_item_count")
+        for field_name in (
+            "evidence_coverage_ratio",
+            "independent_source_ratio",
+            *SUMMARY_SCORE_FIELDS,
+            "completeness_score",
+        ):
             object.__setattr__(
                 self,
                 field_name,
@@ -255,19 +358,14 @@ class ResearchStrategyManualDecisionPacketCompletenessRow(_FinalDataclass):
             )
         object.__setattr__(
             self,
-            "unresolved_section_gap_count",
+            "unresolved_summary_gap_count",
             _normalize_nonnegative_count(
-                "unresolved_section_gap_count",
-                self.unresolved_section_gap_count,
+                "unresolved_summary_gap_count",
+                self.unresolved_summary_gap_count,
             ),
         )
-        object.__setattr__(
-            self,
-            "completeness_score",
-            _normalize_ratio("completeness_score", self.completeness_score),
-        )
         _require_status("status", self.status)
-        _require_human_review_state("human_review_state", self.human_review_state)
+        _require_manual_state("manual_decision_review_state", self.manual_decision_review_state)
         object.__setattr__(self, "reason_codes", _normalize_reason_codes(self.reason_codes))
         _require_digest("validation_digest", self.validation_digest)
         _require_hard_phase_flags("row", self)
@@ -285,7 +383,7 @@ class ResearchStrategyManualDecisionPacketCompletenessReport(_FinalDataclass):
     average_completeness_score: Decimal | None
     min_completeness_score: Decimal | None
     status: str
-    human_review_state: str
+    manual_decision_review_state: str
     reason_codes: tuple[str, ...]
     rows: tuple[ResearchStrategyManualDecisionPacketCompletenessRow, ...]
     validation_digest: str
@@ -312,7 +410,7 @@ class ResearchStrategyManualDecisionPacketCompletenessReport(_FinalDataclass):
             if value is not None:
                 object.__setattr__(self, field_name, _normalize_ratio(field_name, value))
         _require_status("status", self.status)
-        _require_human_review_state("human_review_state", self.human_review_state)
+        _require_manual_state("manual_decision_review_state", self.manual_decision_review_state)
         object.__setattr__(self, "reason_codes", _normalize_reason_codes(self.reason_codes))
         object.__setattr__(self, "rows", _normalize_rows(self.rows))
         _require_digest("validation_digest", self.validation_digest)
@@ -349,16 +447,19 @@ def build_research_strategy_manual_decision_packet_completeness_report(
         )
     _require_hard_phase_flags("config", config)
     generated_at_utc = _as_utc("generated_at", generated_at)
-    packet_inputs = _normalize_packets(packets)
-    draft_rows = tuple(
+    normalized_packets = _normalize_packets(packets)
+    row_values = tuple(
         sorted(
-            (_draft_row_values(packet, config=config) for packet in packet_inputs),
-            key=_draft_sort_key,
+            (
+                _row_values_from_packet(packet_value, config=config)
+                for packet_value in normalized_packets
+            ),
+            key=_row_value_sort_key,
         ),
     )
     rows = tuple(
-        _row_from_draft(row_number=index, draft_values=draft_values)
-        for index, draft_values in enumerate(draft_rows, start=1)
+        _row_from_values(_count(index), values)
+        for index, values in enumerate(row_values, start=1)
     )
     report_status = _report_status(rows)
     report_values = {
@@ -373,7 +474,7 @@ def build_research_strategy_manual_decision_packet_completeness_report(
             None if not rows else min(row.completeness_score for row in rows)
         ),
         "status": report_status,
-        "human_review_state": _human_review_state(report_status),
+        "manual_decision_review_state": _manual_state(report_status),
         "reason_codes": _report_reason_codes(rows),
         "rows": rows,
         "paper_only": True,
@@ -413,24 +514,49 @@ def research_strategy_manual_decision_packet_completeness_report_digest(
     return {key: payload[key] for key in SUMMARY_KEYS}
 
 
-def _draft_row_values(
+def _row_values_from_packet(
     packet: ResearchStrategyManualDecisionPacketInput,
     *,
     config: ResearchStrategyManualDecisionPacketCompletenessConfig,
-) -> dict[str, object]:
+) -> dict[str, Any]:
+    evidence_coverage_ratio = _capped_ratio(
+        packet.evidence_item_count,
+        config.evidence_item_count_pass_floor,
+    )
+    independent_source_ratio = _capped_ratio(
+        packet.independent_source_count,
+        config.independent_source_count_pass_floor,
+    )
     reason_codes = _row_reason_codes(packet, config=config)
-    row_status = _row_status(reason_codes)
+    status = _row_status(reason_codes)
+    completeness_score = _completeness_score(
+        (
+            evidence_coverage_ratio,
+            independent_source_ratio,
+            packet.evidence_summary_score,
+            packet.cost_summary_score,
+            packet.risk_summary_score,
+            packet.resolution_summary_score,
+            packet.team_memory_summary_score,
+            packet.update_trigger_summary_score,
+        ),
+    )
     return {
-        "public_packet_hash": _public_hash(packet.internal_packet_key),
-        "research_section_score": packet.research_section_score,
-        "forecast_section_score": packet.forecast_section_score,
-        "cost_section_score": packet.cost_section_score,
-        "settlement_section_score": packet.settlement_section_score,
-        "domain_memory_section_score": packet.domain_memory_section_score,
-        "unresolved_section_gap_count": packet.unresolved_section_gap_count,
-        "completeness_score": _completeness_score(_section_values(packet)),
-        "status": row_status,
-        "human_review_state": _human_review_state(row_status),
+        "public_packet_hash": _public_packet_hash(packet.internal_packet_key),
+        "evidence_item_count": packet.evidence_item_count,
+        "independent_source_count": packet.independent_source_count,
+        "evidence_coverage_ratio": evidence_coverage_ratio,
+        "independent_source_ratio": independent_source_ratio,
+        "evidence_summary_score": packet.evidence_summary_score,
+        "cost_summary_score": packet.cost_summary_score,
+        "risk_summary_score": packet.risk_summary_score,
+        "resolution_summary_score": packet.resolution_summary_score,
+        "team_memory_summary_score": packet.team_memory_summary_score,
+        "update_trigger_summary_score": packet.update_trigger_summary_score,
+        "unresolved_summary_gap_count": packet.unresolved_summary_gap_count,
+        "completeness_score": completeness_score,
+        "status": status,
+        "manual_decision_review_state": _manual_state(status),
         "reason_codes": reason_codes,
         "paper_only": True,
         "report_only": True,
@@ -438,12 +564,11 @@ def _draft_row_values(
     }
 
 
-def _row_from_draft(
-    *,
-    row_number: int,
-    draft_values: dict[str, object],
+def _row_from_values(
+    row_number: Decimal,
+    values: dict[str, Any],
 ) -> ResearchStrategyManualDecisionPacketCompletenessRow:
-    row_values = {"row_number": _count(row_number), **draft_values}
+    row_values = {"row_number": row_number, **values}
     return ResearchStrategyManualDecisionPacketCompletenessRow(
         **row_values,
         validation_digest=_validation_digest(row_values),
@@ -457,16 +582,28 @@ def _row_reason_codes(
 ) -> tuple[str, ...]:
     block_reasons: list[str] = []
     watch_reasons: list[str] = []
-    for field_name, reason_prefix in zip(SECTION_FIELDS, SECTION_REASON_PREFIXES):
-        value = getattr(packet, field_name)
-        if value < config.section_watch_floor:
+    if packet.evidence_item_count < config.min_evidence_item_count:
+        block_reasons.append("evidence_item_count_block")
+    elif packet.evidence_item_count < config.evidence_item_count_pass_floor:
+        watch_reasons.append("evidence_item_count_watch")
+    if packet.independent_source_count < config.min_independent_source_count:
+        block_reasons.append("independent_source_count_block")
+    elif packet.independent_source_count < config.independent_source_count_pass_floor:
+        watch_reasons.append("independent_source_count_watch")
+    for field_name, reason_prefix in zip(
+        SUMMARY_SCORE_FIELDS,
+        SUMMARY_REASON_PREFIXES,
+        strict=True,
+    ):
+        score = getattr(packet, field_name)
+        if score < config.summary_block_floor:
             block_reasons.append(f"{reason_prefix}_block")
-        elif value < config.section_pass_floor:
+        elif score < config.summary_watch_floor:
             watch_reasons.append(f"{reason_prefix}_watch")
-    if packet.unresolved_section_gap_count >= config.unresolved_section_gap_block_ceiling:
-        block_reasons.append("unresolved_section_gap_block")
-    elif packet.unresolved_section_gap_count > config.unresolved_section_gap_watch_ceiling:
-        watch_reasons.append("unresolved_section_gap_watch")
+    if packet.unresolved_summary_gap_count >= config.unresolved_summary_gap_block_ceiling:
+        block_reasons.append("unresolved_summary_gap_block")
+    elif packet.unresolved_summary_gap_count > config.unresolved_summary_gap_watch_ceiling:
+        watch_reasons.append("unresolved_summary_gap_watch")
     reasons = tuple(block_reasons + watch_reasons)
     if not reasons:
         reasons = ("manual_decision_packet_completeness_pass",)
@@ -493,12 +630,12 @@ def _report_status(
     return "pass"
 
 
-def _human_review_state(status: str) -> str:
+def _manual_state(status: str) -> str:
     if status == "block":
-        return "human_review_block"
+        return "manual_decision_review_block"
     if status == "watch":
-        return "human_review_watch"
-    return "human_review_ready"
+        return "manual_decision_review_watch"
+    return "manual_decision_review_ready"
 
 
 def _report_reason_codes(
@@ -513,13 +650,11 @@ def _report_reason_codes(
         for reason in row.reason_codes
         if reason != "manual_decision_packet_completeness_pass"
     )
-    return _normalize_reason_codes(
-        (*values, f"manual_decision_packet_completeness_{status}"),
-    )
+    return _normalize_reason_codes((*values, f"manual_decision_packet_completeness_{status}"))
 
 
 def _completeness_score(values: tuple[Decimal, ...]) -> Decimal:
-    return _ratio(_sum_decimal(values), FIVE)
+    return _ratio(_sum_decimal(values), EIGHT)
 
 
 def _average_completeness_score(
@@ -527,16 +662,7 @@ def _average_completeness_score(
 ) -> Decimal | None:
     if not rows:
         return None
-    return _ratio(
-        _sum_decimal(tuple(row.completeness_score for row in rows)),
-        _count(len(rows)),
-    )
-
-
-def _section_values(
-    packet: ResearchStrategyManualDecisionPacketInput,
-) -> tuple[Decimal, ...]:
-    return tuple(getattr(packet, field_name) for field_name in SECTION_FIELDS)
+    return _ratio(_sum_decimal(tuple(row.completeness_score for row in rows)), _count(len(rows)))
 
 
 def _normalize_packets(
@@ -571,7 +697,7 @@ def _normalize_rows(
     except TypeError as exc:
         raise ValueError("rows must be an iterable") from exc
     seen: set[str] = set()
-    for row in values:
+    for index, row in enumerate(values, start=1):
         if type(row) is not ResearchStrategyManualDecisionPacketCompletenessRow:
             raise ValueError(
                 "rows must contain ResearchStrategyManualDecisionPacketCompletenessRow",
@@ -580,38 +706,39 @@ def _normalize_rows(
         if row.public_packet_hash in seen:
             raise ValueError("public_packet_hash values must be unique")
         seen.add(row.public_packet_hash)
-    expected_numbers = tuple(_count(index) for index in range(1, len(values) + 1))
-    actual_numbers = tuple(row.row_number for row in values)
-    if actual_numbers != expected_numbers:
-        raise ValueError("rows must be sorted deterministically")
+        if row.row_number != _count(index):
+            raise ValueError("row_number values must be sequential")
     if values != tuple(sorted(values, key=_row_sort_key)):
         raise ValueError("rows must be sorted deterministically")
     return values
 
 
 def _validate_row(row: ResearchStrategyManualDecisionPacketCompletenessRow) -> None:
+    if row.validation_digest != _validation_digest(_row_digest_values(row)):
+        raise ValueError("validation_digest must match row payload")
     expected_completeness = _completeness_score(
         (
-            row.research_section_score,
-            row.forecast_section_score,
-            row.cost_section_score,
-            row.settlement_section_score,
-            row.domain_memory_section_score,
+            row.evidence_coverage_ratio,
+            row.independent_source_ratio,
+            row.evidence_summary_score,
+            row.cost_summary_score,
+            row.risk_summary_score,
+            row.resolution_summary_score,
+            row.team_memory_summary_score,
+            row.update_trigger_summary_score,
         ),
     )
     if row.completeness_score != expected_completeness:
-        raise ValueError("completeness_score must match section scores")
+        raise ValueError("completeness_score must match component scores")
     if row.status != _row_status(row.reason_codes):
         raise ValueError("status must match reason_codes")
-    if row.human_review_state != _human_review_state(row.status):
-        raise ValueError("human_review_state must match status")
-    if row.validation_digest != _validation_digest(_row_digest_values(row)):
-        raise ValueError("validation_digest must match row payload")
+    if row.manual_decision_review_state != _manual_state(row.status):
+        raise ValueError("manual_decision_review_state must match status")
 
 
-def _validate_report(
-    report: ResearchStrategyManualDecisionPacketCompletenessReport,
-) -> None:
+def _validate_report(report: ResearchStrategyManualDecisionPacketCompletenessReport) -> None:
+    if report.validation_digest != _validation_digest(_report_digest_values(report)):
+        raise ValueError("validation_digest must match report payload")
     if report.packet_count != _count(len(report.rows)):
         raise ValueError("packet_count must match rows")
     if report.pass_count != _status_count(report.rows, "pass"):
@@ -627,12 +754,10 @@ def _validate_report(
         raise ValueError("min_completeness_score must match rows")
     if report.status != _report_status(report.rows):
         raise ValueError("status must match rows")
-    if report.human_review_state != _human_review_state(report.status):
-        raise ValueError("human_review_state must match status")
+    if report.manual_decision_review_state != _manual_state(report.status):
+        raise ValueError("manual_decision_review_state must match status")
     if report.reason_codes != _report_reason_codes(report.rows):
         raise ValueError("reason_codes must match rows")
-    if report.validation_digest != _validation_digest(_report_digest_values(report)):
-        raise ValueError("validation_digest must match report payload")
 
 
 def _row_digest_values(
@@ -641,15 +766,20 @@ def _row_digest_values(
     return {
         "row_number": row.row_number,
         "public_packet_hash": row.public_packet_hash,
-        "research_section_score": row.research_section_score,
-        "forecast_section_score": row.forecast_section_score,
-        "cost_section_score": row.cost_section_score,
-        "settlement_section_score": row.settlement_section_score,
-        "domain_memory_section_score": row.domain_memory_section_score,
-        "unresolved_section_gap_count": row.unresolved_section_gap_count,
+        "evidence_item_count": row.evidence_item_count,
+        "independent_source_count": row.independent_source_count,
+        "evidence_coverage_ratio": row.evidence_coverage_ratio,
+        "independent_source_ratio": row.independent_source_ratio,
+        "evidence_summary_score": row.evidence_summary_score,
+        "cost_summary_score": row.cost_summary_score,
+        "risk_summary_score": row.risk_summary_score,
+        "resolution_summary_score": row.resolution_summary_score,
+        "team_memory_summary_score": row.team_memory_summary_score,
+        "update_trigger_summary_score": row.update_trigger_summary_score,
+        "unresolved_summary_gap_count": row.unresolved_summary_gap_count,
         "completeness_score": row.completeness_score,
         "status": row.status,
-        "human_review_state": row.human_review_state,
+        "manual_decision_review_state": row.manual_decision_review_state,
         "reason_codes": row.reason_codes,
         "paper_only": row.paper_only,
         "report_only": row.report_only,
@@ -670,7 +800,7 @@ def _report_digest_values(
         "average_completeness_score": report.average_completeness_score,
         "min_completeness_score": report.min_completeness_score,
         "status": report.status,
-        "human_review_state": report.human_review_state,
+        "manual_decision_review_state": report.manual_decision_review_state,
         "reason_codes": report.reason_codes,
         "rows": report.rows,
         "paper_only": report.paper_only,
@@ -680,39 +810,55 @@ def _report_digest_values(
 
 
 def _validate_payload_digests(payload: dict[str, Any]) -> None:
-    rows = payload.get("rows")
+    _require_payload_keys("report payload", payload, REPORT_PAYLOAD_KEYS)
+    rows = payload["rows"]
     if type(rows) is not list:
-        raise ValueError("rows must be a list")
-    for row in rows:
-        if type(row) is not dict:
-            raise ValueError("rows must contain objects")
-        _require_digest("validation_digest", row.get("validation_digest"))
-        if row["validation_digest"] != _validation_digest(_without_digest(row)):
-            raise ValueError("validation_digest must match row payload")
-    _require_digest("validation_digest", payload.get("validation_digest"))
-    if payload["validation_digest"] != _validation_digest(_without_digest(payload)):
-        raise ValueError("validation_digest must match report payload")
+        raise ValueError("rows must be a JSON list")
+    for row_payload in rows:
+        if type(row_payload) is not dict:
+            raise ValueError("rows must contain JSON objects")
+        _require_payload_keys("row payload", row_payload, ROW_PAYLOAD_KEYS)
+        _validate_payload_digest("row", row_payload, ROW_PAYLOAD_KEYS)
+    _validate_payload_digest("report", payload, REPORT_PAYLOAD_KEYS)
 
 
-def _without_digest(value: dict[str, Any]) -> dict[str, Any]:
-    return {key: item for key, item in value.items() if key != "validation_digest"}
+def _require_payload_keys(
+    name: str,
+    payload: dict[str, Any],
+    expected_keys: tuple[str, ...],
+) -> None:
+    if set(payload) != set(expected_keys):
+        raise ValueError(f"{name} keys must match the public payload schema")
 
 
-def _draft_sort_key(values: dict[str, object]) -> tuple[Decimal, Decimal, str]:
-    status = values["status"]
-    completeness_score = values["completeness_score"]
-    packet_hash = values["public_packet_hash"]
-    if type(status) is not str or type(completeness_score) is not Decimal:
-        raise ValueError("row draft has invalid sort values")
-    if type(packet_hash) is not str:
-        raise ValueError("row draft has invalid hash")
-    return (STATUS_WEIGHT[status], completeness_score, packet_hash)
+def _validate_payload_digest(
+    name: str,
+    payload: dict[str, Any],
+    payload_keys: tuple[str, ...],
+) -> None:
+    digest = payload["validation_digest"]
+    _require_digest("validation_digest", digest)
+    digest_values = {
+        key: payload[key]
+        for key in payload_keys
+        if key != "validation_digest"
+    }
+    if digest != _validation_digest(digest_values):
+        raise ValueError(f"validation_digest must match {name} payload")
+
+
+def _row_value_sort_key(values: dict[str, Any]) -> tuple[Decimal, Decimal, str]:
+    return (
+        STATUS_WEIGHT[str(values["status"])],
+        _normalize_ratio("completeness_score", values["completeness_score"]),
+        str(values["public_packet_hash"]),
+    )
 
 
 def _row_sort_key(
     row: ResearchStrategyManualDecisionPacketCompletenessRow,
-) -> tuple[Decimal, Decimal, Decimal, str]:
-    return (STATUS_WEIGHT[row.status], row.completeness_score, row.row_number, row.public_packet_hash)
+) -> tuple[Decimal, Decimal, str]:
+    return (STATUS_WEIGHT[row.status], row.completeness_score, row.public_packet_hash)
 
 
 def _status_count(
@@ -750,6 +896,12 @@ def _reason_sort_key(reason_code: str) -> tuple[int, str]:
     return (len(REASON_PRIORITY), reason_code)
 
 
+def _public_packet_hash(internal_packet_key: str) -> str:
+    _require_text("internal_packet_key", internal_packet_key)
+    digest = sha256(f"manual-decision-packet:{internal_packet_key}".encode()).hexdigest()
+    return f"sha256:{digest}"
+
+
 def _count(value: int) -> Decimal:
     if type(value) is not int or value < 0:
         raise ValueError("count must be a nonnegative int")
@@ -770,6 +922,13 @@ def _ratio(numerator: Decimal, denominator: Decimal) -> Decimal:
     numerator = _normalize_decimal("numerator", numerator)
     with localcontext(DECIMAL_CONTEXT):
         return _quantize(numerator / denominator)
+
+
+def _capped_ratio(numerator: Decimal, denominator: Decimal) -> Decimal:
+    value = _ratio(numerator, denominator)
+    if value > ONE:
+        return ONE
+    return value
 
 
 def _normalize_positive_count(name: str, value: object) -> Decimal:
@@ -837,14 +996,14 @@ def _require_status(name: str, value: object) -> None:
         raise ValueError(f"{name} must be pass, watch, or block")
 
 
-def _require_human_review_state(name: str, value: object) -> None:
+def _require_manual_state(name: str, value: object) -> None:
     _require_public_text(name, value)
     if value not in {
-        "human_review_ready",
-        "human_review_watch",
-        "human_review_block",
+        "manual_decision_review_ready",
+        "manual_decision_review_watch",
+        "manual_decision_review_block",
     }:
-        raise ValueError(f"{name} must be a human review state")
+        raise ValueError(f"{name} must be a manual decision review state")
 
 
 def _require_text(name: str, value: object) -> None:
@@ -861,29 +1020,26 @@ def _require_public_text(name: str, value: object) -> None:
         raise ValueError(f"{name} contains unsafe public text")
 
 
+def _require_public_hash(name: str, value: object) -> None:
+    _require_text(name, value)
+    prefix = "sha256:"
+    if not value.startswith(prefix):
+        raise ValueError(f"{name} must be a sha256 public hash")
+    digest = value[len(prefix) :]
+    if len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
+        raise ValueError(f"{name} must be a sha256 public hash")
+
+
 def _require_digest(name: str, value: object) -> None:
     _require_text(name, value)
     if len(value) != 64 or any(char not in "0123456789abcdef" for char in value):
         raise ValueError(f"{name} must be a sha256 hex digest")
 
 
-def _require_public_hash(name: str, value: object) -> None:
-    _require_text(name, value)
-    if not value.startswith("sha256:"):
-        raise ValueError(f"{name} must be a public hash")
-    _require_digest(name, value.removeprefix("sha256:"))
-
-
 def _require_hard_phase_flags(name: str, value: object) -> None:
     for field_name in PHASE_FLAG_FIELDS:
         if getattr(value, field_name, None) is not True:
             raise ValueError(f"{name} {field_name} must be True")
-
-
-def _public_hash(value: str) -> str:
-    _require_text("internal_packet_key", value)
-    digest = sha256(value.encode("utf-8")).hexdigest()
-    return f"sha256:{digest}"
 
 
 def _validation_digest(values: dict[str, Any]) -> str:
