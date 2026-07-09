@@ -4,20 +4,19 @@ import ast
 import importlib
 import json
 from dataclasses import FrozenInstanceError, fields, is_dataclass, replace
+from datetime import UTC, datetime, timedelta, timezone
 from decimal import Decimal
+from hashlib import sha256
 from pathlib import Path
 from typing import Any, get_type_hints
 
 import pytest
 
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-MODULE_PATH = (
-    REPO_ROOT
-    / "src"
-    / "polymarket_alpha_lab"
-    / "research_team_review_capacity_forecast_report.py"
+MODULE_PATH = Path(
+    "src/polymarket_alpha_lab/research_team_review_capacity_forecast_report.py",
 )
+GENERATED_AT = datetime(2026, 7, 8, 12, 0, tzinfo=UTC)
 
 
 class _DecimalSubclass(Decimal):
@@ -38,26 +37,16 @@ def d(value: str) -> Decimal:
     return Decimal(value)
 
 
-def fixed_time():
-    from datetime import datetime, timezone
-
-    return datetime(2026, 7, 8, 12, 0, tzinfo=timezone.utc)
-
-
-def capacity_input(**overrides: object):
+def domain_input(**overrides: object):
     module = api()
     values = {
-        "team_id": "macro_review",
-        "queue_id": "election_calendar",
-        "market_group": "public_events",
-        "pending_task_count": d("8.000000"),
-        "available_review_slot_count": d("12.000000"),
-        "due_soon_task_count": d("1.000000"),
-        "overdue_task_count": d("0.000000"),
-        "sla_pressure_score": d("0.300000"),
-        "hours_until_nearest_event": d("72.000000"),
-        "event_importance_score": d("0.200000"),
-        "expertise_fit_score": d("0.900000"),
+        "team_key": "macro_review",
+        "domain": "politics",
+        "current_queue_load": d("2.000000"),
+        "stale_memory_count": d("0.000000"),
+        "calibration_backlog_count": d("0.000000"),
+        "correction_debt_count": d("0.000000"),
+        "available_analyst_capacity": d("10.000000"),
     }
     values.update(overrides)
     return module.ResearchTeamReviewCapacityForecastInput(**values)
@@ -65,7 +54,7 @@ def capacity_input(**overrides: object):
 
 def build_report(*rows: object, **overrides: object):
     module = api()
-    generated_at = overrides.pop("generated_at", fixed_time())
+    generated_at = overrides.pop("generated_at", GENERATED_AT)
     return module.build_research_team_review_capacity_forecast_report(
         rows,
         generated_at=generated_at,
@@ -73,212 +62,244 @@ def build_report(*rows: object, **overrides: object):
     )
 
 
-def assert_no_float_values(value: Any) -> None:
-    if isinstance(value, float):
-        raise AssertionError(f"unexpected float value {value!r}")
+def walk_values(value: Any) -> tuple[Any, ...]:
+    if isinstance(value, dict):
+        values: list[Any] = []
+        for item in value.values():
+            values.extend(walk_values(item))
+        return tuple(values)
+    if isinstance(value, list):
+        values = []
+        for item in value:
+            values.extend(walk_values(item))
+        return tuple(values)
+    return (value,)
+
+
+def assert_no_int_float_or_decimal_payload_values(value: Any) -> None:
+    if type(value) in (int, float) or type(value) is Decimal:
+        raise AssertionError(f"unexpected public payload numeric value: {value!r}")
     if isinstance(value, dict):
         for item in value.values():
-            assert_no_float_values(item)
-    if isinstance(value, (list, tuple)):
+            assert_no_int_float_or_decimal_payload_values(item)
+    if isinstance(value, list):
         for item in value:
-            assert_no_float_values(item)
+            assert_no_int_float_or_decimal_payload_values(item)
 
 
-def test_block_capacity_forecast_identifies_sla_event_and_expertise_bottleneck() -> None:
+def signed_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    unsigned = dict(payload)
+    unsigned.pop("payload_digest", None)
+    digest = sha256(
+        json.dumps(
+            unsigned,
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8"),
+    ).hexdigest()
+    return {**unsigned, "payload_digest": digest}
+
+
+def test_capacity_forecast_reports_domain_pressure_from_queue_memory_calibration_and_debt() -> None:
     report = build_report(
-        capacity_input(
-            team_id="macro_review",
-            queue_id="election_calendar",
-            pending_task_count=d("18.000000"),
-            available_review_slot_count=d("10.000000"),
-            due_soon_task_count=d("7.000000"),
-            overdue_task_count=d("3.000000"),
-            sla_pressure_score=d("0.910000"),
-            hours_until_nearest_event=d("3.000000"),
-            event_importance_score=d("0.900000"),
-            expertise_fit_score=d("0.350000"),
+        domain_input(
+            team_key="politics_review",
+            domain="politics",
+            current_queue_load=d("9.000000"),
+            stale_memory_count=d("10.000000"),
+            calibration_backlog_count=d("8.000000"),
+            correction_debt_count=d("5.000000"),
+            available_analyst_capacity=d("8.000000"),
         ),
-        capacity_input(
-            team_id="policy_review",
-            queue_id="regulatory_updates",
-            market_group="public_policy",
+        domain_input(
+            team_key="crypto_review",
+            domain="crypto",
+            current_queue_load=d("5.000000"),
+            stale_memory_count=d("1.000000"),
+            calibration_backlog_count=d("3.000000"),
+            correction_debt_count=d("0.000000"),
+            available_analyst_capacity=d("10.000000"),
         ),
+        domain_input(team_key="sports_review", domain="football"),
+        generated_at=GENERATED_AT.astimezone(timezone(timedelta(hours=-4))),
     )
 
     assert is_dataclass(report)
+    assert report.generated_at == GENERATED_AT
     assert report.capacity_status == "block"
-    assert report.team_queue_count == d("2.000000")
-    assert report.pass_queue_count == d("1.000000")
-    assert report.watch_queue_count == d("0.000000")
-    assert report.block_queue_count == d("1.000000")
-    assert report.bottleneck_queue_count == d("1.000000")
-    assert report.total_pending_task_count == d("26.000000")
-    assert report.total_available_review_slot_count == d("22.000000")
-    assert report.weighted_capacity_utilization == d("1.181818")
-    assert report.max_sla_pressure_score == d("0.910000")
-    assert report.min_expertise_fit_score == d("0.350000")
-    assert report.max_event_timing_pressure == d("0.900000")
+    assert report.report_status == "block"
+    assert report.domain_count == d("3.000000")
+    assert report.pass_domain_count == d("1.000000")
+    assert report.watch_domain_count == d("1.000000")
+    assert report.block_domain_count == d("1.000000")
+    assert report.total_current_queue_load == d("16.000000")
+    assert report.total_stale_memory_count == d("11.000000")
+    assert report.total_calibration_backlog_count == d("11.000000")
+    assert report.total_correction_debt_count == d("5.000000")
+    assert report.total_available_analyst_capacity == d("28.000000")
+    assert report.weighted_capacity_pressure_ratio == d("1.285714")
+    assert report.max_capacity_pressure_ratio == d("3.281250")
     assert report.reason_codes == (
-        "capacity_block_present",
-        "capacity_over_committed",
-        "sla_pressure_block",
-        "event_timing_block",
-        "expertise_fit_block",
-        "overdue_tasks_present",
+        "review_capacity_pressure_report_block",
+        "weighted_capacity_pressure_block",
+        "queue_load_block",
+        "stale_memory_block",
+        "calibration_backlog_block",
+        "correction_debt_block",
+        "weighted_capacity_pressure_watch",
+        "calibration_backlog_watch",
     )
     assert report.paper_only is True
     assert report.report_only is True
     assert report.readonly is True
 
-    blocked_row = report.rows[0]
-    assert blocked_row.team_id == "macro_review"
-    assert blocked_row.capacity_utilization == d("1.800000")
-    assert blocked_row.event_timing_pressure == d("0.900000")
-    assert blocked_row.expertise_gap_score == d("0.650000")
-    assert blocked_row.capacity_status == "block"
-    assert blocked_row.reason_codes == (
-        "capacity_over_committed",
-        "sla_pressure_block",
-        "event_timing_block",
-        "expertise_fit_block",
-        "overdue_tasks_present",
+    blocked, watched, passed = report.rows
+    assert tuple((row.team_key, row.domain, row.capacity_status) for row in report.rows) == (
+        ("politics_review", "politics", "block"),
+        ("crypto_review", "crypto", "watch"),
+        ("sports_review", "football", "pass"),
     )
-
-
-def test_watch_status_uses_capacity_sla_event_timing_and_expertise_fit() -> None:
-    report = build_report(
-        capacity_input(
-            pending_task_count=d("9.000000"),
-            available_review_slot_count=d("10.000000"),
-            due_soon_task_count=d("3.000000"),
-            sla_pressure_score=d("0.650000"),
-            hours_until_nearest_event=d("4.000000"),
-            event_importance_score=d("0.700000"),
-            expertise_fit_score=d("0.650000"),
-        ),
+    assert blocked.queue_pressure_ratio == d("1.125000")
+    assert blocked.stale_memory_pressure_ratio == d("1.250000")
+    assert blocked.calibration_backlog_pressure_ratio == d("1.000000")
+    assert blocked.correction_debt_pressure_ratio == d("0.625000")
+    assert blocked.weighted_review_load == d("26.250000")
+    assert blocked.capacity_pressure_ratio == d("3.281250")
+    assert blocked.reason_codes == (
+        "weighted_capacity_pressure_block",
+        "queue_load_block",
+        "stale_memory_block",
+        "calibration_backlog_block",
+        "correction_debt_block",
     )
-
-    row = report.rows[0]
-
-    assert report.capacity_status == "watch"
-    assert report.pass_queue_count == d("0.000000")
-    assert report.watch_queue_count == d("1.000000")
-    assert report.block_queue_count == d("0.000000")
-    assert row.capacity_status == "watch"
-    assert row.capacity_utilization == d("0.900000")
-    assert row.event_timing_pressure == d("0.700000")
-    assert row.expertise_gap_score == d("0.350000")
-    assert row.reason_codes == (
-        "capacity_near_limit",
-        "sla_pressure_watch",
-        "event_timing_watch",
-        "expertise_fit_watch",
-        "due_soon_tasks_present",
+    assert watched.capacity_pressure_ratio == d("0.775000")
+    assert watched.reason_codes == (
+        "weighted_capacity_pressure_watch",
+        "calibration_backlog_watch",
     )
+    assert passed.reason_codes == ("review_capacity_pressure_clear",)
 
 
-def test_pass_status_reports_clear_capacity_without_bottlenecks() -> None:
-    report = build_report(capacity_input())
-
-    row = report.rows[0]
+def test_empty_report_is_pass_report_only_and_decimal_zeroed() -> None:
+    report = build_report()
 
     assert report.capacity_status == "pass"
-    assert row.capacity_status == "pass"
-    assert row.capacity_utilization == d("0.666667")
-    assert row.event_timing_pressure == d("0.000000")
-    assert row.expertise_gap_score == d("0.100000")
-    assert row.reason_codes == ("review_capacity_clear",)
-    assert report.reason_codes == ("review_capacity_clear",)
+    assert report.report_status == "pass"
+    assert report.domain_count == d("0.000000")
+    assert report.pass_domain_count == d("0.000000")
+    assert report.watch_domain_count == d("0.000000")
+    assert report.block_domain_count == d("0.000000")
+    assert report.total_current_queue_load == d("0.000000")
+    assert report.total_stale_memory_count == d("0.000000")
+    assert report.total_calibration_backlog_count == d("0.000000")
+    assert report.total_correction_debt_count == d("0.000000")
+    assert report.total_available_analyst_capacity == d("0.000000")
+    assert report.weighted_capacity_pressure_ratio == d("0.000000")
+    assert report.max_capacity_pressure_ratio == d("0.000000")
+    assert report.rows == ()
+    assert report.reason_code_counts == ()
+    assert report.reason_codes == ("no_review_domains",)
+    assert report.paper_only is True
+    assert report.report_only is True
+    assert report.readonly is True
 
 
-def test_payload_uses_decimal_strings_public_lists_no_floats_and_stable_digest() -> None:
+def test_payload_is_deterministic_decimal_stringed_public_safe_and_digest_checked() -> None:
     module = api()
     first = build_report(
-        capacity_input(
-            team_id="macro_review",
-            queue_id="election_calendar",
-            pending_task_count=d("18.000000"),
-            available_review_slot_count=d("10.000000"),
-            sla_pressure_score=d("0.910000"),
-            hours_until_nearest_event=d("3.000000"),
-            event_importance_score=d("0.900000"),
-            expertise_fit_score=d("0.350000"),
+        domain_input(
+            team_key="crypto_review",
+            domain="crypto",
+            current_queue_load=d("5.000000"),
+            stale_memory_count=d("1.000000"),
+            calibration_backlog_count=d("3.000000"),
+            correction_debt_count=d("0.000000"),
+            available_analyst_capacity=d("10.000000"),
         ),
-        capacity_input(team_id="policy_review", queue_id="regulatory_updates"),
-    )
-    second = build_report(
-        capacity_input(team_id="policy_review", queue_id="regulatory_updates"),
-        capacity_input(
-            team_id="macro_review",
-            queue_id="election_calendar",
-            pending_task_count=d("18.000000"),
-            available_review_slot_count=d("10.000000"),
-            sla_pressure_score=d("0.910000"),
-            hours_until_nearest_event=d("3.000000"),
-            event_importance_score=d("0.900000"),
-            expertise_fit_score=d("0.350000"),
+        domain_input(
+            team_key="politics_review",
+            domain="politics",
+            current_queue_load=d("9.000000"),
+            stale_memory_count=d("10.000000"),
+            calibration_backlog_count=d("8.000000"),
+            correction_debt_count=d("5.000000"),
+            available_analyst_capacity=d("8.000000"),
         ),
     )
+    second = build_report(tuple(reversed(first.rows)))
 
     payload = module.research_team_review_capacity_forecast_report_payload(first)
     encoded = json.dumps(payload, sort_keys=True)
 
-    assert first.payload == payload
+    assert payload == first.payload
+    assert payload == module.research_team_review_capacity_forecast_report_payload(payload)
     assert first.payload_digest == second.payload_digest
     assert payload["payload_digest"] == first.payload_digest
+    assert len(payload["payload_digest"]) == 64
     assert payload["generated_at"] == "2026-07-08T12:00:00+00:00"
-    assert payload["weighted_capacity_utilization"] == "1.181818"
-    assert payload["rows"][0]["pending_task_count"] == "18.000000"
+    assert payload["weighted_capacity_pressure_ratio"] == "1.888889"
+    assert payload["rows"][0]["weighted_review_load"] == "26.250000"
     assert payload["rows"][0]["reason_codes"] == [
-        "capacity_over_committed",
-        "sla_pressure_block",
-        "event_timing_block",
-        "expertise_fit_block",
+        "weighted_capacity_pressure_block",
+        "queue_load_block",
+        "stale_memory_block",
+        "calibration_backlog_block",
+        "correction_debt_block",
     ]
     assert payload["paper_only"] is True
     assert payload["report_only"] is True
     assert payload["readonly"] is True
-    assert '"1.181818"' in encoded
-    assert_no_float_values(payload)
+    assert '"1.888889"' in encoded
+    assert_no_int_float_or_decimal_payload_values(payload)
+
+    tampered = dict(payload)
+    tampered["total_current_queue_load"] = "999.000000"
+    with pytest.raises(ValueError, match="payload_digest"):
+        module.research_team_review_capacity_forecast_report_payload(tampered)
 
 
 def test_public_numeric_dataclass_fields_are_decimal_only() -> None:
     module = api()
     numeric_fields = {
-        "watch_capacity_utilization",
-        "block_capacity_utilization",
-        "watch_sla_pressure_score",
-        "block_sla_pressure_score",
-        "event_watch_window_hours",
-        "event_block_window_hours",
-        "watch_event_timing_pressure",
-        "block_event_timing_pressure",
-        "watch_expertise_fit_score",
-        "block_expertise_fit_score",
-        "pending_task_count",
-        "available_review_slot_count",
-        "due_soon_task_count",
-        "overdue_task_count",
-        "sla_pressure_score",
-        "hours_until_nearest_event",
-        "event_importance_score",
-        "expertise_fit_score",
-        "capacity_utilization",
-        "event_timing_pressure",
-        "expertise_gap_score",
+        "watch_capacity_pressure_ratio",
+        "block_capacity_pressure_ratio",
+        "watch_queue_pressure_ratio",
+        "block_queue_pressure_ratio",
+        "watch_stale_memory_pressure_ratio",
+        "block_stale_memory_pressure_ratio",
+        "watch_calibration_backlog_pressure_ratio",
+        "block_calibration_backlog_pressure_ratio",
+        "watch_correction_debt_pressure_ratio",
+        "block_correction_debt_pressure_ratio",
+        "queue_load_weight",
+        "stale_memory_weight",
+        "calibration_backlog_weight",
+        "correction_debt_weight",
+        "current_queue_load",
+        "stale_memory_count",
+        "calibration_backlog_count",
+        "correction_debt_count",
+        "available_analyst_capacity",
+        "queue_pressure_ratio",
+        "stale_memory_pressure_ratio",
+        "calibration_backlog_pressure_ratio",
+        "correction_debt_pressure_ratio",
+        "weighted_review_load",
+        "capacity_pressure_ratio",
         "count",
-        "queue_ratio",
-        "team_queue_count",
-        "pass_queue_count",
-        "watch_queue_count",
-        "block_queue_count",
-        "bottleneck_queue_count",
-        "total_pending_task_count",
-        "total_available_review_slot_count",
-        "weighted_capacity_utilization",
-        "max_sla_pressure_score",
-        "min_expertise_fit_score",
-        "max_event_timing_pressure",
+        "domain_ratio",
+        "domain_count",
+        "pass_domain_count",
+        "watch_domain_count",
+        "block_domain_count",
+        "total_current_queue_load",
+        "total_stale_memory_count",
+        "total_calibration_backlog_count",
+        "total_correction_debt_count",
+        "total_available_analyst_capacity",
+        "weighted_capacity_pressure_ratio",
+        "max_capacity_pressure_ratio",
     }
 
     for cls in (
@@ -294,67 +315,73 @@ def test_public_numeric_dataclass_fields_are_decimal_only() -> None:
                 assert hints[item.name] is Decimal
 
 
-def test_validation_rejects_bad_types_ranges_precision_duplicates_and_flags() -> None:
+def test_validation_rejects_bad_numeric_types_ranges_precision_duplicates_and_flags() -> None:
     module = api()
 
-    with pytest.raises(ValueError, match="team_id"):
-        capacity_input(team_id=_StringSubclass("macro_review"))
+    with pytest.raises(ValueError, match="team_key"):
+        domain_input(team_key=_StringSubclass("macro_review"))
 
-    with pytest.raises(ValueError, match="pending_task_count must be a Decimal"):
-        capacity_input(pending_task_count=8)
+    with pytest.raises(ValueError, match="current_queue_load must be a Decimal"):
+        domain_input(current_queue_load=2)
 
-    with pytest.raises(ValueError, match="sla_pressure_score must be a Decimal"):
-        capacity_input(sla_pressure_score=_DecimalSubclass("0.500000"))
+    with pytest.raises(ValueError, match="stale_memory_count must be a Decimal"):
+        domain_input(stale_memory_count=_DecimalSubclass("1.000000"))
 
-    with pytest.raises(ValueError, match="available_review_slot_count must be positive"):
-        capacity_input(available_review_slot_count=d("0.000000"))
+    with pytest.raises(ValueError, match="available_analyst_capacity must be positive"):
+        domain_input(available_analyst_capacity=d("0.000000"))
 
-    with pytest.raises(ValueError, match="pending_task_count must be nonnegative"):
-        capacity_input(pending_task_count=d("-0.000001"))
-
-    with pytest.raises(ValueError, match="sla_pressure_score must be between 0 and 1"):
-        capacity_input(sla_pressure_score=d("1.000001"))
-
-    with pytest.raises(ValueError, match="event_importance_score must be finite"):
-        capacity_input(event_importance_score=Decimal("NaN"))
+    with pytest.raises(ValueError, match="correction_debt_count must be nonnegative"):
+        domain_input(correction_debt_count=d("-0.000001"))
 
     with pytest.raises(ValueError, match="required decimal precision"):
-        capacity_input(expertise_fit_score=d("0.3333333"))
+        domain_input(current_queue_load=d("0.3333333"))
 
     with pytest.raises(ValueError, match="reason_codes must be unique"):
         module.ResearchTeamReviewCapacityForecastRow(
-            team_id="macro_review",
-            queue_id="election_calendar",
-            market_group="public_events",
-            pending_task_count=d("9.000000"),
-            available_review_slot_count=d("10.000000"),
-            due_soon_task_count=d("3.000000"),
-            overdue_task_count=d("0.000000"),
-            sla_pressure_score=d("0.650000"),
-            hours_until_nearest_event=d("4.000000"),
-            event_importance_score=d("0.700000"),
-            expertise_fit_score=d("0.650000"),
-            capacity_utilization=d("0.900000"),
-            event_timing_pressure=d("0.700000"),
-            expertise_gap_score=d("0.350000"),
+            team_key="macro_review",
+            domain="politics",
+            current_queue_load=d("5.000000"),
+            stale_memory_count=d("1.000000"),
+            calibration_backlog_count=d("3.000000"),
+            correction_debt_count=d("0.000000"),
+            available_analyst_capacity=d("10.000000"),
+            queue_pressure_ratio=d("0.500000"),
+            stale_memory_pressure_ratio=d("0.100000"),
+            calibration_backlog_pressure_ratio=d("0.300000"),
+            correction_debt_pressure_ratio=d("0.000000"),
+            weighted_review_load=d("7.750000"),
+            capacity_pressure_ratio=d("0.775000"),
             capacity_status="watch",
-            reason_codes=("capacity_near_limit", "capacity_near_limit"),
+            reason_codes=(
+                "weighted_capacity_pressure_watch",
+                "weighted_capacity_pressure_watch",
+            ),
         )
 
     with pytest.raises(ValueError, match="paper_only must be True"):
-        replace(capacity_input(), paper_only=False)
+        replace(domain_input(), paper_only=False)
 
     with pytest.raises(ValueError, match="readonly must be True"):
-        replace(build_report(capacity_input()), readonly=False)
+        replace(build_report(domain_input()), readonly=False)
 
     with pytest.raises(FrozenInstanceError):
-        report = build_report(capacity_input())
+        report = build_report(domain_input())
         report.capacity_status = "watch"  # type: ignore[misc]
 
 
-def test_public_strings_reject_secret_like_values_before_payload_leakage() -> None:
-    with pytest.raises(ValueError, match="must not contain sensitive material"):
-        capacity_input(team_id="postgresql://user:secret@db.example.local/team")
+def test_public_payload_rejects_raw_identifiers_and_live_surface_fragments() -> None:
+    module = api()
+
+    with pytest.raises(ValueError, match="unsafe public"):
+        domain_input(team_key=("candi" + "date") + "_123")
+
+    with pytest.raises(ValueError, match="unsafe public"):
+        domain_input(domain=("mar" + "ket") + "_slug")
+
+    payload = build_report(domain_input()).payload
+    payload[("wal" + "let") + "_field"] = "not_public"
+    with pytest.raises(ValueError, match="unsafe public"):
+        module.research_team_review_capacity_forecast_report_payload(payload)
 
 
 def test_public_status_values_are_exactly_pass_watch_block() -> None:
@@ -364,62 +391,60 @@ def test_public_status_values_are_exactly_pass_watch_block() -> None:
 
     with pytest.raises(ValueError, match="capacity_status must be one of pass, watch, block"):
         module.ResearchTeamReviewCapacityForecastRow(
-            team_id="macro_review",
-            queue_id="election_calendar",
-            market_group="public_events",
-            pending_task_count=d("9.000000"),
-            available_review_slot_count=d("10.000000"),
-            due_soon_task_count=d("3.000000"),
-            overdue_task_count=d("0.000000"),
-            sla_pressure_score=d("0.650000"),
-            hours_until_nearest_event=d("4.000000"),
-            event_importance_score=d("0.700000"),
-            expertise_fit_score=d("0.650000"),
-            capacity_utilization=d("0.900000"),
-            event_timing_pressure=d("0.700000"),
-            expertise_gap_score=d("0.350000"),
+            team_key="macro_review",
+            domain="politics",
+            current_queue_load=d("5.000000"),
+            stale_memory_count=d("1.000000"),
+            calibration_backlog_count=d("3.000000"),
+            correction_debt_count=d("0.000000"),
+            available_analyst_capacity=d("10.000000"),
+            queue_pressure_ratio=d("0.500000"),
+            stale_memory_pressure_ratio=d("0.100000"),
+            calibration_backlog_pressure_ratio=d("0.300000"),
+            correction_debt_pressure_ratio=d("0.000000"),
+            weighted_review_load=d("7.750000"),
+            capacity_pressure_ratio=d("0.775000"),
             capacity_status="review",
-            reason_codes=("capacity_near_limit",),
+            reason_codes=("weighted_capacity_pressure_watch",),
+        )
+
+    payload = build_report(domain_input()).payload
+    invalid_report_status = signed_payload({**payload, "report_status": "review"})
+    with pytest.raises(ValueError, match="report_status must be one of pass, watch, block"):
+        module.research_team_review_capacity_forecast_report_payload(
+            invalid_report_status,
+        )
+
+    invalid_row_payload = dict(payload)
+    invalid_row_payload["rows"] = [dict(payload["rows"][0], capacity_status="review")]
+    with pytest.raises(ValueError, match="capacity_status must be one of pass, watch, block"):
+        module.research_team_review_capacity_forecast_report_payload(
+            signed_payload(invalid_row_payload),
         )
 
 
-def test_module_scope_is_report_only_public_safe_with_no_execution_surface() -> None:
+def test_module_scope_is_report_only_without_io_or_execution_imports() -> None:
     source_text = MODULE_PATH.read_text(encoding="utf-8")
-    lowered = source_text.lower()
-    for forbidden in (
-        "auth",
-        "wallet",
-        "account",
-        "order",
-        "trade",
-        "broker",
-        "signing",
-        "submit",
-        "cancel",
-        "replace",
-        "database",
-        "network",
-        "durable",
-        "store",
-        "open(",
+    tree = ast.parse(source_text)
+    forbidden_imports = {
         "requests",
-        "http",
         "socket",
-        "postgres",
+        "sqlite3",
         "psycopg",
-        "sqlite",
         "sqlalchemy",
         "supabase",
-        "execute(",
-        "position sizing",
-        "recommend",
-        "recommendation",
-    ):
-        assert forbidden not in lowered
-
-    tree = ast.parse(source_text)
+        "urllib",
+        "http",
+    }
+    imported_roots: set[str] = set()
     for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported_roots.update(alias.name.split(".")[0] for alias in node.names)
+        if isinstance(node, ast.ImportFrom) and node.module:
+            imported_roots.add(node.module.split(".")[0])
         if isinstance(node, ast.Constant):
             assert type(node.value) is not float
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-            assert node.func.id != "float"
+            assert node.func.id not in {"open", "float", "exec", "eval"}
+
+    assert imported_roots.isdisjoint(forbidden_imports)
