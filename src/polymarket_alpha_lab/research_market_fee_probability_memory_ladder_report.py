@@ -200,6 +200,9 @@ class ResearchMarketFeeProbabilityMemoryLadderRow(_FinalPublicDataclass):
     memory_confidence: Decimal
     memory_confidence_score: Decimal
     ladder_score: Decimal
+    probability_gap_weight: Decimal
+    fee_efficiency_weight: Decimal
+    memory_confidence_weight: Decimal
     status: str
     reason_codes: tuple[str, ...]
     paper_only: bool = True
@@ -219,12 +222,17 @@ class ResearchMarketFeeProbabilityMemoryLadderRow(_FinalPublicDataclass):
             "memory_confidence",
             "memory_confidence_score",
             "ladder_score",
+            "probability_gap_weight",
+            "fee_efficiency_weight",
+            "memory_confidence_weight",
         ):
             object.__setattr__(
                 self,
                 field_name,
                 _require_ratio_decimal(field_name, getattr(self, field_name)),
             )
+        if _weight_sum(self) != ONE:
+            raise ValueError("weights must sum to 1.000000")
         object.__setattr__(
             self,
             "probability_gap",
@@ -516,6 +524,9 @@ def _row_from_input(
         memory_confidence=value.memory_confidence,
         memory_confidence_score=memory_confidence_score,
         ladder_score=ladder_score,
+        probability_gap_weight=config.probability_gap_weight,
+        fee_efficiency_weight=config.fee_efficiency_weight,
+        memory_confidence_weight=config.memory_confidence_weight,
         status=status,
         reason_codes=_row_reason_codes(
             value.reason_codes,
@@ -790,9 +801,9 @@ def _expected_score_from_reason_codes(
         raise ValueError("status must match reason_codes")
     with localcontext(DECIMAL_CONTEXT):
         return _quantize_decimal(
-            row.probability_gap_score * Decimal("0.400000")
-            + row.fee_efficiency_score * Decimal("0.300000")
-            + row.memory_confidence_score * Decimal("0.300000"),
+            row.probability_gap_score * row.probability_gap_weight
+            + row.fee_efficiency_score * row.fee_efficiency_weight
+            + row.memory_confidence_score * row.memory_confidence_weight,
         )
 
 

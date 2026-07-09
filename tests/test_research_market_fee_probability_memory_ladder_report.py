@@ -322,6 +322,40 @@ def test_validation_rejects_bad_types_flags_statuses_and_digest_tampering() -> N
         module.research_market_fee_probability_memory_ladder_report_payload(object())
 
 
+def test_row_validation_uses_non_default_config_weights() -> None:
+    cfg = config(
+        probability_gap_weight=d("0.200000"),
+        fee_efficiency_weight=d("0.500000"),
+        memory_confidence_weight=d("0.300000"),
+    )
+    built = report(
+        ladder_input(
+            research_probability=d("0.650000"),
+            venue_probability=d("0.550000"),
+            fee_ratio=d("0.020000"),
+            memory_confidence=d("0.650000"),
+        ),
+        cfg=cfg,
+    )
+
+    row = built.rows[0]
+    assert row.probability_gap_score == d("1.000000")
+    assert row.fee_efficiency_score == d("0.500000")
+    assert row.memory_confidence_score == d("0.500000")
+    assert row.ladder_score == d("0.600000")
+    assert row.probability_gap_weight == d("0.200000")
+    assert row.fee_efficiency_weight == d("0.500000")
+    assert row.memory_confidence_weight == d("0.300000")
+
+    with pytest.raises(ValueError, match="ladder_score"):
+        replace(
+            row,
+            probability_gap_weight=d("0.400000"),
+            fee_efficiency_weight=d("0.300000"),
+            memory_confidence_weight=d("0.300000"),
+        )
+
+
 def test_public_objects_are_frozen_dataclasses_with_decimal_numeric_fields() -> None:
     module = api()
     built = report(ladder_input())
