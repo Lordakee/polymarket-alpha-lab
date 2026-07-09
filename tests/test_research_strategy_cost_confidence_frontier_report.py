@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import FrozenInstanceError, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 from decimal import Decimal
 import hashlib
 import json
@@ -313,6 +313,20 @@ def test_validation_rejects_non_decimal_bad_flags_and_unsafe_public_payloads() -
         frontier_input(1, reason_codes=("wallet_live_order",))
     with pytest.raises(ValueError, match="input.report_only"):
         frontier_input(1, report_only=False)
+    with pytest.raises(ValueError, match="generated_at must be UTC-aware"):
+        report((frontier_input(1),), generated_at=datetime(2026, 7, 8, 12, 0))
+    with pytest.raises(ValueError, match="generated_at must be UTC-aware"):
+        report(
+            (frontier_input(1),),
+            generated_at=datetime(
+                2026,
+                7,
+                8,
+                7,
+                0,
+                tzinfo=timezone(timedelta(hours=-5)),
+            ),
+        )
 
     result = report((frontier_input(1),))
     with pytest.raises(ValueError, match="derived_validation_digest"):
@@ -366,6 +380,12 @@ def test_validation_rejects_non_decimal_bad_flags_and_unsafe_public_payloads() -
                 "marketRef": "private-market-001",
             },
         )
+    payload_without_digest = research_strategy_cost_confidence_frontier_report_payload(
+        result,
+    )
+    payload_without_digest.pop("derived_validation_digest")
+    with pytest.raises(ValueError, match="derived_validation_digest"):
+        research_strategy_cost_confidence_frontier_report_payload(payload_without_digest)
 
     with pytest.raises(FrozenInstanceError):
         result.frontier_status = "watch"  # type: ignore[misc]

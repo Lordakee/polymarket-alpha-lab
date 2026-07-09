@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Iterable
 from dataclasses import asdict, dataclass, is_dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from hashlib import sha256
 import json
@@ -840,8 +840,8 @@ def _field_value(value: object, field_name: str, *, default: object = _MISSING) 
 def _as_utc(field_name: str, value: object) -> datetime:
     if type(value) is not datetime:
         raise ValueError(f"{field_name} must be a datetime")
-    if value.tzinfo is None:
-        return value.replace(tzinfo=UTC)
+    if value.tzinfo is None or value.utcoffset() != timedelta(0):
+        raise ValueError(f"{field_name} must be UTC-aware")
     return value.astimezone(UTC)
 
 
@@ -992,13 +992,14 @@ def _validate_public_payload(label: str, payload: object) -> None:
     _reject_public_numeric_primitives(payload)
     _ensure_json_safe(payload)
     digest = payload.get("derived_validation_digest")
-    if digest is not None:
-        _require_sha256_hex("derived_validation_digest", digest)
-        expected = _derived_validation_digest_for(
-            {key: value for key, value in payload.items() if key != "derived_validation_digest"},
-        )
-        if digest != expected:
-            raise ValueError("derived_validation_digest does not match report payload")
+    if digest is None:
+        raise ValueError("derived_validation_digest is required")
+    _require_sha256_hex("derived_validation_digest", digest)
+    expected = _derived_validation_digest_for(
+        {key: value for key, value in payload.items() if key != "derived_validation_digest"},
+    )
+    if digest != expected:
+        raise ValueError("derived_validation_digest does not match report payload")
 
 
 def _reject_public_numeric_primitives(value: object) -> None:
