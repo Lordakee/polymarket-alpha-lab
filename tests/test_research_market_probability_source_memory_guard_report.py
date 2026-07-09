@@ -377,6 +377,30 @@ def test_public_dataclasses_are_frozen_and_manual_rows_validate_consistency() ->
         replace(guard_report, validation_digest="0" * 64)
 
 
+def test_non_default_evidence_threshold_validates_row_readiness() -> None:
+    custom_config = cfg(min_pass_evidence_count=d("4.000000"))
+    guard_report = report(
+        (
+            item(
+                HEX_A,
+                evidence_count=d("2.000000"),
+                stale_evidence_count=d("0.000000"),
+                probability_confidence=d("0.900000"),
+                memory_quality_score=d("0.920000"),
+            ),
+        ),
+        config=custom_config,
+    )
+
+    row = guard_report.rows[0]
+
+    assert row.min_pass_evidence_count == d("4.000000")
+    assert row.memory_readiness_score == d("0.830000")
+    assert row.status == "watch"
+    with pytest.raises(ValueError, match="memory_readiness_score"):
+        replace(row, min_pass_evidence_count=d("3.000000"))
+
+
 def test_owned_module_has_no_private_or_execution_surface() -> None:
     module_path = (
         Path(__file__).resolve().parents[1]

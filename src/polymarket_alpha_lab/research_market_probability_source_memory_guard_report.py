@@ -222,6 +222,7 @@ class ResearchMarketProbabilitySourceMemoryGuardReportRow:
     probability_confidence: Decimal
     memory_quality_score: Decimal
     memory_readiness_score: Decimal
+    min_pass_evidence_count: Decimal
     status: str
     reason_codes: tuple[str, ...]
     paper_only: bool = True
@@ -258,6 +259,14 @@ class ResearchMarketProbabilitySourceMemoryGuardReportRow:
             )
         if self.stale_evidence_count > self.evidence_count:
             raise ValueError("stale_evidence_count must not exceed evidence_count")
+        object.__setattr__(
+            self,
+            "min_pass_evidence_count",
+            _require_positive_whole_decimal(
+                "min_pass_evidence_count",
+                self.min_pass_evidence_count,
+            ),
+        )
         for field_name in (
             "stale_evidence_ratio",
             "probability_confidence",
@@ -623,6 +632,7 @@ def _build_report_row(
         probability_confidence=row.probability_confidence,
         memory_quality_score=row.memory_quality_score,
         memory_readiness_score=readiness_score,
+        min_pass_evidence_count=config.min_pass_evidence_count,
         status=status,
         reason_codes=_normalize_reason_codes("reason_codes", tuple(reason_codes)),
     )
@@ -995,7 +1005,24 @@ def _memory_readiness_score(
     memory_quality_score: Decimal,
     config: ResearchMarketProbabilitySourceMemoryGuardConfig,
 ) -> Decimal:
-    evidence_score = min(ONE, _quantize(evidence_count / config.min_pass_evidence_count))
+    return _memory_readiness_score_for_threshold(
+        evidence_count=evidence_count,
+        stale_evidence_ratio=stale_evidence_ratio,
+        probability_confidence=probability_confidence,
+        memory_quality_score=memory_quality_score,
+        min_pass_evidence_count=config.min_pass_evidence_count,
+    )
+
+
+def _memory_readiness_score_for_threshold(
+    *,
+    evidence_count: Decimal,
+    stale_evidence_ratio: Decimal,
+    probability_confidence: Decimal,
+    memory_quality_score: Decimal,
+    min_pass_evidence_count: Decimal,
+) -> Decimal:
+    evidence_score = min(ONE, _quantize(evidence_count / min_pass_evidence_count))
     fresh_evidence_score = ONE - stale_evidence_ratio
     return _quantize(
         (
@@ -1016,12 +1043,11 @@ def _validate_row_consistency(
         row.stale_evidence_count,
     ):
         raise ValueError("stale_evidence_ratio must match evidence counts")
-    pass_config = ResearchMarketProbabilitySourceMemoryGuardConfig()
-    if row.memory_readiness_score != _memory_readiness_score(
+    if row.memory_readiness_score != _memory_readiness_score_for_threshold(
         evidence_count=row.evidence_count,
         stale_evidence_ratio=row.stale_evidence_ratio,
         probability_confidence=row.probability_confidence,
         memory_quality_score=row.memory_quality_score,
-        config=pass_config,
+        min_pass_evidence_count=row.min_pass_evidence_count,
     ):
         raise ValueError("memory_readiness_score must match row inputs")
