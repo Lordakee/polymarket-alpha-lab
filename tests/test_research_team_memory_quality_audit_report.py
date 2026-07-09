@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import ast
+import hashlib
+import json
 from dataclasses import FrozenInstanceError, asdict, is_dataclass, replace
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -38,6 +40,17 @@ def d(value: str) -> Decimal:
 
 def _join_parts(*parts: str) -> str:
     return "".join(parts)
+
+
+def canonical_digest(payload: dict[str, object]) -> str:
+    unsigned_payload = dict(payload)
+    unsigned_payload.pop("derived_validation_digest")
+    encoded = json.dumps(
+        unsigned_payload,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def input_row(
@@ -248,7 +261,8 @@ def test_empty_inputs_return_block_report_only_digest() -> None:
         "pass_count": "0.000000",
         "watch_count": "0.000000",
         "block_count": "0.000000",
-        "reason_codes": ("research_team_memory_quality_audit_no_inputs",),
+        "reason_codes": ["research_team_memory_quality_audit_no_inputs"],
+        "derived_validation_digest": summary.derived_validation_digest,
     }
 
 
@@ -394,6 +408,11 @@ def test_payload_is_deterministic_decimal_string_only_and_consistent_with_digest
     first_payload = research_team_memory_quality_audit_report_payload(first)
     second_payload = research_team_memory_quality_audit_report_payload(second)
     assert first_payload == second_payload
+    assert first.derived_validation_digest == second.derived_validation_digest
+    assert first_payload["derived_validation_digest"] == first.derived_validation_digest
+    assert first_payload["derived_validation_digest"] == canonical_digest(first_payload)
+    assert len(first_payload["derived_validation_digest"]) == 64
+    int(first_payload["derived_validation_digest"], 16)
     assert first_payload["generated_at"] == "2026-07-08T12:00:00Z"
     assert first_payload["audited_team_count"] == "2.000000"
     assert first_payload["rows"][0]["public_status"] == "watch"
@@ -415,7 +434,11 @@ def test_payload_is_deterministic_decimal_string_only_and_consistent_with_digest
     assert digest["pass_count"] == first_payload["pass_count"]
     assert digest["watch_count"] == first_payload["watch_count"]
     assert digest["block_count"] == first_payload["block_count"]
-    assert digest["reason_codes"] == first_payload["reason_codes"] == first.reason_codes
+    assert digest["reason_codes"] == first_payload["reason_codes"] == list(first.reason_codes)
+    assert digest["derived_validation_digest"] == first_payload["derived_validation_digest"]
+
+    with pytest.raises(ValueError, match="derived_validation_digest"):
+        replace(first, derived_validation_digest="0" * 64)
 
 
 def test_quality_audit_module_is_report_only_and_has_no_io_surface() -> None:
@@ -431,7 +454,6 @@ def test_quality_audit_module_is_report_only_and_has_no_io_surface() -> None:
     forbidden_import_roots = {
         "builtins",
         "io",
-        "json",
         "os",
         "pathlib",
         "requests",

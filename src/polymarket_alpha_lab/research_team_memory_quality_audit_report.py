@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, fields, is_dataclass
 from datetime import UTC, datetime
 from decimal import Context, Decimal, ROUND_HALF_EVEN, localcontext
+from hashlib import sha256
+import json
 from typing import Any
 
 
@@ -366,6 +368,7 @@ class ResearchTeamMemoryQualityAuditReport:
     rows: tuple[ResearchTeamMemoryQualityAuditRow, ...]
     reason_code_counts: tuple[ResearchTeamMemoryQualityAuditReasonCodeCount, ...]
     reason_codes: tuple[str, ...]
+    derived_validation_digest: str = ""
     paper_only: bool = True
     report_only: bool = True
     readonly: bool = True
@@ -430,6 +433,7 @@ class ResearchTeamMemoryQualityAuditReport:
         if self.report_status != _report_status(self.rows):
             raise ValueError("report_status must match rows")
         _require_hard_flags("report", self)
+        _require_or_set_digest(self)
 
 
 def build_research_team_memory_quality_audit_report(
@@ -523,9 +527,11 @@ def research_team_memory_quality_audit_report_payload(
     if type(report) is not ResearchTeamMemoryQualityAuditReport:
         raise TypeError("report must be exactly ResearchTeamMemoryQualityAuditReport")
     _require_hard_flags("report", report)
+    _require_or_set_digest(report)
     payload = _payload_value(report)
     if not isinstance(payload, dict):
         raise ValueError("report payload must be a JSON object")
+    _verify_public_digest(payload)
     return payload
 
 
@@ -542,6 +548,7 @@ def research_team_memory_quality_audit_report_digest(
         "watch_count": payload["watch_count"],
         "block_count": payload["block_count"],
         "reason_codes": payload["reason_codes"],
+        "derived_validation_digest": payload["derived_validation_digest"],
     }
 
 
@@ -747,6 +754,45 @@ def _require_hard_flags(field_name: str, value: object) -> None:
             raise ValueError(f"{field_name} must keep {flag_name}=True")
 
 
+def _require_or_set_digest(report: ResearchTeamMemoryQualityAuditReport) -> None:
+    if type(report.derived_validation_digest) is not str:
+        raise TypeError("derived_validation_digest must be exactly str")
+    expected = _report_payload_digest(report)
+    if report.derived_validation_digest == "":
+        object.__setattr__(report, "derived_validation_digest", expected)
+        return
+    if report.derived_validation_digest != expected:
+        raise ValueError("derived_validation_digest must match public payload")
+
+
+def _report_payload_digest(report: ResearchTeamMemoryQualityAuditReport) -> str:
+    payload = _payload_value(report)
+    if not isinstance(payload, dict):
+        raise ValueError("report payload must be a JSON object")
+    payload.pop("derived_validation_digest", None)
+    return _canonical_digest(payload)
+
+
+def _verify_public_digest(payload: dict[str, Any]) -> None:
+    digest = payload.get("derived_validation_digest")
+    if type(digest) is not str:
+        raise TypeError("derived_validation_digest must be exactly str")
+    unsigned_payload = dict(payload)
+    unsigned_payload.pop("derived_validation_digest", None)
+    if digest != _canonical_digest(unsigned_payload):
+        raise ValueError("derived_validation_digest must match public payload")
+
+
+def _canonical_digest(payload: dict[str, Any]) -> str:
+    encoded = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    return sha256(encoded).hexdigest()
+
+
 def _as_utc(field_name: str, value: datetime) -> datetime:
     if type(value) is not datetime:
         raise TypeError(f"{field_name} must be exactly datetime")
@@ -834,7 +880,7 @@ def _payload_value(value: object) -> object:
             for field in fields(value)
         }
     if isinstance(value, tuple):
-        return tuple(_payload_value(item) for item in value)
+        return [_payload_value(item) for item in value]
     if type(value) is Decimal:
         return str(value)
     if type(value) is datetime:
