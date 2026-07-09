@@ -19,6 +19,34 @@ DEFAULT_RESEARCH_MARKET_LIQUIDITY_DEPTH_DECAY_REPORT_CONFIG_VERSION = (
 ZERO = Decimal("0.000000")
 ONE = Decimal("1.000000")
 RATIO_QUANTUM = Decimal("0.000001")
+UNSAFE_PUBLIC_FRAGMENTS = tuple(
+    "".join(parts)
+    for parts in (
+        ("candidate", "_", "id"),
+        ("condition", "_", "id"),
+        ("market", "_", "id"),
+        ("market", "_", "slug"),
+        ("slug",),
+        ("question",),
+        ("source", "_", "url"),
+        ("source", "_", "text"),
+        ("d", "s", "n"),
+        ("ta", "ble"),
+        ("to", "ken"),
+        ("wal", "let"),
+        ("au", "th"),
+        ("private",),
+        ("secret",),
+        ("credential",),
+        ("or", "der"),
+        ("tra", "de"),
+        ("buy",),
+        ("sell",),
+        ("size",),
+        ("siz", "ing"),
+        ("recommendation",),
+    )
+)
 
 
 __all__ = (
@@ -44,16 +72,22 @@ class ResearchMarketLiquidityDepthDecayConfig:
     max_watch_book_age_seconds: Decimal = Decimal("900.000000")
     max_pass_spread: Decimal = Decimal("0.020000")
     max_watch_spread: Decimal = Decimal("0.050000")
+    max_pass_spread_change_pressure: Decimal = Decimal("0.010000")
+    max_watch_spread_change_pressure: Decimal = Decimal("0.030000")
     max_pass_depth_decay_ratio: Decimal = Decimal("0.250000")
     max_watch_depth_decay_ratio: Decimal = Decimal("0.600000")
     max_pass_unchanged_book_seconds: Decimal = Decimal("180.000000")
     max_watch_unchanged_book_seconds: Decimal = Decimal("600.000000")
+    max_pass_concentration_pressure: Decimal = Decimal("0.500000")
+    max_watch_concentration_pressure: Decimal = Decimal("0.800000")
     pass_liquidity_depth_decay_score: Decimal = Decimal("0.750000")
     watch_liquidity_depth_decay_score: Decimal = Decimal("0.450000")
-    depth_freshness_weight: Decimal = Decimal("0.300000")
-    spread_pressure_weight: Decimal = Decimal("0.300000")
-    depth_decay_weight: Decimal = Decimal("0.250000")
+    depth_freshness_weight: Decimal = Decimal("0.250000")
+    spread_pressure_weight: Decimal = Decimal("0.200000")
+    spread_change_pressure_weight: Decimal = Decimal("0.100000")
+    depth_decay_weight: Decimal = Decimal("0.200000")
     stale_book_risk_weight: Decimal = Decimal("0.150000")
+    concentration_pressure_weight: Decimal = Decimal("0.100000")
     paper_only: bool = True
     report_only: bool = True
     readonly: bool = True
@@ -75,10 +109,14 @@ class ResearchMarketLiquidityDepthDecayConfig:
             "max_watch_book_age_seconds",
             "max_pass_spread",
             "max_watch_spread",
+            "max_pass_spread_change_pressure",
+            "max_watch_spread_change_pressure",
             "max_pass_depth_decay_ratio",
             "max_watch_depth_decay_ratio",
             "max_pass_unchanged_book_seconds",
             "max_watch_unchanged_book_seconds",
+            "max_pass_concentration_pressure",
+            "max_watch_concentration_pressure",
         ):
             object.__setattr__(
                 self,
@@ -89,17 +127,27 @@ class ResearchMarketLiquidityDepthDecayConfig:
             raise ValueError("max_watch_book_age_seconds must exceed pass threshold")
         if self.max_watch_spread <= self.max_pass_spread:
             raise ValueError("max_watch_spread must exceed pass threshold")
+        if self.max_watch_spread_change_pressure <= self.max_pass_spread_change_pressure:
+            raise ValueError(
+                "max_watch_spread_change_pressure must exceed pass threshold",
+            )
         if self.max_watch_depth_decay_ratio <= self.max_pass_depth_decay_ratio:
             raise ValueError("max_watch_depth_decay_ratio must exceed pass threshold")
         if self.max_watch_unchanged_book_seconds <= self.max_pass_unchanged_book_seconds:
             raise ValueError("max_watch_unchanged_book_seconds must exceed pass threshold")
+        if self.max_watch_concentration_pressure <= self.max_pass_concentration_pressure:
+            raise ValueError(
+                "max_watch_concentration_pressure must exceed pass threshold",
+            )
         for field_name in (
             "pass_liquidity_depth_decay_score",
             "watch_liquidity_depth_decay_score",
             "depth_freshness_weight",
             "spread_pressure_weight",
+            "spread_change_pressure_weight",
             "depth_decay_weight",
             "stale_book_risk_weight",
+            "concentration_pressure_weight",
         ):
             object.__setattr__(
                 self,
@@ -113,8 +161,10 @@ class ResearchMarketLiquidityDepthDecayConfig:
         weight_sum = _quantize(
             self.depth_freshness_weight
             + self.spread_pressure_weight
+            + self.spread_change_pressure_weight
             + self.depth_decay_weight
-            + self.stale_book_risk_weight,
+            + self.stale_book_risk_weight
+            + self.concentration_pressure_weight,
         )
         if weight_sum != ONE:
             raise ValueError("liquidity depth decay score weights must sum to 1")
@@ -128,8 +178,10 @@ class ResearchMarketLiquidityDepthDecaySnapshot:
     last_depth_change_at: datetime
     best_bid_price: Decimal
     best_ask_price: Decimal
+    spread_change_pressure: Decimal
     near_band_depth: Decimal
     far_band_depth: Decimal
+    concentration_pressure: Decimal
     reason_codes: tuple[str, ...] = ()
     paper_only: bool = True
     report_only: bool = True
@@ -158,6 +210,14 @@ class ResearchMarketLiquidityDepthDecaySnapshot:
             )
         if self.best_ask_price <= self.best_bid_price:
             raise ValueError("best_ask_price must exceed best_bid_price")
+        object.__setattr__(
+            self,
+            "spread_change_pressure",
+            _require_ratio_decimal(
+                "spread_change_pressure",
+                self.spread_change_pressure,
+            ),
+        )
         for field_name in ("near_band_depth", "far_band_depth"):
             object.__setattr__(
                 self,
@@ -168,6 +228,11 @@ class ResearchMarketLiquidityDepthDecaySnapshot:
             raise ValueError("near_band_depth must be positive")
         if self.far_band_depth > self.near_band_depth:
             raise ValueError("far_band_depth must not exceed near_band_depth")
+        object.__setattr__(
+            self,
+            "concentration_pressure",
+            _require_ratio_decimal("concentration_pressure", self.concentration_pressure),
+        )
         object.__setattr__(
             self,
             "reason_codes",
@@ -184,13 +249,19 @@ class ResearchMarketLiquidityDepthDecayRow:
     book_age_seconds: Decimal
     unchanged_book_seconds: Decimal
     spread_pressure: Decimal
+    spread_change_pressure: Decimal
     near_band_depth: Decimal
     far_band_depth: Decimal
+    depth_coverage_ratio: Decimal
     depth_decay_ratio: Decimal
+    stale_book_pressure: Decimal
+    concentration_pressure: Decimal
     depth_freshness_score: Decimal
     spread_pressure_score: Decimal
+    spread_change_score: Decimal
     depth_decay_score: Decimal
     stale_book_risk_score: Decimal
+    concentration_score: Decimal
     liquidity_depth_decay_score: Decimal
     status: str
     reason_codes: tuple[str, ...]
@@ -215,6 +286,7 @@ class ResearchMarketLiquidityDepthDecayRow:
             "book_age_seconds",
             "unchanged_book_seconds",
             "spread_pressure",
+            "spread_change_pressure",
             "near_band_depth",
             "far_band_depth",
         ):
@@ -224,11 +296,16 @@ class ResearchMarketLiquidityDepthDecayRow:
                 _require_nonnegative_decimal(field_name, getattr(self, field_name)),
             )
         for field_name in (
+            "depth_coverage_ratio",
             "depth_decay_ratio",
+            "stale_book_pressure",
+            "concentration_pressure",
             "depth_freshness_score",
             "spread_pressure_score",
+            "spread_change_score",
             "depth_decay_score",
             "stale_book_risk_score",
+            "concentration_score",
             "liquidity_depth_decay_score",
         ):
             object.__setattr__(
@@ -292,8 +369,10 @@ class ResearchMarketLiquidityDepthDecayReport:
     average_liquidity_depth_decay_score: Decimal | None
     max_book_age_seconds: Decimal
     max_spread_pressure: Decimal
+    max_spread_change_pressure: Decimal
     max_depth_decay_ratio: Decimal
     max_unchanged_book_seconds: Decimal
+    max_concentration_pressure: Decimal
     status: str
     rows: tuple[ResearchMarketLiquidityDepthDecayRow, ...]
     reason_code_counts: tuple[ResearchMarketLiquidityDepthDecayReasonCodeCount, ...]
@@ -328,8 +407,10 @@ class ResearchMarketLiquidityDepthDecayReport:
         for field_name in (
             "max_book_age_seconds",
             "max_spread_pressure",
+            "max_spread_change_pressure",
             "max_depth_decay_ratio",
             "max_unchanged_book_seconds",
+            "max_concentration_pressure",
         ):
             object.__setattr__(
                 self,
@@ -395,9 +476,15 @@ def build_research_market_liquidity_depth_decay_report(
         average_liquidity_depth_decay_score=_average_score(rows),
         max_book_age_seconds=_max_or_zero(tuple(row.book_age_seconds for row in rows)),
         max_spread_pressure=_max_or_zero(tuple(row.spread_pressure for row in rows)),
+        max_spread_change_pressure=_max_or_zero(
+            tuple(row.spread_change_pressure for row in rows),
+        ),
         max_depth_decay_ratio=_max_or_zero(tuple(row.depth_decay_ratio for row in rows)),
         max_unchanged_book_seconds=_max_or_zero(
             tuple(row.unchanged_book_seconds for row in rows),
+        ),
+        max_concentration_pressure=_max_or_zero(
+            tuple(row.concentration_pressure for row in rows),
         ),
         status=_summary_status(rows),
         rows=rows,
@@ -440,9 +527,16 @@ def _row_from_snapshot(
     book_age_seconds = _age_seconds(generated_at, snapshot.observed_at)
     unchanged_book_seconds = _age_seconds(generated_at, snapshot.last_depth_change_at)
     spread_pressure = _quantize(snapshot.best_ask_price - snapshot.best_bid_price)
+    spread_change_pressure = _quantize(snapshot.spread_change_pressure)
+    depth_coverage_ratio = _quantize(snapshot.far_band_depth / snapshot.near_band_depth)
     depth_decay_ratio = _quantize(
         (snapshot.near_band_depth - snapshot.far_band_depth) / snapshot.near_band_depth,
     )
+    stale_book_pressure = _pressure_ratio(
+        unchanged_book_seconds,
+        config.max_watch_unchanged_book_seconds,
+    )
+    concentration_pressure = _quantize(snapshot.concentration_pressure)
     depth_freshness_score = _inverse_ratio_score(
         book_age_seconds,
         config.max_watch_book_age_seconds,
@@ -450,6 +544,10 @@ def _row_from_snapshot(
     spread_pressure_score = _inverse_ratio_score(
         spread_pressure,
         config.max_watch_spread,
+    )
+    spread_change_score = _inverse_ratio_score(
+        spread_change_pressure,
+        config.max_watch_spread_change_pressure,
     )
     depth_decay_score = _inverse_ratio_score(
         depth_decay_ratio,
@@ -459,18 +557,26 @@ def _row_from_snapshot(
         unchanged_book_seconds,
         config.max_watch_unchanged_book_seconds,
     )
+    concentration_score = _inverse_ratio_score(
+        concentration_pressure,
+        config.max_watch_concentration_pressure,
+    )
     liquidity_depth_decay_score = _liquidity_depth_decay_score(
         depth_freshness_score=depth_freshness_score,
         spread_pressure_score=spread_pressure_score,
+        spread_change_score=spread_change_score,
         depth_decay_score=depth_decay_score,
         stale_book_risk_score=stale_book_risk_score,
+        concentration_score=concentration_score,
         config=config,
     )
     status = _row_status(
         book_age_seconds=book_age_seconds,
         spread_pressure=spread_pressure,
+        spread_change_pressure=spread_change_pressure,
         depth_decay_ratio=depth_decay_ratio,
         unchanged_book_seconds=unchanged_book_seconds,
+        concentration_pressure=concentration_pressure,
         liquidity_depth_decay_score=liquidity_depth_decay_score,
         config=config,
     )
@@ -481,21 +587,29 @@ def _row_from_snapshot(
         book_age_seconds=book_age_seconds,
         unchanged_book_seconds=unchanged_book_seconds,
         spread_pressure=spread_pressure,
+        spread_change_pressure=spread_change_pressure,
         near_band_depth=_quantize(snapshot.near_band_depth),
         far_band_depth=_quantize(snapshot.far_band_depth),
+        depth_coverage_ratio=depth_coverage_ratio,
         depth_decay_ratio=depth_decay_ratio,
+        stale_book_pressure=stale_book_pressure,
+        concentration_pressure=concentration_pressure,
         depth_freshness_score=depth_freshness_score,
         spread_pressure_score=spread_pressure_score,
+        spread_change_score=spread_change_score,
         depth_decay_score=depth_decay_score,
         stale_book_risk_score=stale_book_risk_score,
+        concentration_score=concentration_score,
         liquidity_depth_decay_score=liquidity_depth_decay_score,
         status=status,
         reason_codes=_row_reason_codes(
             snapshot=snapshot,
             book_age_seconds=book_age_seconds,
             spread_pressure=spread_pressure,
+            spread_change_pressure=spread_change_pressure,
             depth_decay_ratio=depth_decay_ratio,
             unchanged_book_seconds=unchanged_book_seconds,
+            concentration_pressure=concentration_pressure,
             status=status,
             config=config,
         ),
@@ -506,15 +620,19 @@ def _liquidity_depth_decay_score(
     *,
     depth_freshness_score: Decimal,
     spread_pressure_score: Decimal,
+    spread_change_score: Decimal,
     depth_decay_score: Decimal,
     stale_book_risk_score: Decimal,
+    concentration_score: Decimal,
     config: ResearchMarketLiquidityDepthDecayConfig,
 ) -> Decimal:
     return _quantize(
         depth_freshness_score * config.depth_freshness_weight
         + spread_pressure_score * config.spread_pressure_weight
+        + spread_change_score * config.spread_change_pressure_weight
         + depth_decay_score * config.depth_decay_weight
-        + stale_book_risk_score * config.stale_book_risk_weight,
+        + stale_book_risk_score * config.stale_book_risk_weight
+        + concentration_score * config.concentration_pressure_weight,
     )
 
 
@@ -522,8 +640,10 @@ def _row_status(
     *,
     book_age_seconds: Decimal,
     spread_pressure: Decimal,
+    spread_change_pressure: Decimal,
     depth_decay_ratio: Decimal,
     unchanged_book_seconds: Decimal,
+    concentration_pressure: Decimal,
     liquidity_depth_decay_score: Decimal,
     config: ResearchMarketLiquidityDepthDecayConfig,
 ) -> str:
@@ -531,16 +651,20 @@ def _row_status(
         liquidity_depth_decay_score < config.watch_liquidity_depth_decay_score
         or book_age_seconds >= config.max_watch_book_age_seconds
         or spread_pressure >= config.max_watch_spread
+        or spread_change_pressure >= config.max_watch_spread_change_pressure
         or depth_decay_ratio >= config.max_watch_depth_decay_ratio
         or unchanged_book_seconds >= config.max_watch_unchanged_book_seconds
+        or concentration_pressure >= config.max_watch_concentration_pressure
     ):
         return "block"
     if (
         liquidity_depth_decay_score < config.pass_liquidity_depth_decay_score
         or book_age_seconds >= config.max_pass_book_age_seconds
         or spread_pressure >= config.max_pass_spread
+        or spread_change_pressure >= config.max_pass_spread_change_pressure
         or depth_decay_ratio >= config.max_pass_depth_decay_ratio
         or unchanged_book_seconds >= config.max_pass_unchanged_book_seconds
+        or concentration_pressure >= config.max_pass_concentration_pressure
     ):
         return "watch"
     return "pass"
@@ -551,8 +675,10 @@ def _row_reason_codes(
     snapshot: ResearchMarketLiquidityDepthDecaySnapshot,
     book_age_seconds: Decimal,
     spread_pressure: Decimal,
+    spread_change_pressure: Decimal,
     depth_decay_ratio: Decimal,
     unchanged_book_seconds: Decimal,
+    concentration_pressure: Decimal,
     status: str,
     config: ResearchMarketLiquidityDepthDecayConfig,
 ) -> tuple[str, ...]:
@@ -575,7 +701,15 @@ def _row_reason_codes(
     )
     reason_codes.add(
         _threshold_reason(
-            "depth_decay",
+            "spread_change_pressure",
+            spread_change_pressure,
+            config.max_pass_spread_change_pressure,
+            config.max_watch_spread_change_pressure,
+        ),
+    )
+    reason_codes.add(
+        _threshold_reason(
+            "depth_coverage",
             depth_decay_ratio,
             config.max_pass_depth_decay_ratio,
             config.max_watch_depth_decay_ratio,
@@ -583,10 +717,18 @@ def _row_reason_codes(
     )
     reason_codes.add(
         _threshold_reason(
-            "stale_book_risk",
+            "stale_book_pressure",
             unchanged_book_seconds,
             config.max_pass_unchanged_book_seconds,
             config.max_watch_unchanged_book_seconds,
+        ),
+    )
+    reason_codes.add(
+        _threshold_reason(
+            "concentration_pressure",
+            concentration_pressure,
+            config.max_pass_concentration_pressure,
+            config.max_watch_concentration_pressure,
         ),
     )
     for reason_code in snapshot.reason_codes:
@@ -666,11 +808,16 @@ def _validate_row(row: ResearchMarketLiquidityDepthDecayRow) -> None:
         raise ValueError("near_band_depth must be positive")
     if row.far_band_depth > row.near_band_depth:
         raise ValueError("far_band_depth must not exceed near_band_depth")
+    expected_depth_coverage_ratio = _quantize(row.far_band_depth / row.near_band_depth)
+    if row.depth_coverage_ratio != expected_depth_coverage_ratio:
+        raise ValueError("depth_coverage_ratio must match depth fields")
     expected_depth_decay_ratio = _quantize(
         (row.near_band_depth - row.far_band_depth) / row.near_band_depth,
     )
     if row.depth_decay_ratio != expected_depth_decay_ratio:
         raise ValueError("depth_decay_ratio must match depth fields")
+    if row.stale_book_pressure != _quantize(ONE - row.stale_book_risk_score):
+        raise ValueError("stale_book_pressure must match stale book score")
     if f"liquidity_depth_decay_{row.status}" not in row.reason_codes:
         raise ValueError("status must match reason_codes")
 
@@ -694,6 +841,10 @@ def _validate_report(report: ResearchMarketLiquidityDepthDecayReport) -> None:
         tuple(row.spread_pressure for row in report.rows),
     ):
         raise ValueError("max_spread_pressure must match rows")
+    if report.max_spread_change_pressure != _max_or_zero(
+        tuple(row.spread_change_pressure for row in report.rows),
+    ):
+        raise ValueError("max_spread_change_pressure must match rows")
     if report.max_depth_decay_ratio != _max_or_zero(
         tuple(row.depth_decay_ratio for row in report.rows),
     ):
@@ -702,6 +853,10 @@ def _validate_report(report: ResearchMarketLiquidityDepthDecayReport) -> None:
         tuple(row.unchanged_book_seconds for row in report.rows),
     ):
         raise ValueError("max_unchanged_book_seconds must match rows")
+    if report.max_concentration_pressure != _max_or_zero(
+        tuple(row.concentration_pressure for row in report.rows),
+    ):
+        raise ValueError("max_concentration_pressure must match rows")
     if report.status != _summary_status(report.rows):
         raise ValueError("status must match rows")
     if report.reason_codes != _summary_reason_codes(report.rows):
@@ -769,6 +924,12 @@ def _inverse_ratio_score(value: Decimal, zero_at: Decimal) -> Decimal:
     return _quantize(max(ZERO, ONE - (value / zero_at)))
 
 
+def _pressure_ratio(value: Decimal, full_at: Decimal) -> Decimal:
+    if full_at <= ZERO:
+        raise ValueError("full_at must be positive")
+    return _quantize(min(ONE, value / full_at))
+
+
 def _age_seconds(generated_at: datetime, observed_at: datetime) -> Decimal:
     delta = generated_at - observed_at
     return _quantize(
@@ -803,7 +964,10 @@ def _payload_value(value: object) -> object:
     if isinstance(value, datetime):
         return value.isoformat()
     if is_dataclass(value) and not isinstance(value, type):
-        return {field.name: _payload_value(getattr(value, field.name)) for field in fields(value)}
+        return {
+            field.name: _payload_value(getattr(value, field.name))
+            for field in fields(value)
+        }
     if isinstance(value, tuple):
         return [_payload_value(item) for item in value]
     if isinstance(value, list):
@@ -925,6 +1089,8 @@ def _require_reason_code(field_name: str, value: object) -> None:
     allowed = set("abcdefghijklmnopqrstuvwxyz0123456789_")
     if any(character not in allowed for character in value):
         raise ValueError(f"{field_name} must contain lowercase snake-case values")
+    if _has_unsafe_public_fragment(value):
+        raise ValueError(f"{field_name} has unsafe public value")
 
 
 def _require_hard_flags(label: str, value: object) -> None:
@@ -940,3 +1106,8 @@ def _require_hex_digest(field_name: str, value: object) -> None:
     allowed = set("0123456789abcdef")
     if any(character not in allowed for character in value):
         raise ValueError(f"{field_name} must be a 64-character hex string")
+
+
+def _has_unsafe_public_fragment(value: str) -> bool:
+    normalized = value.lower()
+    return any(fragment in normalized for fragment in UNSAFE_PUBLIC_FRAGMENTS)

@@ -42,16 +42,22 @@ def config(**overrides: object):
         "max_watch_book_age_seconds": d("900.000000"),
         "max_pass_spread": d("0.020000"),
         "max_watch_spread": d("0.050000"),
+        "max_pass_spread_change_pressure": d("0.010000"),
+        "max_watch_spread_change_pressure": d("0.030000"),
         "max_pass_depth_decay_ratio": d("0.250000"),
         "max_watch_depth_decay_ratio": d("0.600000"),
         "max_pass_unchanged_book_seconds": d("180.000000"),
         "max_watch_unchanged_book_seconds": d("600.000000"),
+        "max_pass_concentration_pressure": d("0.500000"),
+        "max_watch_concentration_pressure": d("0.800000"),
         "pass_liquidity_depth_decay_score": d("0.750000"),
         "watch_liquidity_depth_decay_score": d("0.450000"),
-        "depth_freshness_weight": d("0.300000"),
-        "spread_pressure_weight": d("0.300000"),
-        "depth_decay_weight": d("0.250000"),
+        "depth_freshness_weight": d("0.250000"),
+        "spread_pressure_weight": d("0.200000"),
+        "spread_change_pressure_weight": d("0.100000"),
+        "depth_decay_weight": d("0.200000"),
         "stale_book_risk_weight": d("0.150000"),
+        "concentration_pressure_weight": d("0.100000"),
     }
     values.update(overrides)
     return module.ResearchMarketLiquidityDepthDecayConfig(**values)
@@ -64,8 +70,10 @@ def snapshot(
     last_depth_change_at: datetime | None = None,
     best_bid_price: Decimal = d("0.490000"),
     best_ask_price: Decimal = d("0.500000"),
+    spread_change_pressure: Decimal = d("0.000000"),
     near_band_depth: Decimal = d("1000.000000"),
     far_band_depth: Decimal = d("850.000000"),
+    concentration_pressure: Decimal = d("0.250000"),
     reason_codes: tuple[str, ...] = (),
     paper_only: bool = True,
     report_only: bool = True,
@@ -78,8 +86,10 @@ def snapshot(
         last_depth_change_at=last_depth_change_at or GENERATED_AT - timedelta(seconds=60),
         best_bid_price=best_bid_price,
         best_ask_price=best_ask_price,
+        spread_change_pressure=spread_change_pressure,
         near_band_depth=near_band_depth,
         far_band_depth=far_band_depth,
+        concentration_pressure=concentration_pressure,
         reason_codes=reason_codes,
         paper_only=paper_only,
         report_only=report_only,
@@ -124,8 +134,10 @@ def test_empty_input_blocks_liquidity_depth_decay_review() -> None:
     assert depth_report.average_liquidity_depth_decay_score is None
     assert depth_report.max_book_age_seconds == ZERO
     assert depth_report.max_spread_pressure == ZERO
+    assert depth_report.max_spread_change_pressure == ZERO
     assert depth_report.max_depth_decay_ratio == ZERO
     assert depth_report.max_unchanged_book_seconds == ZERO
+    assert depth_report.max_concentration_pressure == ZERO
     assert depth_report.status == "block"
     assert depth_report.reason_codes == ("no_liquidity_depth_decay_snapshots",)
     assert depth_report.reason_code_counts == (
@@ -149,8 +161,10 @@ def test_scores_pass_watch_and_block_depth_decay_snapshots() -> None:
             last_depth_change_at=GENERATED_AT - timedelta(seconds=300),
             best_bid_price=d("0.470000"),
             best_ask_price=d("0.500000"),
+            spread_change_pressure=d("0.015000"),
             near_band_depth=d("600.000000"),
             far_band_depth=d("390.000000"),
+            concentration_pressure=d("0.550000"),
         ),
         snapshot(
             "depth-case-block",
@@ -158,8 +172,10 @@ def test_scores_pass_watch_and_block_depth_decay_snapshots() -> None:
             last_depth_change_at=GENERATED_AT - timedelta(seconds=900),
             best_bid_price=d("0.420000"),
             best_ask_price=d("0.500000"),
+            spread_change_pressure=d("0.060000"),
             near_band_depth=d("100.000000"),
             far_band_depth=d("20.000000"),
+            concentration_pressure=d("0.900000"),
             reason_codes=("manual_depth_review",),
         ),
         snapshot("depth-case-pass"),
@@ -169,11 +185,13 @@ def test_scores_pass_watch_and_block_depth_decay_snapshots() -> None:
     assert depth_report.pass_count == d("1.000000")
     assert depth_report.watch_count == d("1.000000")
     assert depth_report.block_count == d("1.000000")
-    assert depth_report.average_liquidity_depth_decay_score == d("0.427222")
+    assert depth_report.average_liquidity_depth_decay_score == d("0.427778")
     assert depth_report.max_book_age_seconds == d("1200.000000")
     assert depth_report.max_spread_pressure == d("0.080000")
+    assert depth_report.max_spread_change_pressure == d("0.060000")
     assert depth_report.max_depth_decay_ratio == d("0.800000")
     assert depth_report.max_unchanged_book_seconds == d("900.000000")
+    assert depth_report.max_concentration_pressure == d("0.900000")
     assert depth_report.status == "block"
 
     block_row, pass_row, watch_row = depth_report.rows
@@ -185,36 +203,55 @@ def test_scores_pass_watch_and_block_depth_decay_snapshots() -> None:
     assert tuple(row.status for row in depth_report.rows) == ("block", "pass", "watch")
     assert block_row.book_age_seconds == d("1200.000000")
     assert block_row.spread_pressure == d("0.080000")
+    assert block_row.spread_change_pressure == d("0.060000")
+    assert block_row.depth_coverage_ratio == d("0.200000")
     assert block_row.depth_decay_ratio == d("0.800000")
+    assert block_row.stale_book_pressure == d("1.000000")
+    assert block_row.concentration_pressure == d("0.900000")
     assert block_row.liquidity_depth_decay_score == ZERO
     assert block_row.reason_codes == (
-        "depth_decay_block",
+        "concentration_pressure_block",
+        "depth_coverage_block",
         "depth_freshness_block",
         "input_manual_depth_review",
         "liquidity_depth_decay_block",
+        "spread_change_pressure_block",
         "spread_pressure_block",
-        "stale_book_risk_block",
+        "stale_book_pressure_block",
     )
+    assert pass_row.depth_coverage_ratio == d("0.850000")
     assert pass_row.depth_freshness_score == d("0.866667")
     assert pass_row.spread_pressure_score == d("0.800000")
+    assert pass_row.spread_change_pressure == ZERO
+    assert pass_row.spread_change_score == d("1.000000")
     assert pass_row.depth_decay_score == d("0.750000")
+    assert pass_row.stale_book_pressure == d("0.100000")
     assert pass_row.stale_book_risk_score == d("0.900000")
-    assert pass_row.liquidity_depth_decay_score == d("0.822500")
+    assert pass_row.concentration_pressure == d("0.250000")
+    assert pass_row.concentration_score == d("0.687500")
+    assert pass_row.liquidity_depth_decay_score == d("0.830417")
     assert pass_row.reason_codes == (
-        "depth_decay_pass",
+        "concentration_pressure_pass",
+        "depth_coverage_pass",
         "depth_freshness_pass",
         "liquidity_depth_decay_pass",
+        "spread_change_pressure_pass",
         "spread_pressure_pass",
-        "stale_book_risk_pass",
+        "stale_book_pressure_pass",
     )
     assert watch_row.depth_decay_ratio == d("0.350000")
-    assert watch_row.liquidity_depth_decay_score == d("0.459167")
+    assert watch_row.spread_change_pressure == d("0.015000")
+    assert watch_row.stale_book_pressure == d("0.500000")
+    assert watch_row.concentration_pressure == d("0.550000")
+    assert watch_row.liquidity_depth_decay_score == d("0.452917")
     assert watch_row.reason_codes == (
-        "depth_decay_watch",
+        "concentration_pressure_watch",
+        "depth_coverage_watch",
         "depth_freshness_watch",
         "liquidity_depth_decay_watch",
+        "spread_change_pressure_watch",
         "spread_pressure_watch",
-        "stale_book_risk_watch",
+        "stale_book_pressure_watch",
     )
 
 
@@ -241,7 +278,10 @@ def test_payload_and_digest_are_deterministic_decimal_strings_and_public_safe() 
     int(module.research_market_liquidity_depth_decay_report_digest(first), 16)
     assert first_payload["derived_validation_digest"] == first.derived_validation_digest
     assert first_payload["rows"][0]["liquidity_group_ref"] == "liquidity_depth_group_001"
-    assert first_payload["rows"][0]["liquidity_depth_decay_score"] == "0.822500"
+    assert first_payload["rows"][0]["depth_coverage_ratio"] == "0.850000"
+    assert first_payload["rows"][0]["stale_book_pressure"] == "0.100000"
+    assert first_payload["rows"][0]["concentration_pressure"] == "0.250000"
+    assert first_payload["rows"][0]["liquidity_depth_decay_score"] == "0.830417"
     assert not any(isinstance(value, float) for value in _walk_payload_values(first_payload))
     assert not any(isinstance(value, Decimal) for value in _walk_payload_values(first_payload))
     assert ": 0." not in encoded
@@ -265,8 +305,12 @@ def test_validation_rejects_non_decimal_values_bad_flags_and_digest_tampering() 
         populated.rows[0].liquidity_depth_decay_score = ZERO  # type: ignore[misc]
     with pytest.raises(ValueError, match="best_bid_price"):
         snapshot(best_bid_price=0.49)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="spread_change_pressure"):
+        snapshot(spread_change_pressure=DecimalSubclass("0.010000"))
     with pytest.raises(ValueError, match="near_band_depth"):
         snapshot(near_band_depth=DecimalSubclass("100.000000"))
+    with pytest.raises(ValueError, match="concentration_pressure"):
+        snapshot(concentration_pressure=d("1.010000"))
     with pytest.raises(ValueError, match="observed_at"):
         snapshot(observed_at=datetime(2026, 7, 8, 12, 0))
     with pytest.raises(ValueError, match="generated_at"):
@@ -279,6 +323,8 @@ def test_validation_rejects_non_decimal_values_bad_flags_and_digest_tampering() 
         snapshot(near_band_depth=d("100.000000"), far_band_depth=d("101.000000"))
     with pytest.raises(ValueError, match="reason_codes"):
         snapshot(reason_codes=("Needs Review",))
+    with pytest.raises(ValueError, match="unsafe public"):
+        snapshot(reason_codes=("market_id",))
     with pytest.raises(ValueError, match="paper_only"):
         snapshot(paper_only=False)
     with pytest.raises(ValueError, match="paper_only"):
@@ -300,6 +346,15 @@ def test_owned_module_has_no_db_network_wallet_execution_or_decision_surface() -
     )
     source = module_path.read_text(encoding="utf-8").lower()
     forbidden_terms = (
+        "candidate_id",
+        "condition_id",
+        "market_id",
+        "market_slug",
+        "source_url",
+        "source_text",
+        "dsn",
+        "table",
+        "token",
         "requests",
         "urllib",
         "httpx",
