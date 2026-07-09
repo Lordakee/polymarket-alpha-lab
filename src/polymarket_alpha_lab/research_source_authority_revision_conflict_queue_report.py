@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import asdict, dataclass, fields, is_dataclass
+from dataclasses import InitVar, asdict, dataclass, fields, is_dataclass
 from datetime import UTC, datetime
 from decimal import Decimal, ROUND_HALF_UP
 import hashlib
@@ -264,6 +264,7 @@ class ResearchSourceAuthorityRevisionConflictQueueRow:
     paper_only: bool = True
     report_only: bool = True
     readonly: bool = True
+    _config: InitVar[ResearchSourceAuthorityRevisionConflictQueueConfig | None] = None
 
     def __init_subclass__(cls, **kwargs: object) -> None:
         super().__init_subclass__(**kwargs)
@@ -272,7 +273,10 @@ class ResearchSourceAuthorityRevisionConflictQueueRow:
             "subclassing",
         )
 
-    def __post_init__(self) -> None:
+    def __post_init__(
+        self,
+        _config: ResearchSourceAuthorityRevisionConflictQueueConfig | None,
+    ) -> None:
         _require_exact_type(self, ResearchSourceAuthorityRevisionConflictQueueRow, "row")
         _require_public_case_key("public_case_key", self.public_case_key)
         _require_public_identifier("authority_bucket", self.authority_bucket)
@@ -317,7 +321,7 @@ class ResearchSourceAuthorityRevisionConflictQueueRow:
         )
         _require_hard_flags("row", self)
         _reject_unsafe_public_payload("row", self)
-        _validate_row_consistency(self)
+        _validate_row_consistency(self, config=_row_validation_config(_config))
 
 
 @dataclass(frozen=True)
@@ -608,6 +612,7 @@ def _row_from_item(
             authority_corroboration_gap_score=corroboration_gap,
             config=config,
         ),
+        _config=config,
     )
 
 
@@ -967,6 +972,8 @@ def _validate_config(
 
 def _validate_row_consistency(
     row: ResearchSourceAuthorityRevisionConflictQueueRow,
+    *,
+    config: ResearchSourceAuthorityRevisionConflictQueueConfig,
 ) -> None:
     if row.authority_gap_score != _quantize(_ONE - row.authority_score):
         raise ValueError("authority_gap_score must match authority_score")
@@ -982,19 +989,35 @@ def _validate_row_consistency(
         )
     if f"authority_revision_conflict_queue_{row.status}" not in row.reason_codes:
         raise ValueError("reason_codes must include row status")
-    expected_pressure = _pressure_score_from_row(row)
+    expected_pressure = _pressure_score_from_row(row, config=config)
     if row.conflict_queue_pressure_score != expected_pressure:
         raise ValueError("conflict_queue_pressure_score must match component scores")
 
 
+def _row_validation_config(
+    config: ResearchSourceAuthorityRevisionConflictQueueConfig | None,
+) -> ResearchSourceAuthorityRevisionConflictQueueConfig:
+    if config is None:
+        return ResearchSourceAuthorityRevisionConflictQueueConfig()
+    if type(config) is not ResearchSourceAuthorityRevisionConflictQueueConfig:
+        raise ValueError(
+            "config must be a ResearchSourceAuthorityRevisionConflictQueueConfig",
+        )
+    _require_hard_flags("config", config)
+    return config
+
+
 def _pressure_score_from_row(
     row: ResearchSourceAuthorityRevisionConflictQueueRow,
+    *,
+    config: ResearchSourceAuthorityRevisionConflictQueueConfig,
 ) -> Decimal:
-    return _clamp_probability(
-        (row.revision_age_pressure * Decimal("0.300000"))
-        + (row.authority_gap_score * Decimal("0.250000"))
-        + (row.revision_conflict_score * Decimal("0.300000"))
-        + (row.authority_corroboration_gap_score * Decimal("0.150000")),
+    return _pressure_score(
+        revision_age_pressure=row.revision_age_pressure,
+        authority_gap_score=row.authority_gap_score,
+        revision_conflict_score=row.revision_conflict_score,
+        authority_corroboration_gap_score=row.authority_corroboration_gap_score,
+        config=config,
     )
 
 

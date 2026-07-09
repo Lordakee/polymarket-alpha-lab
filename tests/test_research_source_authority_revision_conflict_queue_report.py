@@ -272,6 +272,39 @@ def test_prioritizes_revision_conflict_queue_with_decimal_scores() -> None:
     )
 
 
+def test_custom_config_weights_are_used_to_validate_pressure_scores() -> None:
+    module = api()
+    custom_cfg = config(
+        revision_age_weight=d("0.100000"),
+        authority_gap_weight=d("0.700000"),
+        revision_conflict_weight=d("0.100000"),
+        authority_corroboration_gap_weight=d("0.100000"),
+    )
+
+    conflict_report = report(
+        (
+            item(
+                1,
+                public_case_key="custom-weight-case",
+                authority_bucket="authority-weighted",
+            ),
+        ),
+        cfg=custom_cfg,
+    )
+    payload = module.research_source_authority_revision_conflict_queue_report_payload(
+        conflict_report,
+    )
+
+    row = conflict_report.rows[0]
+    assert row.revision_age_pressure == d("0.055556")
+    assert row.authority_gap_score == d("0.050000")
+    assert row.revision_conflict_score == d("0.050000")
+    assert row.authority_corroboration_gap_score == d("0.000000")
+    assert row.conflict_queue_pressure_score == d("0.045556")
+    assert row.conflict_queue_pressure_score != d("0.044167")
+    assert payload["rows"][0]["conflict_queue_pressure_score"] == "0.045556"
+
+
 def test_payload_and_digest_are_deterministic_public_safe_and_decimal_strings() -> None:
     module = api()
     rows = (
