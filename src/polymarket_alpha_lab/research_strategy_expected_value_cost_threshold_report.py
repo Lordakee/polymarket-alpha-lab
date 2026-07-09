@@ -754,7 +754,7 @@ def _validate_row_consistency(row: ResearchStrategyExpectedValueCostThresholdRow
         raise ValueError(
             "adjusted_expected_value_edge must match gross edge and total cost drag",
         )
-    if row.status not in row.reason_codes[0] and row.status == "pass":
+    if row.status == "pass":
         if "expected_value_cost_threshold_pass" not in row.reason_codes:
             raise ValueError("pass rows must include pass reason code")
     if row.status == "watch" and "expected_value_cost_threshold_watch" not in row.reason_codes:
