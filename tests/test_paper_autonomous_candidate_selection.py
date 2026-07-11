@@ -434,6 +434,29 @@ def test_builder_rejects_wrong_types_and_false_hard_flags() -> None:
         )
 
 
+def test_builder_rejects_non_string_decision_matrix_reason_codes() -> None:
+    source_report = _source_report((_source_row(),))
+    decision_report = _decision_matrix_report(
+        _decision_matrix_row("market-a", "research"),
+    )
+    object.__setattr__(
+        decision_report.decision_rows[0],
+        "reason_codes",
+        ("matrix_research_gap", 42),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="decision_matrix_report rows must be exact",
+    ):
+        build_paper_autonomous_candidate_selection_report(
+            (source_report,),
+            config=PaperAutonomousCandidateSelectionConfig(),
+            generated_at=GENERATED_AT,
+            decision_matrix_report=decision_report,
+        )
+
+
 def test_config_rejects_float_thresholds_and_quantizes_decimals() -> None:
     config = PaperAutonomousCandidateSelectionConfig(
         min_net_edge_per_share=Decimal("0.0100004"),

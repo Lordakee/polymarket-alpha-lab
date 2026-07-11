@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import fields
+from dataclasses import FrozenInstanceError, fields, replace
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal
+from decimal import Context, Decimal, localcontext
 import hashlib
+import inspect
 import json
 from typing import Any
 
@@ -252,6 +253,399 @@ def test_build_team_source_reliability_report_groups_settled_sources() -> None:
     assert eth.status == "source_reliability_candidate"
 
 
+def test_source_reliability_scores_capture_phase_1_summary_fields() -> None:
+    evidence_rows = (
+        _evidence_row(
+            evidence_id="evidence-primary-1",
+            forecast_id="forecast-primary-1",
+            source_id="source-primary-desk",
+            generated_at=GENERATED_AT - timedelta(minutes=30),
+        ),
+        _evidence_row(
+            evidence_id="evidence-primary-2",
+            forecast_id="forecast-primary-2",
+            source_id="source-primary-desk",
+            generated_at=GENERATED_AT - timedelta(minutes=10),
+        ),
+        _evidence_row(
+            evidence_id="evidence-primary-3",
+            forecast_id="forecast-primary-3",
+            source_id="source-primary-desk",
+            generated_at=GENERATED_AT - timedelta(seconds=60),
+        ),
+        _evidence_row(
+            evidence_id="evidence-secondary-1",
+            forecast_id="forecast-secondary-1",
+            source_id="source-secondary-desk",
+            generated_at=GENERATED_AT - timedelta(seconds=120),
+        ),
+    )
+    outcome_rows = (
+        _outcome_row(
+            outcome_id="outcome-primary-1",
+            forecast_id="forecast-primary-1",
+            directionally_correct=True,
+            profitable_after_cost=True,
+            brier_score=d("0.040000"),
+            generated_at=GENERATED_AT - timedelta(minutes=30),
+        ),
+        _outcome_row(
+            outcome_id="outcome-primary-2",
+            forecast_id="forecast-primary-2",
+            directionally_correct=False,
+            profitable_after_cost=False,
+            brier_score=d("0.360000"),
+            generated_at=GENERATED_AT - timedelta(minutes=10),
+        ),
+        _outcome_row(
+            outcome_id="outcome-primary-3",
+            forecast_id="forecast-primary-3",
+            directionally_correct=False,
+            profitable_after_cost=False,
+            brier_score=d("0.250000"),
+            generated_at=GENERATED_AT - timedelta(seconds=60),
+        ),
+        _outcome_row(
+            outcome_id="outcome-secondary-1",
+            forecast_id="forecast-secondary-1",
+            directionally_correct=True,
+            profitable_after_cost=True,
+            brier_score=d("0.010000"),
+            generated_at=GENERATED_AT - timedelta(seconds=120),
+        ),
+    )
+
+    report = build_team_source_reliability_report(
+        evidence_rows,
+        outcome_rows,
+        config=TeamSourceReliabilityConfig(
+            min_settled_evidence_count=3,
+            max_freshness_age_seconds=600,
+            min_corroboration_count=2,
+            failure_streak_watch_threshold=2,
+        ),
+        generated_at=GENERATED_AT,
+    )
+
+    primary, secondary = report.rows
+    assert (primary.source_id, secondary.source_id) == (
+        "source-primary-desk",
+        "source-secondary-desk",
+    )
+    assert primary.freshness_age_seconds == 60
+    assert primary.freshness_score == d("0.900000")
+    assert primary.corroboration_count == 1
+    assert primary.failure_streak == 2
+    assert primary.reliability_score == d("0.589166")
+    assert primary.reliability_grade == "C"
+    assert secondary.freshness_age_seconds == 120
+    assert secondary.corroboration_count == 1
+    assert secondary.failure_streak == 0
+    assert secondary.reliability_grade == "A"
+    assert report.reliability_grade_counts == (("A", 1), ("C", 1))
+
+
+def test_source_reliability_rejects_future_evidence_timestamp() -> None:
+    evidence = _evidence_row(
+        evidence_id="evidence-future",
+        forecast_id="forecast-future",
+        generated_at=GENERATED_AT + timedelta(microseconds=1),
+    )
+
+    with pytest.raises(ValueError, match="must not be later than generated_at"):
+        build_team_source_reliability_report(
+            (evidence,),
+            (),
+            config=TeamSourceReliabilityConfig(),
+            generated_at=GENERATED_AT,
+        )
+
+
+@pytest.mark.parametrize("field_name", ("generated_at", "resolved_at"))
+def test_source_reliability_rejects_future_outcome_timestamp(
+    field_name: str,
+) -> None:
+    evidence = _evidence_row(
+        evidence_id="evidence-future-outcome",
+        forecast_id="forecast-future-outcome",
+        generated_at=GENERATED_AT - timedelta(minutes=1),
+    )
+    outcome = _outcome_row(
+        outcome_id="outcome-future",
+        forecast_id="forecast-future-outcome",
+        directionally_correct=True,
+        profitable_after_cost=True,
+    )
+    future_outcome = _bypassed_row(
+        outcome,
+        **{field_name: GENERATED_AT + timedelta(microseconds=1)},
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=rf"outcome {field_name} must not be later than generated_at",
+    ):
+        build_team_source_reliability_report(
+            (evidence,),
+            (future_outcome,),
+            config=TeamSourceReliabilityConfig(min_settled_evidence_count=1),
+            generated_at=GENERATED_AT,
+        )
+
+
+def test_derived_source_reliability_rows_revalidate_score_relationships() -> None:
+    values = {
+        "team_id": "crypto_btc",
+        "source_id": "source-etf-flow-dashboard",
+        "evidence_count": 1,
+        "settled_evidence_count": 1,
+        "directionally_correct_count": 1,
+        "profitable_after_cost_count": 1,
+        "dispute_count": 0,
+        "average_brier_score": d("0.100000"),
+        "hit_rate": d("1.000000"),
+        "profitable_rate": d("1.000000"),
+        "average_weight": d("0.420000"),
+        "average_confidence": None,
+        "latest_generated_at": GENERATED_AT,
+        "status": "source_reliability_validated",
+        "freshness_age_seconds": 60,
+        "freshness_score": d("0.900000"),
+        "freshness_horizon_seconds": 600,
+        "corroboration_count": 1,
+        "failure_streak": 0,
+        "reliability_score": d("0.900000"),
+        "reliability_grade": "A",
+    }
+
+    row = TeamSourceReliabilityRow(**values)
+    assert row.freshness_horizon_seconds == 600
+
+    with pytest.raises(ValueError, match="freshness_score must match"):
+        TeamSourceReliabilityRow(**{**values, "freshness_score": d("0.800000")})
+    with pytest.raises(ValueError, match="reliability_grade must match"):
+        TeamSourceReliabilityRow(**{**values, "reliability_grade": "F"})
+
+
+@pytest.mark.parametrize(
+    ("field_name", "bad_value", "error_match"),
+    (
+        ("freshness_score", d("0.800000"), "freshness_score must match"),
+        ("reliability_grade", "F", "reliability_grade must match"),
+    ),
+)
+def test_report_revalidates_tampered_derived_source_rows(
+    field_name: str,
+    bad_value: object,
+    error_match: str,
+) -> None:
+    evidence = _evidence_row(
+        evidence_id="evidence-derived-row",
+        forecast_id="forecast-derived-row",
+        generated_at=GENERATED_AT - timedelta(seconds=60),
+    )
+    outcome = _outcome_row(
+        outcome_id="outcome-derived-row",
+        forecast_id="forecast-derived-row",
+        directionally_correct=True,
+        profitable_after_cost=True,
+    )
+    report = build_team_source_reliability_report(
+        (evidence,),
+        (outcome,),
+        config=TeamSourceReliabilityConfig(min_settled_evidence_count=1),
+        generated_at=GENERATED_AT,
+    )
+    object.__setattr__(report.rows[0], field_name, bad_value)
+
+    with pytest.raises(ValueError, match=error_match):
+        replace(report, reliability_grade_counts=(("F", 1),))
+
+
+def test_source_reliability_uses_decimal_time_math_without_float_surfaces() -> None:
+    import polymarket_alpha_lab.team_source_reliability as api
+
+    source = inspect.getsource(api)
+
+    assert ".total_seconds(" not in source
+    assert "float(" not in source
+
+
+def test_pending_reliability_score_ignores_ambient_decimal_context() -> None:
+    evidence = _evidence_row(
+        evidence_id="evidence-pending-context",
+        forecast_id="forecast-pending-context",
+        generated_at=GENERATED_AT - timedelta(seconds=60),
+    )
+
+    with localcontext(Context(prec=1)):
+        report = build_team_source_reliability_report(
+            (evidence,),
+            (),
+            config=TeamSourceReliabilityConfig(
+                include_pending=True,
+                max_freshness_age_seconds=600,
+            ),
+            generated_at=GENERATED_AT,
+        )
+
+    assert report.rows[0].freshness_score == d("0.900000")
+    assert report.rows[0].reliability_score == d("0.450000")
+
+
+def test_settled_reliability_score_ignores_ambient_decimal_context() -> None:
+    evidence = _evidence_row(
+        evidence_id="evidence-settled-context",
+        forecast_id="forecast-settled-context",
+        generated_at=GENERATED_AT - timedelta(seconds=60),
+    )
+    outcome = _outcome_row(
+        outcome_id="outcome-settled-context",
+        forecast_id="forecast-settled-context",
+        directionally_correct=True,
+        profitable_after_cost=True,
+    )
+
+    with localcontext(Context(prec=1)):
+        report = build_team_source_reliability_report(
+            (evidence,),
+            (outcome,),
+            config=TeamSourceReliabilityConfig(
+                min_settled_evidence_count=1,
+                max_freshness_age_seconds=600,
+            ),
+            generated_at=GENERATED_AT,
+        )
+
+    assert report.rows[0].freshness_score == d("0.900000")
+    assert report.rows[0].reliability_score == d("0.843713")
+
+
+def test_freshness_age_ignores_ambient_decimal_context() -> None:
+    evidence = _evidence_row(
+        evidence_id="evidence-age-context",
+        forecast_id="forecast-age-context",
+        generated_at=GENERATED_AT - timedelta(days=1, seconds=1),
+    )
+
+    with localcontext(Context(prec=1)):
+        report = build_team_source_reliability_report(
+            (evidence,),
+            (),
+            config=TeamSourceReliabilityConfig(
+                include_pending=True,
+                max_freshness_age_seconds=200_000,
+            ),
+            generated_at=GENERATED_AT,
+        )
+
+    assert report.rows[0].freshness_age_seconds == 86_401
+
+
+def test_source_reliability_rejects_naive_report_timestamp() -> None:
+    with pytest.raises(ValueError, match="generated_at must be timezone-aware"):
+        build_team_source_reliability_report(
+            (),
+            (),
+            config=TeamSourceReliabilityConfig(),
+            generated_at=datetime(2026, 7, 2, 12, 0),
+        )
+
+
+def test_source_reliability_rejects_sensitive_source_ids_before_public_rows() -> None:
+    evidence = _evidence_row(
+        evidence_id="evidence-sensitive-source",
+        forecast_id="forecast-sensitive-source",
+    )
+    payload_json = _payload_copy(evidence)
+    payload_json["evidence"]["source_id"] = "wallet_private_source"
+    sensitive_source = _bypassed_row(
+        evidence,
+        source_id="wallet_private_source",
+        payload_sha256=_payload_sha256(payload_json),
+        payload_json=payload_json,
+    )
+    outcome = _outcome_row(
+        outcome_id="outcome-sensitive-source",
+        forecast_id="forecast-sensitive-source",
+        directionally_correct=True,
+        profitable_after_cost=True,
+    )
+
+    with pytest.raises(ValueError, match="source_id"):
+        build_team_source_reliability_report(
+            (sensitive_source,),
+            (outcome,),
+            config=TeamSourceReliabilityConfig(),
+            generated_at=GENERATED_AT,
+        )
+
+
+def test_source_reliability_report_exposes_no_raw_sensitive_output_fields() -> None:
+    evidence = _evidence_row(
+        evidence_id="evidence-btc-1",
+        forecast_id="forecast-btc-1",
+    )
+    outcome = _outcome_row(
+        outcome_id="outcome-btc-1",
+        forecast_id="forecast-btc-1",
+        directionally_correct=True,
+        profitable_after_cost=True,
+    )
+
+    report = build_team_source_reliability_report(
+        (evidence,),
+        (outcome,),
+        config=TeamSourceReliabilityConfig(),
+        generated_at=GENERATED_AT,
+    )
+
+    report_field_names = {field.name for field in fields(report)}
+    row_field_names = {field.name for field in fields(report.rows[0])}
+    exposed_names = report_field_names | row_field_names
+
+    assert {
+        "payload_json",
+        "payload_sha256",
+        "evidence_text",
+        "actual_outcome",
+        "settlement_source",
+        "paper_pnl",
+        "cost_adjusted_return",
+    }.isdisjoint(exposed_names)
+    rendered = repr(report)
+    assert "US spot ETF net flow improved over the last session." not in rendered
+    assert "polymarket_public_resolution" not in rendered
+
+
+def test_source_reliability_report_dataclasses_are_frozen() -> None:
+    row = TeamSourceReliabilityRow(
+        team_id="crypto_btc",
+        source_id="source-etf-flow-dashboard",
+        evidence_count=1,
+        settled_evidence_count=1,
+        directionally_correct_count=1,
+        profitable_after_cost_count=1,
+        dispute_count=0,
+        average_brier_score=d("0.100000"),
+        hit_rate=d("1.000000"),
+        profitable_rate=d("1.000000"),
+        average_weight=d("0.420000"),
+        average_confidence=None,
+        latest_generated_at=GENERATED_AT,
+        status="source_reliability_validated",
+        freshness_age_seconds=0,
+        freshness_score=d("1.000000"),
+        corroboration_count=1,
+        failure_streak=0,
+        reliability_score=d("0.960000"),
+        reliability_grade="A",
+    )
+
+    with pytest.raises(FrozenInstanceError):
+        row.reliability_grade = "A"  # type: ignore[misc]
+
+
 def test_build_team_source_reliability_report_marks_watch_for_bad_disputes_or_profit() -> None:
     evidence_rows = (
         _evidence_row(evidence_id="evidence-btc-1", forecast_id="forecast-btc-1"),
@@ -486,6 +880,12 @@ def test_report_dataclasses_reject_false_hard_flags() -> None:
             average_confidence=None,
             latest_generated_at=GENERATED_AT,
             status="source_reliability_validated",
+            freshness_age_seconds=0,
+            freshness_score=d("1.000000"),
+            corroboration_count=1,
+            failure_streak=0,
+            reliability_score=d("0.960000"),
+            reliability_grade="A",
             report_only=False,
         )
 
@@ -502,3 +902,32 @@ def test_report_dataclasses_reject_false_hard_flags() -> None:
             rows=(),
             readonly=False,
         )
+
+
+def test_source_reliability_row_preserves_legacy_constructor_defaults() -> None:
+    row = TeamSourceReliabilityRow(
+        team_id="crypto_btc",
+        source_id="source-etf-flow-dashboard",
+        evidence_count=1,
+        settled_evidence_count=1,
+        directionally_correct_count=1,
+        profitable_after_cost_count=1,
+        dispute_count=0,
+        average_brier_score=d("0.100000"),
+        hit_rate=d("1.000000"),
+        profitable_rate=d("1.000000"),
+        average_weight=d("0.420000"),
+        average_confidence=None,
+        latest_generated_at=GENERATED_AT,
+        status="source_reliability_validated",
+    )
+
+    assert row.freshness_age_seconds == 0
+    assert row.freshness_score == d("1.000000")
+    assert row.corroboration_count == 0
+    assert row.failure_streak == 0
+    assert row.reliability_score == d("0.000000")
+    assert row.reliability_grade == "F"
+    assert row.paper_only is True
+    assert row.report_only is True
+    assert row.readonly is True

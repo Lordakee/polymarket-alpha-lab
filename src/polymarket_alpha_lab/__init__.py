@@ -359,6 +359,13 @@ from polymarket_alpha_lab.nav_risk_metrics import (
     PaperNavRiskMetricsReport,
     build_paper_nav_risk_metrics_report,
 )
+from polymarket_alpha_lab.exposure_concentration_monitor import (
+    PaperExposureConcentrationEventRow,
+    PaperExposureConcentrationGroupRow,
+    PaperExposureConcentrationMonitorConfig,
+    PaperExposureConcentrationReport,
+    build_paper_exposure_concentration_report,
+)
 from polymarket_alpha_lab.paper_trade_cost_audit import (
     PaperTradeCostAuditConfig,
     PaperTradeCostAuditReport,
@@ -615,6 +622,10 @@ __all__ = [
     "PaperExecutionConfig",
     "PaperExecutionResult",
     "PaperExecutionLog",
+    "PaperExposureConcentrationEventRow",
+    "PaperExposureConcentrationGroupRow",
+    "PaperExposureConcentrationMonitorConfig",
+    "PaperExposureConcentrationReport",
     "PaperFill",
     "PaperForecastConfig",
     "PaperForecast",
@@ -798,6 +809,7 @@ __all__ = [
     "build_paper_project_screening_report",
     "build_paper_strategy_cycle_report_history_gate_report",
     "build_paper_drawdown_points",
+    "build_paper_exposure_concentration_report",
     "build_paper_forecast_evidence_report",
     "build_paper_naive_forecast",
     "build_paper_manual_review_queue",

@@ -253,6 +253,10 @@ def _with_psycopg_owned_connection(
     )
 
     def connection_factory() -> _PsycopgJsonConnection:
+        validate_local_postgres_dsn(
+            dsn,
+            env_var_name=PAPER_PROBABILITY_SELECTION_SUMMARY_HISTORY_DB_DSN_ENV_VAR,
+        )
         jsonb_adapter = _jsonb_adapter()
         if connect is None:
             connection = _connect(dsn)

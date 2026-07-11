@@ -14757,11 +14757,16 @@ def _print_paper_research_packet_db_history_summary(report: object) -> None:
     if report.latest_top_packet_rank is None:
         print("top_packet: none")
         return
+    redacted_market_slug = (
+        "<redacted-market>"
+        if report.latest_top_packet_market_slug is not None
+        else "none"
+    )
     reason_codes = ",".join(report.latest_top_packet_reason_codes or ())
     print(
         "top_packet: "
         f"rank={report.latest_top_packet_rank} "
-        "market_slug=<redacted-market> "
+        f"market_slug={redacted_market_slug} "
         f"side={report.latest_top_packet_side} "
         f"research_priority={report.latest_top_packet_research_priority} "
         f"recommendation_score={report.latest_top_packet_recommendation_score} "
