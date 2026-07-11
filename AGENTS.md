@@ -56,9 +56,6 @@ the user explicitly changes them in a later instruction.
 5. **Fast mode is forbidden.** Do not use fast mode for the main Codex agent,
    Codex subagents, Claude Code reviews, implementation workers, planning workers,
    or audit workers.
-6. **Codex subagents use GPT-5.5 xhigh.** Codex subagents dispatched for this
-   project must use model `gpt-5.5` with reasoning effort `xhigh`. If the user
-   informally writes `xhign`, treat it as the executable setting `xhigh`.
 
 ## CodeGraph
 
@@ -102,10 +99,14 @@ Avoid using website scraping as a primary data path unless a needed field is una
 
 ## Model Defaults
 
-- Codex subagents dispatched for this project must use model `gpt-5.5` with reasoning effort `xhigh`.
+- Codex subagents have no project-wide fixed model or reasoning-effort
+  requirement. Select the model and reasoning effort per task based on
+  complexity, quality, throughput, and current service capacity.
+- Historical plans, review packages, and handoff artifacts that mention a
+  fixed `gpt-5.5` / `xhigh` subagent setting are descriptive records and do not
+  reinstate that requirement for current or future dispatches.
 - Local Claude Code reviews for this project must use model `claude-opus-4-8`
   with thinking level `max`.
-- If the user informally writes `xhign` for the Codex subagent reasoning level, treat it as the executable setting `xhigh`.
 - Do not use fast mode for the main Codex agent, Codex subagents, Claude Code
   reviews, or local implementation/review gates.
 
