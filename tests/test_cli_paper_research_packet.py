@@ -283,6 +283,40 @@ def test_paper_research_packet_cli_persists_packet_when_requested(
     assert packet_table not in captured.out
 
 
+def test_paper_research_packet_cli_summary_prints_phase_1_hard_flags(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    source_dsn = "postgresql://localhost:54322/paper-research-packet_source"
+    monkeypatch.setenv(STRATEGY_CANDIDATE_RESEARCH_QUEUE_DB_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(STRATEGY_CANDIDATE_RESEARCH_QUEUE_DB_DSN_ENV_VAR, source_dsn)
+    source_report = _source_report(
+        "latest",
+        datetime(2026, 6, 23, 5, 0, tzinfo=UTC),
+    )
+
+    exit_code = main(
+        [COMMAND],
+        strategy_candidate_research_queue_loader=lambda *args, **kwargs: (source_report,),
+        paper_research_packet_builder=lambda *args, **kwargs: _packet_report(),
+        paper_research_packet_db_sink=lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("paper research packet DB sink should not run"),
+        ),
+        client_factory=lambda: (_ for _ in ()).throw(
+            AssertionError("client should not be constructed"),
+        ),
+    )
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    summary_line = captured.out.splitlines()[0]
+    assert "paper_only=True" in summary_line
+    assert "report_only=True" in summary_line
+    assert "readonly=True" in summary_line
+    assert source_dsn not in captured.out
+    assert source_dsn not in captured.err
+
+
 def test_paper_research_packet_cli_requires_packet_db_when_persisting(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],

@@ -85,6 +85,17 @@ def test_fewer_than_min_report_count_is_blocked_but_includes_latest_counts() -> 
     assert report.latest_blocked_count == 0
 
 
+def test_history_treats_naive_generated_at_as_utc() -> None:
+    report = build_team_memory_readiness_digest_history_report(
+        (),
+        config=TeamMemoryReadinessDigestHistoryConfig(min_report_count=2),
+        generated_at=datetime(2026, 7, 2, 12, 0),
+    )
+
+    assert report.generated_at == GENERATED_AT
+    assert report.generated_at.tzinfo is UTC
+
+
 def test_duplicate_latest_generated_at_blocks_history() -> None:
     latest_generated_at = GENERATED_AT + timedelta(minutes=2)
     report = build_team_memory_readiness_digest_history_report(

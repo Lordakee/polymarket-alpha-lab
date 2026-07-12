@@ -11,6 +11,10 @@ from polymarket_alpha_lab.positions import PaperNavSnapshot
 RATIO_QUANTUM = Decimal("0.000001")
 ZERO = Decimal("0")
 ZERO_NAV = Decimal("0.0000")
+CONCENTRATED_MARKET_SHARE = Decimal("0.250000")
+MATERIAL_MARKET_SHARE = Decimal("0.100000")
+TOP_THREE_EXPOSURE_WATCH_SHARE = Decimal("0.500000")
+TOP_THREE_EXPOSURE_BLOCK_SHARE = Decimal("0.750000")
 
 
 @dataclass(frozen=True)
@@ -78,6 +82,14 @@ class PaperNavRiskMetricsReport:
     largest_market_exposure_value: Decimal | None
     largest_market_exposure_share: Decimal | None
     exposure_rows: tuple[PaperNavRiskExposureRow, ...]
+    top_three_market_exposure_value: Decimal | None = None
+    top_three_market_exposure_share: Decimal | None = None
+    concentrated_market_count: int = 0
+    material_market_count: int = 0
+    exposure_concentration_status: str = "pass"
+    exposure_concentration_reason_codes: tuple[str, ...] = (
+        "nav_exposure_concentration_clear",
+    )
     paper_only: bool = True
     report_only: bool = True
 
@@ -110,6 +122,8 @@ class PaperNavRiskMetricsReport:
             "pending_notional",
             "largest_market_exposure_value",
             "largest_market_exposure_share",
+            "top_three_market_exposure_value",
+            "top_three_market_exposure_share",
         ):
             _require_optional_nonnegative_decimal(field_name, getattr(self, field_name))
         _require_optional_decimal(
@@ -123,13 +137,28 @@ class PaperNavRiskMetricsReport:
             "fully_executable_count",
             "partially_executable_count",
             "no_exit_depth_count",
+            "concentrated_market_count",
+            "material_market_count",
         ):
             _require_nonnegative_int(field_name, getattr(self, field_name))
+        _require_concentration_status(
+            "exposure_concentration_status",
+            self.exposure_concentration_status,
+        )
+        object.__setattr__(
+            self,
+            "exposure_concentration_reason_codes",
+            _normalize_reason_codes(
+                "exposure_concentration_reason_codes",
+                self.exposure_concentration_reason_codes,
+            ),
+        )
         object.__setattr__(
             self,
             "exposure_rows",
             _normalize_exposure_rows(self.exposure_rows),
         )
+        _derive_default_concentration_fields(self)
         _validate_report_consistency(self)
         if self.paper_only is not True:
             raise ValueError("paper_only must be True")
@@ -183,6 +212,10 @@ def build_paper_nav_risk_metrics_report(
     latest = snapshots[-1]
     exposure_rows = _build_exposure_rows(latest)
     largest_exposure_value, largest_exposure_share = _largest_exposure(exposure_rows)
+    concentration_summary = _exposure_concentration_summary(
+        exposure_rows,
+        latest.exit_nav,
+    )
     max_drawdown, max_drawdown_pct = _max_drawdown_metrics(snapshots)
     step_returns = _step_returns(snapshots)
 
@@ -211,6 +244,12 @@ def build_paper_nav_risk_metrics_report(
         no_exit_depth_count=_mark_status_count(latest, "no_exit_depth"),
         largest_market_exposure_value=largest_exposure_value,
         largest_market_exposure_share=largest_exposure_share,
+        top_three_market_exposure_value=concentration_summary[0],
+        top_three_market_exposure_share=concentration_summary[1],
+        concentrated_market_count=concentration_summary[2],
+        material_market_count=concentration_summary[3],
+        exposure_concentration_status=concentration_summary[4],
+        exposure_concentration_reason_codes=concentration_summary[5],
         exposure_rows=exposure_rows,
     )
 
@@ -356,6 +395,107 @@ def _largest_exposure(
     return largest.exit_value, largest.share_of_exit_nav
 
 
+def _exposure_concentration_summary(
+    exposure_rows: tuple[PaperNavRiskExposureRow, ...],
+    latest_exit_nav: Decimal,
+) -> tuple[Decimal | None, Decimal | None, int, int, str, tuple[str, ...]]:
+    if not exposure_rows:
+        return None, None, 0, 0, "pass", ("nav_exposure_concentration_clear",)
+
+    top_three_rows = tuple(
+        sorted(
+            exposure_rows,
+            key=lambda row: row.exit_value,
+            reverse=True,
+        )[:3],
+    )
+    top_three_value = _sum_decimal(row.exit_value for row in top_three_rows)
+    top_three_share = _optional_ratio(top_three_value, latest_exit_nav)
+    concentrated_count = sum(
+        1
+        for row in exposure_rows
+        if row.share_of_exit_nav is not None
+        and row.share_of_exit_nav >= CONCENTRATED_MARKET_SHARE
+    )
+    material_count = sum(
+        1
+        for row in exposure_rows
+        if row.share_of_exit_nav is not None
+        and row.share_of_exit_nav >= MATERIAL_MARKET_SHARE
+    )
+
+    reason_codes: list[str] = []
+    if (
+        top_three_share is not None
+        and top_three_share > TOP_THREE_EXPOSURE_BLOCK_SHARE
+    ):
+        status = "block"
+        reason_codes.append("nav_exposure_top_three_share_block")
+    elif (
+        top_three_share is not None
+        and top_three_share >= TOP_THREE_EXPOSURE_WATCH_SHARE
+    ):
+        status = "watch"
+        reason_codes.append("nav_exposure_top_three_share_watch")
+    else:
+        status = "pass"
+
+    if concentrated_count:
+        if status == "pass":
+            status = "watch"
+        reason_codes.append("nav_exposure_single_market_share_watch")
+
+    if not reason_codes:
+        reason_codes.append("nav_exposure_concentration_clear")
+
+    return (
+        top_three_value,
+        top_three_share,
+        concentrated_count,
+        material_count,
+        status,
+        tuple(reason_codes),
+    )
+
+
+def _derive_default_concentration_fields(report: PaperNavRiskMetricsReport) -> None:
+    if (
+        report.top_three_market_exposure_value is not None
+        or report.top_three_market_exposure_share is not None
+        or report.concentrated_market_count != 0
+        or report.material_market_count != 0
+        or report.exposure_concentration_status != "pass"
+        or report.exposure_concentration_reason_codes
+        != ("nav_exposure_concentration_clear",)
+    ):
+        return
+    if not report.exposure_rows or report.latest_exit_nav is None:
+        return
+
+    concentration_summary = _exposure_concentration_summary(
+        report.exposure_rows,
+        report.latest_exit_nav,
+    )
+    object.__setattr__(
+        report,
+        "top_three_market_exposure_value",
+        concentration_summary[0],
+    )
+    object.__setattr__(
+        report,
+        "top_three_market_exposure_share",
+        concentration_summary[1],
+    )
+    object.__setattr__(report, "concentrated_market_count", concentration_summary[2])
+    object.__setattr__(report, "material_market_count", concentration_summary[3])
+    object.__setattr__(report, "exposure_concentration_status", concentration_summary[4])
+    object.__setattr__(
+        report,
+        "exposure_concentration_reason_codes",
+        concentration_summary[5],
+    )
+
+
 def _sum_decimal(values: Iterable[Decimal]) -> Decimal:
     return sum(values, ZERO)
 
@@ -407,6 +547,17 @@ def _validate_report_consistency(report: PaperNavRiskMetricsReport) -> None:
             raise ValueError("latest_exit_nav must equal cash balance plus exposure value")
         _require_none("largest_market_exposure_value", report.largest_market_exposure_value)
         _require_none("largest_market_exposure_share", report.largest_market_exposure_share)
+        _require_none(
+            "top_three_market_exposure_value",
+            report.top_three_market_exposure_value,
+        )
+        _require_none(
+            "top_three_market_exposure_share",
+            report.top_three_market_exposure_share,
+        )
+        _require_zero("concentrated_market_count", report.concentrated_market_count)
+        _require_zero("material_market_count", report.material_market_count)
+        _require_concentration_clear(report)
         _require_zero("fully_executable_count", report.fully_executable_count)
         _require_zero("partially_executable_count", report.partially_executable_count)
         _require_zero("no_exit_depth_count", report.no_exit_depth_count)
@@ -453,6 +604,24 @@ def _validate_report_consistency(report: PaperNavRiskMetricsReport) -> None:
         raise ValueError("largest_market_exposure_value must match exposure rows")
     if report.largest_market_exposure_share != largest_share:
         raise ValueError("largest_market_exposure_share must match exposure rows")
+    expected_concentration = _exposure_concentration_summary(
+        report.exposure_rows,
+        report.latest_exit_nav,
+    )
+    if report.top_three_market_exposure_value != expected_concentration[0]:
+        raise ValueError("top_three_market_exposure_value must match exposure rows")
+    if report.top_three_market_exposure_share != expected_concentration[1]:
+        raise ValueError("top_three_market_exposure_share must match exposure rows")
+    if report.concentrated_market_count != expected_concentration[2]:
+        raise ValueError("concentrated_market_count must match exposure rows")
+    if report.material_market_count != expected_concentration[3]:
+        raise ValueError("material_market_count must match exposure rows")
+    if report.exposure_concentration_status != expected_concentration[4]:
+        raise ValueError("exposure_concentration_status must match exposure rows")
+    if report.exposure_concentration_reason_codes != expected_concentration[5]:
+        raise ValueError(
+            "exposure_concentration_reason_codes must match exposure rows",
+        )
 
 
 def _validate_empty_report(report: PaperNavRiskMetricsReport) -> None:
@@ -474,6 +643,8 @@ def _validate_empty_report(report: PaperNavRiskMetricsReport) -> None:
         "pending_notional",
         "largest_market_exposure_value",
         "largest_market_exposure_share",
+        "top_three_market_exposure_value",
+        "top_three_market_exposure_share",
     ):
         if getattr(report, field_name) is not None:
             raise ValueError("empty NAV risk metrics report cannot include populated metrics")
@@ -482,9 +653,12 @@ def _validate_empty_report(report: PaperNavRiskMetricsReport) -> None:
         "fully_executable_count",
         "partially_executable_count",
         "no_exit_depth_count",
+        "concentrated_market_count",
+        "material_market_count",
     ):
         if getattr(report, field_name) != 0:
             raise ValueError("empty NAV risk metrics report cannot include populated metrics")
+    _require_concentration_clear(report)
     if report.exposure_rows:
         raise ValueError("empty NAV risk metrics report cannot include populated metrics")
 
@@ -598,6 +772,32 @@ def _require_optional_ratio_decimal(field_name: str, value: Decimal | None) -> N
     _require_nonnegative_decimal(field_name, value)
     if value > Decimal("1"):
         raise ValueError(f"{field_name} must be between 0 and 1")
+
+
+def _require_concentration_status(field_name: str, value: str) -> None:
+    if value not in ("pass", "watch", "block"):
+        raise ValueError(f"{field_name} must be pass, watch, or block")
+
+
+def _normalize_reason_codes(field_name: str, value: tuple[str, ...]) -> tuple[str, ...]:
+    try:
+        reason_codes = tuple(value)
+    except TypeError as exc:
+        raise ValueError(f"{field_name} must be an iterable") from exc
+    if not reason_codes:
+        raise ValueError(f"{field_name} must be nonempty")
+    for reason_code in reason_codes:
+        _require_canonical_string(field_name, reason_code)
+    return reason_codes
+
+
+def _require_concentration_clear(report: PaperNavRiskMetricsReport) -> None:
+    if report.exposure_concentration_status != "pass":
+        raise ValueError("empty NAV risk metrics report cannot include populated metrics")
+    if report.exposure_concentration_reason_codes != (
+        "nav_exposure_concentration_clear",
+    ):
+        raise ValueError("empty NAV risk metrics report cannot include populated metrics")
 
 
 def _require_none(field_name: str, value: object) -> None:

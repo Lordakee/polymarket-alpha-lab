@@ -266,6 +266,58 @@ def test_nav_risk_metrics_aggregates_binary_condition_exposure_rows():
     assert report.largest_market_exposure_share == Decimal("0.050000")
 
 
+def test_nav_risk_metrics_reports_exposure_concentration_bucket_summary():
+    marks = (
+        _mark(
+            condition_id="condition-large",
+            token_id="token-large",
+            market_slug="market-large",
+            open_size=Decimal("600.0000"),
+            cost_basis=Decimal("500.0000"),
+            exit_value=Decimal("500.0000"),
+            mark_status="fully_executable",
+        ),
+        _mark(
+            condition_id="condition-medium",
+            token_id="token-medium",
+            market_slug="market-medium",
+            open_size=Decimal("250.0000"),
+            cost_basis=Decimal("200.0000"),
+            exit_value=Decimal("200.0000"),
+            mark_status="fully_executable",
+        ),
+        _mark(
+            condition_id="condition-small",
+            token_id="token-small",
+            market_slug="market-small",
+            open_size=Decimal("100.0000"),
+            cost_basis=Decimal("60.0000"),
+            exit_value=Decimal("50.0000"),
+            mark_status="fully_executable",
+        ),
+    )
+
+    report = _build_report(
+        (
+            _nav(
+                GENERATED_AT,
+                exit_nav=Decimal("1000.0000"),
+                marks=marks,
+            ),
+        ),
+    )
+
+    assert report.top_three_market_exposure_value == Decimal("750.0000")
+    assert report.top_three_market_exposure_share == Decimal("0.750000")
+    assert report.concentrated_market_count == 1
+    assert report.material_market_count == 2
+    assert report.exposure_concentration_status == "watch"
+    assert report.exposure_concentration_reason_codes == (
+        "nav_exposure_top_three_share_watch",
+        "nav_exposure_single_market_share_watch",
+    )
+
+
 def test_nav_risk_metrics_can_preserve_append_order_for_trend_metrics():
     timestamp_latest_marks = (
         _mark(

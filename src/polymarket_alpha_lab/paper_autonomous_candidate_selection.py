@@ -6,6 +6,10 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 
+from polymarket_alpha_lab.strategy_candidate_decision_matrix import (
+    PaperStrategyCandidateDecisionMatrixReport,
+    PaperStrategyCandidateDecisionRow,
+)
 from polymarket_alpha_lab.strategy_candidate_research_queue import (
     PaperStrategyCandidateResearchQueueReport,
     PaperStrategyCandidateResearchQueueRow,
@@ -786,13 +790,12 @@ def _decision_matrix_rows_by_slug(
 ) -> dict[str, object] | None:
     if decision_matrix_report is None:
         return None
-    try:
-        decision_rows = getattr(decision_matrix_report, "decision_rows")
-    except AttributeError:
+    if type(decision_matrix_report) is not PaperStrategyCandidateDecisionMatrixReport:
         raise ValueError(
             "decision_matrix_report must be exactly "
             "PaperStrategyCandidateDecisionMatrixReport",
-        ) from None
+        )
+    decision_rows = decision_matrix_report.decision_rows
     if type(decision_rows) is not tuple:
         raise ValueError(
             "decision_matrix_report must be exactly "
@@ -802,14 +805,16 @@ def _decision_matrix_rows_by_slug(
     source_market_slugs = _source_market_slugs(source_reports)
     matrix_rows_by_slug: dict[str, object] = {}
     for row in decision_rows:
-        if (
-            type(getattr(row, "market_slug", None)) is not str
-            or type(getattr(row, "decision_status", None)) is not str
-            or type(getattr(row, "reason_codes", None)) is not tuple
-            or any(
-                type(reason_code) is not str
-                for reason_code in getattr(row, "reason_codes", ())
+        if type(row) is not PaperStrategyCandidateDecisionRow:
+            raise ValueError(
+                "decision_matrix_report rows must be exact "
+                "PaperStrategyCandidateDecisionRow values",
             )
+        if (
+            type(row.market_slug) is not str
+            or type(row.decision_status) is not str
+            or type(row.reason_codes) is not tuple
+            or any(type(reason_code) is not str for reason_code in row.reason_codes)
         ):
             raise ValueError(
                 "decision_matrix_report rows must be exact "

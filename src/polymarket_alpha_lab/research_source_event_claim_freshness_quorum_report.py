@@ -54,6 +54,7 @@ _REASON_CODE_SEQUENCE = (
     "fresh_source_quorum_block",
     "primary_fresh_source_quorum_watch",
     "primary_fresh_source_quorum_block",
+    "latest_verification_missing",
     "latest_verification_age_watch",
     "latest_verification_age_block",
     "stale_source_ratio_watch",
@@ -254,6 +255,7 @@ class ResearchSourceEventClaimFreshnessQuorumRow:
     stale_source_count: Decimal
     freshness_ratio: Decimal
     stale_source_ratio: Decimal
+    latest_verification_missing: bool
     latest_verification_age_seconds: Decimal
     source_agreement_score: Decimal
     contradiction_pressure: Decimal
@@ -333,6 +335,7 @@ class ResearchSourceEventClaimFreshnessQuorumReport:
     block_count: Decimal
     min_fresh_source_count: Decimal
     min_primary_fresh_source_count: Decimal
+    missing_latest_verification_count: Decimal
     max_latest_verification_age_seconds: Decimal
     max_stale_source_ratio: Decimal
     max_contradiction_pressure: Decimal
@@ -372,6 +375,7 @@ class ResearchSourceEventClaimFreshnessQuorumReport:
             "block_count",
             "min_fresh_source_count",
             "min_primary_fresh_source_count",
+            "missing_latest_verification_count",
         ):
             object.__setattr__(
                 self,
@@ -446,6 +450,9 @@ def build_research_source_event_claim_freshness_quorum_report(
             (row.primary_fresh_source_count for row in rows),
             default=_ZERO,
         ),
+        "missing_latest_verification_count": _decimal_count(
+            sum(1 for row in rows if row.latest_verification_missing),
+        ),
         "max_latest_verification_age_seconds": max(
             (row.latest_verification_age_seconds for row in rows),
             default=_ZERO,
@@ -498,6 +505,7 @@ def _row_for_observation(
     stale_count = observation.source_family_count - observation.fresh_source_count
     freshness_ratio = _quantize(observation.fresh_source_count / observation.source_family_count)
     stale_ratio = _quantize(stale_count / observation.source_family_count)
+    latest_verification_missing = observation.latest_verified_at is None
     latest_age = _latest_verification_age_seconds(observation, config, generated_at)
     quorum_gap = _quorum_gap(
         config.watch_fresh_source_quorum,
@@ -511,6 +519,7 @@ def _row_for_observation(
         fresh_source_count=observation.fresh_source_count,
         primary_fresh_source_count=observation.primary_fresh_source_count,
         latest_verification_age_seconds=latest_age,
+        latest_verification_missing=latest_verification_missing,
         stale_source_ratio=stale_ratio,
         source_agreement_score=observation.source_agreement_score,
         contradiction_pressure=observation.contradiction_pressure,
@@ -525,6 +534,7 @@ def _row_for_observation(
         stale_source_count=stale_count,
         freshness_ratio=freshness_ratio,
         stale_source_ratio=stale_ratio,
+        latest_verification_missing=latest_verification_missing,
         latest_verification_age_seconds=latest_age,
         source_agreement_score=observation.source_agreement_score,
         contradiction_pressure=observation.contradiction_pressure,
@@ -557,6 +567,7 @@ def _row_reason_codes(
     *,
     fresh_source_count: Decimal,
     primary_fresh_source_count: Decimal,
+    latest_verification_missing: bool,
     latest_verification_age_seconds: Decimal,
     stale_source_ratio: Decimal,
     source_agreement_score: Decimal,
@@ -579,6 +590,8 @@ def _row_reason_codes(
         watch_threshold=config.watch_primary_fresh_source_quorum,
         block_threshold=config.block_primary_fresh_source_quorum,
     )
+    if latest_verification_missing:
+        reason_codes.append("latest_verification_missing")
     _append_high_threshold_reason(
         reason_codes,
         prefix="latest_verification_age",
@@ -726,6 +739,8 @@ def _validate_row_consistency(row: ResearchSourceEventClaimFreshnessQuorumRow) -
         raise ValueError("freshness_ratio must match source counts")
     if row.stale_source_ratio != _quantize(row.stale_source_count / row.source_family_count):
         raise ValueError("stale_source_ratio must match source counts")
+    if type(row.latest_verification_missing) is not bool:
+        raise ValueError("latest_verification_missing must be a bool")
     if row.status != _row_status(row.reason_codes):
         raise ValueError("status must match reason_codes")
     if (
@@ -755,6 +770,10 @@ def _validate_report_consistency(report: ResearchSourceEventClaimFreshnessQuorum
         default=_ZERO,
     ):
         raise ValueError("min_primary_fresh_source_count must match rows")
+    if report.missing_latest_verification_count != _decimal_count(
+        sum(1 for row in report.rows if row.latest_verification_missing),
+    ):
+        raise ValueError("missing_latest_verification_count must match rows")
     if report.max_latest_verification_age_seconds != max(
         (row.latest_verification_age_seconds for row in report.rows),
         default=_ZERO,

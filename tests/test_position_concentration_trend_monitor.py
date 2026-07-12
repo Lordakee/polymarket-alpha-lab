@@ -268,12 +268,13 @@ def test_monitor_normalizes_timezones_freezes_dataclasses_and_rejects_bad_inputs
             config=monitor.PositionConcentrationTrendMonitorConfig(config_version="v1"),
             generated_at=DatetimeSubclass(2026, 7, 2, tzinfo=UTC),
         )
-    with pytest.raises(ValueError, match="generated_at must be timezone-aware"):
-        monitor.build_position_concentration_trend_monitor_report(
-            (),
-            config=monitor.PositionConcentrationTrendMonitorConfig(config_version="v1"),
-            generated_at=datetime(2026, 7, 2, 12, 0),
-        )
+    naive_trend = monitor.build_position_concentration_trend_monitor_report(
+        (),
+        config=monitor.PositionConcentrationTrendMonitorConfig(config_version="v1"),
+        generated_at=datetime(2026, 7, 2, 12, 0),
+    )
+    assert naive_trend.generated_at == GENERATED_AT
+    assert naive_trend.generated_at.tzinfo is UTC
     with pytest.raises(ValueError, match="source snapshot generated_at must not be after"):
         report(snapshot(GENERATED_AT + timedelta(minutes=1), record("future")))
 

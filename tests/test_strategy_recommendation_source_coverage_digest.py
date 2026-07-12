@@ -169,6 +169,41 @@ def test_missing_resolution_source_evidence_blocks_candidate() -> None:
     )
 
 
+def test_stale_resolution_source_evidence_does_not_satisfy_screen() -> None:
+    digest = report(
+        evidence(
+            "candidate-stale-resolution",
+            "official-old",
+            "official",
+            observed_at=GENERATED_AT - timedelta(hours=25),
+            resolution_source_evidence=True,
+        ),
+        evidence("candidate-stale-resolution", "news-1", "news"),
+        evidence("candidate-stale-resolution", "news-2", "news"),
+        evidence("candidate-stale-resolution", "data-1", "data"),
+    )
+
+    assert digest.status == "blocked"
+    assert digest.blocked_candidate_count == d("1")
+    assert digest.watch_candidate_count == d("0")
+    assert digest.missing_resolution_candidate_count == d("1")
+    assert digest.stale_candidate_count == d("1")
+    assert digest.reason_codes == (
+        "source_coverage_resolution_evidence_missing",
+        "source_coverage_stale_sources_present",
+    )
+
+    row = digest.rows[0]
+    assert row.coverage_status == "blocked"
+    assert row.fresh_source_count == d("3")
+    assert row.stale_source_count == d("1")
+    assert row.resolution_source_evidence_count == d("1")
+    assert row.reason_codes == (
+        "source_coverage_resolution_evidence_missing",
+        "source_coverage_sources_stale",
+    )
+
+
 def test_low_source_family_diversity_blocks_candidate() -> None:
     digest = report(
         evidence(

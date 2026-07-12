@@ -486,7 +486,7 @@ def _as_utc(value: object) -> datetime:
     if type(value) is not datetime:
         raise ValueError("generated_at must be a datetime")
     if value.tzinfo is None:
-        raise ValueError("generated_at must be timezone-aware")
+        return value.replace(tzinfo=UTC)
     return value.astimezone(UTC)
 
 

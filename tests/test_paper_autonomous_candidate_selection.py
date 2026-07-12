@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -257,6 +257,59 @@ def test_selection_report_uses_optional_decision_matrix_as_selection_gate() -> N
     )
 
 
+def test_selection_report_rejects_fake_decision_matrix_report_with_matching_attrs() -> None:
+    source_report = _source_report((_source_row(market_slug="market-a"),))
+    fake_report = _FakeDecisionMatrixReport(
+        decision_rows=(
+            _decision_matrix_row("market-a", "candidate"),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="decision_matrix_report must be exactly"):
+        build_paper_autonomous_candidate_selection_report(
+            (source_report,),
+            config=PaperAutonomousCandidateSelectionConfig(),
+            generated_at=GENERATED_AT,
+            decision_matrix_report=fake_report,
+        )
+
+
+def test_selection_report_rejects_fake_decision_matrix_rows_with_matching_attrs() -> None:
+    source_report = _source_report((_source_row(market_slug="market-a"),))
+    real_row = _decision_matrix_row("market-a", "candidate")
+    decision_report = _decision_matrix_report(real_row)
+    fake_row = _FakeDecisionMatrixRow(
+        market_slug=real_row.market_slug,
+        decision_status=real_row.decision_status,
+        reason_codes=real_row.reason_codes,
+    )
+    object.__setattr__(decision_report, "decision_rows", (fake_row,))
+
+    with pytest.raises(ValueError, match="decision_matrix_report rows must be exact"):
+        build_paper_autonomous_candidate_selection_report(
+            (source_report,),
+            config=PaperAutonomousCandidateSelectionConfig(),
+            generated_at=GENERATED_AT,
+            decision_matrix_report=decision_report,
+        )
+
+
+def test_selection_report_accepts_real_decision_matrix_report_and_rows() -> None:
+    source_report = _source_report((_source_row(market_slug="market-a"),))
+
+    report = build_paper_autonomous_candidate_selection_report(
+        (source_report,),
+        config=PaperAutonomousCandidateSelectionConfig(),
+        generated_at=GENERATED_AT,
+        decision_matrix_report=_decision_matrix_report(
+            _decision_matrix_row("market-a", "candidate"),
+        ),
+    )
+
+    assert report.selected_candidate_count == 1
+    assert report.rows[0].reason_codes == ("candidate_selection_selected",)
+
+
 def test_selection_report_keeps_duplicate_and_max_count_logic_after_matrix_candidate_gate() -> None:
     rows = (
         _source_row(
@@ -468,6 +521,24 @@ def test_config_rejects_float_thresholds_and_quantizes_decimals() -> None:
 
     with pytest.raises(ValueError, match="min_net_edge_per_share must be a Decimal"):
         PaperAutonomousCandidateSelectionConfig(min_net_edge_per_share=0.01)
+
+
+@dataclass(frozen=True)
+class _FakeDecisionMatrixReport:
+    decision_rows: tuple[object, ...]
+    paper_only: bool = True
+    report_only: bool = True
+    readonly: bool = True
+
+
+@dataclass(frozen=True)
+class _FakeDecisionMatrixRow:
+    market_slug: str
+    decision_status: str
+    reason_codes: tuple[str, ...]
+    paper_only: bool = True
+    report_only: bool = True
+    readonly: bool = True
 
 
 def _source_report(

@@ -328,6 +328,46 @@ def test_cpi_revision_digest_allows_operational_words_in_public_identifiers() ->
     assert summary.rows[0].cpi_series_key == "cpi.persistent.revision"
 
 
+@pytest.mark.parametrize(
+    ("field_name", "unsafe_value"),
+    (
+        ("research_key", "research.cpi.wallet-token"),
+        ("condition_id", "condition-cpi-auth-private"),
+        ("cpi_series_key", "https://credential.example/cpi"),
+    ),
+)
+def test_cpi_revision_digest_rejects_sensitive_public_identifiers(
+    field_name: str,
+    unsafe_value: str,
+) -> None:
+    with pytest.raises(ValueError, match=field_name):
+        if field_name == "research_key":
+            input_row(unsafe_value)
+        else:
+            input_row(**{field_name: unsafe_value})
+
+    ready = report((input_row(),)).rows[0]
+    with pytest.raises(ValueError, match=field_name):
+        replace(ready, **{field_name: unsafe_value})
+
+
+def test_cpi_revision_digest_payload_redacts_url_like_release_reference() -> None:
+    summary = report(
+        (
+            input_row(
+                cpi_release_reference="public-bls-cpi-release?release_id=2026-07",
+            ),
+        ),
+    )
+
+    payload = market_research_macro_cpi_revision_digest_payload(summary)
+    public_payload = repr(payload).lower()
+
+    assert "public-bls-cpi-release?release_id=2026-07" not in public_payload
+    assert "?" not in public_payload
+    assert payload["rows"][0]["redacted_cpi_release_reference"].startswith("sha256:")
+
+
 def test_cpi_revision_digest_is_independent_of_ambient_decimal_context() -> None:
     with localcontext(Context(prec=1, rounding=ROUND_HALF_EVEN)):
         summary = report(

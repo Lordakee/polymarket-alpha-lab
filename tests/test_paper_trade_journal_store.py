@@ -34,6 +34,8 @@ class FakePaperTradeJournalDbRow:
     account_equity_before_trade: Decimal
     payload_json: dict[str, Any]
     paper_only: bool = True
+    report_only: bool = True
+    readonly: bool = True
 
 
 class FakeCursor:
@@ -195,8 +197,10 @@ def test_insert_paper_trade_record_uses_parameterized_insert(
             fill_average_price,
             account_equity_before_trade,
             payload_json,
-            paper_only
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            paper_only,
+            report_only,
+            readonly
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (record_sha256) DO NOTHING
         """,
     )
@@ -218,6 +222,8 @@ def test_insert_paper_trade_record_uses_parameterized_insert(
             "condition_id": "0xabc",
             "token_id": "111",
         },
+        True,
+        True,
         True,
     )
 
@@ -346,7 +352,9 @@ def test_load_paper_trade_records_filters_and_limits_with_params(
             fill_average_price,
             account_equity_before_trade,
             payload_json,
-            paper_only
+            paper_only,
+            report_only,
+            readonly
         FROM paper_trade_archive
         WHERE condition_id = %s AND token_id = %s
         ORDER BY decision_timestamp_utc DESC, inserted_at DESC, record_sha256 DESC
@@ -412,6 +420,8 @@ def test_load_paper_trade_records_accepts_positional_rows(
                     "condition_id": "0xdef",
                     "token_id": "222",
                 },
+                True,
+                True,
                 True,
             ),
         ),

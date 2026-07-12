@@ -864,7 +864,17 @@ def _as_utc(field_name: str, value: object) -> datetime:
     if type(value) is not datetime:
         raise ValueError(f"{field_name} must be a datetime")
     if value.tzinfo is None or value.utcoffset() is None:
-        return value.replace(tzinfo=UTC)
+        return datetime(
+            value.year,
+            value.month,
+            value.day,
+            value.hour,
+            value.minute,
+            value.second,
+            value.microsecond,
+            tzinfo=UTC,
+            fold=value.fold,
+        )
     return value.astimezone(UTC)
 
 

@@ -324,6 +324,9 @@ class ResearchSourceFetchQualitySlaReport:
     manual_review_urgency_ratio: Decimal
     block_batch_count: Decimal
     watch_batch_count: Decimal
+    pass_ready_batch_count: Decimal
+    pass_ready_attempted_fetch_count: Decimal
+    pass_ready_attempted_fetch_ratio: Decimal
     average_quality_pressure_score: Decimal
     status: str
     reason_codes: tuple[str, ...]
@@ -351,6 +354,8 @@ class ResearchSourceFetchQualitySlaReport:
             "manual_review_capacity_count",
             "block_batch_count",
             "watch_batch_count",
+            "pass_ready_batch_count",
+            "pass_ready_attempted_fetch_count",
             "average_quality_pressure_score",
         ):
             object.__setattr__(
@@ -364,6 +369,7 @@ class ResearchSourceFetchQualitySlaReport:
             "min_corroboration_readiness_ratio",
             "retry_pressure_ratio",
             "manual_review_urgency_ratio",
+            "pass_ready_attempted_fetch_ratio",
         ):
             object.__setattr__(
                 self,
@@ -399,6 +405,11 @@ def build_research_source_fetch_quality_sla_report(
     retry_attempt_count = _sum_rows(rows, "retry_attempt_count")
     manual_review_item_count = _sum_rows(rows, "manual_review_item_count")
     manual_review_capacity_count = _sum_rows(rows, "manual_review_capacity_count")
+    pass_ready_attempted_fetch_count = _status_sum_rows(
+        rows,
+        "attempted_fetch_count",
+        status="pass",
+    )
     return ResearchSourceFetchQualitySlaReport(
         generated_at=generated_at_utc,
         config_version=config.config_version,
@@ -422,6 +433,12 @@ def build_research_source_fetch_quality_sla_report(
         ),
         block_batch_count=_count(sum(row.status == "block" for row in rows)),
         watch_batch_count=_count(sum(row.status == "watch" for row in rows)),
+        pass_ready_batch_count=_count(sum(row.status == "pass" for row in rows)),
+        pass_ready_attempted_fetch_count=pass_ready_attempted_fetch_count,
+        pass_ready_attempted_fetch_ratio=_ratio(
+            pass_ready_attempted_fetch_count,
+            attempted_fetch_count,
+        ),
         average_quality_pressure_score=_ratio(
             _sum_rows(rows, "quality_pressure_score"),
             _count(len(rows)),
@@ -782,6 +799,21 @@ def _validate_report(report: ResearchSourceFetchQualitySlaReport) -> None:
         raise ValueError("block_batch_count must match quality_rows")
     if report.watch_batch_count != _count(sum(row.status == "watch" for row in report.quality_rows)):
         raise ValueError("watch_batch_count must match quality_rows")
+    if report.pass_ready_batch_count != _count(
+        sum(row.status == "pass" for row in report.quality_rows),
+    ):
+        raise ValueError("pass_ready_batch_count must match quality_rows")
+    if report.pass_ready_attempted_fetch_count != _status_sum_rows(
+        report.quality_rows,
+        "attempted_fetch_count",
+        status="pass",
+    ):
+        raise ValueError("pass_ready_attempted_fetch_count must match quality_rows")
+    if report.pass_ready_attempted_fetch_ratio != _ratio(
+        report.pass_ready_attempted_fetch_count,
+        report.attempted_fetch_count,
+    ):
+        raise ValueError("pass_ready_attempted_fetch_ratio must match aggregate counts")
     if report.average_quality_pressure_score != _ratio(
         _sum_rows(report.quality_rows, "quality_pressure_score"),
         _count(len(report.quality_rows)),
@@ -801,6 +833,18 @@ def _count(value: int) -> Decimal:
 
 def _sum_rows(rows: tuple[object, ...], field_name: str) -> Decimal:
     return sum((getattr(row, field_name) for row in rows), ZERO).quantize(QUANT)
+
+
+def _status_sum_rows(
+    rows: tuple[ResearchSourceFetchQualitySlaRow, ...],
+    field_name: str,
+    *,
+    status: str,
+) -> Decimal:
+    return sum(
+        (getattr(row, field_name) for row in rows if row.status == status),
+        ZERO,
+    ).quantize(QUANT)
 
 
 def _max_rows(rows: tuple[object, ...], field_name: str) -> Decimal:

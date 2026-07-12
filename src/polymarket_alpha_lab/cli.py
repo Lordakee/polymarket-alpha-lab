@@ -13483,6 +13483,9 @@ def _print_paper_research_packet_summary(
         f"high_priority_count={report.high_priority_count} "
         f"medium_priority_count={report.medium_priority_count} "
         f"low_priority_count={report.low_priority_count} "
+        f"paper_only={report.paper_only} "
+        f"report_only={report.report_only} "
+        f"readonly={report.readonly} "
         f"persisted={persisted}",
     )
     if not report.packet_rows:

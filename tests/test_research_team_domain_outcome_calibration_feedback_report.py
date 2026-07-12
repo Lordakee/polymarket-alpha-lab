@@ -404,6 +404,7 @@ def test_payload_uses_exact_canonical_schema_and_stable_tie_breaks() -> None:
         "report_only",
         "readonly",
     )
+
     assert tuple(payload["rows"][0]) == (
         "domain_id",
         "team_id",
@@ -434,6 +435,13 @@ def test_payload_uses_exact_canonical_schema_and_stable_tie_breaks() -> None:
         module.validate_research_team_domain_outcome_calibration_feedback_public_payload(
             reordered_row,
         )
+
+
+def test_feedback_report_treats_naive_generated_at_as_utc() -> None:
+    report = build_report(generated_at=datetime(2026, 7, 9, 12, 0))
+
+    assert report.generated_at == GENERATED_AT
+    assert report.generated_at.tzinfo is UTC
 
 
 @pytest.mark.parametrize(

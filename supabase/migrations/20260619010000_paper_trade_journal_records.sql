@@ -21,6 +21,10 @@ create table if not exists public.paper_trade_journal_records (
     check (jsonb_typeof(payload_json) = 'object'),
   paper_only boolean not null default true
     check (paper_only is true),
+  report_only boolean not null default true
+    check (report_only is true),
+  readonly boolean not null default true
+    check (readonly is true),
   inserted_at timestamptz not null default now()
 );
 

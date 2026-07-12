@@ -77,6 +77,8 @@ class PaperTradeJournalDbRow:
     account_equity_before_trade: Decimal
     payload_json: dict[str, Any]
     paper_only: bool = True
+    report_only: bool = True
+    readonly: bool = True
 
     def __post_init__(self) -> None:
         _require_sha256("record_sha256", self.record_sha256)
@@ -105,6 +107,10 @@ class PaperTradeJournalDbRow:
         )
         if self.paper_only is not True:
             raise ValueError("paper_only must be True")
+        if self.report_only is not True:
+            raise ValueError("report_only must be True")
+        if self.readonly is not True:
+            raise ValueError("readonly must be True")
         _validate_materialized_fields_match_payload(self)
         _validate_payload_recovers_to_compatible_record(self.payload_json)
 
@@ -158,6 +164,10 @@ def _validate_row_core_fields(row: PaperTradeJournalDbRow) -> None:
     )
     if row.paper_only is not True:
         raise ValueError("paper_only must be True")
+    if row.report_only is not True:
+        raise ValueError("report_only must be True")
+    if row.readonly is not True:
+        raise ValueError("readonly must be True")
 
 
 def _validate_payload_recovers_to_compatible_record(

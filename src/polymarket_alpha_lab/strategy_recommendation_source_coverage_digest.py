@@ -304,11 +304,14 @@ def _candidate_row(
     resolution_source_evidence_count = _count(
         sum(1 for row in rows if row.resolution_source_evidence),
     )
+    fresh_resolution_source_evidence_count = _count(
+        sum(1 for row in fresh_rows if row.resolution_source_evidence),
+    )
     reason_codes = _row_reason_codes(
         fresh_source_count=_count(len(fresh_rows)),
         fresh_source_family_count=_count(len(fresh_source_families)),
         stale_source_count=_count(len(rows) - len(fresh_rows)),
-        resolution_source_evidence_count=resolution_source_evidence_count,
+        resolution_source_evidence_count=fresh_resolution_source_evidence_count,
         config=config,
     )
     return StrategyRecommendationSourceCoverageDigestRow(
