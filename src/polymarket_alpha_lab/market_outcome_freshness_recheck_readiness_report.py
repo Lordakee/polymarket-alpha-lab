@@ -139,6 +139,7 @@ class MarketOutcomeFreshnessRecheckReadinessRow:
     recheck_age_seconds: Decimal
     outcome_age_delta_seconds: Decimal
     recheck_age_delta_seconds: Decimal
+    pending_ack_age_seconds: Decimal
     queue_bucket: str
     ack_bucket: str
     status: str
@@ -179,6 +180,7 @@ class MarketOutcomeFreshnessRecheckReadinessRow:
             "recheck_age_seconds",
             "outcome_age_delta_seconds",
             "recheck_age_delta_seconds",
+            "pending_ack_age_seconds",
         ):
             object.__setattr__(
                 self,
@@ -208,11 +210,14 @@ class MarketOutcomeFreshnessRecheckReadinessReport:
     stale_recheck_count: Decimal
     queue_ready_count: Decimal
     ack_ready_count: Decimal
+    pending_ack_count: Decimal
     ready_ratio: Decimal
     queue_ready_ratio: Decimal
     ack_ready_ratio: Decimal
+    pending_ack_ratio: Decimal
     max_outcome_age_seconds: Decimal
     max_recheck_age_seconds: Decimal
+    max_pending_ack_age_seconds: Decimal
     status: str
     reason_codes: tuple[str, ...]
     category_rollups: tuple[tuple[str, Decimal, Decimal, Decimal, Decimal], ...]
@@ -240,19 +245,29 @@ class MarketOutcomeFreshnessRecheckReadinessReport:
             "stale_recheck_count",
             "queue_ready_count",
             "ack_ready_count",
+            "pending_ack_count",
         ):
             object.__setattr__(
                 self,
                 field_name,
                 _normalize_count(field_name, getattr(self, field_name)),
             )
-        for field_name in ("ready_ratio", "queue_ready_ratio", "ack_ready_ratio"):
+        for field_name in (
+            "ready_ratio",
+            "queue_ready_ratio",
+            "ack_ready_ratio",
+            "pending_ack_ratio",
+        ):
             object.__setattr__(
                 self,
                 field_name,
                 _normalize_ratio(field_name, getattr(self, field_name)),
             )
-        for field_name in ("max_outcome_age_seconds", "max_recheck_age_seconds"):
+        for field_name in (
+            "max_outcome_age_seconds",
+            "max_recheck_age_seconds",
+            "max_pending_ack_age_seconds",
+        ):
             object.__setattr__(
                 self,
                 field_name,
@@ -312,6 +327,9 @@ def build_market_outcome_freshness_recheck_readiness_report(
     )
     queue_ready_count = _count(sum(1 for row in rows if row.queue_bucket != "not_queued"))
     ack_ready_count = _count(sum(1 for row in rows if row.ack_bucket == "acknowledged"))
+    pending_ack_count = _count(
+        sum(1 for row in rows if row.queue_bucket == "queued_waiting_ack"),
+    )
 
     return MarketOutcomeFreshnessRecheckReadinessReport(
         generated_at=generated_at_utc,
@@ -327,11 +345,16 @@ def build_market_outcome_freshness_recheck_readiness_report(
         stale_recheck_count=stale_recheck_count,
         queue_ready_count=queue_ready_count,
         ack_ready_count=ack_ready_count,
+        pending_ack_count=pending_ack_count,
         ready_ratio=_ratio(ready_count, market_count),
         queue_ready_ratio=_ratio(queue_ready_count, market_count),
         ack_ready_ratio=_ratio(ack_ready_count, market_count),
+        pending_ack_ratio=_ratio(pending_ack_count, market_count),
         max_outcome_age_seconds=_max_age(row.outcome_age_seconds for row in rows),
         max_recheck_age_seconds=_max_age(row.recheck_age_seconds for row in rows),
+        max_pending_ack_age_seconds=_max_age(
+            row.pending_ack_age_seconds for row in rows
+        ),
         status=_report_status(rows),
         reason_codes=_report_reason_codes(rows),
         category_rollups=_category_rollups(rows),
@@ -399,6 +422,7 @@ def _row_from_source(
             recheck_age_seconds,
             config.recheck_fresh_after_seconds,
         ),
+        pending_ack_age_seconds=_pending_ack_age_seconds(source, generated_at),
         queue_bucket=_queue_bucket(source),
         ack_bucket=_ack_bucket(source),
         status=status,
@@ -528,6 +552,15 @@ def _age_delta(age_seconds: Decimal, threshold_seconds: Decimal) -> Decimal:
     return _normalize_nonnegative_seconds("age_delta_seconds", age_seconds - threshold_seconds)
 
 
+def _pending_ack_age_seconds(
+    source: MarketOutcomeFreshnessRecheckReadinessSource,
+    generated_at: datetime,
+) -> Decimal:
+    if source.queued_at is None or source.acknowledged_at is not None:
+        return ZERO_RATIO
+    return _optional_age_seconds(source.queued_at, generated_at)
+
+
 def _optional_age_seconds(value: datetime | None, generated_at: datetime) -> Decimal:
     if value is None:
         return ZERO_RATIO
@@ -640,12 +673,23 @@ def _validate_report_consistency(report: MarketOutcomeFreshnessRecheckReadinessR
     expected_ready = _count(sum(1 for row in report.rows if row.status == "ready"))
     expected_watch = _count(sum(1 for row in report.rows if row.status == "watch"))
     expected_blocked = _count(sum(1 for row in report.rows if row.status == "blocked"))
+    expected_pending_ack = _count(
+        sum(1 for row in report.rows if row.queue_bucket == "queued_waiting_ack"),
+    )
     if report.ready_count != expected_ready:
         raise ValueError("ready_count must match rows")
     if report.watch_count != expected_watch:
         raise ValueError("watch_count must match rows")
     if report.blocked_count != expected_blocked:
         raise ValueError("blocked_count must match rows")
+    if report.pending_ack_count != expected_pending_ack:
+        raise ValueError("pending_ack_count must match rows")
+    if report.pending_ack_ratio != _ratio(expected_pending_ack, report.market_count):
+        raise ValueError("pending_ack_ratio must match rows")
+    if report.max_pending_ack_age_seconds != _max_age(
+        row.pending_ack_age_seconds for row in report.rows
+    ):
+        raise ValueError("max_pending_ack_age_seconds must match rows")
     if report.status != _report_status(report.rows):
         raise ValueError("status must match rows")
     if report.reason_codes != _report_reason_codes(report.rows):

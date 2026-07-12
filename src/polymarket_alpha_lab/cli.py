@@ -402,6 +402,8 @@ ProbabilitySelectionScorerAgreementTrendGateRunner = Callable[..., object]
 PaperCandidateDecisionEngineRunner = Callable[..., object]
 TeamDiagnosticsRowsLoader = Callable[..., object]
 TeamDiagnosticsBundleBuilder = Callable[..., object]
+# Team-diagnostics formatters must emit these exact Phase 1 boundary tokens:
+# paper_only=True, report_only=True, readonly=True.
 TeamDiagnosticsFormatter = Callable[[object], str]
 TeamDiagnosticsSnapshotBuilder = Callable[..., object]
 TeamDiagnosticsSnapshotDbSink = Callable[..., object]
@@ -1395,7 +1397,29 @@ def _run_team_diagnostics(
         if stdout_formatter is None
         else stdout_formatter
     )
-    return formatter(artifacts.bundle)
+    stdout = formatter(artifacts.bundle)
+    _require_report_only_cli_stdout(
+        "team diagnostics",
+        stdout,
+        required_tokens=("paper_only=True", "report_only=True", "readonly=True"),
+    )
+    return stdout
+
+
+def _require_report_only_cli_stdout(
+    command_name: str,
+    stdout: str,
+    *,
+    required_tokens: tuple[str, ...],
+) -> None:
+    if type(stdout) is not str:
+        raise ValueError(f"{command_name} stdout must be a string")
+    missing_tokens = tuple(token for token in required_tokens if token not in stdout)
+    if missing_tokens:
+        raise ValueError(
+            f"{command_name} stdout must include "
+            + ", ".join(missing_tokens),
+        )
 
 
 def _build_team_diagnostics_bundle_from_db(

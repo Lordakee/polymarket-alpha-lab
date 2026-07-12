@@ -134,6 +134,8 @@ def test_gate_computes_cost_adjusted_edge_and_readonly_statuses() -> None:
     assert ready.settlement_delay_cost_probability == d("0.004000")
     assert ready.total_cost_probability == d("0.029000")
     assert ready.cost_adjusted_edge == d("0.071000")
+    assert ready.decision_threshold_probability == d("0.629000")
+    assert ready.edge_to_threshold_probability == d("0.071000")
     assert ready.liquidity_coverage_ratio == d("1.500000")
     assert ready.depth_coverage_ratio == d("1.600000")
     assert ready.age_seconds == d("30.000000")
@@ -144,12 +146,16 @@ def test_gate_computes_cost_adjusted_edge_and_readonly_statuses() -> None:
 
     assert watch.candidate_id == "watch"
     assert watch.cost_adjusted_edge == d("0.009000")
+    assert watch.decision_threshold_probability == d("0.629000")
+    assert watch.edge_to_threshold_probability == d("0.009000")
     assert watch.gate_status == "watch"
     assert watch.risk_label == "medium_cost_risk"
     assert "edge_below_minimum" in watch.reason_codes
 
     assert blocked.candidate_id == "blocked"
     assert blocked.cost_adjusted_edge == d("-0.009000")
+    assert blocked.decision_threshold_probability == d("0.629000")
+    assert blocked.edge_to_threshold_probability == d("-0.009000")
     assert blocked.gate_status == "blocked"
     assert blocked.risk_label == "high_cost_risk"
     assert "edge_not_positive_after_costs" in blocked.reason_codes
@@ -215,6 +221,8 @@ def test_payload_is_json_ready_decimal_strings_and_safe_public_content() -> None
     assert payload["generated_at"] == "2026-07-06T12:00:00+00:00"
     assert payload["rows"][0]["candidate_id"] == "payload"
     assert payload["rows"][0]["cost_adjusted_edge"] == "0.071000"
+    assert payload["rows"][0]["decision_threshold_probability"] == "0.629000"
+    assert payload["rows"][0]["edge_to_threshold_probability"] == "0.071000"
     assert payload["rows"][0]["age_seconds"] == "30.000000"
     assert payload["rows"][0]["derived_validation_digest"] == result.rows[0].derived_validation_digest
     assert payload["derived_validation_digest"] == result.derived_validation_digest

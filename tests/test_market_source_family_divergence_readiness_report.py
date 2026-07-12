@@ -280,6 +280,120 @@ def test_empty_report_is_deterministic_readonly_and_decimal_zeroed() -> None:
     assert report.readonly is True
 
 
+def test_report_surfaces_official_api_fallback_provenance_and_manual_review_readiness() -> None:
+    report = _report(
+        _input_row(
+            "market-official-fallback-ready",
+            "gamma_api",
+            probability_delta=d("0.180000"),
+            evidence_count=d("1.000000"),
+            observed_at=_at(minutes=20),
+            conflict_acknowledged_at=_at(minutes=5),
+        ),
+        _input_row(
+            "market-official-fallback-ready",
+            "scraper",
+            probability_delta=d("0.160000"),
+            evidence_count=d("1.000000"),
+            observed_at=_at(minutes=18),
+            conflict_acknowledged_at=_at(minutes=5),
+        ),
+        _input_row(
+            "market-official-fallback-ready",
+            "agent",
+            probability_delta=d("0.120000"),
+            evidence_count=d("1.000000"),
+            observed_at=_at(minutes=16),
+            conflict_acknowledged_at=_at(minutes=5),
+        ),
+        _input_row(
+            "market-fallback-only",
+            "scraper",
+            probability_delta=d("0.120000"),
+            evidence_count=d("1.000000"),
+            observed_at=_at(minutes=15),
+            conflict_acknowledged_at=_at(minutes=5),
+        ),
+        _input_row(
+            "market-fallback-only",
+            "agent",
+            probability_delta=d("0.110000"),
+            evidence_count=d("1.000000"),
+            observed_at=_at(minutes=14),
+            conflict_acknowledged_at=_at(minutes=5),
+        ),
+        _input_row(
+            "market-fallback-only",
+            "proxy",
+            probability_delta=d("0.100000"),
+            evidence_count=d("1.000000"),
+            observed_at=_at(minutes=13),
+            conflict_acknowledged_at=_at(minutes=5),
+        ),
+        _input_row(
+            "market-official-only",
+            "gamma_api",
+            probability_delta=d("0.100000"),
+            evidence_count=d("1.000000"),
+            observed_at=_at(minutes=12),
+            conflict_acknowledged_at=_at(minutes=5),
+        ),
+        _input_row(
+            "market-official-only",
+            "clob_api",
+            probability_delta=d("0.090000"),
+            evidence_count=d("1.000000"),
+            observed_at=_at(minutes=11),
+            conflict_acknowledged_at=_at(minutes=5),
+        ),
+        _input_row(
+            "market-official-only",
+            "data_api",
+            probability_delta=d("0.080000"),
+            evidence_count=d("1.000000"),
+            observed_at=_at(minutes=10),
+            conflict_acknowledged_at=_at(minutes=5),
+        ),
+    )
+
+    assert report.official_api_covered_market_count == d("2.000000")
+    assert report.fallback_covered_market_count == d("2.000000")
+    assert report.fallback_only_market_count == d("1.000000")
+    assert report.official_api_coverage_ratio == d("0.666667")
+    assert report.fallback_coverage_ratio == d("0.666667")
+    assert report.manual_review_ready_market_count == d("1.000000")
+    assert report.manual_review_ready_ratio == d("0.333333")
+
+    ready = next(
+        row for row in report.rows if row.market_id == "market-official-fallback-ready"
+    )
+    assert ready.official_api_family_count == d("1.000000")
+    assert ready.fallback_family_count == d("2.000000")
+    assert ready.official_api_evidence_count == d("1.000000")
+    assert ready.fallback_evidence_count == d("2.000000")
+    assert ready.official_api_coverage_ratio == d("0.333333")
+    assert ready.fallback_coverage_ratio == d("0.666667")
+    assert ready.manual_review_ready is True
+
+    fallback_only = next(row for row in report.rows if row.market_id == "market-fallback-only")
+    assert fallback_only.official_api_family_count == d("0.000000")
+    assert fallback_only.fallback_family_count == d("2.000000")
+    assert fallback_only.official_api_coverage_ratio == d("0.000000")
+    assert fallback_only.fallback_coverage_ratio == d("0.666667")
+    assert fallback_only.manual_review_ready is False
+
+    payload = _api().market_source_family_divergence_readiness_payload(report)
+    ready_payload = next(
+        row
+        for row in payload["rows"]
+        if row["market_id"] == "market-official-fallback-ready"
+    )
+    assert payload["official_api_coverage_ratio"] == "0.666667"
+    assert payload["manual_review_ready_market_count"] == "1.000000"
+    assert ready_payload["official_api_family_count"] == "1.000000"
+    assert ready_payload["manual_review_ready"] is True
+
+
 def test_payload_is_json_ready_decimal_stringed_utc_and_has_no_float_or_live_surface() -> None:
     api = _api()
     report = _report(

@@ -165,6 +165,47 @@ def test_timing_memory_report_scores_aggregate_catalyst_risks_deterministically(
     assert_payload_has_no_numeric_values(payload)
 
 
+def test_manual_review_readiness_analytics_surface_freshness_and_timing_gaps() -> None:
+    stale_catalyst = timing_input(
+        "stale-catalyst-aggregate",
+        catalyst_freshness_hours=d("30.000000"),
+        evidence_lead_time_hours=d("30.000000"),
+    )
+    weak_evidence = timing_input(
+        "weak-evidence-aggregate",
+        catalyst_freshness_hours=d("12.000000"),
+        evidence_lead_time_hours=d("4.000000"),
+    )
+    ready = timing_input("ready-aggregate")
+
+    report = build(stale_catalyst, ready, weak_evidence)
+
+    assert report.manual_review_ready_aggregate_count == d("1.000000")
+    assert report.manual_review_deferred_aggregate_count == d("2.000000")
+    assert report.manual_review_ready_aggregate_ratio == d("0.333333")
+    assert report.max_manual_review_timing_gap_hours == d("20.000000")
+
+    blocked, watched, passed = report.rows
+    assert blocked.aggregate_label == "weak-evidence-aggregate"
+    assert blocked.manual_review_ready is False
+    assert blocked.manual_review_timing_gap_hours == d("20.000000")
+    assert watched.aggregate_label == "stale-catalyst-aggregate"
+    assert watched.manual_review_ready is False
+    assert watched.manual_review_timing_gap_hours == d("6.000000")
+    assert passed.aggregate_label == "ready-aggregate"
+    assert passed.manual_review_ready is True
+    assert passed.manual_review_timing_gap_hours == ZERO
+
+    payload = api().research_event_catalyst_timing_memory_report_to_payload(report)
+    assert payload["manual_review_ready_aggregate_count"] == "1.000000"
+    assert payload["manual_review_deferred_aggregate_count"] == "2.000000"
+    assert payload["manual_review_ready_aggregate_ratio"] == "0.333333"
+    assert payload["max_manual_review_timing_gap_hours"] == "20.000000"
+    assert payload["rows"][0]["manual_review_ready"] is False
+    assert payload["rows"][0]["manual_review_timing_gap_hours"] == "20.000000"
+    assert_payload_has_no_numeric_values(payload)
+
+
 def test_empty_report_passes_with_decimal_zeroes_and_stable_digest() -> None:
     report = build()
     repeated = build()
@@ -267,7 +308,19 @@ def test_public_surface_rejects_raw_identifiers_urls_source_text_and_tampering()
             weak_evidence_lead_time_count=report.weak_evidence_lead_time_count,
             stale_thesis_risk_count=report.stale_thesis_risk_count,
             recheck_urgency_count=report.recheck_urgency_count,
+            manual_review_ready_aggregate_count=(
+                report.manual_review_ready_aggregate_count
+            ),
+            manual_review_deferred_aggregate_count=(
+                report.manual_review_deferred_aggregate_count
+            ),
+            manual_review_ready_aggregate_ratio=(
+                report.manual_review_ready_aggregate_ratio
+            ),
             highest_timing_memory_risk_score=report.highest_timing_memory_risk_score,
+            max_manual_review_timing_gap_hours=(
+                report.max_manual_review_timing_gap_hours
+            ),
             max_catalyst_freshness_hours=report.max_catalyst_freshness_hours,
             min_evidence_lead_time_hours=report.min_evidence_lead_time_hours,
             max_stale_thesis_risk_score=report.max_stale_thesis_risk_score,

@@ -206,6 +206,7 @@ class StrategyRecommendationExpectedValueCostBandV2Row:
     recommendation_status: str
     cost_band: str
     reason_codes: tuple[str, ...]
+    driver_explanations: tuple[str, ...]
     validation_digest: str
     paper_only: bool = True
     report_only: bool = True
@@ -258,6 +259,11 @@ class StrategyRecommendationExpectedValueCostBandV2Row:
             self,
             "reason_codes",
             _normalize_reason_codes(self.reason_codes, require_nonempty=True),
+        )
+        object.__setattr__(
+            self,
+            "driver_explanations",
+            _normalize_driver_explanations(self.driver_explanations),
         )
         _require_hex_digest("validation_digest", self.validation_digest)
         _validate_row(self)
@@ -467,6 +473,16 @@ def _row_from_input(
     )
     status = _row_status(reason_codes)
     cost_band = _cost_band(status)
+    driver_explanations = _driver_explanations_from_values(
+        probability_edge=recommendation.probability_edge,
+        confidence=recommendation.confidence,
+        confidence_adjusted_edge=confidence_adjusted_edge,
+        liquidity_haircut=recommendation.liquidity_haircut,
+        total_cost=total_cost,
+        net_expected_value=net_expected_value,
+        cost_to_edge_ratio=cost_to_edge_ratio,
+        reason_codes=reason_codes,
+    )
     validation_digest = _row_validation_digest_from_parts(
         recommendation_id=recommendation.recommendation_id,
         observed_at=recommendation.observed_at,
@@ -485,6 +501,7 @@ def _row_from_input(
         recommendation_status=status,
         cost_band=cost_band,
         reason_codes=reason_codes,
+        driver_explanations=driver_explanations,
     )
     return StrategyRecommendationExpectedValueCostBandV2Row(
         recommendation_id=recommendation.recommendation_id,
@@ -504,6 +521,7 @@ def _row_from_input(
         recommendation_status=status,
         cost_band=cost_band,
         reason_codes=reason_codes,
+        driver_explanations=driver_explanations,
         validation_digest=validation_digest,
     )
 
@@ -628,6 +646,103 @@ def _cost_band(status: str) -> str:
     if status == "watch":
         return "thin"
     return "positive"
+
+
+def _driver_explanations(
+    row: StrategyRecommendationExpectedValueCostBandV2Row,
+) -> tuple[str, ...]:
+    return _driver_explanations_from_values(
+        probability_edge=row.probability_edge,
+        confidence=row.confidence,
+        confidence_adjusted_edge=row.confidence_adjusted_edge,
+        liquidity_haircut=row.liquidity_haircut,
+        total_cost=row.total_cost,
+        net_expected_value=row.net_expected_value,
+        cost_to_edge_ratio=row.cost_to_edge_ratio,
+        reason_codes=row.reason_codes,
+    )
+
+
+def _driver_explanations_from_values(
+    *,
+    probability_edge: Decimal,
+    confidence: Decimal,
+    confidence_adjusted_edge: Decimal,
+    liquidity_haircut: Decimal,
+    total_cost: Decimal,
+    net_expected_value: Decimal,
+    cost_to_edge_ratio: Decimal,
+    reason_codes: tuple[str, ...],
+) -> tuple[str, ...]:
+    edge_explanation = (
+        f"Probability edge {probability_edge} is positive."
+        if probability_edge > ZERO
+        else f"Probability edge {probability_edge} is not positive."
+    )
+    return (
+        edge_explanation,
+        (
+            f"Confidence {confidence} applies to edge {probability_edge}, leaving "
+            f"confidence-adjusted edge {confidence_adjusted_edge}."
+        ),
+        (
+            f"Liquidity haircut {liquidity_haircut} is included in total cost "
+            f"{total_cost}."
+        ),
+        (
+            f"Costs total {total_cost} versus confidence-adjusted edge "
+            f"{confidence_adjusted_edge}, leaving net expected value "
+            f"{net_expected_value}."
+        ),
+        _status_explanation(
+            probability_edge=probability_edge,
+            confidence=confidence,
+            net_expected_value=net_expected_value,
+            cost_to_edge_ratio=cost_to_edge_ratio,
+            reason_codes=reason_codes,
+        ),
+    )
+
+
+def _status_explanation(
+    *,
+    probability_edge: Decimal,
+    confidence: Decimal,
+    net_expected_value: Decimal,
+    cost_to_edge_ratio: Decimal,
+    reason_codes: tuple[str, ...],
+) -> str:
+    if "cost_band_probability_edge_blocked" in reason_codes:
+        return f"Blocked because probability edge {probability_edge} is not positive."
+    if "cost_band_net_expected_value_blocked" in reason_codes:
+        return (
+            f"Blocked because net expected value {net_expected_value} is below "
+            "the watch floor."
+        )
+    if "cost_band_cost_ratio_blocked" in reason_codes:
+        return (
+            f"Blocked because cost-to-edge ratio {cost_to_edge_ratio} is above "
+            "the block limit."
+        )
+    if "cost_band_net_expected_value_watch" in reason_codes:
+        return (
+            f"Watch because net expected value {net_expected_value} is below "
+            "the pass floor."
+        )
+    if "cost_band_cost_ratio_watch" in reason_codes:
+        return (
+            f"Watch because cost-to-edge ratio {cost_to_edge_ratio} is above "
+            "the pass limit."
+        )
+    if "cost_band_confidence_watch" in reason_codes:
+        return (
+            f"Watch because confidence {confidence} is below the minimum confidence "
+            "requirement."
+        )
+    return (
+        f"Pass because net expected value {net_expected_value} meets the pass floor "
+        f"and cost-to-edge ratio {cost_to_edge_ratio} is within limits."
+    )
 
 
 def _report_status(
@@ -771,6 +886,23 @@ def _normalize_report_reason_codes(value: object) -> tuple[str, ...]:
     return reason_codes
 
 
+def _normalize_driver_explanations(value: object) -> tuple[str, ...]:
+    if type(value) not in (list, tuple):
+        raise ValueError("driver_explanations must be a list or tuple")
+    explanations = tuple(value)
+    if not explanations:
+        raise ValueError("driver_explanations must not be empty")
+    for explanation in explanations:
+        if type(explanation) is not str:
+            raise ValueError("driver_explanations must contain strings")
+        if explanation.strip() != explanation or not explanation:
+            raise ValueError("driver_explanations must contain public text")
+        _reject_unsafe_text("driver_explanations", explanation)
+    if len(explanations) != len(set(explanations)):
+        raise ValueError("driver_explanations must not contain duplicate values")
+    return explanations
+
+
 def _validate_row(row: StrategyRecommendationExpectedValueCostBandV2Row) -> None:
     if row.confidence_adjusted_edge != _multiply_decimal(
         row.probability_edge,
@@ -802,6 +934,8 @@ def _validate_row(row: StrategyRecommendationExpectedValueCostBandV2Row) -> None
         raise ValueError("recommendation_status must match reason_codes")
     if row.cost_band != _cost_band(row.recommendation_status):
         raise ValueError("cost_band must match recommendation_status")
+    if row.driver_explanations != _driver_explanations(row):
+        raise ValueError("driver_explanations must match row drivers")
     if row.validation_digest != _row_validation_digest(row):
         raise ValueError("validation_digest must match row")
 
@@ -1038,6 +1172,7 @@ def _row_validation_digest(
         recommendation_status=row.recommendation_status,
         cost_band=row.cost_band,
         reason_codes=row.reason_codes,
+        driver_explanations=row.driver_explanations,
     )
 
 
@@ -1060,6 +1195,7 @@ def _row_validation_digest_from_parts(
     recommendation_status: str,
     cost_band: str,
     reason_codes: tuple[str, ...],
+    driver_explanations: tuple[str, ...],
 ) -> str:
     return _digest_pairs(
         (
@@ -1081,6 +1217,7 @@ def _row_validation_digest_from_parts(
             ("recommendation_status", recommendation_status),
             ("cost_band", cost_band),
             ("reason_codes", _digest_value(reason_codes)),
+            ("driver_explanations", _digest_value(driver_explanations)),
             ("paper_only", "true"),
             ("report_only", "true"),
             ("readonly", "true"),

@@ -283,6 +283,40 @@ def test_update_trigger_summary_gap_prevents_pass_status() -> None:
     )
 
 
+def test_manual_review_readiness_fields_explain_missing_evidence_counts() -> None:
+    completeness = report(
+        packet(
+            evidence_item_count=d("4.000000"),
+            independent_source_count=ONE,
+        ),
+    )
+
+    assert completeness.status == "block"
+    assert completeness.manual_decision_review_state == "manual_decision_review_block"
+    assert completeness.manual_decision_readiness_score == d("0.500000")
+    assert completeness.missing_evidence_item_count == d("2.000000")
+    assert completeness.missing_independent_source_count == d("2.000000")
+    assert completeness.rows[0].status == "block"
+    assert completeness.rows[0].manual_decision_readiness_score == d("0.500000")
+    assert completeness.rows[0].missing_evidence_item_count == d("2.000000")
+    assert completeness.rows[0].missing_independent_source_count == d("2.000000")
+    assert completeness.rows[0].reason_codes == (
+        "independent_source_count_block",
+        "evidence_item_count_watch",
+    )
+
+    payload = research_strategy_manual_decision_packet_completeness_report_payload(
+        completeness,
+    )
+    assert payload["manual_decision_readiness_score"] == "0.500000"
+    assert payload["missing_evidence_item_count"] == "2.000000"
+    assert payload["missing_independent_source_count"] == "2.000000"
+    assert payload["rows"][0]["manual_decision_readiness_score"] == "0.500000"
+    assert payload["rows"][0]["missing_evidence_item_count"] == "2.000000"
+    assert payload["rows"][0]["missing_independent_source_count"] == "2.000000"
+    assert_no_float_or_int_values(payload)
+
+
 def test_validation_digest_rejects_report_and_row_tampering() -> None:
     completeness = report(packet())
 

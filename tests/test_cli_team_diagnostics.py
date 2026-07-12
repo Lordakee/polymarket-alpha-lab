@@ -225,6 +225,50 @@ def test_team_diagnostics_accepts_filters_and_prints_compact_summary(
     assert TEAM_FORECAST_OUTCOME_TABLE not in combined
 
 
+def test_team_diagnostics_rejects_output_missing_phase1_boundary_flags(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _enable_team_forecast_env(monkeypatch)
+    side_effect_calls: list[str] = []
+    client_factory_calls: list[str] = []
+    observed_requests: list[object] = []
+
+    _install_psycopg_connect_guard(monkeypatch, side_effect_calls)
+    _install_successful_team_diagnostics_injections(monkeypatch, observed_requests)
+
+    exit_code = _invoke_main(
+        [
+            "team-diagnostics",
+            "--team-id",
+            "crypto_btc",
+            "--market-slug",
+            "bitcoin-above-120k",
+            "--forecast-id",
+            "forecast-btc-1",
+            "--limit",
+            "7",
+        ],
+        client_factory=_forbidden_client_factory(client_factory_calls),
+        team_diagnostics_stdout_formatter=lambda _bundle: (
+            "team-diagnostics:\n"
+            "row-counts: calibration=1 event_template_rows=1 "
+            "source_reliability_rows=1 evidence_quality_rows=1 "
+            "memory_eligible_references=1\n"
+        ),
+    )
+
+    assert exit_code == 1
+    assert side_effect_calls == []
+    assert client_factory_calls == []
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "team-diagnostics failed:" in captured.err
+    assert "paper_only=True" in captured.err
+    assert "report_only=True" in captured.err
+    assert "readonly=True" in captured.err
+
+
 def test_team_diagnostics_redacts_dsn_and_table_on_source_failure(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],

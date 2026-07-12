@@ -31,6 +31,9 @@ from polymarket_alpha_lab.proposal_review import (
     TradeProposalReviewLog,
     build_trade_proposal_review_record,
 )
+from polymarket_alpha_lab.research_public_payload_safety_audit import (
+    audit_research_public_payload,
+)
 
 
 DEFAULT_REVIEW_ATTESTATION = (
@@ -528,7 +531,7 @@ def test_trade_proposal_review_log_appends_jsonl_record(tmp_path):
     record = review_record()
     log = TradeProposalReviewLog(path=tmp_path / "proposal-reviews.jsonl")
 
-    log.append(record)
+    log.record(record)
 
     lines = log.path.read_text(encoding="utf-8").splitlines()
     assert len(lines) == 1
@@ -552,14 +555,68 @@ def test_trade_proposal_review_log_appends_jsonl_record(tmp_path):
     assert stored["review_reason_codes"] == []
 
 
+def test_trade_proposal_review_record_public_safe_payload_excludes_trade_proposal_fields():
+    record = review_record()
+
+    payload = record.public_safe_payload()
+
+    forbidden_fields = {
+        "condition_id",
+        "token_id",
+        "market_slug",
+        "question",
+        "side",
+        "intended_order_type",
+        "maximum_size",
+        "source_max_executable_size",
+        "order",
+        "trade",
+        "size",
+    }
+    assert forbidden_fields.isdisjoint(payload)
+    assert payload == {
+        "review_record_id": record.review_record_id,
+        "recorded_at": "2026-09-03T12:30:00+00:00",
+        "review_config_version": "review-v1",
+        "record_only": True,
+        "explicit_human_decision": True,
+        "decision": "approved",
+        "review_reason_codes": [],
+        "paper_only": True,
+        "report_only": True,
+        "readonly": True,
+        "public_export_scope": "public_safe_review_attestation",
+    }
+    audit = audit_research_public_payload(
+        payload,
+        generated_at=datetime(2026, 9, 3, 13, tzinfo=UTC),
+        report_name="trade_proposal_review_public_safe_payload",
+    )
+    assert audit.audit_status == "pass"
+
+
+def test_trade_proposal_review_log_marks_file_append_as_ephemeral_local_only(tmp_path):
+    log = TradeProposalReviewLog(path=tmp_path / "proposal-reviews.jsonl")
+
+    assert log.storage_scope == "ephemeral_local_review_log"
+    assert log.durable_memory is False
+    assert log.public_output is False
+    assert "ephemeral/local review log" in TradeProposalReviewLog.__doc__
+    with pytest.raises(ValueError, match="durable_memory"):
+        TradeProposalReviewLog(
+            path=tmp_path / "durable-reviews.jsonl",
+            durable_memory=True,
+        )
+
+
 def test_trade_proposal_review_log_appends_without_overwriting_and_creates_parent_dirs(
     tmp_path,
 ):
     record = review_record()
     log = TradeProposalReviewLog(path=str(tmp_path / "nested" / "reviews.jsonl"))
 
-    log.append(record)
-    log.append(record)
+    log.record(record)
+    log.record(record)
 
     lines = log.path.read_text(encoding="utf-8").splitlines()
     assert len(lines) == 2
@@ -586,7 +643,7 @@ def test_trade_proposal_review_log_rejects_invalid_paths_and_inputs(tmp_path):
     path = tmp_path / "proposal-reviews.jsonl"
     log = TradeProposalReviewLog(path=path)
     with pytest.raises(ValueError, match="TradeProposalReviewRecord"):
-        log.append(object())
+        log.record(object())
     assert not path.exists()
 
 
@@ -600,7 +657,7 @@ def test_trade_proposal_review_log_preserves_existing_file_when_validation_fails
     log = TradeProposalReviewLog(path=path)
 
     with pytest.raises(ValueError, match="finite|maximum_size"):
-        log.append(record)
+        log.record(record)
 
     assert path.read_text(encoding="utf-8") == '{"existing": true}\n'
 
@@ -611,6 +668,6 @@ def test_trade_proposal_review_log_rejects_non_finite_decimal_before_open(tmp_pa
     log = TradeProposalReviewLog(path=tmp_path / "proposal-reviews.jsonl")
 
     with pytest.raises(ValueError, match="finite|source_score"):
-        log.append(record)
+        log.record(record)
 
     assert not log.path.exists()

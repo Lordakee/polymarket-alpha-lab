@@ -112,6 +112,8 @@ def test_builds_ranked_decimal_scorecard_and_public_payload() -> None:
     assert report.average_calibration_memory_score == d("0.654250")
     assert report.top_calibration_memory_score == d("0.900000")
     assert report.bottom_calibration_memory_score == d("0.346250")
+    assert report.average_learning_priority_score == d("0.345750")
+    assert report.top_learning_priority_score == d("0.653750")
     assert report.reason_codes == (
         "team_specialist_memory_scorecard_blocked_rows",
         "team_specialist_memory_scorecard_watch_rows",
@@ -129,17 +131,31 @@ def test_builds_ranked_decimal_scorecard_and_public_payload() -> None:
         d("0.716500"),
         d("0.346250"),
     )
+    assert tuple(row.learning_priority_score for row in rows) == (
+        d("0.100000"),
+        d("0.283500"),
+        d("0.653750"),
+    )
+    assert tuple(row.learning_priority_band for row in rows) == (
+        "low",
+        "medium",
+        "high",
+    )
     assert tuple(row.memory_status for row in rows) == ("pass", "watch", "blocked")
 
     payload = report.payload
     assert payload["team_count"] == "3"
     assert payload["average_calibration_memory_score"] == "0.654250"
+    assert payload["average_learning_priority_score"] == "0.345750"
+    assert payload["top_learning_priority_score"] == "0.653750"
     assert payload["generated_at"] == "2026-07-06T12:00:00+00:00"
     assert payload["paper_only"] is True
     assert payload["report_only"] is True
     assert payload["readonly"] is True
     assert payload["rows"][0]["rank"] == "1"
     assert payload["rows"][0]["calibration_memory_score"] == "0.900000"
+    assert payload["rows"][2]["learning_priority_score"] == "0.653750"
+    assert payload["rows"][2]["learning_priority_band"] == "high"
     assert len(report.derived_validation_digest) == 64
     assert_no_float_values(payload)
 
@@ -156,6 +172,8 @@ def test_empty_scorecard_is_report_only_and_digest_backed() -> None:
     assert report.average_calibration_memory_score == d("0.000000")
     assert report.top_calibration_memory_score == d("0.000000")
     assert report.bottom_calibration_memory_score == d("0.000000")
+    assert report.average_learning_priority_score == d("0.000000")
+    assert report.top_learning_priority_score == d("0.000000")
     assert report.rows == ()
     assert report.reason_codes == ("team_specialist_memory_scorecard_empty",)
     assert report.payload["derived_validation_digest"] == report.derived_validation_digest
@@ -198,6 +216,7 @@ def test_dataclasses_are_frozen_decimal_only_and_hard_flagged() -> None:
                 "stale_lesson_score",
                 "postmortem_action_score",
                 "calibration_memory_score",
+                "learning_priority_score",
                 "team_count",
                 "pass_team_count",
                 "watch_team_count",
@@ -205,6 +224,8 @@ def test_dataclasses_are_frozen_decimal_only_and_hard_flagged() -> None:
                 "average_calibration_memory_score",
                 "top_calibration_memory_score",
                 "bottom_calibration_memory_score",
+                "average_learning_priority_score",
+                "top_learning_priority_score",
             }:
                 assert type(value) is Decimal
 

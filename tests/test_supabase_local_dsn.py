@@ -49,6 +49,8 @@ def test_validate_local_postgres_dsn_accepts_local_dsns(dsn: str) -> None:
         "host=localhost,example.invalid dbname=postgres",
         "host=db.abcdefghijklmnopqrst.supabase.co password=super-secret-password dbname=postgres",
         "host=aws-0-us-east-1.pooler.supabase.com password=super-secret-password dbname=postgres",
+        "host=example.invalid HOST=localhost dbname=postgres",
+        "HOST=localhost host=example.invalid dbname=postgres",
         "hostaddr=127.0.0.1 dbname=postgres",
         "service=local",
         "sqlite:///tmp/project.db",

@@ -21,6 +21,7 @@ ONE = Decimal("1.000000")
 
 MEMORY_STATUSES = ("pass", "watch", "blocked")
 SCORECARD_STATUSES = ("pass", "watch", "blocked")
+LEARNING_PRIORITY_BANDS = ("low", "medium", "high")
 ROW_REASON_CODES = (
     "team_specialist_memory_pass",
     "team_specialist_memory_watch",
@@ -205,6 +206,8 @@ class TeamSpecialistCalibrationMemoryScorecardV2Row:
     unresolved_postmortem_action_count: Decimal
     postmortem_action_score: Decimal
     calibration_memory_score: Decimal
+    learning_priority_score: Decimal
+    learning_priority_band: str
     memory_status: str
     reason_codes: tuple[str, ...]
     paper_only: bool = True
@@ -236,6 +239,7 @@ class TeamSpecialistCalibrationMemoryScorecardV2Row:
             "stale_lesson_score",
             "postmortem_action_score",
             "calibration_memory_score",
+            "learning_priority_score",
         ):
             object.__setattr__(
                 self,
@@ -254,6 +258,10 @@ class TeamSpecialistCalibrationMemoryScorecardV2Row:
                     getattr(self, field_name),
                 ),
             )
+        _require_learning_priority_band(
+            "learning_priority_band",
+            self.learning_priority_band,
+        )
         _require_memory_status("memory_status", self.memory_status)
         object.__setattr__(
             self,
@@ -280,6 +288,8 @@ class TeamSpecialistCalibrationMemoryScorecardV2Report:
     average_calibration_memory_score: Decimal
     top_calibration_memory_score: Decimal
     bottom_calibration_memory_score: Decimal
+    average_learning_priority_score: Decimal
+    top_learning_priority_score: Decimal
     rows: tuple[TeamSpecialistCalibrationMemoryScorecardV2Row, ...]
     reason_codes: tuple[str, ...]
     derived_validation_digest: str
@@ -313,6 +323,8 @@ class TeamSpecialistCalibrationMemoryScorecardV2Report:
             "average_calibration_memory_score",
             "top_calibration_memory_score",
             "bottom_calibration_memory_score",
+            "average_learning_priority_score",
+            "top_learning_priority_score",
         ):
             object.__setattr__(
                 self,
@@ -384,6 +396,8 @@ def build_team_specialist_calibration_memory_scorecard_v2(
         "average_calibration_memory_score": _average_score(rows),
         "top_calibration_memory_score": _top_score(rows),
         "bottom_calibration_memory_score": _bottom_score(rows),
+        "average_learning_priority_score": _average_learning_priority_score(rows),
+        "top_learning_priority_score": _top_learning_priority_score(rows),
         "rows": rows,
         "reason_codes": _report_reason_codes(rows, status),
         "paper_only": True,
@@ -438,6 +452,8 @@ def _row_for_memory(
             config.max_unresolved_postmortem_action_count,
         ),
         calibration_memory_score=score,
+        learning_priority_score=_learning_priority_score(score),
+        learning_priority_band=_learning_priority_band(score),
         memory_status=status,
         reason_codes=_row_reason_codes(memory, status, config),
     )
@@ -486,6 +502,20 @@ def _memory_status(
     if score >= config.watch_score_floor:
         return "watch"
     return "blocked"
+
+
+def _learning_priority_score(score: Decimal) -> Decimal:
+    with localcontext(DECIMAL_CONTEXT):
+        return _clamp_ratio(ONE - score)
+
+
+def _learning_priority_band(score: Decimal) -> str:
+    priority_score = _learning_priority_score(score)
+    if priority_score >= Decimal("0.600000"):
+        return "high"
+    if priority_score >= Decimal("0.250000"):
+        return "medium"
+    return "low"
 
 
 def _scorecard_status(
@@ -643,6 +673,25 @@ def _bottom_score(
     return min(row.calibration_memory_score for row in rows)
 
 
+def _average_learning_priority_score(
+    rows: tuple[TeamSpecialistCalibrationMemoryScorecardV2Row, ...],
+) -> Decimal:
+    if not rows:
+        return ZERO
+    with localcontext(DECIMAL_CONTEXT):
+        return _clamp_ratio(
+            sum(row.learning_priority_score for row in rows) / Decimal(len(rows)),
+        )
+
+
+def _top_learning_priority_score(
+    rows: tuple[TeamSpecialistCalibrationMemoryScorecardV2Row, ...],
+) -> Decimal:
+    if not rows:
+        return ZERO
+    return max(row.learning_priority_score for row in rows)
+
+
 def _normalize_team_memories(
     value: object,
 ) -> tuple[TeamSpecialistCalibrationMemoryV2Input, ...]:
@@ -697,6 +746,10 @@ def _validate_row_consistency(
 ) -> None:
     if row.forecast_accuracy_score != _forecast_accuracy_score(row.recent_forecast_error):
         raise ValueError("forecast_accuracy_score must match recent_forecast_error")
+    if row.learning_priority_score != _learning_priority_score(row.calibration_memory_score):
+        raise ValueError("learning_priority_score must match calibration_memory_score")
+    if row.learning_priority_band != _learning_priority_band(row.calibration_memory_score):
+        raise ValueError("learning_priority_band must match calibration_memory_score")
 
 
 def _validate_report_consistency(
@@ -732,6 +785,10 @@ def _validate_report_consistency(
         raise ValueError("top_calibration_memory_score must match rows")
     if report.bottom_calibration_memory_score != _bottom_score(rows):
         raise ValueError("bottom_calibration_memory_score must match rows")
+    if report.average_learning_priority_score != _average_learning_priority_score(rows):
+        raise ValueError("average_learning_priority_score must match rows")
+    if report.top_learning_priority_score != _top_learning_priority_score(rows):
+        raise ValueError("top_learning_priority_score must match rows")
 
 
 def _validate_rows_sorted(
@@ -781,6 +838,12 @@ def _require_scorecard_status(field_name: str, value: object) -> None:
     _require_non_empty_string(field_name, value)
     if value not in SCORECARD_STATUSES:
         raise ValueError(f"{field_name} must be pass, watch, or blocked")
+
+
+def _require_learning_priority_band(field_name: str, value: object) -> None:
+    _require_non_empty_string(field_name, value)
+    if value not in LEARNING_PRIORITY_BANDS:
+        raise ValueError(f"{field_name} must be low, medium, or high")
 
 
 def _normalize_reason_codes(

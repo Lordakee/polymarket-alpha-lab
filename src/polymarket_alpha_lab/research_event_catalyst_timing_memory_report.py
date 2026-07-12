@@ -219,10 +219,12 @@ class ResearchEventCatalystTimingMemoryRow:
     stale_thesis_risk_score: Decimal
     recheck_urgency_score: Decimal
     timing_memory_risk_score: Decimal
+    manual_review_timing_gap_hours: Decimal
     needs_fresh_catalyst: bool
     weak_evidence_lead_time: bool
     stale_thesis_risk: bool
     recheck_urgency: bool
+    manual_review_ready: bool
     reason_codes: tuple[str, ...]
     paper_only: bool = True
     report_only: bool = True
@@ -253,11 +255,20 @@ class ResearchEventCatalystTimingMemoryRow:
                 field_name,
                 _require_score_decimal(field_name, getattr(self, field_name)),
             )
+        object.__setattr__(
+            self,
+            "manual_review_timing_gap_hours",
+            _require_nonnegative_decimal(
+                "manual_review_timing_gap_hours",
+                self.manual_review_timing_gap_hours,
+            ),
+        )
         for field_name in (
             "needs_fresh_catalyst",
             "weak_evidence_lead_time",
             "stale_thesis_risk",
             "recheck_urgency",
+            "manual_review_ready",
         ):
             _require_bool(field_name, getattr(self, field_name))
         object.__setattr__(
@@ -286,7 +297,11 @@ class ResearchEventCatalystTimingMemoryReport:
     weak_evidence_lead_time_count: Decimal
     stale_thesis_risk_count: Decimal
     recheck_urgency_count: Decimal
+    manual_review_ready_aggregate_count: Decimal
+    manual_review_deferred_aggregate_count: Decimal
+    manual_review_ready_aggregate_ratio: Decimal
     highest_timing_memory_risk_score: Decimal
+    max_manual_review_timing_gap_hours: Decimal
     max_catalyst_freshness_hours: Decimal
     min_evidence_lead_time_hours: Decimal
     max_stale_thesis_risk_score: Decimal
@@ -325,6 +340,9 @@ class ResearchEventCatalystTimingMemoryReport:
             "weak_evidence_lead_time_count",
             "stale_thesis_risk_count",
             "recheck_urgency_count",
+            "manual_review_ready_aggregate_count",
+            "manual_review_deferred_aggregate_count",
+            "max_manual_review_timing_gap_hours",
             "max_catalyst_freshness_hours",
             "min_evidence_lead_time_hours",
         ):
@@ -335,6 +353,7 @@ class ResearchEventCatalystTimingMemoryReport:
             )
         for field_name in (
             "flagged_aggregate_ratio",
+            "manual_review_ready_aggregate_ratio",
             "highest_timing_memory_risk_score",
             "max_stale_thesis_risk_score",
             "max_recheck_urgency_score",
@@ -397,6 +416,12 @@ def build_research_event_catalyst_timing_memory_report(
     status = _report_status(rows)
     aggregate_count = _count(len(rows))
     flagged_count = _count(sum(1 for row in rows if row.status != "pass"))
+    manual_review_ready_count = _count(
+        sum(1 for row in rows if row.manual_review_ready),
+    )
+    manual_review_deferred_count = _count(
+        sum(1 for row in rows if not row.manual_review_ready),
+    )
     return ResearchEventCatalystTimingMemoryReport(
         generated_at=generated_at_utc,
         config_version=config.config_version,
@@ -418,8 +443,17 @@ def build_research_event_catalyst_timing_memory_report(
             sum(1 for row in rows if row.stale_thesis_risk),
         ),
         recheck_urgency_count=_count(sum(1 for row in rows if row.recheck_urgency)),
+        manual_review_ready_aggregate_count=manual_review_ready_count,
+        manual_review_deferred_aggregate_count=manual_review_deferred_count,
+        manual_review_ready_aggregate_ratio=_ratio(
+            manual_review_ready_count,
+            aggregate_count,
+        ),
         highest_timing_memory_risk_score=_max_decimal(
             (row.timing_memory_risk_score for row in rows),
+        ),
+        max_manual_review_timing_gap_hours=_max_decimal(
+            (row.manual_review_timing_gap_hours for row in rows),
         ),
         max_catalyst_freshness_hours=_max_decimal(
             (row.catalyst_freshness_hours for row in rows),
@@ -458,6 +492,10 @@ def _build_row(
     status = _status_from_reason_codes(reason_codes)
     if not reason_codes:
         reason_codes = (PASS_REASON,)
+    manual_review_timing_gap_hours = _manual_review_timing_gap_hours(
+        item,
+        config=config,
+    )
     return ResearchEventCatalystTimingMemoryRow(
         aggregate_label=item.aggregate_label,
         status=status,
@@ -466,6 +504,7 @@ def _build_row(
         stale_thesis_risk_score=item.stale_thesis_risk_score,
         recheck_urgency_score=item.recheck_urgency_score,
         timing_memory_risk_score=_risk_score_for_status(status),
+        manual_review_timing_gap_hours=manual_review_timing_gap_hours,
         needs_fresh_catalyst=any(
             reason_code
             in (
@@ -498,6 +537,7 @@ def _build_row(
             )
             for reason_code in reason_codes
         ),
+        manual_review_ready=manual_review_timing_gap_hours == ZERO,
         reason_codes=_normalize_reason_codes("reason_codes", reason_codes),
     )
 
@@ -530,6 +570,16 @@ def _timing_reason_codes(
     return _normalize_reason_codes("reason_codes", tuple(reason_codes))
 
 
+def _manual_review_timing_gap_hours(
+    item: ResearchEventCatalystTimingMemoryInput,
+    *,
+    config: ResearchEventCatalystTimingMemoryConfig,
+) -> Decimal:
+    catalyst_gap = item.catalyst_freshness_hours - config.max_pass_catalyst_freshness_hours
+    evidence_gap = config.min_pass_evidence_lead_time_hours - item.evidence_lead_time_hours
+    return max(ZERO, catalyst_gap, evidence_gap)
+
+
 def _validate_config(config: ResearchEventCatalystTimingMemoryConfig) -> None:
     if config.max_pass_catalyst_freshness_hours > config.max_watch_catalyst_freshness_hours:
         raise ValueError(
@@ -559,6 +609,8 @@ def _validate_row(row: ResearchEventCatalystTimingMemoryRow) -> None:
         raise ValueError("status must match reason_codes")
     if row.timing_memory_risk_score != _risk_score_for_status(row.status):
         raise ValueError("timing_memory_risk_score must match status")
+    if row.manual_review_ready != (row.manual_review_timing_gap_hours == ZERO):
+        raise ValueError("manual_review_ready must match manual_review_timing_gap_hours")
     if row.needs_fresh_catalyst != any(
         reason_code
         in (CATALYST_FRESHNESS_WATCH_REASON, CATALYST_FRESHNESS_BLOCK_REASON)
@@ -617,10 +669,27 @@ def _validate_report(report: ResearchEventCatalystTimingMemoryReport) -> None:
         raise ValueError("stale_thesis_risk_count must match rows")
     if report.recheck_urgency_count != _count(sum(1 for row in rows if row.recheck_urgency)):
         raise ValueError("recheck_urgency_count must match rows")
+    manual_review_ready_count = _count(sum(1 for row in rows if row.manual_review_ready))
+    if report.manual_review_ready_aggregate_count != manual_review_ready_count:
+        raise ValueError("manual_review_ready_aggregate_count must match rows")
+    manual_review_deferred_count = _count(
+        sum(1 for row in rows if not row.manual_review_ready),
+    )
+    if report.manual_review_deferred_aggregate_count != manual_review_deferred_count:
+        raise ValueError("manual_review_deferred_aggregate_count must match rows")
+    if report.manual_review_ready_aggregate_ratio != _ratio(
+        manual_review_ready_count,
+        report.aggregate_count,
+    ):
+        raise ValueError("manual_review_ready_aggregate_ratio must match rows")
     if report.highest_timing_memory_risk_score != _max_decimal(
         (row.timing_memory_risk_score for row in rows),
     ):
         raise ValueError("highest_timing_memory_risk_score must match rows")
+    if report.max_manual_review_timing_gap_hours != _max_decimal(
+        (row.manual_review_timing_gap_hours for row in rows),
+    ):
+        raise ValueError("max_manual_review_timing_gap_hours must match rows")
     if report.max_catalyst_freshness_hours != _max_decimal(
         (row.catalyst_freshness_hours for row in rows),
     ):

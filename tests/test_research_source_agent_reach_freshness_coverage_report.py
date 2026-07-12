@@ -461,3 +461,78 @@ def test_empty_report_is_block_report_only_and_module_has_no_runtime_surfaces() 
         "supabase",
         "web3",
     }
+
+
+def test_report_exposes_agent_reach_preflight_readiness_analytics() -> None:
+    module = api()
+    report = build_report(
+        source_class_input("official-api"),
+        source_class_input(
+            "agent-reach-news",
+            recency_lag_seconds=d("90000.000000"),
+        ),
+        source_class_input(
+            "community-archive",
+            retrieval_attempt_count=d("10.000000"),
+            successful_retrieval_count=d("4.000000"),
+            recency_lag_seconds=d("300000.000000"),
+            authority_confidence=d("0.350000"),
+            conflict_count=d("4.000000"),
+            covered_conflict_count=d("1.000000"),
+        ),
+    )
+
+    assert report.preflight_ready_count == d("1.000000")
+    assert report.preflight_attention_ratio == d("0.666667")
+    assert report.preflight_blocker_count == d("1.000000")
+    assert report.paper_only is True
+    assert report.report_only is True
+    assert report.readonly is True
+
+    payload = module.research_source_agent_reach_freshness_coverage_report_public_payload(
+        report,
+    )
+
+    assert payload["preflight_ready_count"] == "1.000000"
+    assert payload["preflight_attention_ratio"] == "0.666667"
+    assert payload["preflight_blocker_count"] == "1.000000"
+    assert payload["derived_validation_digest"] == canonical_digest(payload)
+    assert module.validate_research_source_agent_reach_freshness_coverage_report_public_payload(
+        payload,
+    )
+    _assert_payload_has_no_raw_numbers(payload)
+    _assert_payload_has_no_forbidden_text(payload)
+
+
+def test_report_rejects_misreported_preflight_readiness_counts() -> None:
+    module = api()
+    report = build_report(
+        source_class_input("official-api"),
+        source_class_input(
+            "agent-reach-news",
+            recency_lag_seconds=d("90000.000000"),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="preflight_ready_count must match rows"):
+        module.ResearchSourceAgentReachFreshnessCoverageReport(
+            generated_at=report.generated_at,
+            config_version=report.config_version,
+            status=report.status,
+            input_count=report.input_count,
+            row_count=report.row_count,
+            pass_count=report.pass_count,
+            watch_count=report.watch_count,
+            block_count=report.block_count,
+            attention_count=report.attention_count,
+            avg_successful_retrieval_ratio=report.avg_successful_retrieval_ratio,
+            max_recency_lag_seconds=report.max_recency_lag_seconds,
+            avg_authority_confidence=report.avg_authority_confidence,
+            avg_conflict_coverage_ratio=report.avg_conflict_coverage_ratio,
+            min_freshness_coverage_score=report.min_freshness_coverage_score,
+            preflight_ready_count=d("0.000000"),
+            preflight_attention_ratio=report.preflight_attention_ratio,
+            preflight_blocker_count=report.preflight_blocker_count,
+            reason_codes=report.reason_codes,
+            rows=report.rows,
+        )

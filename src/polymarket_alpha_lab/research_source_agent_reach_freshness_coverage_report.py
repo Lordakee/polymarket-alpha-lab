@@ -62,6 +62,9 @@ PUBLIC_PAYLOAD_FIELDS = (
     "avg_authority_confidence",
     "avg_conflict_coverage_ratio",
     "min_freshness_coverage_score",
+    "preflight_ready_count",
+    "preflight_attention_ratio",
+    "preflight_blocker_count",
     "reason_codes",
     "rows",
     "paper_only",
@@ -384,6 +387,9 @@ class ResearchSourceAgentReachFreshnessCoverageReport:
     avg_authority_confidence: Decimal
     avg_conflict_coverage_ratio: Decimal
     min_freshness_coverage_score: Decimal
+    preflight_ready_count: Decimal
+    preflight_attention_ratio: Decimal
+    preflight_blocker_count: Decimal
     reason_codes: tuple[str, ...]
     rows: tuple[ResearchSourceAgentReachFreshnessCoverageRow, ...]
     derived_validation_digest: str = ""
@@ -409,6 +415,8 @@ class ResearchSourceAgentReachFreshnessCoverageReport:
             "watch_count",
             "block_count",
             "attention_count",
+            "preflight_ready_count",
+            "preflight_blocker_count",
         ):
             object.__setattr__(
                 self,
@@ -420,6 +428,7 @@ class ResearchSourceAgentReachFreshnessCoverageReport:
             "avg_authority_confidence",
             "avg_conflict_coverage_ratio",
             "min_freshness_coverage_score",
+            "preflight_attention_ratio",
         ):
             object.__setattr__(
                 self,
@@ -511,6 +520,12 @@ def build_research_source_agent_reach_freshness_coverage_report(
             (row.freshness_coverage_score for row in rows),
             default=ZERO,
         ),
+        preflight_ready_count=_status_count(rows, "pass"),
+        preflight_attention_ratio=_safe_ratio(
+            _status_count(rows, "watch") + _status_count(rows, "block"),
+            row_count,
+        ),
+        preflight_blocker_count=_status_count(rows, "block"),
         reason_codes=_report_reason_codes(rows),
         rows=rows,
     )
@@ -563,8 +578,11 @@ def validate_research_source_agent_reach_freshness_coverage_report_public_payloa
         "avg_authority_confidence",
         "avg_conflict_coverage_ratio",
         "min_freshness_coverage_score",
+        "preflight_attention_ratio",
     ):
         _decimal_from_payload_string(field_name, payload[field_name])
+    for field_name in ("preflight_ready_count", "preflight_blocker_count"):
+        _decimal_from_payload_string(field_name, payload[field_name], require_integral=True)
     _normalize_public_reason_codes("reason_codes", payload["reason_codes"])
     _validate_payload_rows(payload["rows"])
     _require_payload_hard_flags("payload", payload)
@@ -847,6 +865,15 @@ def _validate_report(report: ResearchSourceAgentReachFreshnessCoverageReport) ->
         raise ValueError("block_count must match rows")
     if report.attention_count != report.watch_count + report.block_count:
         raise ValueError("attention_count must match watch and block counts")
+    if report.preflight_ready_count != _status_count(report.rows, "pass"):
+        raise ValueError("preflight_ready_count must match rows")
+    if report.preflight_attention_ratio != _safe_ratio(
+        report.watch_count + report.block_count,
+        report.row_count,
+    ):
+        raise ValueError("preflight_attention_ratio must match attention rows")
+    if report.preflight_blocker_count != _status_count(report.rows, "block"):
+        raise ValueError("preflight_blocker_count must match rows")
     if report.avg_successful_retrieval_ratio != _safe_ratio(
         _sum_decimals(row.successful_retrieval_ratio for row in report.rows),
         report.row_count,
@@ -935,6 +962,20 @@ def _validate_payload_report_consistency(payload: dict[str, Any]) -> None:
         min_freshness_coverage_score=_decimal_from_payload_string(
             "min_freshness_coverage_score",
             payload["min_freshness_coverage_score"],
+        ),
+        preflight_ready_count=_decimal_from_payload_string(
+            "preflight_ready_count",
+            payload["preflight_ready_count"],
+            require_integral=True,
+        ),
+        preflight_attention_ratio=_decimal_from_payload_string(
+            "preflight_attention_ratio",
+            payload["preflight_attention_ratio"],
+        ),
+        preflight_blocker_count=_decimal_from_payload_string(
+            "preflight_blocker_count",
+            payload["preflight_blocker_count"],
+            require_integral=True,
         ),
         reason_codes=_normalize_public_reason_codes(
             "reason_codes",
@@ -1055,6 +1096,11 @@ def _report_public_payload_without_digest(
         "min_freshness_coverage_score": _decimal_payload_value(
             report.min_freshness_coverage_score,
         ),
+        "preflight_ready_count": _decimal_payload_value(report.preflight_ready_count),
+        "preflight_attention_ratio": _decimal_payload_value(
+            report.preflight_attention_ratio,
+        ),
+        "preflight_blocker_count": _decimal_payload_value(report.preflight_blocker_count),
         "reason_codes": list(report.reason_codes),
         "rows": [_row_public_payload(row) for row in report.rows],
         "paper_only": report.paper_only,

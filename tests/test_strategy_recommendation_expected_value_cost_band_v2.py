@@ -250,6 +250,71 @@ def test_status_bands_and_reason_codes_are_deterministic() -> None:
     assert rows_by_id["pass-clean"].recommendation_status == "pass"
 
 
+def test_report_rows_explain_probability_confidence_liquidity_cost_and_status_drivers() -> None:
+    digest = report(
+        recommendation(
+            "pass-clear",
+            probability_edge=d("0.150000"),
+            confidence=d("0.800000"),
+            taker_fee=d("0.010000"),
+            spread=d("0.010000"),
+            slippage=d("0.005000"),
+            settlement_lag=d("0.002000"),
+            liquidity_haircut=d("0.003000"),
+        ),
+        recommendation(
+            "watch-confidence",
+            probability_edge=d("0.120000"),
+            confidence=d("0.400000"),
+            taker_fee=ZERO,
+            spread=ZERO,
+            slippage=ZERO,
+            settlement_lag=ZERO,
+            liquidity_haircut=ZERO,
+        ),
+        recommendation(
+            "blocked-liquidity-cost",
+            probability_edge=d("0.050000"),
+            confidence=d("0.700000"),
+            taker_fee=d("0.020000"),
+            spread=d("0.010000"),
+            slippage=d("0.005000"),
+            settlement_lag=ZERO,
+            liquidity_haircut=d("0.020000"),
+        ),
+    )
+
+    rows_by_id = {row.recommendation_id: row for row in digest.recommendation_rows}
+
+    assert rows_by_id["pass-clear"].driver_explanations == (
+        "Probability edge 0.150000 is positive.",
+        "Confidence 0.800000 applies to edge 0.150000, leaving confidence-adjusted edge 0.120000.",
+        "Liquidity haircut 0.003000 is included in total cost 0.030000.",
+        "Costs total 0.030000 versus confidence-adjusted edge 0.120000, leaving net expected value 0.090000.",
+        "Pass because net expected value 0.090000 meets the pass floor and cost-to-edge ratio 0.250000 is within limits.",
+    )
+    assert rows_by_id["watch-confidence"].driver_explanations[-1] == (
+        "Watch because confidence 0.400000 is below the minimum confidence requirement."
+    )
+    assert rows_by_id["blocked-liquidity-cost"].driver_explanations == (
+        "Probability edge 0.050000 is positive.",
+        "Confidence 0.700000 applies to edge 0.050000, leaving confidence-adjusted edge 0.035000.",
+        "Liquidity haircut 0.020000 is included in total cost 0.055000.",
+        "Costs total 0.055000 versus confidence-adjusted edge 0.035000, leaving net expected value -0.020000.",
+        "Blocked because net expected value -0.020000 is below the watch floor.",
+    )
+
+    payload = strategy_recommendation_expected_value_cost_band_v2_payload(digest)
+    assert payload["recommendation_rows"][0]["driver_explanations"] == [
+        "Probability edge 0.050000 is positive.",
+        "Confidence 0.700000 applies to edge 0.050000, leaving confidence-adjusted edge 0.035000.",
+        "Liquidity haircut 0.020000 is included in total cost 0.055000.",
+        "Costs total 0.055000 versus confidence-adjusted edge 0.035000, leaving net expected value -0.020000.",
+        "Blocked because net expected value -0.020000 is below the watch floor.",
+    ]
+    assert not _contains_float(payload)
+
+
 def test_confidence_and_nonpositive_edge_guards_are_separate_from_cost_components() -> None:
     digest = report(
         recommendation(

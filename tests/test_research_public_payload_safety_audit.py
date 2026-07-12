@@ -193,7 +193,57 @@ def test_blocking_identifiers_sources_secrets_and_trading_language_are_flagged()
             "research_public_payload_safety_audit_position_sizing_language",
         ),
     )
-    assert report.reason_codes == tuple(item.reason_code for item in report.findings)
+    assert report.reason_codes == (
+        "research_public_payload_safety_audit_raw_candidate_id_field",
+        "research_public_payload_safety_audit_market_id_field",
+        "research_public_payload_safety_audit_slug_field",
+        "research_public_payload_safety_audit_question_field",
+        "research_public_payload_safety_audit_source_reference_field",
+        "research_public_payload_safety_audit_source_reference_value",
+        "research_public_payload_safety_audit_secret_reference_value",
+        "research_public_payload_safety_audit_trade_field",
+        "research_public_payload_safety_audit_order_or_trade_language",
+        "research_public_payload_safety_audit_position_sizing_language",
+    )
+
+
+def test_summary_reason_codes_are_deduplicated_without_dropping_findings() -> None:
+    report = audit_research_public_payload(
+        {
+            "source_url": "https://example.invalid/redacted",
+            "source_text": "https://example.invalid/another-redacted",
+            "paper_only": True,
+            "report_only": True,
+            "readonly": True,
+        },
+        generated_at=GENERATED_AT,
+        report_name="deduplicated_reason_code_payload",
+    )
+
+    assert report.audit_status == "block"
+    assert tuple((item.path, item.reason_code) for item in report.findings) == (
+        (
+            "source_url",
+            "research_public_payload_safety_audit_source_reference_field",
+        ),
+        (
+            "source_url",
+            "research_public_payload_safety_audit_source_reference_value",
+        ),
+        (
+            "source_text",
+            "research_public_payload_safety_audit_source_reference_field",
+        ),
+        (
+            "source_text",
+            "research_public_payload_safety_audit_source_reference_value",
+        ),
+    )
+    assert report.finding_count == d("4")
+    assert report.reason_codes == (
+        "research_public_payload_safety_audit_source_reference_field",
+        "research_public_payload_safety_audit_source_reference_value",
+    )
 
 
 def test_watch_status_for_public_market_text_without_blocking_values() -> None:

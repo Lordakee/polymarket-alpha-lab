@@ -56,6 +56,9 @@ SUMMARY_KEYS = (
     "block_count",
     "average_completeness_score",
     "min_completeness_score",
+    "manual_decision_readiness_score",
+    "missing_evidence_item_count",
+    "missing_independent_source_count",
     "status",
     "manual_decision_review_state",
     "reason_codes",
@@ -73,6 +76,9 @@ REPORT_PAYLOAD_KEYS = (
     "block_count",
     "average_completeness_score",
     "min_completeness_score",
+    "manual_decision_readiness_score",
+    "missing_evidence_item_count",
+    "missing_independent_source_count",
     "status",
     "manual_decision_review_state",
     "reason_codes",
@@ -96,6 +102,9 @@ ROW_PAYLOAD_KEYS = (
     "team_memory_summary_score",
     "update_trigger_summary_score",
     "unresolved_summary_gap_count",
+    "manual_decision_readiness_score",
+    "missing_evidence_item_count",
+    "missing_independent_source_count",
     "completeness_score",
     "status",
     "manual_decision_review_state",
@@ -316,6 +325,9 @@ class ResearchStrategyManualDecisionPacketCompletenessRow(_FinalDataclass):
     team_memory_summary_score: Decimal
     update_trigger_summary_score: Decimal
     unresolved_summary_gap_count: Decimal
+    manual_decision_readiness_score: Decimal
+    missing_evidence_item_count: Decimal
+    missing_independent_source_count: Decimal
     completeness_score: Decimal
     status: str
     manual_decision_review_state: str
@@ -364,6 +376,23 @@ class ResearchStrategyManualDecisionPacketCompletenessRow(_FinalDataclass):
                 self.unresolved_summary_gap_count,
             ),
         )
+        object.__setattr__(
+            self,
+            "manual_decision_readiness_score",
+            _normalize_ratio(
+                "manual_decision_readiness_score",
+                self.manual_decision_readiness_score,
+            ),
+        )
+        for field_name in (
+            "missing_evidence_item_count",
+            "missing_independent_source_count",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _normalize_nonnegative_count(field_name, getattr(self, field_name)),
+            )
         _require_status("status", self.status)
         _require_manual_state("manual_decision_review_state", self.manual_decision_review_state)
         object.__setattr__(self, "reason_codes", _normalize_reason_codes(self.reason_codes))
@@ -382,6 +411,9 @@ class ResearchStrategyManualDecisionPacketCompletenessReport(_FinalDataclass):
     block_count: Decimal
     average_completeness_score: Decimal | None
     min_completeness_score: Decimal | None
+    manual_decision_readiness_score: Decimal | None
+    missing_evidence_item_count: Decimal
+    missing_independent_source_count: Decimal
     status: str
     manual_decision_review_state: str
     reason_codes: tuple[str, ...]
@@ -409,6 +441,24 @@ class ResearchStrategyManualDecisionPacketCompletenessReport(_FinalDataclass):
             value = getattr(self, field_name)
             if value is not None:
                 object.__setattr__(self, field_name, _normalize_ratio(field_name, value))
+        if self.manual_decision_readiness_score is not None:
+            object.__setattr__(
+                self,
+                "manual_decision_readiness_score",
+                _normalize_ratio(
+                    "manual_decision_readiness_score",
+                    self.manual_decision_readiness_score,
+                ),
+            )
+        for field_name in (
+            "missing_evidence_item_count",
+            "missing_independent_source_count",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _normalize_nonnegative_count(field_name, getattr(self, field_name)),
+            )
         _require_status("status", self.status)
         _require_manual_state("manual_decision_review_state", self.manual_decision_review_state)
         object.__setattr__(self, "reason_codes", _normalize_reason_codes(self.reason_codes))
@@ -473,6 +523,13 @@ def build_research_strategy_manual_decision_packet_completeness_report(
         "min_completeness_score": (
             None if not rows else min(row.completeness_score for row in rows)
         ),
+        "manual_decision_readiness_score": _average_manual_readiness_score(rows),
+        "missing_evidence_item_count": _sum_decimal(
+            tuple(row.missing_evidence_item_count for row in rows),
+        ),
+        "missing_independent_source_count": _sum_decimal(
+            tuple(row.missing_independent_source_count for row in rows),
+        ),
         "status": report_status,
         "manual_decision_review_state": _manual_state(report_status),
         "reason_codes": _report_reason_codes(rows),
@@ -527,6 +584,18 @@ def _row_values_from_packet(
         packet.independent_source_count,
         config.independent_source_count_pass_floor,
     )
+    missing_evidence_item_count = _missing_count(
+        packet.evidence_item_count,
+        config.evidence_item_count_pass_floor,
+    )
+    missing_independent_source_count = _missing_count(
+        packet.independent_source_count,
+        config.independent_source_count_pass_floor,
+    )
+    manual_decision_readiness_score = _manual_readiness_score(
+        evidence_coverage_ratio,
+        independent_source_ratio,
+    )
     reason_codes = _row_reason_codes(packet, config=config)
     status = _row_status(reason_codes)
     completeness_score = _completeness_score(
@@ -554,6 +623,9 @@ def _row_values_from_packet(
         "team_memory_summary_score": packet.team_memory_summary_score,
         "update_trigger_summary_score": packet.update_trigger_summary_score,
         "unresolved_summary_gap_count": packet.unresolved_summary_gap_count,
+        "manual_decision_readiness_score": manual_decision_readiness_score,
+        "missing_evidence_item_count": missing_evidence_item_count,
+        "missing_independent_source_count": missing_independent_source_count,
         "completeness_score": completeness_score,
         "status": status,
         "manual_decision_review_state": _manual_state(status),
@@ -665,6 +737,32 @@ def _average_completeness_score(
     return _ratio(_sum_decimal(tuple(row.completeness_score for row in rows)), _count(len(rows)))
 
 
+def _average_manual_readiness_score(
+    rows: tuple[ResearchStrategyManualDecisionPacketCompletenessRow, ...],
+) -> Decimal | None:
+    if not rows:
+        return None
+    return _ratio(
+        _sum_decimal(tuple(row.manual_decision_readiness_score for row in rows)),
+        _count(len(rows)),
+    )
+
+
+def _manual_readiness_score(
+    evidence_coverage_ratio: Decimal,
+    independent_source_ratio: Decimal,
+) -> Decimal:
+    return _ratio(_sum_decimal((evidence_coverage_ratio, independent_source_ratio)), Decimal("2.000000"))
+
+
+def _missing_count(actual_count: Decimal, required_count: Decimal) -> Decimal:
+    actual = _normalize_nonnegative_count("actual_count", actual_count)
+    required = _normalize_nonnegative_count("required_count", required_count)
+    if actual >= required:
+        return ZERO
+    return (required - actual).quantize(COUNT_QUANTUM)
+
+
 def _normalize_packets(
     packets: Iterable[ResearchStrategyManualDecisionPacketInput],
 ) -> tuple[ResearchStrategyManualDecisionPacketInput, ...]:
@@ -730,6 +828,12 @@ def _validate_row(row: ResearchStrategyManualDecisionPacketCompletenessRow) -> N
     )
     if row.completeness_score != expected_completeness:
         raise ValueError("completeness_score must match component scores")
+    expected_manual_readiness = _manual_readiness_score(
+        row.evidence_coverage_ratio,
+        row.independent_source_ratio,
+    )
+    if row.manual_decision_readiness_score != expected_manual_readiness:
+        raise ValueError("manual_decision_readiness_score must match coverage scores")
     if row.status != _row_status(row.reason_codes):
         raise ValueError("status must match reason_codes")
     if row.manual_decision_review_state != _manual_state(row.status):
@@ -752,6 +856,16 @@ def _validate_report(report: ResearchStrategyManualDecisionPacketCompletenessRep
     expected_min = None if not report.rows else min(row.completeness_score for row in report.rows)
     if report.min_completeness_score != expected_min:
         raise ValueError("min_completeness_score must match rows")
+    if report.manual_decision_readiness_score != _average_manual_readiness_score(report.rows):
+        raise ValueError("manual_decision_readiness_score must match rows")
+    if report.missing_evidence_item_count != _sum_decimal(
+        tuple(row.missing_evidence_item_count for row in report.rows),
+    ):
+        raise ValueError("missing_evidence_item_count must match rows")
+    if report.missing_independent_source_count != _sum_decimal(
+        tuple(row.missing_independent_source_count for row in report.rows),
+    ):
+        raise ValueError("missing_independent_source_count must match rows")
     if report.status != _report_status(report.rows):
         raise ValueError("status must match rows")
     if report.manual_decision_review_state != _manual_state(report.status):
@@ -777,6 +891,9 @@ def _row_digest_values(
         "team_memory_summary_score": row.team_memory_summary_score,
         "update_trigger_summary_score": row.update_trigger_summary_score,
         "unresolved_summary_gap_count": row.unresolved_summary_gap_count,
+        "manual_decision_readiness_score": row.manual_decision_readiness_score,
+        "missing_evidence_item_count": row.missing_evidence_item_count,
+        "missing_independent_source_count": row.missing_independent_source_count,
         "completeness_score": row.completeness_score,
         "status": row.status,
         "manual_decision_review_state": row.manual_decision_review_state,
@@ -799,6 +916,9 @@ def _report_digest_values(
         "block_count": report.block_count,
         "average_completeness_score": report.average_completeness_score,
         "min_completeness_score": report.min_completeness_score,
+        "manual_decision_readiness_score": report.manual_decision_readiness_score,
+        "missing_evidence_item_count": report.missing_evidence_item_count,
+        "missing_independent_source_count": report.missing_independent_source_count,
         "status": report.status,
         "manual_decision_review_state": report.manual_decision_review_state,
         "reason_codes": report.reason_codes,

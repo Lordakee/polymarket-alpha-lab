@@ -76,7 +76,10 @@ def _is_local_keyword_dsn(value: str) -> bool:
         key, field_value = token.split("=", 1)
         if not key:
             return False
-        params[key.lower()] = field_value
+        normalized_key = key.lower()
+        if normalized_key in params:
+            return False
+        params[normalized_key] = field_value
     if "hostaddr" in params or "service" in params:
         return False
     host = params.get("host")

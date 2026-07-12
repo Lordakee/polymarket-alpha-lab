@@ -157,9 +157,11 @@ REPORT_PAYLOAD_FIELDS = frozenset(
         "config_version",
         "topic_count",
         "routed_topic_count",
+        "manual_review_topic_count",
         "pass_count",
         "watch_count",
         "block_count",
+        "manual_review_topic_ratio",
         "max_routing_pressure_score",
         "avg_routing_pressure_score",
         "max_source_gap_score",
@@ -181,6 +183,7 @@ REPORT_COUNT_PAYLOAD_FIELDS = frozenset(
     (
         "topic_count",
         "routed_topic_count",
+        "manual_review_topic_count",
         "pass_count",
         "watch_count",
         "block_count",
@@ -190,6 +193,7 @@ REPORT_RATIO_PAYLOAD_FIELDS = frozenset(
     (
         "max_routing_pressure_score",
         "avg_routing_pressure_score",
+        "manual_review_topic_ratio",
         "max_source_gap_score",
         "min_memory_quality_score",
         "max_workload_pressure_score",
@@ -450,9 +454,11 @@ class ResearchTeamSpecialistAssignmentRoutingReport(_FinalDataclass):
     config_version: str
     topic_count: Decimal
     routed_topic_count: Decimal
+    manual_review_topic_count: Decimal
     pass_count: Decimal
     watch_count: Decimal
     block_count: Decimal
+    manual_review_topic_ratio: Decimal
     max_routing_pressure_score: Decimal
     avg_routing_pressure_score: Decimal
     max_source_gap_score: Decimal
@@ -488,6 +494,7 @@ class ResearchTeamSpecialistAssignmentRoutingReport(_FinalDataclass):
         for field_name in (
             "topic_count",
             "routed_topic_count",
+            "manual_review_topic_count",
             "pass_count",
             "watch_count",
             "block_count",
@@ -500,6 +507,7 @@ class ResearchTeamSpecialistAssignmentRoutingReport(_FinalDataclass):
         for field_name in (
             "max_routing_pressure_score",
             "avg_routing_pressure_score",
+            "manual_review_topic_ratio",
             "max_source_gap_score",
             "min_memory_quality_score",
             "max_workload_pressure_score",
@@ -558,9 +566,14 @@ def build_research_team_specialist_assignment_routing_report(
         "config_version": config.config_version,
         "topic_count": _count(len(rows)),
         "routed_topic_count": _count(len(rows)),
+        "manual_review_topic_count": _manual_review_topic_count(rows),
         "pass_count": _status_count(rows, "pass"),
         "watch_count": _status_count(rows, "watch"),
         "block_count": _status_count(rows, "block"),
+        "manual_review_topic_ratio": _ratio(
+            _manual_review_topic_count(rows),
+            _count(len(rows)),
+        ),
         "max_routing_pressure_score": _max_decimal(
             tuple(row.routing_pressure_score for row in rows),
         ),
@@ -989,6 +1002,12 @@ def _status_count(
     return _count(sum(1 for row in rows if row.status == status))
 
 
+def _manual_review_topic_count(
+    rows: tuple[ResearchTeamSpecialistAssignmentRoutingRow, ...],
+) -> Decimal:
+    return _count(sum(1 for row in rows if row.status in {"watch", "block"}))
+
+
 def _report_reason_codes(
     rows: tuple[ResearchTeamSpecialistAssignmentRoutingRow, ...],
 ) -> tuple[str, ...]:
@@ -1124,6 +1143,8 @@ def _validate_report(report: ResearchTeamSpecialistAssignmentRoutingReport) -> N
         raise ValueError("topic_count must match rows")
     if report.routed_topic_count != report.topic_count:
         raise ValueError("routed_topic_count must match topic_count")
+    if report.manual_review_topic_count != _manual_review_topic_count(rows):
+        raise ValueError("manual_review_topic_count must match rows")
     if report.pass_count != _status_count(rows, "pass"):
         raise ValueError("pass_count must match rows")
     if report.watch_count != _status_count(rows, "watch"):
@@ -1136,6 +1157,12 @@ def _validate_report(report: ResearchTeamSpecialistAssignmentRoutingReport) -> N
         raise ValueError("reason_codes must match rows")
     if report.reason_code_counts != _reason_code_counts(rows):
         raise ValueError("reason_code_counts must match rows")
+    expected_manual_review_ratio = _ratio(
+        report.manual_review_topic_count,
+        report.topic_count,
+    )
+    if report.manual_review_topic_ratio != expected_manual_review_ratio:
+        raise ValueError("manual_review_topic_ratio must match rows")
     if report.max_routing_pressure_score != _max_decimal(
         tuple(row.routing_pressure_score for row in rows),
     ):

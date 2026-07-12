@@ -148,6 +148,8 @@ def test_outcome_feedback_learning_rank_sorts_and_summarizes_rows() -> None:
         "outcome_feedback_learning_rank_watch_rows",
         "recent_improvement_boost_present",
         "poor_calibration_penalty_present",
+        "forecast_error_bucket_mix_present",
+        "high_forecast_error_bucket_present",
     )
 
 
@@ -184,6 +186,60 @@ def test_recent_improvement_boost_requires_recent_learning_and_improvement() -> 
     assert "no_recent_improvement_boost" in old_learning.reason_codes
     assert no_improvement.recent_improvement_boost_applied == d("0.000000")
     assert no_improvement.outcome_feedback_learning_score == d("0.400000")
+
+
+def test_forecast_error_buckets_summarize_settled_feedback_for_learning() -> None:
+    report = build_report(
+        feedback(
+            feedback_id="feedback-strong",
+            team_id="macro_rates",
+            baseline_brier_score=d("0.500000"),
+            recent_brier_score=d("0.040000"),
+            baseline_calibration_error=d("0.400000"),
+            recent_calibration_error=d("0.030000"),
+        ),
+        feedback(
+            feedback_id="feedback-watch",
+            team_id="policy_research",
+            specialist_id="policy-specialist",
+            topic_id="policy-outcomes",
+            baseline_brier_score=d("0.400000"),
+            recent_brier_score=d("0.180000"),
+            baseline_calibration_error=d("0.350000"),
+            recent_calibration_error=d("0.120000"),
+        ),
+        feedback(
+            feedback_id="feedback-blocked",
+            team_id="event_research",
+            specialist_id="event-specialist",
+            topic_id="event-outcomes",
+            baseline_brier_score=d("0.260000"),
+            recent_brier_score=d("0.420000"),
+            baseline_calibration_error=d("0.220000"),
+            recent_calibration_error=d("0.360000"),
+            latest_learning_at=None,
+        ),
+    )
+
+    assert report.low_forecast_error_bucket_count == d("1")
+    assert report.medium_forecast_error_bucket_count == d("1")
+    assert report.high_forecast_error_bucket_count == d("1")
+    assert tuple(row.forecast_error_bucket for row in report.rows) == (
+        "low",
+        "medium",
+        "high",
+    )
+    assert tuple(row.forecast_error_bucket_rank for row in report.rows) == (
+        d("1"),
+        d("2"),
+        d("3"),
+    )
+    assert report.reason_codes == (
+        "outcome_feedback_learning_rank_watch_rows",
+        "recent_improvement_boost_present",
+        "forecast_error_bucket_mix_present",
+        "high_forecast_error_bucket_present",
+    )
 
 
 def test_payload_serializes_decimals_as_strings_and_validates_digest() -> None:

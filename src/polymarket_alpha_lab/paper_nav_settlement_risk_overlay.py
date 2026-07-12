@@ -192,6 +192,19 @@ class PaperNavSettlementRiskOverlayReport:
         _validate_report_consistency(self)
         _require_safety_flags(self)
 
+    @property
+    def blocked_settlement_risk_budget_headroom(self) -> Decimal | None:
+        if self.blocked_or_missing_exit_nav_share is None:
+            return None
+        with localcontext(DECIMAL_CONTEXT):
+            headroom = (
+                self.max_blocked_settlement_exposure_share
+                - self.blocked_or_missing_exit_nav_share
+            )
+        if headroom < ZERO:
+            return ZERO.quantize(RATIO_QUANTUM)
+        return headroom.quantize(RATIO_QUANTUM)
+
 
 def build_paper_nav_settlement_risk_overlay_report(
     *,
