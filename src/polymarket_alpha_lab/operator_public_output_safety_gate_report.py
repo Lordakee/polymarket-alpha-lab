@@ -411,11 +411,85 @@ def _validate_public_payload(payload: dict[str, Any]) -> None:
     }
     if set(payload) != required_keys:
         raise ValueError("report payload must use the supported public schema")
+    _validate_public_payload_consistency(payload)
     expected_digest = _public_payload_digest(payload)
     if payload["derived_validation_digest"] != expected_digest:
         raise ValueError("derived_validation_digest does not match public payload")
     if payload["public_payload_digest"] != expected_digest:
         raise ValueError("public_payload_digest does not match public payload")
+
+
+def _validate_public_payload_consistency(payload: dict[str, Any]) -> None:
+    payload_field_names = _tuple_from_public_list(
+        "payload_field_names",
+        payload["payload_field_names"],
+    )
+    payload_text_tokens = _tuple_from_public_list(
+        "payload_text_tokens",
+        payload["payload_text_tokens"],
+    )
+    expected_blocked_field_count = _decimal_count(
+        sum(1 for field_name in payload_field_names if _field_has_blocker(field_name)),
+    )
+    expected_blocked_token_count = _decimal_count(
+        sum(1 for token in payload_text_tokens if _token_has_blocker(token)),
+    )
+    blocked_field_count = _parse_decimal_string(
+        "blocked_field_count",
+        payload["blocked_field_count"],
+    )
+    blocked_token_count = _parse_decimal_string(
+        "blocked_token_count",
+        payload["blocked_token_count"],
+    )
+    if blocked_field_count != expected_blocked_field_count:
+        raise ValueError("blocked_field_count must match payload_field_names")
+    if blocked_token_count != expected_blocked_token_count:
+        raise ValueError("blocked_token_count must match payload_text_tokens")
+    contains_market_identifier = _require_bool_value(
+        "contains_market_identifier",
+        payload["contains_market_identifier"],
+    )
+    contains_order_language = _require_bool_value(
+        "contains_order_language",
+        payload["contains_order_language"],
+    )
+    contains_auth_or_wallet_term = _require_bool_value(
+        "contains_auth_or_wallet_term",
+        payload["contains_auth_or_wallet_term"],
+    )
+    contains_dsn_or_table_term = _require_bool_value(
+        "contains_dsn_or_table_term",
+        payload["contains_dsn_or_table_term"],
+    )
+    audited_by_public_payload_safety = _require_bool_value(
+        "audited_by_public_payload_safety",
+        payload["audited_by_public_payload_safety"],
+    )
+    safe_for_operator_display = _require_bool_value(
+        "safe_for_operator_display",
+        payload["safe_for_operator_display"],
+    )
+    expected_blockers = _blocker_reason_codes(
+        contains_market_identifier=contains_market_identifier,
+        contains_order_language=contains_order_language,
+        contains_auth_or_wallet_term=contains_auth_or_wallet_term,
+        contains_dsn_or_table_term=contains_dsn_or_table_term,
+        audited_by_public_payload_safety=audited_by_public_payload_safety,
+        blocked_field_count=blocked_field_count,
+        blocked_token_count=blocked_token_count,
+    )
+    if _tuple_from_public_list("blocker_reason_codes", payload["blocker_reason_codes"]) != expected_blockers:
+        raise ValueError("blocker_reason_codes must match gate inputs")
+    expected_safe = not expected_blockers
+    if safe_for_operator_display is not expected_safe:
+        raise ValueError("safe_for_operator_display must match blocker_reason_codes")
+    expected_attention = (PASS_REASON_CODE,) if expected_safe else expected_blockers
+    if _tuple_from_public_list("attention_reason_codes", payload["attention_reason_codes"]) != expected_attention:
+        raise ValueError("attention_reason_codes must match gate status")
+    expected_ready_ratio = ONE if expected_safe else ZERO
+    if _parse_decimal_string("ready_ratio", payload["ready_ratio"]) != expected_ready_ratio:
+        raise ValueError("ready_ratio must match gate status")
 
 
 def _validate_report_consistency(report: OperatorPublicOutputSafetyGateReport) -> None:
@@ -451,6 +525,31 @@ def _validate_report_consistency(report: OperatorPublicOutputSafetyGateReport) -
     expected_ready_ratio = ONE if expected_safe else ZERO
     if report.ready_ratio != expected_ready_ratio:
         raise ValueError("ready_ratio must match gate status")
+
+
+def _tuple_from_public_list(field_name: str, value: object) -> tuple[str, ...]:
+    if type(value) is not list:
+        raise ValueError(f"{field_name} must be a public list")
+    normalized: list[str] = []
+    for item in value:
+        normalized.append(_require_public_string(field_name, item))
+    return tuple(normalized)
+
+
+def _parse_decimal_string(field_name: str, value: object) -> Decimal:
+    if type(value) is not str:
+        raise ValueError(f"{field_name} must be a Decimal-derived string")
+    try:
+        parsed = Decimal(value)
+    except InvalidOperation as exc:
+        raise ValueError(f"{field_name} must be a Decimal-derived string") from exc
+    return parsed
+
+
+def _require_bool_value(field_name: str, value: object) -> bool:
+    if type(value) is not bool:
+        raise ValueError(f"{field_name} must be a bool")
+    return value
 
 
 def _public_payload_digest(value: dict[str, Any]) -> str:

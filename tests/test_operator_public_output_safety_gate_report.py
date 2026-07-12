@@ -186,7 +186,7 @@ def test_payload_rejects_mutated_digest_and_non_decimal_public_numbers() -> None
 
     tampered = dict(payload)
     tampered["ready_ratio"] = "0.500000"
-    with pytest.raises(ValueError, match="derived_validation_digest"):
+    with pytest.raises(ValueError, match="ready_ratio"):
         operator_public_output_safety_gate_report_payload(tampered)
 
     with pytest.raises(ValueError, match="public payload numerics"):
@@ -196,6 +196,41 @@ def test_payload_rejects_mutated_digest_and_non_decimal_public_numbers() -> None
                 "blocked_field_count": 0,
             },
         )
+
+
+def test_payload_rejects_forged_safe_state_with_recomputed_digest() -> None:
+    report = build_operator_public_output_safety_gate_report(
+        output_surface_name="operator_panel",
+        payload_field_names=("summary",),
+        payload_text_tokens=("public",),
+        contains_market_identifier=False,
+        contains_order_language=False,
+        contains_auth_or_wallet_term=False,
+        contains_dsn_or_table_term=False,
+        audited_by_public_payload_safety=True,
+    )
+    payload = operator_public_output_safety_gate_report_payload(report)
+    forged = {
+        **payload,
+        "payload_text_tokens": ["buy", "wallet"],
+        "blocked_token_count": "0",
+        "safe_for_operator_display": True,
+    }
+    digest_source = dict(forged)
+    digest_source.pop("public_payload_digest")
+    digest_source.pop("derived_validation_digest")
+    digest = __import__("hashlib").sha256(
+        json.dumps(
+            digest_source,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode(),
+    ).hexdigest()
+    forged["public_payload_digest"] = digest
+    forged["derived_validation_digest"] = digest
+
+    with pytest.raises(ValueError, match="blocked_token_count"):
+        operator_public_output_safety_gate_report_payload(forged)
 
 
 def test_builder_rejects_live_payload_surfaces_and_bad_flags() -> None:
