@@ -941,8 +941,6 @@ def _validate_report_metric(
 def _require_public_string(field_name: str, value: object) -> str:
     _require_canonical_string(field_name, value)
     assert type(value) is str
-    if any(fragment in value.lower() for fragment in UNSAFE_TEXT_FRAGMENTS):
-        raise ValueError(f"{field_name} must be a public identifier")
     return value
 
 

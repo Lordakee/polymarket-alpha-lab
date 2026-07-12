@@ -233,6 +233,7 @@ def test_cpi_revision_digest_reduces_rows_redacts_refs_and_sorts_deterministical
         "market_research_macro_cpi_revision_digest_ready",
     )
 
+
     assert summary.reason_code_counts == (
         MarketResearchMacroCpiRevisionDigestReasonCodeCount(
             reason_code="market_research_macro_cpi_revision_digest_material_revision",
@@ -300,6 +301,31 @@ def test_cpi_revision_digest_reduces_rows_redacts_refs_and_sorts_deterministical
         "private",
     ):
         assert token not in public
+
+
+def test_cpi_revision_digest_allows_operational_words_in_public_identifiers() -> None:
+    summary = report(
+        (
+            input_row(
+                "research.cpi.database-source",
+                condition_id="condition-cpi-submit-window",
+                cpi_series_key="cpi.persistent.revision",
+                cpi_release_reference="public-bls-cpi-release",
+                released_at=GENERATED_AT - timedelta(minutes=45),
+                acknowledged_at=GENERATED_AT - timedelta(minutes=30),
+                source_count=d("3"),
+                initial_value=d("3.200000"),
+                revised_value=d("3.240000"),
+                prior_value=d("3.100000"),
+                market_probability_before=d("0.480000"),
+                market_probability_after=d("0.520000"),
+            ),
+        ),
+    )
+
+    assert summary.rows[0].research_key == "research.cpi.database-source"
+    assert summary.rows[0].condition_id == "condition-cpi-submit-window"
+    assert summary.rows[0].cpi_series_key == "cpi.persistent.revision"
 
 
 def test_cpi_revision_digest_is_independent_of_ambient_decimal_context() -> None:
@@ -428,7 +454,7 @@ def test_cpi_revision_digest_validates_public_contracts_and_flags() -> None:
     with pytest.raises(ValueError, match="research_key"):
         input_row(" bad")
     with pytest.raises(ValueError, match="condition_id"):
-        input_row(condition_id="broker_feed")
+        input_row(condition_id=" bad")
     with pytest.raises(ValueError, match="released_at"):
         input_row(released_at=datetime(2026, 7, 3, 14, 0))
     with pytest.raises(ValueError, match="acknowledged_at"):

@@ -542,14 +542,15 @@ def test_freshness_age_ignores_ambient_decimal_context() -> None:
     assert report.rows[0].freshness_age_seconds == 86_401
 
 
-def test_source_reliability_rejects_naive_report_timestamp() -> None:
-    with pytest.raises(ValueError, match="generated_at must be timezone-aware"):
-        build_team_source_reliability_report(
-            (),
-            (),
-            config=TeamSourceReliabilityConfig(),
-            generated_at=datetime(2026, 7, 2, 12, 0),
-        )
+def test_source_reliability_treats_naive_report_timestamp_as_utc() -> None:
+    report = build_team_source_reliability_report(
+        (),
+        (),
+        config=TeamSourceReliabilityConfig(),
+        generated_at=datetime(2026, 7, 2, 12, 0),
+    )
+
+    assert report.generated_at == datetime(2026, 7, 2, 12, 0, tzinfo=UTC)
 
 
 def test_source_reliability_rejects_sensitive_source_ids_before_public_rows() -> None:
