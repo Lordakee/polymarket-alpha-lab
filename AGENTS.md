@@ -56,6 +56,25 @@ the user explicitly changes them in a later instruction.
 5. **Fast mode is forbidden.** Do not use fast mode for the main Codex agent,
    Codex subagents, Claude Code reviews, implementation workers, planning workers,
    or audit workers.
+6. **Sustained parallel development is a project iron rule.** Whenever useful,
+   independent, non-conflicting work exists, keep useful collaboration capacity
+   occupied with implementation, testing, review, audit, documentation, or
+   next-node preparation, up to the project maximum of **20 active subagent
+   threads**. This maximum is a ceiling, not a quota, minimum, or requirement to
+   start 20 threads; use only as much concurrency as is materially useful for
+   the independent work available. Parallel work may span multiple modules and
+   multiple development nodes, but write ownership must be split by
+   non-overlapping files or isolated worktrees, and every node must retain its
+   own focused tests, full-suite verification, CodeGraph sync, Claude Code
+   review, commit, and push gates.
+   Reclaim agents immediately when they complete, fail, or become blocked,
+   inspect any work they left on disk, and redeploy the freed capacity to the
+   next independent task. Do not impose a permanent lower coordinator-side
+   concurrency ceiling or leave useful capacity idle merely for sequential
+   convenience. Active concurrency may be lower when independent work is
+   limited or when write conflicts, rate limits, memory pressure, shared test
+   resources, or coordination overhead would materially reduce correctness;
+   raise it again when doing so becomes useful.
 
 ## CodeGraph
 
@@ -90,8 +109,14 @@ Avoid using website scraping as a primary data path unless a needed field is una
 
 ## Agent Coordination Defaults
 
-- Treat parallel agent utilization as a durable project operating constraint: while avoiding write conflicts, default to keeping multiple independent subagents active, reclaim completed subagents promptly, and redeploy capacity to the next independent research, review, or implementation task.
-- The current Codex subagent concurrency cap for this project is **20 active subagent threads**, with a nested subagent depth cap of **3**. Use up to those caps only for independent, non-conflicting work; reduce concurrency when rate limits, memory pressure, test-resource contention, or write-scope overlap would reduce quality.
+- Treat parallel agent utilization as a durable project operating constraint and
+  apply Project Iron Rule 6 continuously.
+- The project concurrency cap is **20 active subagent threads**, with a nested
+  subagent depth cap of **3**. These are ceilings, not quotas or minimums.
+  Coordinators must not introduce a permanent lower artificial cap, but should
+  use fewer threads whenever the amount of independent work, rate limits,
+  memory pressure, test-resource contention, write-scope overlap, or
+  coordination cost makes lower active concurrency more effective.
 - Keep as many subagents active as is useful when there are independent tasks that can run in parallel.
 - Avoid assigning multiple subagents to edit the same files, the same batch of files, or the same tightly coupled responsibility at the same time.
 - For write tasks, split ownership by non-overlapping files or modules before dispatching subagents, and keep each subagent inside its assigned write scope.

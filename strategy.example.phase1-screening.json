@@ -1,0 +1,165 @@
+{
+  "config_version": "phase-1-strategy-screening-v0",
+  "paper_only": true,
+  "report_only": true,
+  "readonly": true,
+  "storage": {
+    "kind": "local_supabase_postgres",
+    "enabled": true,
+    "dsn_env_var": "POLYMARKET_ALPHA_LAB_LOCAL_SUPABASE_DSN",
+    "example_dsn": "postgresql://postgres:<password>@127.0.0.1:54322/postgres",
+    "tables": {
+      "candidate_research_queue": "strategy_candidate_research_queue_reports",
+      "team_routes": "team_market_routes",
+      "team_memory": "team_memory_readiness_digest_reports",
+      "screening_reports": "phase1_strategy_screening_reports"
+    }
+  },
+  "dsn_readiness_contract": {
+    "required_check_count": "4.000000",
+    "ready_status_counts": {
+      "ready_check_count": "4.000000",
+      "blocker_count": "0.000000"
+    },
+    "blocker_status_counts": {
+      "ready_check_count": "3.000000",
+      "blocker_count": "1.000000"
+    },
+    "reason_codes": {
+      "ready": ["local_supabase_postgres_dsn_ready"],
+      "invalid": ["local_supabase_postgres_dsn_invalid_blocker"],
+      "hosted": [
+        "hosted_database_dsn_rejected_blocker",
+        "local_supabase_postgres_dsn_invalid_blocker"
+      ],
+      "jsonl": [
+        "jsonl_file_dsn_rejected_blocker",
+        "local_supabase_postgres_dsn_invalid_blocker"
+      ],
+      "sqlite": [
+        "sqlite_dsn_rejected_blocker",
+        "local_supabase_postgres_dsn_invalid_blocker"
+      ]
+    }
+  },
+  "team_taxonomy": {
+    "primary_team_required": true,
+    "secondary_team_max_count": 2,
+    "teams": [
+      {
+        "team_id": "politics",
+        "category_ids": ["politics", "elections", "policy"],
+        "memory_policy": "throttle"
+      },
+      {
+        "team_id": "crypto_btc",
+        "category_ids": ["crypto", "bitcoin", "btc"],
+        "memory_policy": "allow"
+      },
+      {
+        "team_id": "crypto_eth",
+        "category_ids": ["crypto", "ethereum", "eth"],
+        "memory_policy": "throttle"
+      },
+      {
+        "team_id": "macro_rates",
+        "category_ids": ["macro", "rates", "inflation"],
+        "memory_policy": "throttle"
+      },
+      {
+        "team_id": "equity_indices",
+        "category_ids": ["equities", "indices"],
+        "memory_policy": "throttle"
+      },
+      {
+        "team_id": "commodities_gold",
+        "category_ids": ["commodities", "gold", "metals"],
+        "memory_policy": "throttle"
+      },
+      {
+        "team_id": "commodities_oil",
+        "category_ids": ["commodities", "oil", "energy"],
+        "memory_policy": "throttle"
+      },
+      {
+        "team_id": "sports_soccer",
+        "category_ids": ["sports", "soccer"],
+        "memory_policy": "throttle"
+      },
+      {
+        "team_id": "sports_basketball",
+        "category_ids": ["sports", "basketball"],
+        "memory_policy": "throttle"
+      },
+      {
+        "team_id": "sports_other",
+        "category_ids": ["sports", "other_sports"],
+        "memory_policy": "block"
+      }
+    ]
+  },
+  "screening_thresholds": {
+    "min_source_verified_edge": "0.010000",
+    "min_research_readiness": "0.500000",
+    "min_attention_score": "0.500000",
+    "min_source_reliability_score": "0.650000",
+    "default_min_source_count": 2,
+    "default_min_source_family_count": 2,
+    "microstructure_min_source_count": 1,
+    "microstructure_min_source_family_count": 1,
+    "superforecaster_min_source_count": 3,
+    "superforecaster_min_source_family_count": 3,
+    "max_liquidity_exit_risk": "0.750000",
+    "max_resolution_ambiguity": "0.750000",
+    "max_uncertainty_band_width": "0.300000",
+    "max_portfolio_impact_for_paper_review": "0.050000"
+  },
+  "cost_assumptions": {
+    "currency": "USD",
+    "paper_notional_per_candidate": "100.00",
+    "fee_bps": "0.00",
+    "half_spread_bps": "25.00",
+    "slippage_bps": "10.00",
+    "liquidity_haircut_bps": "50.00",
+    "settlement_delay_cost_bps_per_day": "1.00",
+    "minimum_cost_adjusted_edge": "0.005000"
+  },
+  "freshness_sla": {
+    "market_metadata_max_age_seconds": 300,
+    "market_depth_snapshot_max_age_seconds": 120,
+    "source_evidence_max_age_seconds": 3600,
+    "team_memory_max_age_seconds": 86400,
+    "outcome_history_max_age_seconds": 604800
+  },
+  "manual_review_gates": {
+    "require_review_before_candidate": true,
+    "gate_statuses": ["pass", "watch", "blocked"],
+    "watch_requires_review": true,
+    "blocked_requires_research_reset": true,
+    "required_reviewer_notes": [
+      "source_quality",
+      "resolution_rules",
+      "cost_adjusted_edge",
+      "freshness_sla",
+      "team_memory_policy"
+    ],
+    "review_reason_codes": [
+      "manual_review_not_required",
+      "manual_review_completed",
+      "manual_review_required"
+    ],
+    "block_reason_codes": [
+      "phase1_flags_missing",
+      "hosted_database_dsn_rejected_blocker",
+      "jsonl_file_dsn_rejected_blocker",
+      "local_supabase_postgres_dsn_invalid_blocker",
+      "sqlite_dsn_rejected_blocker",
+      "source_count_below_minimum",
+      "source_family_count_below_minimum",
+      "evidence_stale",
+      "cost_adjusted_edge_below_minimum",
+      "resolution_ambiguity_high",
+      "team_memory_blocked"
+    ]
+  }
+}

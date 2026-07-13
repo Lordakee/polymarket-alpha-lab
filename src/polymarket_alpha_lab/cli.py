@@ -144,6 +144,10 @@ from polymarket_alpha_lab.performance_summary import (
 )
 from polymarket_alpha_lab.project_screening import PaperProjectScreeningConfig
 from polymarket_alpha_lab.runner import RunLoopSummary, run_strategy_loop
+from polymarket_alpha_lab.report_discovery import (
+    REPORT_DISCOVERY_CATEGORIES,
+    format_report_discovery,
+)
 from polymarket_alpha_lab.strategy_cycle import (
     PaperStrategyCycleConfig,
     PaperStrategyCycleLog,
@@ -4265,6 +4269,28 @@ def main(
         dest="persist",
     )
 
+    report_discovery = subparsers.add_parser(
+        "report-discovery",
+        allow_abbrev=False,
+        description=(
+            "List read-only, report-only operator report entrypoints by "
+            "aggregate category."
+        ),
+        help="discover read-only report-only operator report entrypoints",
+    )
+    report_discovery.add_argument(
+        "--category",
+        choices=REPORT_DISCOVERY_CATEGORIES,
+        default=None,
+        dest="category",
+    )
+    report_discovery.add_argument(
+        "--format",
+        choices=("text",),
+        default="text",
+        dest="output_format",
+    )
+
     paper_research_packet_operator_flow = subparsers.add_parser(
         "paper-research-packet-operator-flow",
     )
@@ -7563,6 +7589,16 @@ def main(
                 file=sys.stderr,
             )
             return 1
+
+    if args.command == "report-discovery":
+        print(
+            format_report_discovery(
+                category=args.category,
+                output_format=args.output_format,
+            ),
+            end="",
+        )
+        return 0
 
     if args.command == "paper-research-packet-operator-flow":
         try:

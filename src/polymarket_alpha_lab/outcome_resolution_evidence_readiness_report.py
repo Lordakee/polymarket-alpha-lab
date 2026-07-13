@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from decimal import Context, Decimal, ROUND_HALF_EVEN, localcontext
 from hashlib import sha256
 from json import dumps
@@ -34,11 +34,77 @@ QUORUM_GAP_REASON = "outcome_resolution_evidence_quorum_gap"
 PENDING_ACK_REASON = "outcome_resolution_evidence_pending_ack"
 MANUAL_REVIEW_REASON = "outcome_resolution_evidence_manual_review_required"
 STALE_CHECK_REASON = "outcome_resolution_evidence_stale_check"
+UNCLEAR_CRITERIA_REASON = "outcome_resolution_criteria_unclear"
+ORACLE_SOURCE_LATENCY_REASON = "outcome_resolution_oracle_source_latency"
+SETTLEMENT_LOCKUP_REASON = "outcome_resolution_settlement_delay_capital_lockup"
+PENDING_OUTCOME_ESCALATION_REASON = "outcome_resolution_pending_outcome_escalation"
 
 DECIMAL_CONTEXT = Context(prec=64, rounding=ROUND_HALF_EVEN)
 QUANT = Decimal("0.000001")
 ZERO = Decimal("0.000000")
 ONE = Decimal("1.000000")
+
+_CONFIG_POSITIVE_INTEGER_FIELDS = (
+    "required_resolution_source_count",
+    "required_official_source_count",
+)
+_CONFIG_RATIO_FIELDS = (
+    "freshness_warning_ratio",
+    "freshness_blocker_ratio",
+    "criteria_clarity_warning_score",
+    "criteria_clarity_blocker_score",
+)
+_CONFIG_POSITIVE_FIELDS = (
+    "oracle_latency_warning_seconds",
+    "oracle_latency_blocker_seconds",
+    "settlement_delay_warning_seconds",
+    "settlement_delay_blocker_seconds",
+    "capital_lockup_warning_seconds",
+    "capital_lockup_blocker_seconds",
+    "pending_outcome_escalation_seconds",
+)
+_INPUT_NONNEGATIVE_INTEGER_FIELDS = (
+    "resolution_source_count",
+    "official_source_count",
+    "conflicting_source_count",
+)
+_INPUT_NONNEGATIVE_FIELDS = (
+    "last_checked_age_seconds",
+    "oracle_source_latency_seconds",
+    "settlement_delay_seconds",
+    "capital_lockup_seconds",
+    "pending_outcome_age_seconds",
+)
+_ROW_NONNEGATIVE_INTEGER_FIELDS = (
+    "resolution_source_count",
+    "official_source_count",
+    "conflicting_source_count",
+    "evidence_quorum_gap",
+    "official_source_gap",
+)
+_ROW_NONNEGATIVE_FIELDS = (
+    "last_checked_age_seconds",
+    "pending_ack_age_seconds",
+    "oracle_source_latency_seconds",
+    "settlement_delay_seconds",
+    "capital_lockup_seconds",
+    "pending_outcome_age_seconds",
+)
+_REPORT_NONNEGATIVE_INTEGER_FIELDS = (
+    "item_count",
+    "ready_count",
+    "attention_count",
+    "blocker_count",
+    "max_evidence_quorum_gap",
+)
+_REPORT_NONNEGATIVE_FIELDS = (
+    "max_pending_ack_age_seconds",
+    "max_last_checked_age_seconds",
+    "max_oracle_source_latency_seconds",
+    "max_settlement_delay_seconds",
+    "max_capital_lockup_seconds",
+    "max_pending_outcome_age_seconds",
+)
 
 
 @dataclass(frozen=True)
@@ -50,9 +116,24 @@ class OutcomeResolutionEvidenceReadinessConfig:
     required_official_source_count: Decimal = Decimal("1.000000")
     freshness_warning_ratio: Decimal = Decimal("0.500000")
     freshness_blocker_ratio: Decimal = Decimal("1.000000")
+    criteria_clarity_warning_score: Decimal = Decimal("0.500000")
+    criteria_clarity_blocker_score: Decimal = Decimal("0.250000")
+    oracle_latency_warning_seconds: Decimal = Decimal("3600.000000")
+    oracle_latency_blocker_seconds: Decimal = Decimal("21600.000000")
+    settlement_delay_warning_seconds: Decimal = Decimal("7200.000000")
+    settlement_delay_blocker_seconds: Decimal = Decimal("21600.000000")
+    capital_lockup_warning_seconds: Decimal = Decimal("7200.000000")
+    capital_lockup_blocker_seconds: Decimal = Decimal("21600.000000")
+    pending_outcome_escalation_seconds: Decimal = Decimal("7200.000000")
     paper_only: bool = True
     report_only: bool = True
     readonly: bool = True
+
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        super().__init_subclass__(**kwargs)
+        raise TypeError(
+            "OutcomeResolutionEvidenceReadinessConfig does not support subclassing",
+        )
 
     def __post_init__(self) -> None:
         _require_public_string("config_version", self.config_version)
@@ -82,8 +163,51 @@ class OutcomeResolutionEvidenceReadinessConfig:
             "freshness_blocker_ratio",
             _require_ratio_decimal("freshness_blocker_ratio", self.freshness_blocker_ratio),
         )
+        for field_name in (
+            "criteria_clarity_warning_score",
+            "criteria_clarity_blocker_score",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _require_ratio_decimal(field_name, getattr(self, field_name)),
+            )
+        for field_name in (
+            "oracle_latency_warning_seconds",
+            "oracle_latency_blocker_seconds",
+            "settlement_delay_warning_seconds",
+            "settlement_delay_blocker_seconds",
+            "capital_lockup_warning_seconds",
+            "capital_lockup_blocker_seconds",
+            "pending_outcome_escalation_seconds",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _require_positive_decimal(field_name, getattr(self, field_name)),
+            )
         if self.freshness_warning_ratio > self.freshness_blocker_ratio:
             raise ValueError("freshness_warning_ratio cannot exceed freshness_blocker_ratio")
+        if self.criteria_clarity_warning_score < self.criteria_clarity_blocker_score:
+            raise ValueError(
+                "criteria_clarity_warning_score cannot be less than "
+                "criteria_clarity_blocker_score",
+            )
+        if self.oracle_latency_warning_seconds > self.oracle_latency_blocker_seconds:
+            raise ValueError(
+                "oracle_latency_warning_seconds cannot exceed "
+                "oracle_latency_blocker_seconds",
+            )
+        if self.settlement_delay_warning_seconds > self.settlement_delay_blocker_seconds:
+            raise ValueError(
+                "settlement_delay_warning_seconds cannot exceed "
+                "settlement_delay_blocker_seconds",
+            )
+        if self.capital_lockup_warning_seconds > self.capital_lockup_blocker_seconds:
+            raise ValueError(
+                "capital_lockup_warning_seconds cannot exceed "
+                "capital_lockup_blocker_seconds",
+            )
         reject_unsafe_surface_fields("outcome resolution evidence readiness config", self)
         require_paper_only_flags("outcome resolution evidence readiness config", self)
 
@@ -99,9 +223,20 @@ class OutcomeResolutionEvidenceReadinessInput:
     pending_ack: bool
     manual_review_required: bool
     settlement_window_seconds: Decimal
+    resolution_criteria_clarity_score: Decimal = Decimal("1.000000")
+    oracle_source_latency_seconds: Decimal = Decimal("0.000000")
+    settlement_delay_seconds: Decimal = Decimal("0.000000")
+    capital_lockup_seconds: Decimal = Decimal("0.000000")
+    pending_outcome_age_seconds: Decimal = Decimal("0.000000")
     paper_only: bool = True
     report_only: bool = True
     readonly: bool = True
+
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        super().__init_subclass__(**kwargs)
+        raise TypeError(
+            "OutcomeResolutionEvidenceReadinessInput does not support subclassing",
+        )
 
     def __post_init__(self) -> None:
         _require_public_string("event_id", self.event_id)
@@ -148,6 +283,25 @@ class OutcomeResolutionEvidenceReadinessInput:
                 self.settlement_window_seconds,
             ),
         )
+        object.__setattr__(
+            self,
+            "resolution_criteria_clarity_score",
+            _require_ratio_decimal(
+                "resolution_criteria_clarity_score",
+                self.resolution_criteria_clarity_score,
+            ),
+        )
+        for field_name in (
+            "oracle_source_latency_seconds",
+            "settlement_delay_seconds",
+            "capital_lockup_seconds",
+            "pending_outcome_age_seconds",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _require_nonnegative_decimal(field_name, getattr(self, field_name)),
+            )
         _validate_input_counts(self)
         reject_unsafe_surface_fields("outcome resolution evidence readiness input", self)
         require_paper_only_flags("outcome resolution evidence readiness input", self)
@@ -170,9 +324,20 @@ class OutcomeResolutionEvidenceReadinessRow:
     manual_review_required: bool
     settlement_window_seconds: Decimal
     freshness_ratio: Decimal
+    resolution_criteria_clarity_score: Decimal
+    oracle_source_latency_seconds: Decimal
+    settlement_delay_seconds: Decimal
+    capital_lockup_seconds: Decimal
+    pending_outcome_age_seconds: Decimal
     paper_only: bool = True
     report_only: bool = True
     readonly: bool = True
+
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        super().__init_subclass__(**kwargs)
+        raise TypeError(
+            "OutcomeResolutionEvidenceReadinessRow does not support subclassing",
+        )
 
     def __post_init__(self) -> None:
         _require_public_string("event_id", self.event_id)
@@ -210,6 +375,25 @@ class OutcomeResolutionEvidenceReadinessRow:
             "freshness_ratio",
             _require_ratio_decimal("freshness_ratio", self.freshness_ratio),
         )
+        object.__setattr__(
+            self,
+            "resolution_criteria_clarity_score",
+            _require_ratio_decimal(
+                "resolution_criteria_clarity_score",
+                self.resolution_criteria_clarity_score,
+            ),
+        )
+        for field_name in (
+            "oracle_source_latency_seconds",
+            "settlement_delay_seconds",
+            "capital_lockup_seconds",
+            "pending_outcome_age_seconds",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _require_nonnegative_decimal(field_name, getattr(self, field_name)),
+            )
         _validate_row(self)
         reject_unsafe_surface_fields("outcome resolution evidence readiness row", self)
         require_paper_only_flags("outcome resolution evidence readiness row", self)
@@ -218,6 +402,7 @@ class OutcomeResolutionEvidenceReadinessRow:
 @dataclass(frozen=True)
 class OutcomeResolutionEvidenceReadinessReport:
     config_version: str
+    effective_config: OutcomeResolutionEvidenceReadinessConfig
     report_band: str
     reason_codes: tuple[str, ...]
     item_count: Decimal
@@ -228,6 +413,11 @@ class OutcomeResolutionEvidenceReadinessReport:
     max_evidence_quorum_gap: Decimal
     max_pending_ack_age_seconds: Decimal
     max_last_checked_age_seconds: Decimal
+    max_oracle_source_latency_seconds: Decimal
+    max_settlement_delay_seconds: Decimal
+    max_capital_lockup_seconds: Decimal
+    max_pending_outcome_age_seconds: Decimal
+    min_resolution_criteria_clarity_score: Decimal
     rows: tuple[OutcomeResolutionEvidenceReadinessRow, ...]
     inputs: tuple[OutcomeResolutionEvidenceReadinessInput, ...]
     public_payload_digest: str
@@ -235,8 +425,19 @@ class OutcomeResolutionEvidenceReadinessReport:
     report_only: bool = True
     readonly: bool = True
 
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        super().__init_subclass__(**kwargs)
+        raise TypeError(
+            "OutcomeResolutionEvidenceReadinessReport does not support subclassing",
+        )
+
     def __post_init__(self) -> None:
         _require_public_string("config_version", self.config_version)
+        object.__setattr__(
+            self,
+            "effective_config",
+            _validated_config_copy(self.effective_config),
+        )
         _require_band("report_band", self.report_band)
         object.__setattr__(self, "reason_codes", _normalize_reason_codes(self.reason_codes))
         for field_name in (
@@ -254,6 +455,10 @@ class OutcomeResolutionEvidenceReadinessReport:
         for field_name in (
             "max_pending_ack_age_seconds",
             "max_last_checked_age_seconds",
+            "max_oracle_source_latency_seconds",
+            "max_settlement_delay_seconds",
+            "max_capital_lockup_seconds",
+            "max_pending_outcome_age_seconds",
         ):
             object.__setattr__(
                 self,
@@ -262,15 +467,23 @@ class OutcomeResolutionEvidenceReadinessReport:
             )
         object.__setattr__(
             self,
+            "min_resolution_criteria_clarity_score",
+            _require_ratio_decimal(
+                "min_resolution_criteria_clarity_score",
+                self.min_resolution_criteria_clarity_score,
+            ),
+        )
+        object.__setattr__(
+            self,
             "readiness_ratio",
             _require_ratio_decimal("readiness_ratio", self.readiness_ratio),
         )
         object.__setattr__(self, "rows", _normalize_rows(self.rows))
         object.__setattr__(self, "inputs", _normalize_inputs(self.inputs))
-        _require_digest("public_payload_digest", self.public_payload_digest)
         _validate_report(self)
         reject_unsafe_surface_fields("outcome resolution evidence readiness report", self)
         require_paper_only_flags("outcome resolution evidence readiness report", self)
+        _validate_public_payload_digest(self, fill_sentinel=True)
 
 
 def build_outcome_resolution_evidence_readiness_report(
@@ -281,16 +494,17 @@ def build_outcome_resolution_evidence_readiness_report(
 ) -> OutcomeResolutionEvidenceReadinessReport:
     if type(config) is not OutcomeResolutionEvidenceReadinessConfig:
         raise ValueError("config must be an OutcomeResolutionEvidenceReadinessConfig")
-    require_paper_only_flags("config", config)
+    effective_config = _validated_config_copy(config)
     input_items = _normalize_inputs(items)
     rows = tuple(
         sorted(
-            (_row_from_input(item, config) for item in input_items),
+            (_row_from_input(item, effective_config) for item in input_items),
             key=_row_sort_key,
         ),
     )
     report_without_digest = OutcomeResolutionEvidenceReadinessReport(
-        config_version=config.config_version,
+        config_version=effective_config.config_version,
+        effective_config=effective_config,
         report_band=_report_band(rows),
         reason_codes=_report_reason_codes(rows),
         item_count=_count(len(rows)),
@@ -307,6 +521,22 @@ def build_outcome_resolution_evidence_readiness_report(
         max_last_checked_age_seconds=_max_decimal(
             tuple(row.last_checked_age_seconds for row in rows),
         ),
+        max_oracle_source_latency_seconds=_max_decimal(
+            tuple(row.oracle_source_latency_seconds for row in rows),
+        ),
+        max_settlement_delay_seconds=_max_decimal(
+            tuple(row.settlement_delay_seconds for row in rows),
+        ),
+        max_capital_lockup_seconds=_max_decimal(
+            tuple(row.capital_lockup_seconds for row in rows),
+        ),
+        max_pending_outcome_age_seconds=_max_decimal(
+            tuple(row.pending_outcome_age_seconds for row in rows),
+        ),
+        min_resolution_criteria_clarity_score=_min_decimal(
+            tuple(row.resolution_criteria_clarity_score for row in rows),
+            default=ONE,
+        ),
         rows=rows,
         inputs=tuple(sorted(input_items, key=_input_sort_key)),
         public_payload_digest="0" * 64,
@@ -314,6 +544,7 @@ def build_outcome_resolution_evidence_readiness_report(
     digest = _public_payload_digest(report_without_digest)
     return OutcomeResolutionEvidenceReadinessReport(
         config_version=report_without_digest.config_version,
+        effective_config=report_without_digest.effective_config,
         report_band=report_without_digest.report_band,
         reason_codes=report_without_digest.reason_codes,
         item_count=report_without_digest.item_count,
@@ -324,6 +555,17 @@ def build_outcome_resolution_evidence_readiness_report(
         max_evidence_quorum_gap=report_without_digest.max_evidence_quorum_gap,
         max_pending_ack_age_seconds=report_without_digest.max_pending_ack_age_seconds,
         max_last_checked_age_seconds=report_without_digest.max_last_checked_age_seconds,
+        max_oracle_source_latency_seconds=(
+            report_without_digest.max_oracle_source_latency_seconds
+        ),
+        max_settlement_delay_seconds=report_without_digest.max_settlement_delay_seconds,
+        max_capital_lockup_seconds=report_without_digest.max_capital_lockup_seconds,
+        max_pending_outcome_age_seconds=(
+            report_without_digest.max_pending_outcome_age_seconds
+        ),
+        min_resolution_criteria_clarity_score=(
+            report_without_digest.min_resolution_criteria_clarity_score
+        ),
         rows=report_without_digest.rows,
         inputs=report_without_digest.inputs,
         public_payload_digest=digest,
@@ -337,6 +579,8 @@ def outcome_resolution_evidence_readiness_payload(
         raise ValueError("report must be an OutcomeResolutionEvidenceReadinessReport")
     require_paper_only_flags("report", report)
     reject_unsafe_surface_fields("outcome resolution evidence readiness report", report)
+    _validate_report(report)
+    _validate_public_payload_digest(report, fill_sentinel=False)
     return json_ready_no_floats(report)
 
 
@@ -363,6 +607,11 @@ def _row_from_input(
         pending_ack=item.pending_ack,
         manual_review_required=item.manual_review_required,
         freshness_ratio=freshness_ratio,
+        resolution_criteria_clarity_score=item.resolution_criteria_clarity_score,
+        oracle_source_latency_seconds=item.oracle_source_latency_seconds,
+        settlement_delay_seconds=item.settlement_delay_seconds,
+        capital_lockup_seconds=item.capital_lockup_seconds,
+        pending_outcome_age_seconds=item.pending_outcome_age_seconds,
         config=config,
     )
     return OutcomeResolutionEvidenceReadinessRow(
@@ -377,6 +626,11 @@ def _row_from_input(
             pending_ack=item.pending_ack,
             manual_review_required=item.manual_review_required,
             freshness_ratio=freshness_ratio,
+            resolution_criteria_clarity_score=item.resolution_criteria_clarity_score,
+            oracle_source_latency_seconds=item.oracle_source_latency_seconds,
+            settlement_delay_seconds=item.settlement_delay_seconds,
+            capital_lockup_seconds=item.capital_lockup_seconds,
+            pending_outcome_age_seconds=item.pending_outcome_age_seconds,
             config=config,
         ),
         resolution_source_count=item.resolution_source_count,
@@ -392,6 +646,11 @@ def _row_from_input(
         manual_review_required=item.manual_review_required,
         settlement_window_seconds=item.settlement_window_seconds,
         freshness_ratio=freshness_ratio,
+        resolution_criteria_clarity_score=item.resolution_criteria_clarity_score,
+        oracle_source_latency_seconds=item.oracle_source_latency_seconds,
+        settlement_delay_seconds=item.settlement_delay_seconds,
+        capital_lockup_seconds=item.capital_lockup_seconds,
+        pending_outcome_age_seconds=item.pending_outcome_age_seconds,
     )
 
 
@@ -403,6 +662,11 @@ def _row_band(
     pending_ack: bool,
     manual_review_required: bool,
     freshness_ratio: Decimal,
+    resolution_criteria_clarity_score: Decimal,
+    oracle_source_latency_seconds: Decimal,
+    settlement_delay_seconds: Decimal,
+    capital_lockup_seconds: Decimal,
+    pending_outcome_age_seconds: Decimal,
     config: OutcomeResolutionEvidenceReadinessConfig,
 ) -> str:
     if (
@@ -411,9 +675,21 @@ def _row_band(
         or official_source_gap > ZERO
         or manual_review_required
         or freshness_ratio >= config.freshness_blocker_ratio
+        or resolution_criteria_clarity_score <= config.criteria_clarity_blocker_score
+        or oracle_source_latency_seconds >= config.oracle_latency_blocker_seconds
+        or settlement_delay_seconds >= config.settlement_delay_blocker_seconds
+        or capital_lockup_seconds >= config.capital_lockup_blocker_seconds
+        or pending_outcome_age_seconds >= config.pending_outcome_escalation_seconds
     ):
         return "blocker"
-    if pending_ack or freshness_ratio >= config.freshness_warning_ratio:
+    if (
+        pending_ack
+        or freshness_ratio >= config.freshness_warning_ratio
+        or resolution_criteria_clarity_score <= config.criteria_clarity_warning_score
+        or oracle_source_latency_seconds >= config.oracle_latency_warning_seconds
+        or settlement_delay_seconds >= config.settlement_delay_warning_seconds
+        or capital_lockup_seconds >= config.capital_lockup_warning_seconds
+    ):
         return "attention"
     return "ready"
 
@@ -427,6 +703,11 @@ def _row_reason_codes(
     pending_ack: bool,
     manual_review_required: bool,
     freshness_ratio: Decimal,
+    resolution_criteria_clarity_score: Decimal,
+    oracle_source_latency_seconds: Decimal,
+    settlement_delay_seconds: Decimal,
+    capital_lockup_seconds: Decimal,
+    pending_outcome_age_seconds: Decimal,
     config: OutcomeResolutionEvidenceReadinessConfig,
 ) -> tuple[str, ...]:
     codes = [_band_reason(band)]
@@ -434,8 +715,19 @@ def _row_reason_codes(
         codes.append(CONFLICTING_SOURCES_REASON)
     if evidence_quorum_gap > ZERO or official_source_gap > ZERO:
         codes.append(QUORUM_GAP_REASON)
+    if resolution_criteria_clarity_score <= config.criteria_clarity_warning_score:
+        codes.append(UNCLEAR_CRITERIA_REASON)
+    if oracle_source_latency_seconds >= config.oracle_latency_warning_seconds:
+        codes.append(ORACLE_SOURCE_LATENCY_REASON)
+    if (
+        settlement_delay_seconds >= config.settlement_delay_warning_seconds
+        or capital_lockup_seconds >= config.capital_lockup_warning_seconds
+    ):
+        codes.append(SETTLEMENT_LOCKUP_REASON)
     if pending_ack:
         codes.append(PENDING_ACK_REASON)
+    if pending_outcome_age_seconds >= config.pending_outcome_escalation_seconds:
+        codes.append(PENDING_OUTCOME_ESCALATION_REASON)
     if manual_review_required:
         codes.append(MANUAL_REVIEW_REASON)
     if freshness_ratio >= config.freshness_warning_ratio:
@@ -458,8 +750,16 @@ def _report_reason_codes(rows: tuple[OutcomeResolutionEvidenceReadinessRow, ...]
         codes.append(CONFLICTING_SOURCES_REASON)
     if any(row.evidence_quorum_gap > ZERO or row.official_source_gap > ZERO for row in rows):
         codes.append(QUORUM_GAP_REASON)
+    if any(UNCLEAR_CRITERIA_REASON in row.reason_codes for row in rows):
+        codes.append(UNCLEAR_CRITERIA_REASON)
+    if any(ORACLE_SOURCE_LATENCY_REASON in row.reason_codes for row in rows):
+        codes.append(ORACLE_SOURCE_LATENCY_REASON)
+    if any(SETTLEMENT_LOCKUP_REASON in row.reason_codes for row in rows):
+        codes.append(SETTLEMENT_LOCKUP_REASON)
     if any(row.pending_ack for row in rows):
         codes.append(PENDING_ACK_REASON)
+    if any(PENDING_OUTCOME_ESCALATION_REASON in row.reason_codes for row in rows):
+        codes.append(PENDING_OUTCOME_ESCALATION_REASON)
     if any(row.manual_review_required for row in rows):
         codes.append(MANUAL_REVIEW_REASON)
     if any(STALE_CHECK_REASON in row.reason_codes for row in rows):
@@ -477,6 +777,78 @@ def _band_reason(band: str) -> str:
     raise ValueError("band is invalid")
 
 
+def _validated_config_copy(
+    config: OutcomeResolutionEvidenceReadinessConfig,
+) -> OutcomeResolutionEvidenceReadinessConfig:
+    if type(config) is not OutcomeResolutionEvidenceReadinessConfig:
+        raise ValueError(
+            "effective_config must be an OutcomeResolutionEvidenceReadinessConfig",
+        )
+    _require_public_string("config_version", config.config_version)
+    for field_name in _CONFIG_POSITIVE_INTEGER_FIELDS:
+        _require_canonical_decimal(
+            field_name,
+            getattr(config, field_name),
+            _require_positive_integer_decimal,
+        )
+    for field_name in _CONFIG_RATIO_FIELDS:
+        _require_canonical_decimal(
+            field_name,
+            getattr(config, field_name),
+            _require_ratio_decimal,
+        )
+    for field_name in _CONFIG_POSITIVE_FIELDS:
+        _require_canonical_decimal(
+            field_name,
+            getattr(config, field_name),
+            _require_positive_decimal,
+        )
+    reject_unsafe_surface_fields("outcome resolution evidence readiness config", config)
+    require_paper_only_flags("outcome resolution evidence readiness config", config)
+    return OutcomeResolutionEvidenceReadinessConfig(
+        **{
+            field.name: getattr(config, field.name)
+            for field in fields(OutcomeResolutionEvidenceReadinessConfig)
+        },
+    )
+
+
+def _validate_input(item: OutcomeResolutionEvidenceReadinessInput) -> None:
+    if type(item) is not OutcomeResolutionEvidenceReadinessInput:
+        raise ValueError(
+            "items must contain OutcomeResolutionEvidenceReadinessInput values",
+        )
+    _require_public_string("event_id", item.event_id)
+    _require_public_string("outcome_id", item.outcome_id)
+    for field_name in _INPUT_NONNEGATIVE_INTEGER_FIELDS:
+        _require_canonical_decimal(
+            field_name,
+            getattr(item, field_name),
+            _require_nonnegative_integer_decimal,
+        )
+    for field_name in _INPUT_NONNEGATIVE_FIELDS:
+        _require_canonical_decimal(
+            field_name,
+            getattr(item, field_name),
+            _require_nonnegative_decimal,
+        )
+    _require_canonical_decimal(
+        "settlement_window_seconds",
+        item.settlement_window_seconds,
+        _require_positive_decimal,
+    )
+    _require_canonical_decimal(
+        "resolution_criteria_clarity_score",
+        item.resolution_criteria_clarity_score,
+        _require_ratio_decimal,
+    )
+    _require_bool("pending_ack", item.pending_ack)
+    _require_bool("manual_review_required", item.manual_review_required)
+    _validate_input_counts(item)
+    reject_unsafe_surface_fields("outcome resolution evidence readiness input", item)
+    require_paper_only_flags("outcome resolution evidence readiness input", item)
+
+
 def _normalize_inputs(
     items: tuple[OutcomeResolutionEvidenceReadinessInput, ...]
     | list[OutcomeResolutionEvidenceReadinessInput],
@@ -486,9 +858,7 @@ def _normalize_inputs(
     normalized = tuple(items)
     seen: set[tuple[str, str]] = set()
     for item in normalized:
-        if type(item) is not OutcomeResolutionEvidenceReadinessInput:
-            raise ValueError("items must contain OutcomeResolutionEvidenceReadinessInput values")
-        require_paper_only_flags("item", item)
+        _validate_input(item)
         key = (item.event_id, item.outcome_id)
         if key in seen:
             raise ValueError("items must not contain duplicate event_id outcome_id pairs")
@@ -507,7 +877,7 @@ def _normalize_rows(
     for row in normalized:
         if type(row) is not OutcomeResolutionEvidenceReadinessRow:
             raise ValueError("rows must contain OutcomeResolutionEvidenceReadinessRow values")
-        require_paper_only_flags("row", row)
+        _validate_row(row)
         key = (row.event_id, row.outcome_id)
         if key in seen:
             raise ValueError("rows must not contain duplicate event_id outcome_id pairs")
@@ -558,6 +928,12 @@ def _max_decimal(values: tuple[Decimal, ...]) -> Decimal:
     return max(values).quantize(QUANT)
 
 
+def _min_decimal(values: tuple[Decimal, ...], *, default: Decimal) -> Decimal:
+    if not values:
+        return default
+    return min(values).quantize(QUANT)
+
+
 def _safe_ratio(numerator: Decimal, denominator: Decimal) -> Decimal:
     if denominator == ZERO:
         return ZERO
@@ -580,7 +956,10 @@ def _nonnegative_difference(first: Decimal, second: Decimal) -> Decimal:
     return value.quantize(QUANT)
 
 
-def _validate_input_counts(item: OutcomeResolutionEvidenceReadinessInput) -> None:
+def _validate_input_counts(
+    item: OutcomeResolutionEvidenceReadinessInput
+    | OutcomeResolutionEvidenceReadinessRow,
+) -> None:
     if item.official_source_count > item.resolution_source_count:
         raise ValueError("official_source_count cannot exceed resolution_source_count")
     if item.conflicting_source_count > item.resolution_source_count:
@@ -588,19 +967,41 @@ def _validate_input_counts(item: OutcomeResolutionEvidenceReadinessInput) -> Non
 
 
 def _validate_row(row: OutcomeResolutionEvidenceReadinessRow) -> None:
-    _validate_input_counts(
-        OutcomeResolutionEvidenceReadinessInput(
-            event_id=row.event_id,
-            outcome_id=row.outcome_id,
-            resolution_source_count=row.resolution_source_count,
-            official_source_count=row.official_source_count,
-            conflicting_source_count=row.conflicting_source_count,
-            last_checked_age_seconds=row.last_checked_age_seconds,
-            pending_ack=row.pending_ack,
-            manual_review_required=row.manual_review_required,
-            settlement_window_seconds=row.settlement_window_seconds,
-        ),
+    if type(row) is not OutcomeResolutionEvidenceReadinessRow:
+        raise ValueError("rows must contain OutcomeResolutionEvidenceReadinessRow values")
+    _require_public_string("event_id", row.event_id)
+    _require_public_string("outcome_id", row.outcome_id)
+    _require_band("band", row.band)
+    _normalize_reason_codes(row.reason_codes)
+    for field_name in _ROW_NONNEGATIVE_INTEGER_FIELDS:
+        _require_canonical_decimal(
+            field_name,
+            getattr(row, field_name),
+            _require_nonnegative_integer_decimal,
+        )
+    for field_name in _ROW_NONNEGATIVE_FIELDS:
+        _require_canonical_decimal(
+            field_name,
+            getattr(row, field_name),
+            _require_nonnegative_decimal,
+        )
+    _require_canonical_decimal(
+        "settlement_window_seconds",
+        row.settlement_window_seconds,
+        _require_positive_decimal,
     )
+    for field_name in (
+        "freshness_ratio",
+        "resolution_criteria_clarity_score",
+    ):
+        _require_canonical_decimal(
+            field_name,
+            getattr(row, field_name),
+            _require_ratio_decimal,
+        )
+    _require_bool("pending_ack", row.pending_ack)
+    _require_bool("manual_review_required", row.manual_review_required)
+    _validate_input_counts(row)
     if row.pending_ack_age_seconds != (
         row.last_checked_age_seconds if row.pending_ack else ZERO
     ):
@@ -612,9 +1013,62 @@ def _validate_row(row: OutcomeResolutionEvidenceReadinessRow) -> None:
         raise ValueError("freshness_ratio must match age and settlement window")
     if row.reason_codes[0] != _band_reason(row.band):
         raise ValueError("reason_codes must start with band reason")
+    reject_unsafe_surface_fields("outcome resolution evidence readiness row", row)
+    require_paper_only_flags("outcome resolution evidence readiness row", row)
 
 
 def _validate_report(report: OutcomeResolutionEvidenceReadinessReport) -> None:
+    _require_public_string("config_version", report.config_version)
+    _require_band("report_band", report.report_band)
+    _normalize_reason_codes(report.reason_codes)
+    for field_name in _REPORT_NONNEGATIVE_INTEGER_FIELDS:
+        _require_canonical_decimal(
+            field_name,
+            getattr(report, field_name),
+            _require_nonnegative_integer_decimal,
+        )
+    for field_name in _REPORT_NONNEGATIVE_FIELDS:
+        _require_canonical_decimal(
+            field_name,
+            getattr(report, field_name),
+            _require_nonnegative_decimal,
+        )
+    for field_name in (
+        "readiness_ratio",
+        "min_resolution_criteria_clarity_score",
+    ):
+        _require_canonical_decimal(
+            field_name,
+            getattr(report, field_name),
+            _require_ratio_decimal,
+        )
+    if type(report.inputs) is not tuple:
+        raise ValueError("inputs must be a tuple")
+    if type(report.rows) is not tuple:
+        raise ValueError("rows must be a tuple")
+    effective_config = _validated_config_copy(report.effective_config)
+    if report.config_version != effective_config.config_version:
+        raise ValueError("config_version must match effective_config")
+    inputs = _normalize_inputs(report.inputs)
+    rows = _normalize_rows(report.rows)
+    if inputs != tuple(sorted(inputs, key=_input_sort_key)):
+        raise ValueError("inputs must be in canonical order")
+    if rows != tuple(sorted(rows, key=_row_sort_key)):
+        raise ValueError("rows must be in canonical order")
+    expected_rows = tuple(
+        sorted(
+            (_row_from_input(item, effective_config) for item in inputs),
+            key=_row_sort_key,
+        ),
+    )
+    if len(rows) != len(expected_rows):
+        raise ValueError("inputs must match rows")
+    for row, expected_row in zip(rows, expected_rows, strict=True):
+        for field in fields(OutcomeResolutionEvidenceReadinessRow):
+            if getattr(row, field.name) != getattr(expected_row, field.name):
+                raise ValueError(
+                    f"{field.name} must match inputs and effective_config",
+                )
     if report.item_count != _count(len(report.rows)):
         raise ValueError("item_count must match rows")
     if report.ready_count != _row_band_count(report.rows, "ready"):
@@ -637,12 +1091,32 @@ def _validate_report(report: OutcomeResolutionEvidenceReadinessReport) -> None:
         tuple(row.last_checked_age_seconds for row in report.rows),
     ):
         raise ValueError("max_last_checked_age_seconds must match rows")
+    if report.max_oracle_source_latency_seconds != _max_decimal(
+        tuple(row.oracle_source_latency_seconds for row in report.rows),
+    ):
+        raise ValueError("max_oracle_source_latency_seconds must match rows")
+    if report.max_settlement_delay_seconds != _max_decimal(
+        tuple(row.settlement_delay_seconds for row in report.rows),
+    ):
+        raise ValueError("max_settlement_delay_seconds must match rows")
+    if report.max_capital_lockup_seconds != _max_decimal(
+        tuple(row.capital_lockup_seconds for row in report.rows),
+    ):
+        raise ValueError("max_capital_lockup_seconds must match rows")
+    if report.max_pending_outcome_age_seconds != _max_decimal(
+        tuple(row.pending_outcome_age_seconds for row in report.rows),
+    ):
+        raise ValueError("max_pending_outcome_age_seconds must match rows")
+    if report.min_resolution_criteria_clarity_score != _min_decimal(
+        tuple(row.resolution_criteria_clarity_score for row in report.rows),
+        default=ONE,
+    ):
+        raise ValueError("min_resolution_criteria_clarity_score must match rows")
     if report.report_band != _report_band(report.rows):
         raise ValueError("report_band must match rows")
     if report.reason_codes != _report_reason_codes(report.rows):
         raise ValueError("reason_codes must match rows")
-    if len(report.inputs) != len(report.rows):
-        raise ValueError("inputs must match rows")
+    require_paper_only_flags("outcome resolution evidence readiness report", report)
 
 
 def _public_payload_digest(report: OutcomeResolutionEvidenceReadinessReport) -> str:
@@ -652,13 +1126,30 @@ def _public_payload_digest(report: OutcomeResolutionEvidenceReadinessReport) -> 
     return sha256(encoded.encode("utf-8")).hexdigest()
 
 
-def _require_public_string(name: str, value: str) -> None:
+def _validate_public_payload_digest(
+    report: OutcomeResolutionEvidenceReadinessReport,
+    *,
+    fill_sentinel: bool,
+) -> None:
+    supplied_digest = report.public_payload_digest
+    is_sentinel = supplied_digest in ("", "0" * 64)
+    if not is_sentinel:
+        _require_digest("public_payload_digest", supplied_digest)
+    expected_digest = _public_payload_digest(report)
+    if fill_sentinel and is_sentinel:
+        object.__setattr__(report, "public_payload_digest", expected_digest)
+        return
+    if supplied_digest != expected_digest:
+        raise ValueError("public_payload_digest must match report content")
+
+
+def _require_public_string(name: str, value: object) -> None:
     if type(value) is not str or not value.strip():
         raise ValueError(f"{name} must be a non-empty string")
 
 
-def _require_band(name: str, value: str) -> None:
-    if value not in BANDS:
+def _require_band(name: str, value: object) -> None:
+    if type(value) is not str or value not in BANDS:
         raise ValueError(f"{name} must be one of {BANDS}")
 
 
@@ -673,6 +1164,17 @@ def _require_decimal(name: str, value: Decimal) -> Decimal:
     if not value.is_finite():
         raise ValueError(f"{name} must be finite")
     return value.quantize(QUANT)
+
+
+def _require_canonical_decimal(
+    name: str,
+    value: object,
+    validator: Any,
+) -> Decimal:
+    normalized = validator(name, value)
+    if value.as_tuple() != normalized.as_tuple():
+        raise ValueError(f"{name} must be a canonical six-place Decimal")
+    return normalized
 
 
 def _require_nonnegative_decimal(name: str, value: Decimal) -> Decimal:
