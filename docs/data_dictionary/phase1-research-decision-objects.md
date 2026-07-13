@@ -143,9 +143,11 @@ decisioning, not live forecasts for execution.
 
 ### Probability Sanity
 
+forecast_probability always denotes canonical Decimal P(YES), regardless of selected_side; selected_side identifies the paper-review side being evaluated and never reorients forecast_probability; P(NO) is 1 - P(YES).
+
 | Field | Type | Precision / Shape | Contract |
 | --- | --- | --- | --- |
-| `forecast_probability` | Decimal | fixed-six ratio | Candidate forecast probability. |
+| `forecast_probability` | Decimal | fixed-six ratio | Canonical event `P(YES)`. |
 | `market_probability` | Decimal | fixed-six ratio | Market implied probability. |
 | `bid_implied_probability` | Decimal | fixed-six ratio | Bid implied probability. |
 | `ask_implied_probability` | Decimal | fixed-six ratio | Ask implied probability. |

@@ -15,10 +15,15 @@ Scope constraints:
 Local facts:
 
 - Supabase CLI: `/home/ubuntu/supabase/node_modules/.bin/supabase`
-- Migration: `supabase/migrations/20260701000000_team_forecast_tables.sql`
+- Migration apply order is listed below.
 - Local database container check: `sudo -n docker ps`
 - Local database psql entry point: `sudo -n docker exec supabase-db psql`
 - Expected tables: `team_profiles`, `team_market_routes`, `team_forecasts`, `team_forecast_evidence`, `team_forecast_outcomes`
+
+1. `supabase/migrations/20260701000000_team_forecast_tables.sql`
+2. `supabase/migrations/20260713000000_team_forecast_probability_yes_contract.sql`
+
+Migrations are operator prerequisites and must not auto-reset or auto-apply to the host database. Operators apply the baseline first and the corrective column-comment migration second.
 
 ## Preconditions
 
@@ -27,6 +32,7 @@ Run from the repository root:
 ```bash
 pwd
 test -f supabase/migrations/20260701000000_team_forecast_tables.sql
+test -f supabase/migrations/20260713000000_team_forecast_probability_yes_contract.sql
 sudo -n docker ps
 ```
 
@@ -45,6 +51,8 @@ Apply the committed migration through the local database container:
 ```bash
 sudo -n docker exec -i supabase-db psql -v ON_ERROR_STOP=1 -U postgres -d postgres \
   < supabase/migrations/20260701000000_team_forecast_tables.sql
+sudo -n docker exec -i supabase-db psql -v ON_ERROR_STOP=1 -U postgres -d postgres \
+  < supabase/migrations/20260713000000_team_forecast_probability_yes_contract.sql
 ```
 
 The required local command shape is `psql -v ON_ERROR_STOP=1`; keep that flag on every direct apply so failures stop the run.
@@ -101,6 +109,26 @@ Minimum expected column markers:
 - `team_forecast_evidence`: `payload_sha256`, `generated_at`, `forecast_id`, `evidence_id`, `team_id`, `market_slug`, `config_version`, `source_id`, `data_timestamp`, `data_freshness_seconds`, `evidence_type`, `weight`, `payload_json`, `paper_only`, `report_only`, `readonly`, `inserted_at`
 - `team_forecast_outcomes`: `payload_sha256`, `generated_at`, `outcome_id`, `forecast_id`, `team_id`, `market_slug`, `config_version`, `resolved_at`, `actual_outcome`, `forecast_error`, `brier_score`, `paper_pnl`, `cost_adjusted_return`, `directionally_correct`, `profitable_after_cost`, `resolution_dispute_flag`, `payload_json`, `paper_only`, `report_only`, `readonly`, `inserted_at`
 
+## Verify Forecast Column Comments
+
+After both migrations are present, verify the canonical probability contract with a catalog read:
+
+```bash
+sudo -n docker exec supabase-db psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres -c "
+SELECT
+    col_description('public.team_forecasts'::regclass, a.attnum) AS column_comment
+FROM pg_attribute AS a
+WHERE a.attrelid = 'public.team_forecasts'::regclass
+  AND a.attname IN ('forecast_probability', 'selected_side')
+ORDER BY a.attname;
+"
+```
+
+Expected comments, ordered by column name:
+
+- `Canonical Decimal P(YES) for the event; never P(selected_side).`
+- `Paper-review side being evaluated; does not reorient forecast_probability.`
+
 ## Environment Surface
 
 The Team Forecast database env surface is owned by `supabase_team_forecast_config`.
@@ -127,7 +155,7 @@ Default table names:
 
 Leave the `.env.example` values blank. Do not add sample values.
 
-## Troubleshooting
+## Recovery
 
 If Docker access fails, rerun:
 
@@ -141,9 +169,11 @@ If psql access fails, rerun a minimal local query:
 sudo -n docker exec supabase-db psql -U postgres -d postgres -c "select 1;"
 ```
 
-If any expected table is absent, rerun the local apply command and then repeat the `to_regclass` checks:
+For missing-table recovery, reapply both migrations to the local `supabase-db` container in documented order, then repeat the `to_regclass` checks. Do not reset the local stack or run a host-database migration command.
 
 ```bash
 sudo -n docker exec -i supabase-db psql -v ON_ERROR_STOP=1 -U postgres -d postgres \
   < supabase/migrations/20260701000000_team_forecast_tables.sql
+sudo -n docker exec -i supabase-db psql -v ON_ERROR_STOP=1 -U postgres -d postgres \
+  < supabase/migrations/20260713000000_team_forecast_probability_yes_contract.sql
 ```

@@ -33,7 +33,7 @@ Do not review a packet until these inputs are present:
 - primary specialist team route and packet digest;
 - evidence summary with source timestamps, freshness, corroboration, and
   contradictions;
-- side-aware forecast probability and confidence;
+- canonical event `P(YES)` forecast probability and confidence;
 - executable YES/NO price context or a reason executable price is unavailable;
 - cost, EV, liquidity, depth, spread, fee, slippage, settlement, and
   resolution-risk sections;
@@ -41,6 +41,8 @@ Do not review a packet until these inputs are present:
 - explicit `paper_only`, `report_only`, and `readonly` flags where supported;
 - redaction status for DSNs, credentials, tokens, wallet/account material, and
   order-like sensitive values.
+
+forecast_probability always denotes canonical Decimal P(YES), regardless of selected_side; selected_side identifies the paper-review side being evaluated and never reorients forecast_probability; P(NO) is 1 - P(YES).
 
 If any required input is missing, the packet is `research` or `blocked`, not
 `go_for_manual_review`.
@@ -138,6 +140,11 @@ Minimum checks:
 - settlement timing, dispute window, finalization lag, and capital lockup are
   reviewed;
 - resolution-risk notes explain what evidence will prove the outcome.
+
+```text
+YES side probability = forecast_probability
+NO side probability = 1 - forecast_probability
+```
 
 Do not accept midpoint-only edge, stale executable prices, missing liquidity,
 or optimistic full-fill assumptions as sufficient for `go_for_manual_review`.

@@ -111,9 +111,12 @@ auditable. Route to `research` when the gap is specific and answerable.
 Review the probability forecast before reviewing price edge. The forecast must
 explain why the research estimate differs from the market-implied probability.
 
+forecast_probability always denotes canonical Decimal P(YES), regardless of selected_side; selected_side identifies the paper-review side being evaluated and never reorients forecast_probability; P(NO) is 1 - P(YES).
+
 Required checks:
 
-- forecast probability is side-aware and tied to YES or NO;
+- forecast probability is canonical event `P(YES)` and is not reoriented to the
+  selected paper-review side;
 - confidence, uncertainty range, and forecast timestamp are present;
 - specialist team route and forecast rationale are included;
 - major assumptions are listed separately from observed facts;
@@ -213,6 +216,11 @@ Required checks:
 - midpoint-only edge, stale order book context, or optimistic full-fill
   assumptions are rejected.
 
+```text
+YES side probability = forecast_probability
+NO side probability = 1 - forecast_probability
+```
+
 Operator questions:
 
 - Is the market price executable, or just a displayed midpoint?
@@ -294,6 +302,10 @@ be resolved inside Phase 1 boundaries.
 After the market resolves, use the settled outcome for calibration evidence.
 Post-settlement calibration is descriptive learning, not retroactive approval
 and not a transition to live execution.
+
+Calibration compares canonical `P(YES)` with an actual YES target of `1` and actual NO target of `0`, regardless of which paper-review side was selected.
+
+Persisted `actual_outcome` uses the string enum `yes` or `no`; calibration maps `yes` to Decimal target `1` and `no` to Decimal target `0`; `selected_side` never changes that mapping.
 
 Required checks:
 

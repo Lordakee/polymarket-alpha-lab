@@ -39,6 +39,7 @@ def _forecast_row(
     event_template: str = "btc_hit_price",
     probability: Decimal = d("0.800000"),
     confidence: Decimal = d("0.700000"),
+    selected_side: str = "yes",
     generated_at: datetime | None = None,
 ) -> TeamForecastDbRow:
     generated = generated_at if generated_at is not None else GENERATED_AT
@@ -51,7 +52,7 @@ def _forecast_row(
             question=f"Will {forecast_id} resolve yes?",
             category_id=category_id,
             event_template=event_template,
-            selected_side="yes",
+            selected_side=selected_side,
             forecast_probability=probability,
             confidence=confidence,
             evidence_quality=d("0.800000"),
@@ -120,6 +121,44 @@ def _bypassed_row(row: object, **overrides: Any) -> object:
     for key, value in overrides.items():
         object.__setattr__(malformed, key, value)
     return malformed
+
+
+def test_actual_no_metrics_use_canonical_pyes_regardless_of_selected_side() -> None:
+    reports = []
+    groups = []
+    outcomes = []
+
+    for selected_side in ("yes", "no"):
+        forecast = _forecast_row(
+            "canonical-pyes-no-outcome",
+            probability=d("0.200000"),
+            selected_side=selected_side,
+        )
+        outcome = _outcome_row(forecast, actual_outcome="no")
+        report = build_team_forecast_calibration_report(
+            (forecast,),
+            (outcome,),
+            config=TeamForecastCalibrationConfig(
+                config_version="team-calibration-pyes-contract-test",
+                bucket_count=2,
+                min_settled_forecasts=1,
+            ),
+            generated_at=GENERATED_AT,
+        )
+        outcomes.append(outcome)
+        reports.append(report)
+        groups.append(report.groups[0])
+
+    assert tuple(outcome.brier_score for outcome in outcomes) == (
+        d("0.040000"),
+        d("0.040000"),
+    )
+    assert reports[0] == reports[1]
+    assert groups[0] == groups[1]
+    assert groups[1].observed_yes_rate == d("0.000000")
+    assert groups[1].average_forecast_probability == d("0.200000")
+    assert groups[1].average_brier_score == d("0.040000")
+    assert groups[1].calibration_error == d("0.200000")
 
 
 def test_build_team_forecast_calibration_report_summarizes_team_buckets_and_metrics() -> None:

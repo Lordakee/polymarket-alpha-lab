@@ -132,6 +132,55 @@ def _prose_contexts(text: str) -> tuple[str, ...]:
     )
 
 
+def test_probability_event_docs_freeze_canonical_pyes_orientation() -> None:
+    paths = (
+        Path("docs/operators/phase1-probability-event-go-no-go-runbook.md"),
+        Path("docs/phase1/probability-event-readonly-supabase-principles.md"),
+        Path("docs/data_dictionary/phase1-research-decision-objects.md"),
+        Path("docs/playbooks/phase1-specialist-team-playbooks.md"),
+        Path("docs/strategy/phase1-probability-event-filtering-workflow.md"),
+    )
+    contract = (
+        "forecast_probability always denotes canonical Decimal P(YES), "
+        "regardless of selected_side; selected_side identifies the paper-review "
+        "side being evaluated and never reorients forecast_probability; "
+        "P(NO) is 1 - P(YES)."
+    )
+
+    for path in paths:
+        assert path.exists(), f"{path} must exist"
+
+    texts = {path: path.read_text(encoding="utf-8") for path in paths}
+    for path in paths:
+        assert contract in texts[path], path
+
+    for path in (
+        Path("docs/operators/phase1-probability-event-go-no-go-runbook.md"),
+        Path("docs/strategy/phase1-probability-event-filtering-workflow.md"),
+    ):
+        assert "YES side probability = forecast_probability" in texts[path], path
+        assert "NO side probability = 1 - forecast_probability" in texts[path], path
+
+    playbook_text = texts[Path("docs/playbooks/phase1-specialist-team-playbooks.md")]
+    calibration_contract = (
+        "canonical `P(YES)` with an actual YES target of `1` and actual NO "
+        "target of `0`, regardless of which paper-review side was selected"
+    )
+    assert calibration_contract in playbook_text
+
+    outcome_calibration_contract = (
+        "Persisted `actual_outcome` uses the string enum `yes` or `no`; "
+        "calibration maps `yes` to Decimal target `1` and `no` to Decimal "
+        "target `0`; `selected_side` never changes that mapping."
+    )
+    assert outcome_calibration_contract in playbook_text
+
+    principles_text = texts[
+        Path("docs/phase1/probability-event-readonly-supabase-principles.md")
+    ]
+    assert "side-aware forecast" not in principles_text.lower()
+
+
 def test_phase1_new_docs_exist_and_are_markdown() -> None:
     assert len(PHASE1_NEW_DOC_PATHS) == 15
 

@@ -7,6 +7,9 @@ import re
 SAFETY_DOC_PATH = Path("docs/team-forecast-migration-safety.md")
 RUNBOOK_PATH = Path("docs/team-forecast-supabase-runbook.md")
 MIGRATION_PATH = Path("supabase/migrations/20260701000000_team_forecast_tables.sql")
+PROBABILITY_YES_CONTRACT_MIGRATION_PATH = Path(
+    "supabase/migrations/20260713000000_team_forecast_probability_yes_contract.sql"
+)
 
 EXPECTED_TABLES = (
     "team_profiles",
@@ -68,3 +71,23 @@ def test_migration_safety_doc_points_operators_to_runbook_without_replacing_it()
     assert str(RUNBOOK_PATH) in text
     assert "sudo -n docker exec supabase-db psql" not in text
     assert "psql -v ON_ERROR_STOP=1" not in text
+
+
+def test_migration_safety_inventories_probability_yes_comment_contract() -> None:
+    text = _safety_text()
+    lower_text = text.lower()
+
+    baseline_index = text.index(str(MIGRATION_PATH))
+    contract_index = text.index(str(PROBABILITY_YES_CONTRACT_MIGRATION_PATH))
+    assert baseline_index < contract_index
+    assert "column comments only" in lower_text
+    assert "no table rewrite, dml, or row rewrite" in lower_text
+    assert (
+        "Canonical Decimal P(YES) for the event; never P(selected_side)."
+        in text
+    )
+    assert (
+        "Paper-review side being evaluated; does not reorient "
+        "forecast_probability."
+        in text
+    )

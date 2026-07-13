@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import fields
+from dataclasses import fields, replace
 from datetime import UTC, datetime
 from decimal import Decimal
 import hashlib
@@ -285,6 +285,76 @@ def test_forecast_db_row_uses_canonical_payload_and_round_trips() -> None:
     assert row.payload_json["report_only"] is True
     assert row.payload_json["readonly"] is True
     assert team_forecast_from_db_row(row) == packet
+
+
+def test_no_selected_forecast_db_row_preserves_canonical_pyes_round_trip() -> None:
+    packet = replace(
+        _forecast_packet(),
+        selected_side="no",
+        forecast_probability=d("0.200000"),
+    )
+    row = team_forecast_to_db_row(packet)
+    recovered = team_forecast_from_db_row(row)
+
+    assert row.selected_side == "no"
+    assert row.forecast_probability == d("0.200000")
+    assert row.payload_json["selected_side"] == "no"
+    assert row.payload_json["forecast_probability"] == "0.200000"
+    assert recovered.selected_side == "no"
+    assert recovered.forecast_probability == d("0.200000")
+    contract = (
+        "Store canonical Decimal P(YES), regardless of selected_side; "
+        "selected_side identifies the paper-review side being evaluated and never "
+        "reorients forecast_probability; P(NO) is 1 - P(YES)."
+    )
+    assert contract in (TeamForecastDbRow.__doc__ or "")
+
+
+@pytest.mark.parametrize(
+    "forecast_probability",
+    (d("-0.0000004"), d("1.0000004")),
+)
+def test_forecast_db_row_rejects_raw_out_of_range_probability_before_quantization(
+    forecast_probability: Decimal,
+) -> None:
+    values = _row_values(team_forecast_to_db_row(_forecast_packet()))
+    values["forecast_probability"] = forecast_probability
+
+    with pytest.raises(ValueError, match="forecast_probability must be between zero and one"):
+        TeamForecastDbRow(**values)
+
+
+def test_forecast_db_row_preserves_signed_zero_probability() -> None:
+    packet = replace(_forecast_packet(), forecast_probability=d("0.000000"))
+    values = _row_values(team_forecast_to_db_row(packet))
+    values["forecast_probability"] = d("-0.000000")
+
+    row = TeamForecastDbRow(**values)
+
+    assert row.forecast_probability == d("0.000000")
+    assert row.forecast_probability.is_signed() is True
+
+
+def test_forecast_db_row_round_trips_legacy_signed_zero_payload_and_hash() -> None:
+    packet = replace(_forecast_packet(), forecast_probability=d("0.000000"))
+    base_row = team_forecast_to_db_row(packet)
+    payload_json = _payload_copy(base_row)
+    payload_json["forecast_probability"] = "-0.000000"
+    values = _row_values(base_row)
+    values.update(
+        forecast_probability=d("-0.000000"),
+        payload_json=payload_json,
+        payload_sha256=_payload_sha256(payload_json),
+    )
+
+    row = TeamForecastDbRow(**values)
+    recovered = team_forecast_from_db_row(row)
+    round_tripped = team_forecast_to_db_row(recovered)
+
+    assert recovered.forecast_probability.is_signed() is True
+    assert row.payload_json["forecast_probability"] == "-0.000000"
+    assert round_tripped.payload_json == row.payload_json
+    assert round_tripped.payload_sha256 == row.payload_sha256
 
 
 def test_evidence_db_row_uses_canonical_payload_and_round_trips() -> None:

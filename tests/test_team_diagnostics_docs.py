@@ -70,6 +70,61 @@ def _single_fenced_text_line_after(section: str, marker: str) -> str:
     return lines[0]
 
 
+def test_team_probability_docs_freeze_canonical_pyes_orientation() -> None:
+    paths = (
+        Path("docs/team-agent-operating-model.md"),
+        Path("docs/team-agent-framework.md"),
+        Path("docs/team-diagnostics-readonly.md"),
+        Path("docs/operators/phase1-strategy-stack-walkthrough.md"),
+        Path("docs/strategy-first-roadmap.md"),
+        Path("docs/strategy-candidate-decision-matrix.md"),
+    )
+    contract = (
+        "forecast_probability always denotes canonical Decimal P(YES), "
+        "regardless of selected_side; selected_side identifies the paper-review "
+        "side being evaluated and never reorients forecast_probability; "
+        "P(NO) is 1 - P(YES)."
+    )
+
+    for path in paths:
+        assert path.exists(), f"{path} must exist"
+
+    texts = {path: path.read_text(encoding="utf-8") for path in paths}
+    for path in paths:
+        assert contract in texts[path], path
+
+    operator_text = texts[
+        Path("docs/operators/phase1-strategy-stack-walkthrough.md")
+    ]
+    assert "YES side probability = forecast_probability" in operator_text
+    assert "NO side probability = 1 - forecast_probability" in operator_text
+
+    diagnostics_text = texts[Path("docs/team-diagnostics-readonly.md")]
+    calibration_contract = (
+        "canonical `P(YES)` with an actual YES target of `1` and actual NO "
+        "target of `0`, regardless of which paper-review side was selected"
+    )
+    assert calibration_contract in diagnostics_text
+
+    outcome_calibration_contract = (
+        "Persisted `actual_outcome` uses the string enum `yes` or `no`; "
+        "calibration maps `yes` to Decimal target `1` and `no` to Decimal "
+        "target `0`; `selected_side` never changes that mapping."
+    )
+    for path in (
+        Path("docs/team-diagnostics-readonly.md"),
+        Path("docs/operators/phase1-strategy-stack-walkthrough.md"),
+    ):
+        assert outcome_calibration_contract in texts[path], path
+
+    assert "side-aware probability forecast" not in texts[
+        Path("docs/strategy-first-roadmap.md")
+    ].lower()
+    assert "side-aware forecast" not in texts[
+        Path("docs/strategy-candidate-decision-matrix.md")
+    ].lower()
+
+
 def test_team_diagnostics_readonly_doc_covers_purpose_and_phase_1_boundary() -> None:
     text = _doc_text()
     lower_text = text.lower()

@@ -36,6 +36,8 @@ Diagnostics read from these Team Forecast tables:
 - `team_forecast_evidence`: source evidence used by a team forecast, including source id, evidence type, freshness, weight, and payload.
 - `team_forecast_outcomes`: resolved forecast outcomes, errors, Brier score, paper PnL fields, cost-adjusted return, and dispute flags.
 
+forecast_probability always denotes canonical Decimal P(YES), regardless of selected_side; selected_side identifies the paper-review side being evaluated and never reorients forecast_probability; P(NO) is 1 - P(YES).
+
 Diagnostics should treat rows with `paper_only`, `report_only`, and `readonly` markers as the canonical Phase 1 record shape. A diagnostics report should surface missing or unexpected markers as data-quality findings, not as a reason to repair rows in place.
 
 ## Snapshot Persistence
@@ -140,6 +142,8 @@ Team memory:
 
 Calibration:
 
+- Compare canonical `P(YES)` with an actual YES target of `1` and actual NO target of `0`, regardless of which paper-review side was selected.
+- Persisted `actual_outcome` uses the string enum `yes` or `no`; calibration maps `yes` to Decimal target `1` and `no` to Decimal target `0`; `selected_side` never changes that mapping.
 - Compare `forecast_probability`, `confidence`, `actual_outcome`, `forecast_error`, and `brier_score`.
 - Segment calibration by `team_id`, `config_version`, `selected_side`, market family, and event template.
 - Treat unresolved or disputed rows as pending diagnostics inputs, not final calibration records.

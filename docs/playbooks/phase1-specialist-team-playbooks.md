@@ -47,6 +47,12 @@ Each specialist team research packet should include:
 - `paper_only=true`, `report_only=true`, and `readonly=true` wherever those
   fields are represented.
 
+forecast_probability always denotes canonical Decimal P(YES), regardless of selected_side; selected_side identifies the paper-review side being evaluated and never reorients forecast_probability; P(NO) is 1 - P(YES).
+
+Calibration compares canonical `P(YES)` with an actual YES target of `1` and actual NO target of `0`, regardless of which paper-review side was selected.
+
+Persisted `actual_outcome` uses the string enum `yes` or `no`; calibration maps `yes` to Decimal target `1` and `no` to Decimal target `0`; `selected_side` never changes that mapping.
+
 Freshness SLAs below are maximum acceptable age for the decisive source at
 packet assembly time. Older evidence can still be cited as background, but it
 must be marked stale and must not be the decisive basis for a ready packet.

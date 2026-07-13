@@ -92,12 +92,15 @@ Specialist research packets should include:
 - event-template classification and why the team owns it;
 - source-quality assessment, including freshness and contradiction notes;
 - resolution-rule interpretation and edge cases;
-- side-aware forecast probability with confidence and uncertainty range;
+- canonical event `P(YES)` forecast probability with confidence and uncertainty
+  range;
 - evidence that moved the team away from the market price;
 - memory policy status: `allow`, `throttle`, or `block`;
 - relevant long-term memory references, stale-memory warnings, and prior
   failure modes;
 - required follow-up owner and deadline when the packet is incomplete.
+
+forecast_probability always denotes canonical Decimal P(YES), regardless of selected_side; selected_side identifies the paper-review side being evaluated and never reorients forecast_probability; P(NO) is 1 - P(YES).
 
 Team memory is local, durable Phase 1 research context only. It can explain
 source reliability, calibration, recurring mistakes, and reviewer concerns. It
@@ -121,9 +124,11 @@ Required review dimensions:
 | Settlement timing | Does lockup, delayed finalization, dispute timing, or source lag reduce the decision quality? | Unclear finalization time, long lockup, ambiguous proof date, revision/dispute risk. |
 | Resolution risk | Can the team explain exactly how the market resolves and what source proves it? | Ambiguous wording, missing source hierarchy, manual adjudication risk, contradictory proof sources. |
 
-Net edge should be written as a paper research calculation:
+Side probability and net edge should be written as paper research calculations:
 
 ```text
+YES side probability = forecast_probability
+NO side probability = 1 - forecast_probability
 YES net edge = forecast_probability - executable_yes_price - total_cost_probability
 NO net edge = (1 - forecast_probability) - executable_no_price - total_cost_probability
 ```
@@ -144,8 +149,8 @@ The packet should contain:
 - market question, outcomes, close time, and resolution criteria;
 - primary team owner and specialist packet digest;
 - evidence summary with source freshness, corroboration, and contradictions;
-- side-aware forecast, executable price, gross edge, total cost, net edge, and
-  EV summary;
+- canonical event forecast, side-aware executable price, gross edge, total
+  cost, net edge, and EV summary;
 - liquidity, depth, fill, spread, fee, slippage, settlement, and resolution-risk
   notes;
 - memory policy and relevant prior lessons;

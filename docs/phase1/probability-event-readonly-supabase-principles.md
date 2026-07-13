@@ -63,12 +63,14 @@ Supabase/Postgres only. The durable store is for report history, team memory,
 diagnostics, and readonly learning. It is not exchange state, account state,
 wallet state, order state, or execution state.
 
+forecast_probability always denotes canonical Decimal P(YES), regardless of selected_side; selected_side identifies the paper-review side being evaluated and never reorients forecast_probability; P(NO) is 1 - P(YES).
+
 Approved durable report categories include:
 
 - market discovery and screening rows;
 - specialist team assignment and research packet summaries;
 - evidence quality and source-readiness summaries;
-- side-aware forecast and confidence summaries;
+- canonical event `P(YES)` forecast and confidence summaries;
 - cost, EV, liquidity, depth, spread, fee, slippage, settlement, and
   resolution-risk summaries;
 - manual go/no-go packet rows;

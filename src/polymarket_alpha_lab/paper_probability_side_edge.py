@@ -26,6 +26,12 @@ ACTION_PRIORITY = {
 
 @dataclass(frozen=True)
 class PaperProbabilitySideEdgeInput:
+    (
+        "forecast_probability always denotes canonical Decimal P(YES), regardless of "
+        "side; side identifies the paper-review side being evaluated and never reorients "
+        "forecast_probability; P(NO) is 1 - P(YES)."
+    )
+
     market_slug: str
     question: str
     side: str
@@ -323,6 +329,8 @@ def _row_from_input(
 
 
 def _side_probability(value: PaperProbabilitySideEdgeInput) -> Decimal:
+    """Convert canonical P(YES) to the evaluated side probability at this reducer's boundary."""
+
     if value.side == "yes":
         return value.forecast_probability
     return _subtract_decimal(ONE, value.forecast_probability)
@@ -607,12 +615,15 @@ def _quantize(value: Decimal) -> Decimal:
 
 
 def _normalize_probability(field_name: str, value: Decimal) -> Decimal:
-    normalized = _normalize_decimal(field_name, value)
-    if normalized < ZERO:
+    if type(value) is not Decimal:
+        raise ValueError(f"{field_name} must be a Decimal")
+    if not value.is_finite():
+        raise ValueError(f"{field_name} must be finite")
+    if value < ZERO:
         raise ValueError(f"{field_name} must be nonnegative")
-    if normalized > ONE:
+    if value > ONE:
         raise ValueError(f"{field_name} must be at most one")
-    return normalized
+    return _normalize_decimal(field_name, value)
 
 
 def _normalize_nonnegative_decimal(field_name: str, value: Decimal) -> Decimal:
