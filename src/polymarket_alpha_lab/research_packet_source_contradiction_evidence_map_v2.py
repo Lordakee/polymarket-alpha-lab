@@ -679,12 +679,13 @@ def _packet_groups(
 def _reference_evidence(
     rows: tuple[ResearchPacketSourceContradictionEvidence, ...],
 ) -> ResearchPacketSourceContradictionEvidence:
+    datetime_origin = datetime.min.replace(tzinfo=UTC)
     return sorted(
         rows,
         key=lambda row: (
             -ROLE_RANK[row.source_role],
             -row.official_source_rank_score,
-            -Decimal(str(row.observed_at.timestamp())),
+            -_exact_seconds_between(row.observed_at, datetime_origin),
             row.evidence_id,
         ),
     )[0]
@@ -775,9 +776,19 @@ def _source_family_row(
 
 
 def _age_hours(generated_at: datetime, observed_at: datetime) -> Decimal:
-    age_seconds = Decimal(str((generated_at - observed_at).total_seconds()))
     with localcontext(DECIMAL_CONTEXT):
+        age_seconds = _exact_seconds_between(generated_at, observed_at)
         return (age_seconds / SECONDS_PER_HOUR).quantize(QUANTUM)
+
+
+def _exact_seconds_between(later: datetime, earlier: datetime) -> Decimal:
+    delta = later - earlier
+    with localcontext(DECIMAL_CONTEXT):
+        return (
+            Decimal(delta.days) * Decimal("86400")
+            + Decimal(delta.seconds)
+            + Decimal(delta.microseconds) / Decimal("1000000")
+        )
 
 
 def _recency_weight(age_hours: Decimal, recency_window_hours: Decimal) -> Decimal:

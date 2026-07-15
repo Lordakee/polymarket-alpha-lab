@@ -6,10 +6,16 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 
+from polymarket_alpha_lab.strategy_candidate_decision_matrix import (
+    PaperStrategyCandidateDecisionMatrixReport,
+    PaperStrategyCandidateDecisionRow,
+)
 from polymarket_alpha_lab.strategy_candidate_research_queue import (
     PaperStrategyCandidateResearchQueueReport,
     PaperStrategyCandidateResearchQueueRow,
 )
+
+
 DEFAULT_PAPER_AUTONOMOUS_CANDIDATE_SELECTION_CONFIG_VERSION = (
     "paper-autonomous-candidate-selection-v0"
 )
@@ -780,19 +786,32 @@ def _rows_with_reason(
     return sum(1 for row in rows if reason_code in row.reason_codes)
 
 
+def _is_reload_compatible_exact_type(
+    value: object,
+    expected_type: type[object],
+) -> bool:
+    actual_type = type(value)
+    return actual_type is expected_type or (
+        actual_type.__module__ == expected_type.__module__
+        and actual_type.__qualname__ == expected_type.__qualname__
+    )
+
+
 def _decision_matrix_rows_by_slug(
     decision_matrix_report: object | None,
     source_reports: tuple[PaperStrategyCandidateResearchQueueReport, ...],
 ) -> dict[str, object] | None:
     if decision_matrix_report is None:
         return None
-    try:
-        decision_rows = getattr(decision_matrix_report, "decision_rows")
-    except AttributeError:
+    if not _is_reload_compatible_exact_type(
+        decision_matrix_report,
+        PaperStrategyCandidateDecisionMatrixReport,
+    ):
         raise ValueError(
             "decision_matrix_report must be exactly "
             "PaperStrategyCandidateDecisionMatrixReport",
-        ) from None
+        )
+    decision_rows = getattr(decision_matrix_report, "decision_rows", None)
     if type(decision_rows) is not tuple:
         raise ValueError(
             "decision_matrix_report must be exactly "
@@ -802,14 +821,22 @@ def _decision_matrix_rows_by_slug(
     source_market_slugs = _source_market_slugs(source_reports)
     matrix_rows_by_slug: dict[str, object] = {}
     for row in decision_rows:
-        if (
-            type(getattr(row, "market_slug", None)) is not str
-            or type(getattr(row, "decision_status", None)) is not str
-            or type(getattr(row, "reason_codes", None)) is not tuple
-            or any(
-                type(reason_code) is not str
-                for reason_code in getattr(row, "reason_codes", ())
+        if not _is_reload_compatible_exact_type(
+            row,
+            PaperStrategyCandidateDecisionRow,
+        ):
+            raise ValueError(
+                "decision_matrix_report rows must be exact "
+                "PaperStrategyCandidateDecisionRow values",
             )
+        market_slug = getattr(row, "market_slug", None)
+        decision_status = getattr(row, "decision_status", None)
+        reason_codes = getattr(row, "reason_codes", None)
+        if (
+            type(market_slug) is not str
+            or type(decision_status) is not str
+            or type(reason_codes) is not tuple
+            or any(type(reason_code) is not str for reason_code in reason_codes)
         ):
             raise ValueError(
                 "decision_matrix_report rows must be exact "

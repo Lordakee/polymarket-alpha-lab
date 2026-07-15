@@ -203,6 +203,44 @@ def test_fetch_quality_sla_aggregates_metrics_and_orders_rows() -> None:
     )
 
 
+def test_fetch_quality_sla_reports_attempt_weighted_acquisition_readiness() -> None:
+    module = api()
+    report = build_report(
+        input_row(
+            "sports_soccer",
+            "sports.soccer",
+            "sports_batch",
+            attempted_fetch_count=d("40.000000"),
+            successful_fetch_count=d("40.000000"),
+        ),
+        input_row(
+            "macro_rates",
+            "finance.macro.rates",
+            "rates_batch",
+            attempted_fetch_count=d("10.000000"),
+            successful_fetch_count=d("10.000000"),
+            freshness_age_seconds=d("3600.000000"),
+        ),
+        input_row(
+            "politics",
+            "politics",
+            "election_batch",
+            attempted_fetch_count=d("50.000000"),
+            successful_fetch_count=d("25.000000"),
+        ),
+    )
+
+    assert report.pass_ready_batch_count == d("1.000000")
+    assert report.pass_ready_attempted_fetch_count == d("40.000000")
+    assert report.pass_ready_attempted_fetch_ratio == d("0.400000")
+
+    payload = module.research_source_fetch_quality_sla_report_payload(report)
+    assert payload["pass_ready_batch_count"] == "1.000000"
+    assert payload["pass_ready_attempted_fetch_count"] == "40.000000"
+    assert payload["pass_ready_attempted_fetch_ratio"] == "0.400000"
+    assert payload["derived_validation_digest"] == canonical_digest(payload)
+
+
 def test_fetch_quality_sla_statuses_are_exactly_pass_watch_block() -> None:
     module = api()
     pass_report = build_report(input_row("sports_soccer", "sports.soccer", "sports_batch"))

@@ -7,7 +7,9 @@ from decimal import Decimal
 import pytest
 
 from polymarket_alpha_lab.paper_probability_side_edge import (
+    PaperProbabilitySideEdgeConfig,
     PaperProbabilitySideEdgeInput,
+    build_paper_probability_side_edge_report,
 )
 from polymarket_alpha_lab.team_forecast_packet import (
     TeamForecastCostInterfaceInput,
@@ -228,6 +230,25 @@ def test_forecast_and_evidence_packets_reject_invalid_values_and_false_flags():
         btc_evidence_packet(readonly=False)
 
 
+@pytest.mark.parametrize(
+    "forecast_probability",
+    (d("-0.0000004"), d("1.0000004")),
+)
+def test_forecast_probability_rejects_raw_out_of_range_values_before_quantization(
+    forecast_probability: Decimal,
+) -> None:
+    with pytest.raises(ValueError, match="forecast_probability must be between zero and one"):
+        btc_forecast_packet(forecast_probability=forecast_probability)
+
+
+def test_forecast_probability_preserves_signed_zero_for_legacy_payload_compatibility() -> None:
+    forecast = btc_forecast_packet(forecast_probability=d("-0.000000"))
+
+    assert forecast.forecast_probability == d("0.000000")
+    assert forecast.forecast_probability.is_signed() is True
+    assert team_forecast_packet_payload(forecast)["forecast_probability"] == "-0.000000"
+
+
 def test_durable_payload_helper_rejects_unsafe_live_surface_fields():
     payload = team_forecast_packet_payload(btc_forecast_packet())
 
@@ -292,6 +313,54 @@ def test_adapter_builds_side_edge_input_from_forecast_and_central_cost_values():
     assert side_edge_input.paper_only is True
     assert side_edge_input.report_only is True
     assert side_edge_input.readonly is True
+
+
+def test_no_side_adapter_preserves_pyes_and_reducer_derives_pno() -> None:
+    adapted = team_forecast_to_side_edge_input(
+        btc_forecast_packet(
+            selected_side="no",
+            forecast_probability=d("0.320000"),
+        ),
+        cost_input=btc_cost_input(
+            side_price=d("0.600000"),
+            fee_cost_per_share=d("0.010000"),
+            spread_cost_per_share=d("0.000000"),
+            slippage_cost_per_share=d("0.000000"),
+            risk_cost_per_share=d("0.000000"),
+            capital_cost_per_share=d("0.000000"),
+        ),
+    )
+
+    assert adapted.side == "no"
+    assert adapted.forecast_probability == d("0.320000")
+
+    report = build_paper_probability_side_edge_report(
+        (adapted,),
+        config=PaperProbabilitySideEdgeConfig(
+            config_version="probability-side-edge-pyes-contract-v1",
+            min_net_probability_edge=d("0.010000"),
+        ),
+        generated_at=GENERATED_AT,
+    )
+    assert report.rows[0].side_probability == d("0.680000")
+
+
+def test_team_forecast_packet_docstring_declares_canonical_pyes() -> None:
+    contract = (
+        "forecast_probability always denotes canonical Decimal P(YES), regardless of "
+        "selected_side; selected_side identifies the paper-review side being evaluated "
+        "and never reorients forecast_probability; P(NO) is 1 - P(YES)."
+    )
+    assert contract in (TeamForecastPacket.__doc__ or "")
+
+
+def test_team_forecast_to_side_edge_input_docstring_declares_canonical_pyes() -> None:
+    contract = (
+        "forecast_probability always denotes canonical Decimal P(YES), regardless of "
+        "selected_side; selected_side identifies the paper-review side being evaluated "
+        "and never reorients forecast_probability; P(NO) is 1 - P(YES)."
+    )
+    assert contract in (team_forecast_to_side_edge_input.__doc__ or "")
 
 
 @pytest.mark.parametrize(

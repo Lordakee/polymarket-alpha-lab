@@ -547,12 +547,23 @@ def _status_rank(surprise_status: str) -> int:
 def _observation_sort_key(
     item: MarketResearchNewHomeSalesSurpriseDigestObservation,
 ) -> tuple[int, Decimal, Decimal, str]:
+    datetime_origin = datetime.min.replace(tzinfo=UTC)
     return (
         _status_rank(item.surprise_status),
         -item.abs_surprise_ratio,
-        _quantize_decimal(Decimal(str(-item.release_at.timestamp()))),
+        _quantize_decimal(-_exact_seconds_between(item.release_at, datetime_origin)),
         item.release_id,
     )
+
+
+def _exact_seconds_between(later: datetime, earlier: datetime) -> Decimal:
+    delta = later - earlier
+    with localcontext(DECIMAL_CONTEXT):
+        return (
+            Decimal(delta.days) * Decimal("86400")
+            + Decimal(delta.seconds)
+            + Decimal(delta.microseconds) / Decimal("1000000")
+        )
 
 
 def _json_ready(value: object) -> Any:

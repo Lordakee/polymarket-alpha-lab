@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import FrozenInstanceError, fields, replace
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, tzinfo
 from decimal import Context, Decimal, localcontext
 import hashlib
 import inspect
@@ -542,13 +542,35 @@ def test_freshness_age_ignores_ambient_decimal_context() -> None:
     assert report.rows[0].freshness_age_seconds == 86_401
 
 
-def test_source_reliability_rejects_naive_report_timestamp() -> None:
+def test_source_reliability_treats_naive_report_timestamp_as_utc() -> None:
+    report = build_team_source_reliability_report(
+        (),
+        (),
+        config=TeamSourceReliabilityConfig(),
+        generated_at=datetime(2026, 7, 2, 12, 0),
+    )
+
+    assert report.generated_at == datetime(2026, 7, 2, 12, 0, tzinfo=UTC)
+
+
+def test_source_reliability_rejects_timezone_without_utc_offset() -> None:
+    class MissingUtcOffsetTimezone(tzinfo):
+        def utcoffset(self, value: datetime | None) -> timedelta | None:
+            return None
+
     with pytest.raises(ValueError, match="generated_at must be timezone-aware"):
         build_team_source_reliability_report(
             (),
             (),
             config=TeamSourceReliabilityConfig(),
-            generated_at=datetime(2026, 7, 2, 12, 0),
+            generated_at=datetime(
+                2026,
+                7,
+                2,
+                12,
+                0,
+                tzinfo=MissingUtcOffsetTimezone(),
+            ),
         )
 
 

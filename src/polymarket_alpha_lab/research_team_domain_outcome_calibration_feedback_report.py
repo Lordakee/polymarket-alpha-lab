@@ -864,7 +864,7 @@ def _json_ready(value: object) -> object:
         return {str(key): _json_ready(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
         return [_json_ready(item) for item in value]
-    if value is None or type(value) in (str, bool, int, float):
+    if value is None or type(value) in (str, bool, int):
         return value
     raise ValueError("public payload contains an unsupported value")
 
@@ -1181,7 +1181,7 @@ def _as_utc(field_name: str, value: object) -> datetime:
     if type(value) is not datetime:
         raise ValueError(f"{field_name} must be a datetime")
     if value.tzinfo is None or value.utcoffset() is None:
-        raise ValueError(f"{field_name} must be timezone-aware")
+        return value.replace(tzinfo=UTC)
     return value.astimezone(UTC)
 
 

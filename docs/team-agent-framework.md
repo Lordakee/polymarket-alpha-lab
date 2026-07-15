@@ -2,6 +2,8 @@
 
 This document defines the Phase 1 team-agent framework slice for Polymarket Alpha Lab. Phase 1 is paper-only, report-only, and readonly. The framework adds domain teams that can produce forecasts and evidence, while the existing central pipeline remains responsible for Polymarket market context, costs, recommendations, risk, paper allocation, and outcome measurement.
 
+forecast_probability always denotes canonical Decimal P(YES), regardless of selected_side; selected_side identifies the paper-review side being evaluated and never reorients forecast_probability; P(NO) is 1 - P(YES).
+
 ## First Slice Scope
 
 The first implementation slice proves the team architecture with a generic taxonomy, routing, forecast/evidence packet shape, local persistence boundaries, performance gates, and one runnable domain workflow. The data model is intentionally generic enough for all teams, but the runnable workflow in this slice is only `crypto_btc`.

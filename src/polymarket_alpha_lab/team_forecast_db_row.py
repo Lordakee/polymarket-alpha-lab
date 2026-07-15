@@ -97,6 +97,8 @@ class TeamMarketRouteDbRow:
 
 @dataclass(frozen=True)
 class TeamForecastDbRow:
+    """Store canonical Decimal P(YES), regardless of selected_side; selected_side identifies the paper-review side being evaluated and never reorients forecast_probability; P(NO) is 1 - P(YES)."""
+
     payload_sha256: str
     generated_at: datetime
     forecast_id: str
@@ -870,10 +872,13 @@ def _normalize_nonnegative_decimal(field_name: str, value: object) -> Decimal:
 
 
 def _normalize_probability(field_name: str, value: object) -> Decimal:
-    normalized = _normalize_nonnegative_decimal(field_name, value)
-    if normalized > Decimal("1"):
+    if type(value) is not Decimal:
+        raise ValueError(f"{field_name} must be a Decimal")
+    if not value.is_finite():
+        raise ValueError(f"{field_name} must be finite")
+    if value < Decimal("0") or value > Decimal("1"):
         raise ValueError(f"{field_name} must be between zero and one")
-    return normalized
+    return _normalize_decimal(field_name, value)
 
 
 def _normalize_string_tuple(field_name: str, value: object) -> tuple[str, ...]:

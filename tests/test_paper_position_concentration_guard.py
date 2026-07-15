@@ -248,12 +248,13 @@ def test_guard_rejects_non_list_inputs_subclasses_and_bad_generated_at() -> None
             config=guard_config,
             generated_at="2026-07-02T08:00:00Z",
         )
-    with pytest.raises(ValueError, match="timezone-aware"):
-        api.build_paper_position_concentration_guard_report(
-            [record],
-            config=guard_config,
-            generated_at=datetime(2026, 7, 2, 8, 0),
-        )
+    naive_report = api.build_paper_position_concentration_guard_report(
+        [record],
+        config=guard_config,
+        generated_at=datetime(2026, 7, 2, 8, 0),
+    )
+    assert naive_report.generated_at == GENERATED_AT
+    assert naive_report.generated_at.tzinfo is UTC
 
 
 def test_guard_module_stays_leaf_report_only_without_private_market_text() -> None:

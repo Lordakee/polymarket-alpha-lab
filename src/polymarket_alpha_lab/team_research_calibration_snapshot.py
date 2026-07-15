@@ -714,7 +714,8 @@ def _as_optional_utc(field_name: str, value: object) -> datetime | None:
 
 
 def _age_seconds(generated_at: datetime, observed_at: datetime) -> int:
-    return int((generated_at - observed_at).total_seconds())
+    delta = generated_at - observed_at
+    return delta.days * 86_400 + delta.seconds
 
 
 def _outcome_sort_key(

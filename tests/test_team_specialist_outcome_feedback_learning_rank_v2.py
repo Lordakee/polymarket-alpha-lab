@@ -148,6 +148,8 @@ def test_outcome_feedback_learning_rank_sorts_and_summarizes_rows() -> None:
         "outcome_feedback_learning_rank_watch_rows",
         "recent_improvement_boost_present",
         "poor_calibration_penalty_present",
+        "forecast_error_bucket_mix_present",
+        "high_forecast_error_bucket_present",
     )
 
 
@@ -184,6 +186,96 @@ def test_recent_improvement_boost_requires_recent_learning_and_improvement() -> 
     assert "no_recent_improvement_boost" in old_learning.reason_codes
     assert no_improvement.recent_improvement_boost_applied == d("0.000000")
     assert no_improvement.outcome_feedback_learning_score == d("0.400000")
+
+
+def test_recent_improvement_window_preserves_exact_long_horizon_seconds() -> None:
+    module = api()
+    latest_learning_at = datetime(1, 1, 1, tzinfo=UTC)
+    generated_at = datetime(9999, 12, 31, 23, 59, 59, 999999, tzinfo=UTC)
+    delta = generated_at - latest_learning_at
+    exact_window_seconds = (
+        Decimal(delta.days) * d("86400")
+        + Decimal(delta.seconds)
+        + Decimal(delta.microseconds) / d("1000000")
+    ).quantize(d("0.000001"))
+    cfg = module.TeamSpecialistOutcomeFeedbackLearningRankV2Config(
+        recent_improvement_window_seconds=exact_window_seconds,
+    )
+
+    result = module.build_team_specialist_outcome_feedback_learning_rank_v2(
+        (
+            feedback(
+                latest_feedback_at=latest_learning_at,
+                latest_learning_at=latest_learning_at,
+            ),
+        ),
+        config=cfg,
+        generated_at=generated_at,
+    )
+
+    assert result.rows[0].recent_improvement_boost_applied == d("0.150000")
+
+
+def test_future_learning_timestamp_does_not_receive_recent_improvement_boost() -> None:
+    result = build_report(
+        feedback(latest_learning_at=GENERATED_AT + timedelta(microseconds=1)),
+    )
+
+    assert result.rows[0].recent_improvement_boost_applied == d("0.000000")
+
+
+def test_forecast_error_buckets_summarize_settled_feedback_for_learning() -> None:
+    report = build_report(
+        feedback(
+            feedback_id="feedback-strong",
+            team_id="macro_rates",
+            baseline_brier_score=d("0.500000"),
+            recent_brier_score=d("0.040000"),
+            baseline_calibration_error=d("0.400000"),
+            recent_calibration_error=d("0.030000"),
+        ),
+        feedback(
+            feedback_id="feedback-watch",
+            team_id="policy_research",
+            specialist_id="policy-specialist",
+            topic_id="policy-outcomes",
+            baseline_brier_score=d("0.400000"),
+            recent_brier_score=d("0.180000"),
+            baseline_calibration_error=d("0.350000"),
+            recent_calibration_error=d("0.120000"),
+        ),
+        feedback(
+            feedback_id="feedback-blocked",
+            team_id="event_research",
+            specialist_id="event-specialist",
+            topic_id="event-outcomes",
+            baseline_brier_score=d("0.260000"),
+            recent_brier_score=d("0.420000"),
+            baseline_calibration_error=d("0.220000"),
+            recent_calibration_error=d("0.360000"),
+            latest_learning_at=None,
+        ),
+    )
+
+    assert report.low_forecast_error_bucket_count == d("1")
+    assert report.medium_forecast_error_bucket_count == d("1")
+    assert report.high_forecast_error_bucket_count == d("1")
+    assert tuple(row.forecast_error_bucket for row in report.rows) == (
+        "low",
+        "medium",
+        "high",
+    )
+    assert tuple(row.forecast_error_bucket_rank for row in report.rows) == (
+        d("1"),
+        d("2"),
+        d("3"),
+    )
+    assert report.reason_codes == (
+        "outcome_feedback_learning_rank_watch_rows",
+        "recent_improvement_boost_present",
+        "forecast_error_bucket_mix_present",
+        "high_forecast_error_bucket_present",
+    )
 
 
 def test_payload_serializes_decimals_as_strings_and_validates_digest() -> None:
@@ -328,6 +420,7 @@ def test_module_scope_has_no_network_auth_wallet_order_db_or_trading_surface() -
         "sell",
         "send",
         "sign",
+        "total_seconds",
         "trade",
         "write",
     }

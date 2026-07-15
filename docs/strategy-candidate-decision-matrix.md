@@ -9,6 +9,8 @@ The central rule is that information quality comes before price edge. A market
 with an attractive forecast-vs-price gap is not a candidate if the evidence is
 stale, weakly sourced, hard to verify, or vulnerable to ambiguous resolution.
 
+forecast_probability always denotes canonical Decimal P(YES), regardless of selected_side; selected_side identifies the paper-review side being evaluated and never reorients forecast_probability; P(NO) is 1 - P(YES).
+
 ## Screening Flow
 
 Use this sequence for every probability-event market before assigning an
@@ -19,8 +21,9 @@ action:
 2. Verify information quality with fresh, source-traceable evidence. Prefer
    official Polymarket data for market structure and authoritative primary
    sources for event facts.
-3. Build a side-aware forecast and compare it with executable YES/NO prices,
-   not only displayed midpoint or stale last-trade prices.
+3. Build a canonical `P(YES)` forecast and compare the derived side probability
+   with executable YES/NO prices, not only displayed midpoint or stale
+   last-trade prices.
 4. Subtract estimated trading costs, including spread, fees, slippage,
    partial-fill risk, settlement timing, and capital tie-up.
 5. Check liquidity and executable depth at the intended paper notional.

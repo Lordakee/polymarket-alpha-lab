@@ -11,6 +11,7 @@ from polymarket_alpha_lab.paper_probability_side_edge import (
     PaperProbabilitySideEdgeInput,
     PaperProbabilitySideEdgeReport,
     PaperProbabilitySideEdgeRow,
+    _side_probability,
     build_paper_probability_side_edge_report,
 )
 
@@ -134,6 +135,41 @@ def test_build_report_preserves_yes_and_no_probability_event_economics():
     assert report.recommend_count == 2
     assert report.watch_count == 0
     assert report.reject_count == 0
+
+
+def test_paper_probability_side_edge_input_docstring_declares_canonical_pyes() -> None:
+    contract = (
+        "forecast_probability always denotes canonical Decimal P(YES), regardless of "
+        "side; side identifies the paper-review side being evaluated and never reorients "
+        "forecast_probability; P(NO) is 1 - P(YES)."
+    )
+
+    assert contract in (PaperProbabilitySideEdgeInput.__doc__ or "")
+
+
+@pytest.mark.parametrize(
+    "forecast_probability",
+    (d("-0.0000004"), d("1.0000004")),
+)
+def test_side_edge_rejects_raw_out_of_range_probability_before_quantization(
+    forecast_probability: Decimal,
+) -> None:
+    with pytest.raises(ValueError, match="forecast_probability"):
+        edge_input(forecast_probability=forecast_probability)
+
+
+def test_side_edge_preserves_signed_zero_probability_for_legacy_compatibility() -> None:
+    value = edge_input(forecast_probability=d("-0.000000"))
+
+    assert value.forecast_probability == ZERO
+    assert value.forecast_probability.is_signed() is True
+
+
+def test_side_probability_docstring_scopes_complement_to_this_reducer() -> None:
+    assert (_side_probability.__doc__ or "") == (
+        "Convert canonical P(YES) to the evaluated side probability at this "
+        "reducer's boundary."
+    )
 
 
 def test_explicit_spread_cost_lowers_net_probability_edge():

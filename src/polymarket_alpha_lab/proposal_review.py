@@ -108,6 +108,7 @@ SOURCE_FINGERPRINT_FIELDS = (
     "hard_block_count",
     "blocking_reason_codes",
 )
+EPHEMERAL_REVIEW_LOG_WRITE_MODE = "at"
 
 
 @dataclass(frozen=True)
@@ -195,22 +196,34 @@ class TradeProposalReviewRecord:
     def __post_init__(self) -> None:
         _validate_record(self)
 
+    def public_safe_payload(self) -> dict[str, Any]:
+        """Return report-only review attestation metadata safe for public output."""
+        validated = _validate_record_tree(self)
+        return _public_safe_review_payload(validated)
+
 
 @dataclass(frozen=True)
 class TradeProposalReviewLog:
+    """Legacy ephemeral/local review log, not durable memory or public output."""
+
     path: Path | str
+    storage_scope: str = "ephemeral_local_review_log"
+    durable_memory: bool = False
+    public_output: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "path", _normalize_log_path(self.path))
+        _validate_ephemeral_review_log_scope(self)
 
-    def append(self, record: TradeProposalReviewRecord) -> None:
+    def record(self, record: TradeProposalReviewRecord) -> None:
+        _validate_ephemeral_review_log_scope(self)
         if not isinstance(record, TradeProposalReviewRecord):
             raise ValueError("record must be a TradeProposalReviewRecord")
         validated = _validate_record_tree(record)
         line = json.dumps(_json_ready(asdict(validated)), allow_nan=False, sort_keys=True) + "\n"
         _validate_log_parent(self.path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self.path.open("a", encoding="utf-8") as handle:
+        with self.path.open(mode=EPHEMERAL_REVIEW_LOG_WRITE_MODE, encoding="utf-8") as handle:
             handle.write(line)
 
 
@@ -652,6 +665,58 @@ def _validate_record_tree(record: TradeProposalReviewRecord) -> TradeProposalRev
         review_reason_codes=record.review_reason_codes,
         human_attestation=record.human_attestation,
     )
+
+
+def _public_safe_review_payload(record: TradeProposalReviewRecord) -> dict[str, Any]:
+    payload = {
+        "review_record_id": record.review_record_id,
+        "recorded_at": record.recorded_at,
+        "review_config_version": record.review_config_version,
+        "record_only": record.record_only,
+        "explicit_human_decision": record.explicit_human_decision,
+        "decision": record.decision,
+        "review_reason_codes": record.review_reason_codes,
+        "paper_only": True,
+        "report_only": True,
+        "readonly": True,
+        "public_export_scope": "public_safe_review_attestation",
+    }
+    _reject_public_payload_export_fields(payload)
+    safe_payload = _json_ready(payload)
+    if type(safe_payload) is not dict:
+        raise ValueError("public_safe_payload must be a dict")
+    return safe_payload
+
+
+def _reject_public_payload_export_fields(payload: dict[str, Any]) -> None:
+    forbidden_fields = {
+        "condition_id",
+        "token_id",
+        "market_slug",
+        "question",
+        "side",
+        "intended_order_type",
+        "maximum_size",
+        "source_max_executable_size",
+        "order",
+        "trade",
+        "size",
+    }
+    leaked_fields = sorted(forbidden_fields.intersection(payload))
+    if leaked_fields:
+        raise ValueError(
+            "public_safe_payload must not include trade proposal fields: "
+            + ", ".join(leaked_fields),
+        )
+
+
+def _validate_ephemeral_review_log_scope(log: TradeProposalReviewLog) -> None:
+    if log.storage_scope != "ephemeral_local_review_log":
+        raise ValueError("storage_scope must be ephemeral_local_review_log")
+    if log.durable_memory is not False:
+        raise ValueError("durable_memory must be False")
+    if log.public_output is not False:
+        raise ValueError("public_output must be False")
 
 
 def _source_proposal_fingerprint(source: TradeProposalPacket) -> str:

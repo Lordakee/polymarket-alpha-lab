@@ -275,12 +275,13 @@ def test_coverage_map_rejects_wrong_inputs_false_flags_and_non_utc_times() -> No
         api.build_team_research_coverage_map((object(),), config=_config(), generated_at=GENERATED_AT)
     with pytest.raises(ValueError, match="paper_only"):
         api.TeamResearchCoverageMapConfig(paper_only=False)
-    with pytest.raises(ValueError, match="timezone-aware"):
-        api.build_team_research_coverage_map(
-            (),
-            config=_config(),
-            generated_at=datetime(2026, 7, 2, 12, 0),
-        )
+    naive_report = api.build_team_research_coverage_map(
+        (),
+        config=_config(),
+        generated_at=datetime(2026, 7, 2, 12, 0),
+    )
+    assert naive_report.generated_at == GENERATED_AT
+    assert naive_report.generated_at.tzinfo is UTC
     with pytest.raises(ValueError, match="research_domain"):
         _observation("crypto", "official_api", "crypto_btc", "covered", "btc-1")
     with pytest.raises(ValueError, match="evidence_status"):

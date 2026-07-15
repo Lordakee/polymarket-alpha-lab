@@ -38,6 +38,7 @@ def _forecast_row(
     event_template: str = "btc_hit_price",
     probability: Decimal = d("0.800000"),
     confidence: Decimal = d("0.700000"),
+    selected_side: str = "yes",
     generated_at: datetime | None = None,
 ) -> TeamForecastDbRow:
     generated = generated_at if generated_at is not None else GENERATED_AT
@@ -50,7 +51,7 @@ def _forecast_row(
             question=f"Will {forecast_id} resolve yes?",
             category_id=category_id,
             event_template=event_template,
-            selected_side="yes",
+            selected_side=selected_side,
             forecast_probability=probability,
             confidence=confidence,
             evidence_quality=d("0.800000"),
@@ -117,6 +118,45 @@ def _bypassed_row(row: object, **overrides: Any) -> object:
     for key, value in overrides.items():
         object.__setattr__(malformed, key, value)
     return malformed
+
+
+def test_actual_no_drift_metrics_use_canonical_pyes_regardless_of_selected_side() -> None:
+    reports = []
+    slices = []
+    outcomes = []
+
+    for selected_side in ("yes", "no"):
+        forecast = _forecast_row(
+            "canonical-pyes-no-outcome",
+            probability=d("0.200000"),
+            selected_side=selected_side,
+            generated_at=GENERATED_AT - timedelta(days=1),
+        )
+        outcome = _outcome_row(forecast, actual_outcome="no")
+        report = build_calibration_drift_monitor_report(
+            (forecast,),
+            (outcome,),
+            config=CalibrationDriftMonitorConfig(
+                config_version="calibration-drift-pyes-contract-test",
+                slice_days=14,
+                min_settled_per_slice=1,
+                ece_bucket_count=2,
+                group_by="team",
+            ),
+            generated_at=GENERATED_AT,
+        )
+        outcomes.append(outcome)
+        reports.append(report)
+        slices.append(report.slices[0])
+
+    assert tuple(outcome.brier_score for outcome in outcomes) == (
+        d("0.040000"),
+        d("0.040000"),
+    )
+    assert reports[0] == reports[1]
+    assert slices[0] == slices[1]
+    assert slices[1].average_brier_score == d("0.040000")
+    assert slices[1].expected_calibration_error == d("0.200000")
 
 
 def test_monitor_summarizes_brier_and_ece_drift_by_team_slices_without_market_identity() -> None:

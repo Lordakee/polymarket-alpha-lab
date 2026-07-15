@@ -302,6 +302,71 @@ def test_cpi_revision_digest_reduces_rows_redacts_refs_and_sorts_deterministical
         assert token not in public
 
 
+def test_cpi_revision_digest_allows_operational_words_in_public_identifiers() -> None:
+    summary = report(
+        (
+            input_row(
+                "research.cpi.database-source",
+                condition_id="condition-cpi-submit-window",
+                cpi_series_key="cpi.persistent.revision",
+                cpi_release_reference="public-bls-cpi-release",
+                released_at=GENERATED_AT - timedelta(minutes=45),
+                acknowledged_at=GENERATED_AT - timedelta(minutes=30),
+                source_count=d("3"),
+                initial_value=d("3.200000"),
+                revised_value=d("3.240000"),
+                prior_value=d("3.100000"),
+                market_probability_before=d("0.480000"),
+                market_probability_after=d("0.520000"),
+            ),
+        ),
+    )
+
+    assert summary.rows[0].research_key == "research.cpi.database-source"
+    assert summary.rows[0].condition_id == "condition-cpi-submit-window"
+    assert summary.rows[0].cpi_series_key == "cpi.persistent.revision"
+
+
+@pytest.mark.parametrize(
+    ("field_name", "unsafe_value"),
+    (
+        ("research_key", "research.cpi.wallet-token"),
+        ("condition_id", "condition-cpi-auth-private"),
+        ("cpi_series_key", "https://credential.example/cpi"),
+    ),
+)
+def test_cpi_revision_digest_rejects_sensitive_public_identifiers(
+    field_name: str,
+    unsafe_value: str,
+) -> None:
+    with pytest.raises(ValueError, match=field_name):
+        if field_name == "research_key":
+            input_row(unsafe_value)
+        else:
+            input_row(**{field_name: unsafe_value})
+
+    ready = report((input_row(),)).rows[0]
+    with pytest.raises(ValueError, match=field_name):
+        replace(ready, **{field_name: unsafe_value})
+
+
+def test_cpi_revision_digest_payload_redacts_url_like_release_reference() -> None:
+    summary = report(
+        (
+            input_row(
+                cpi_release_reference="public-bls-cpi-release?release_id=2026-07",
+            ),
+        ),
+    )
+
+    payload = market_research_macro_cpi_revision_digest_payload(summary)
+    public_payload = repr(payload).lower()
+
+    assert "public-bls-cpi-release?release_id=2026-07" not in public_payload
+    assert "?" not in public_payload
+    assert payload["rows"][0]["redacted_cpi_release_reference"].startswith("sha256:")
+
+
 def test_cpi_revision_digest_is_independent_of_ambient_decimal_context() -> None:
     with localcontext(Context(prec=1, rounding=ROUND_HALF_EVEN)):
         summary = report(
@@ -428,7 +493,7 @@ def test_cpi_revision_digest_validates_public_contracts_and_flags() -> None:
     with pytest.raises(ValueError, match="research_key"):
         input_row(" bad")
     with pytest.raises(ValueError, match="condition_id"):
-        input_row(condition_id="broker_feed")
+        input_row(condition_id=" bad")
     with pytest.raises(ValueError, match="released_at"):
         input_row(released_at=datetime(2026, 7, 3, 14, 0))
     with pytest.raises(ValueError, match="acknowledged_at"):

@@ -142,6 +142,29 @@ def test_digest_reduces_new_home_sales_surprises_with_stable_ordering() -> None:
     assert report.readonly is True
 
 
+def test_observation_sort_preserves_one_microsecond_at_long_horizon() -> None:
+    generated_at = datetime(9999, 12, 31, 23, 59, 59, 999999, tzinfo=UTC)
+    report = build_market_research_new_home_sales_surprise_digest(
+        (
+            _observation(
+                release_id="release-a-older",
+                release_at=generated_at - timedelta(microseconds=1),
+            ),
+            _observation(
+                release_id="release-z-newer",
+                release_at=generated_at,
+            ),
+        ),
+        config=MarketResearchNewHomeSalesSurpriseDigestConfig(),
+        generated_at=generated_at,
+    )
+
+    assert tuple(item.release_id for item in report.observations) == (
+        "release-z-newer",
+        "release-a-older",
+    )
+
+
 def test_empty_digest_blocks_with_zero_decimal_public_metrics() -> None:
     report = build_market_research_new_home_sales_surprise_digest(
         (),
@@ -458,6 +481,8 @@ def test_module_scope_excludes_io_db_network_auth_wallet_order_and_trading_surfa
         "persist",
         "rollback",
         "send",
+        "timestamp",
+        "total_seconds",
         "write",
     }
     assert not any(

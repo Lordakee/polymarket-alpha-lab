@@ -201,6 +201,43 @@ def test_outcome_idempotency_uses_unique_forecast_id_not_outcome_id():
     assert row.paper_pnl == Decimal("1.000000")
 
 
+def test_summary_scores_no_side_forecasts_against_yes_probability():
+    forecasts = (
+        ForecastStub(
+            forecast_id="forecast-btc-no",
+            team_id="crypto_btc",
+            market_slug="bitcoin-below-100k",
+            category_id="finance.crypto.btc",
+            selected_side="no",
+            forecast_probability=Decimal("0.200000"),
+        ),
+    )
+    outcomes = (
+        OutcomeStub(
+            outcome_id="outcome-btc-no",
+            forecast_id="forecast-btc-no",
+            team_id="crypto_btc",
+            market_slug="bitcoin-below-100k",
+            actual_outcome="no",
+            resolved_at=GENERATED_AT,
+            paper_pnl=Decimal("0.800000"),
+            cost_adjusted_return=Decimal("0.080000"),
+        ),
+    )
+
+    report = build_team_performance_summary_report(
+        forecasts,
+        outcomes,
+        config=TeamPerformanceSummaryConfig(),
+        generated_at=GENERATED_AT,
+    )
+
+    row = report.rows[0]
+    assert row.average_brier_score == Decimal("0.040000")
+    assert row.directionally_correct_count == 1
+    assert row.hit_rate == Decimal("1.000000")
+
+
 def test_route_correction_to_another_team_excludes_original_team_metrics():
     forecasts = (
         ForecastStub(

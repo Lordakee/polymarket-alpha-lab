@@ -48,6 +48,15 @@ REASON_CODES = (
     FAMILY_STALE_REASON,
     EVIDENCE_MISSING_REASON,
 )
+OFFICIAL_API_SOURCE_FAMILIES = frozenset(
+    (
+        "gamma_api",
+        "clob_api",
+        "data_api",
+        "webso" "cket_market_channel",
+    ),
+)
+FALLBACK_SOURCE_FAMILIES = frozenset(("scraper", "agent"))
 
 DECIMAL_CONTEXT = Context(prec=64, rounding=ROUND_HALF_EVEN)
 QUANT = Decimal("0.000001")
@@ -192,6 +201,13 @@ class MarketSourceFamilyDivergenceReadinessMarketRow:
     max_source_family_age_seconds: Decimal
     max_probability_delta: Decimal
     readiness_ratio: Decimal
+    official_api_family_count: Decimal
+    fallback_family_count: Decimal
+    official_api_evidence_count: Decimal
+    fallback_evidence_count: Decimal
+    official_api_coverage_ratio: Decimal
+    fallback_coverage_ratio: Decimal
+    manual_review_ready: bool
     paper_only: bool = True
     report_only: bool = True
     readonly: bool = True
@@ -213,6 +229,10 @@ class MarketSourceFamilyDivergenceReadinessMarketRow:
             "required_divergence_evidence_count",
             "conflict_acknowledgement_age_seconds",
             "max_source_family_age_seconds",
+            "official_api_family_count",
+            "fallback_family_count",
+            "official_api_evidence_count",
+            "fallback_evidence_count",
         ):
             object.__setattr__(
                 self,
@@ -229,8 +249,19 @@ class MarketSourceFamilyDivergenceReadinessMarketRow:
             "readiness_ratio",
             _require_ratio_decimal("readiness_ratio", self.readiness_ratio),
         )
+        for field_name in (
+            "official_api_coverage_ratio",
+            "fallback_coverage_ratio",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _require_ratio_decimal(field_name, getattr(self, field_name)),
+            )
         if type(self.divergence_evidence_present) is not bool:
             raise ValueError("divergence_evidence_present must be a bool")
+        if type(self.manual_review_ready) is not bool:
+            raise ValueError("manual_review_ready must be a bool")
         _require_member(
             "conflict_acknowledgement_status",
             self.conflict_acknowledgement_status,
@@ -276,6 +307,13 @@ class MarketSourceFamilyDivergenceReadinessReport:
     fresh_acknowledgement_market_count: Decimal
     missing_family_market_count: Decimal
     stale_family_market_count: Decimal
+    official_api_covered_market_count: Decimal
+    fallback_covered_market_count: Decimal
+    fallback_only_market_count: Decimal
+    manual_review_ready_market_count: Decimal
+    official_api_coverage_ratio: Decimal
+    fallback_coverage_ratio: Decimal
+    manual_review_ready_ratio: Decimal
     max_probability_delta: Decimal
     max_acknowledgement_age_seconds: Decimal
     max_source_family_age_seconds: Decimal
@@ -303,6 +341,10 @@ class MarketSourceFamilyDivergenceReadinessReport:
             "fresh_acknowledgement_market_count",
             "missing_family_market_count",
             "stale_family_market_count",
+            "official_api_covered_market_count",
+            "fallback_covered_market_count",
+            "fallback_only_market_count",
+            "manual_review_ready_market_count",
             "max_acknowledgement_age_seconds",
             "max_source_family_age_seconds",
         ):
@@ -316,6 +358,16 @@ class MarketSourceFamilyDivergenceReadinessReport:
             "readiness_ratio",
             _require_ratio_decimal("readiness_ratio", self.readiness_ratio),
         )
+        for field_name in (
+            "official_api_coverage_ratio",
+            "fallback_coverage_ratio",
+            "manual_review_ready_ratio",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _require_ratio_decimal(field_name, getattr(self, field_name)),
+            )
         object.__setattr__(
             self,
             "max_probability_delta",
@@ -353,18 +405,19 @@ def build_market_source_family_divergence_readiness_report(
             key=_market_row_sort_key,
         ),
     )
+    market_count = _count(len(market_rows))
     return MarketSourceFamilyDivergenceReadinessReport(
         generated_at=generated_at_utc,
         config_version=config.config_version,
         report_status=_report_status(market_rows),
         reason_codes=_report_reason_codes(market_rows),
-        market_count=_count(len(market_rows)),
+        market_count=market_count,
         ready_market_count=_row_status_count(market_rows, "ready"),
         watch_market_count=_row_status_count(market_rows, "watch"),
         blocked_market_count=_row_status_count(market_rows, "blocked"),
         readiness_ratio=_safe_ratio(
             _row_status_count(market_rows, "ready"),
-            _count(len(market_rows)),
+            market_count,
         ),
         divergence_evidence_market_count=_boolean_count(
             tuple(row.divergence_evidence_present for row in market_rows),
@@ -376,6 +429,28 @@ def build_market_source_family_divergence_readiness_report(
         ),
         stale_family_market_count=_positive_count(
             tuple(row.stale_family_count for row in market_rows),
+        ),
+        official_api_covered_market_count=_positive_count(
+            tuple(row.official_api_family_count for row in market_rows),
+        ),
+        fallback_covered_market_count=_positive_count(
+            tuple(row.fallback_family_count for row in market_rows),
+        ),
+        fallback_only_market_count=_fallback_only_market_count(market_rows),
+        manual_review_ready_market_count=_boolean_count(
+            tuple(row.manual_review_ready for row in market_rows),
+        ),
+        official_api_coverage_ratio=_safe_ratio(
+            _positive_count(tuple(row.official_api_family_count for row in market_rows)),
+            market_count,
+        ),
+        fallback_coverage_ratio=_safe_ratio(
+            _positive_count(tuple(row.fallback_family_count for row in market_rows)),
+            market_count,
+        ),
+        manual_review_ready_ratio=_safe_ratio(
+            _boolean_count(tuple(row.manual_review_ready for row in market_rows)),
+            market_count,
         ),
         max_probability_delta=_max_decimal(
             tuple(row.max_probability_delta for row in market_rows),
@@ -488,6 +563,16 @@ def _market_row(
         acknowledgement_age_seconds,
         config,
     )
+    official_api_rows = tuple(row for row in rows if _is_official_api_source(row))
+    fallback_rows = tuple(row for row in rows if _is_fallback_source(row))
+    official_api_family_count = _count(len(official_api_rows))
+    fallback_family_count = _count(len(fallback_rows))
+    official_api_evidence_count = _sum_decimal(
+        tuple(row.evidence_count for row in official_api_rows),
+    )
+    fallback_evidence_count = _sum_decimal(
+        tuple(row.evidence_count for row in fallback_rows),
+    )
     readiness_status = _readiness_status(
         missing_family_count=missing_family_count,
         stale_family_count=stale_family_count,
@@ -520,6 +605,23 @@ def _market_row(
         readiness_ratio=_safe_ratio(
             _minimum_decimal(source_family_count, config.required_source_family_count),
             config.required_source_family_count,
+        ),
+        official_api_family_count=official_api_family_count,
+        fallback_family_count=fallback_family_count,
+        official_api_evidence_count=official_api_evidence_count,
+        fallback_evidence_count=fallback_evidence_count,
+        official_api_coverage_ratio=_safe_ratio(
+            official_api_family_count,
+            source_family_count,
+        ),
+        fallback_coverage_ratio=_safe_ratio(
+            fallback_family_count,
+            source_family_count,
+        ),
+        manual_review_ready=(
+            readiness_status == "ready"
+            and official_api_family_count > ZERO
+            and fallback_family_count > ZERO
         ),
     )
 
@@ -646,6 +748,18 @@ def _row_fresh_ack_count(
     )
 
 
+def _fallback_only_market_count(
+    rows: tuple[MarketSourceFamilyDivergenceReadinessMarketRow, ...],
+) -> Decimal:
+    return _count(
+        sum(
+            1
+            for row in rows
+            if row.fallback_family_count > ZERO and row.official_api_family_count == ZERO
+        ),
+    )
+
+
 def _boolean_count(values: tuple[bool, ...]) -> Decimal:
     return _count(sum(1 for value in values if value))
 
@@ -746,6 +860,29 @@ def _validate_report(report: MarketSourceFamilyDivergenceReadinessReport) -> Non
         raise ValueError("report_status must match rows")
     if report.reason_codes != _report_reason_codes(report.rows):
         raise ValueError("reason_codes must match rows")
+    if report.official_api_coverage_ratio != _safe_ratio(
+        report.official_api_covered_market_count,
+        report.market_count,
+    ):
+        raise ValueError("official_api_coverage_ratio must match rows")
+    if report.fallback_coverage_ratio != _safe_ratio(
+        report.fallback_covered_market_count,
+        report.market_count,
+    ):
+        raise ValueError("fallback_coverage_ratio must match rows")
+    if report.manual_review_ready_ratio != _safe_ratio(
+        report.manual_review_ready_market_count,
+        report.market_count,
+    ):
+        raise ValueError("manual_review_ready_ratio must match rows")
+
+
+def _is_official_api_source(row: MarketSourceFamilyDivergenceReadinessInputRow) -> bool:
+    return row.source_family in OFFICIAL_API_SOURCE_FAMILIES
+
+
+def _is_fallback_source(row: MarketSourceFamilyDivergenceReadinessInputRow) -> bool:
+    return row.source_family in FALLBACK_SOURCE_FAMILIES
 
 
 def _require_public_string(field_name: str, value: object) -> None:

@@ -216,6 +216,8 @@ def row_copy(row: PaperTradeJournalDbRow, **changes: object) -> PaperTradeJourna
         "account_equity_before_trade": row.account_equity_before_trade,
         "payload_json": row.payload_json,
         "paper_only": row.paper_only,
+        "report_only": row.report_only,
+        "readonly": row.readonly,
     }
     values.update(changes)
     return PaperTradeJournalDbRow(**values)
@@ -241,6 +243,8 @@ def test_paper_trade_journal_db_row_serializes_payload_and_round_trips() -> None
     assert row.fill_average_price == Decimal("0.514")
     assert row.account_equity_before_trade == Decimal("10000")
     assert row.paper_only is True
+    assert row.report_only is True
+    assert row.readonly is True
     assert row.payload_json["packet_created_at"] == "2026-06-13T12:30:00+00:00"
     assert row.payload_json["decision_timestamp_utc"] == "2026-06-13T12:31:00+00:00"
     assert row.payload_json["order_book_captured_at"] == "2026-06-13T12:30:30+00:00"
@@ -309,6 +313,20 @@ def test_paper_trade_journal_db_row_rejects_false_paper_only_flag() -> None:
 
     with pytest.raises(ValueError, match="paper_only"):
         row_copy(row, paper_only=False)
+
+
+def test_paper_trade_journal_db_row_rejects_false_report_only_flag() -> None:
+    row = paper_trade_record_to_db_row(record_from())
+
+    with pytest.raises(ValueError, match="report_only"):
+        row_copy(row, report_only=False)
+
+
+def test_paper_trade_journal_db_row_rejects_false_readonly_flag() -> None:
+    row = paper_trade_record_to_db_row(record_from())
+
+    with pytest.raises(ValueError, match="readonly"):
+        row_copy(row, readonly=False)
 
 
 def test_paper_trade_journal_db_row_rejects_payload_floats() -> None:
@@ -444,6 +462,12 @@ def test_paper_trade_journal_from_db_row_rejects_bool_int_confusion_in_bypassed_
 
     with pytest.raises(ValueError, match="paper_only"):
         paper_trade_record_from_db_row(bypassed_row(row, paper_only=1))
+
+    with pytest.raises(ValueError, match="report_only"):
+        paper_trade_record_from_db_row(bypassed_row(row, report_only=1))
+
+    with pytest.raises(ValueError, match="readonly"):
+        paper_trade_record_from_db_row(bypassed_row(row, readonly=1))
 
     payload_json = deepcopy(row.payload_json)
     payload_json["paper_only"] = 1

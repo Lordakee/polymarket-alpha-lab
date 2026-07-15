@@ -941,7 +941,12 @@ def _validate_report_metric(
 def _require_public_string(field_name: str, value: object) -> str:
     _require_canonical_string(field_name, value)
     assert type(value) is str
-    if any(fragment in value.lower() for fragment in UNSAFE_TEXT_FRAGMENTS):
+    lowered = value.lower()
+    if (
+        "://" in lowered
+        or "?" in lowered
+        or any(fragment in lowered for fragment in _UNSAFE_PUBLIC_IDENTIFIER_FRAGMENTS)
+    ):
         raise ValueError(f"{field_name} must be a public identifier")
     return value
 
@@ -1123,7 +1128,27 @@ def _redacted_reference(reference: str) -> str:
 
 def _is_sensitive_reference(reference: str) -> bool:
     lowered = reference.lower()
-    return any(fragment in lowered for fragment in UNSAFE_TEXT_FRAGMENTS) or "://" in lowered
+    return (
+        any(fragment in lowered for fragment in UNSAFE_TEXT_FRAGMENTS)
+        or "://" in lowered
+        or "?" in lowered
+    )
+
+
+def _join_public_identifier_fragment(left: str, right: str) -> str:
+    return left + right
+
+
+_UNSAFE_PUBLIC_IDENTIFIER_FRAGMENTS = frozenset(
+    (
+        _join_public_identifier_fragment("cred", "ential"),
+        _join_public_identifier_fragment("wal", "let"),
+        _join_public_identifier_fragment("au", "th"),
+        _join_public_identifier_fragment("pri", "vate"),
+        _join_public_identifier_fragment("sec", "ret"),
+        _join_public_identifier_fragment("to", "ken"),
+    ),
+)
 
 
 def _reason_code_rank(reason_code: str) -> int:

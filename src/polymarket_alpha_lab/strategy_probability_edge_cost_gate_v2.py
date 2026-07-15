@@ -151,6 +151,8 @@ class StrategyProbabilityEdgeCostGateV2Row:
     settlement_delay_cost_probability: Decimal
     total_cost_probability: Decimal
     cost_adjusted_edge: Decimal
+    decision_threshold_probability: Decimal
+    edge_to_threshold_probability: Decimal
     age_seconds: Decimal
     available_liquidity_usdc: Decimal
     min_liquidity_usdc: Decimal
@@ -192,6 +194,7 @@ class StrategyProbabilityEdgeCostGateV2Row:
         for field_name in (
             "gross_probability_edge",
             "cost_adjusted_edge",
+            "edge_to_threshold_probability",
         ):
             object.__setattr__(
                 self,
@@ -203,6 +206,7 @@ class StrategyProbabilityEdgeCostGateV2Row:
             "settlement_delay_days",
             "settlement_delay_cost_probability",
             "total_cost_probability",
+            "decision_threshold_probability",
             "age_seconds",
             "available_liquidity_usdc",
             "min_liquidity_usdc",
@@ -373,6 +377,14 @@ def _row_from_candidate(
         gross_probability_edge,
         total_cost_probability,
     )
+    decision_threshold_probability = _add_decimal(
+        value.market_probability,
+        total_cost_probability,
+    )
+    edge_to_threshold_probability = _subtract_decimal(
+        value.forecast_probability,
+        decision_threshold_probability,
+    )
     age_seconds = _seconds_between(generated_at, observed_at)
     liquidity_coverage_ratio = _optional_ratio(
         value.available_liquidity_usdc,
@@ -423,6 +435,8 @@ def _row_from_candidate(
         settlement_delay_cost_probability=settlement_delay_cost_probability,
         total_cost_probability=total_cost_probability,
         cost_adjusted_edge=cost_adjusted_edge,
+        decision_threshold_probability=decision_threshold_probability,
+        edge_to_threshold_probability=edge_to_threshold_probability,
         age_seconds=age_seconds,
         available_liquidity_usdc=value.available_liquidity_usdc,
         min_liquidity_usdc=config.min_liquidity_usdc,
@@ -605,6 +619,20 @@ def _validate_row_consistency(row: StrategyProbabilityEdgeCostGateV2Row) -> None
     )
     if row.cost_adjusted_edge != expected_cost_adjusted_edge:
         raise ValueError("cost_adjusted_edge does not match edge and costs")
+    expected_decision_threshold_probability = _add_decimal(
+        row.market_probability,
+        row.total_cost_probability,
+    )
+    if row.decision_threshold_probability != expected_decision_threshold_probability:
+        raise ValueError("decision_threshold_probability does not match market and costs")
+    expected_edge_to_threshold_probability = _subtract_decimal(
+        row.forecast_probability,
+        row.decision_threshold_probability,
+    )
+    if row.edge_to_threshold_probability != expected_edge_to_threshold_probability:
+        raise ValueError("edge_to_threshold_probability does not match forecast and threshold")
+    if row.edge_to_threshold_probability != row.cost_adjusted_edge:
+        raise ValueError("edge_to_threshold_probability must match cost_adjusted_edge")
     expected_liquidity_ratio = _optional_ratio(
         row.available_liquidity_usdc,
         row.min_liquidity_usdc,

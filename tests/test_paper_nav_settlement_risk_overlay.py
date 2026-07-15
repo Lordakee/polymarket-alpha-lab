@@ -378,6 +378,61 @@ def test_overlay_blocks_when_blocked_settlement_exposure_exceeds_configured_shar
     assert report.status == "settlement_nav_risk_blocked"
 
 
+def test_overlay_reports_remaining_settlement_risk_budget_headroom():
+    nav_report = _nav_report(
+        _exposure(
+            condition_id="condition-watch",
+            market_slug="watch-market",
+            open_size=Decimal("60.0000"),
+            cost_basis=Decimal("45.0000"),
+            exit_value=Decimal("50.0000"),
+            share_of_exit_nav=Decimal("0.050000"),
+        ),
+        _exposure(
+            condition_id="condition-blocked",
+            market_slug="blocked-market",
+            open_size=Decimal("40.0000"),
+            cost_basis=Decimal("35.0000"),
+            exit_value=Decimal("25.0000"),
+            share_of_exit_nav=Decimal("0.025000"),
+        ),
+    )
+    settlement_report = _settlement_report(
+        _timing_row(market_slug="watch-market", timing_status="watch"),
+        _timing_row(market_slug="blocked-market", timing_status="blocked"),
+    )
+
+    report = _build_overlay(nav_report, settlement_report)
+
+    assert report.blocked_or_missing_exit_nav_share == Decimal("0.025000")
+    assert report.max_blocked_settlement_exposure_share == Decimal("0.100000")
+    assert report.blocked_settlement_risk_budget_headroom == Decimal("0.075000")
+
+
+def test_overlay_floors_negative_settlement_risk_budget_headroom_at_zero():
+    nav_report = _nav_report(
+        _exposure(
+            condition_id="condition-blocked",
+            market_slug="blocked-market",
+            open_size=Decimal("200.0000"),
+            cost_basis=Decimal("160.0000"),
+            exit_value=Decimal("150.0000"),
+            share_of_exit_nav=Decimal("0.150000"),
+        ),
+    )
+
+    report = _build_overlay(
+        nav_report,
+        _settlement_report(
+            _timing_row(market_slug="blocked-market", timing_status="blocked"),
+        ),
+    )
+
+    assert report.blocked_or_missing_exit_nav_share == Decimal("0.150000")
+    assert report.max_blocked_settlement_exposure_share == Decimal("0.100000")
+    assert report.blocked_settlement_risk_budget_headroom == Decimal("0.000000")
+
+
 def test_overlay_empty_nav_exposure_returns_empty_report():
     report = _build_overlay(_nav_report(), _settlement_report())
 

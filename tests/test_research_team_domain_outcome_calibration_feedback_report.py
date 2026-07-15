@@ -436,6 +436,13 @@ def test_payload_uses_exact_canonical_schema_and_stable_tie_breaks() -> None:
         )
 
 
+def test_feedback_report_treats_naive_generated_at_as_utc() -> None:
+    report = build_report(generated_at=datetime(2026, 7, 9, 12, 0))
+
+    assert report.generated_at == GENERATED_AT
+    assert report.generated_at.tzinfo is UTC
+
+
 @pytest.mark.parametrize(
     ("field_name", "forged_value", "error_match"),
     (

@@ -220,6 +220,23 @@ def test_snapshot_summarizes_resolved_pending_brier_and_confidence_bands() -> No
     _assert_no_recommendation_or_execution_payload(report)
 
 
+def test_snapshot_preserves_whole_seconds_across_the_full_datetime_range() -> None:
+    generated_at = datetime.max.replace(tzinfo=UTC)
+    observed_at = datetime.min.replace(tzinfo=UTC)
+
+    report = build_team_research_calibration_snapshot(
+        (_outcome("long-range-pending", observed_at=observed_at),),
+        config=_config(stale_after_seconds=0),
+        generated_at=generated_at,
+    )
+
+    delta = generated_at - observed_at
+    expected_whole_seconds = delta.days * 86_400 + delta.seconds
+    assert report.stale_unresolved_items[0].unresolved_age_seconds == (
+        expected_whole_seconds
+    )
+
+
 def test_snapshot_omits_brier_like_values_when_forecast_probability_is_absent() -> None:
     report = build_team_research_calibration_snapshot(
         (

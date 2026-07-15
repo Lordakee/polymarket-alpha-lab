@@ -211,6 +211,13 @@ def test_rejects_bad_types_inconsistent_counts_and_false_hard_flags() -> None:
             config=TeamMemoryQualityGateConfig(),
             generated_at=_DateTimeSubclass(2026, 7, 2, 12, 0, tzinfo=UTC),
         )
+    naive_result = build_team_memory_quality_gate(
+        _metrics(),
+        config=TeamMemoryQualityGateConfig(),
+        generated_at=datetime(2026, 7, 2, 12, 0),
+    )
+    assert naive_result.generated_at == GENERATED_AT
+    assert naive_result.generated_at.tzinfo is UTC
     with pytest.raises(ValueError, match="paper_only"):
         replace(_metrics(), paper_only=False)
 

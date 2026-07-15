@@ -49,6 +49,8 @@ def test_migration_creates_paper_trade_journal_table_with_required_columns() -> 
         "account_equity_before_trade numeric not null",
         "payload_json jsonb not null",
         "paper_only boolean not null default true",
+        "report_only boolean not null default true",
+        "readonly boolean not null default true",
         "inserted_at timestamptz not null default now()",
     )
     for column in required_columns:
@@ -67,6 +69,8 @@ def test_migration_enforces_paper_trade_journal_invariants_with_checks() -> None
         "check (account_equity_before_trade > 0)",
         "check (jsonb_typeof(payload_json) = 'object')",
         "check (paper_only is true)",
+        "check (report_only is true)",
+        "check (readonly is true)",
     )
     for check in expected_checks:
         assert check in body

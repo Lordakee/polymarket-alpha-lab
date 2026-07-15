@@ -484,7 +484,14 @@ def _summary_reason_codes(
 ) -> tuple[str, ...]:
     if not findings:
         return (PASS_REASON_CODE,)
-    return tuple(finding.reason_code for finding in findings)
+    reason_codes: list[str] = []
+    seen_reason_codes: set[str] = set()
+    for finding in findings:
+        if finding.reason_code in seen_reason_codes:
+            continue
+        reason_codes.append(finding.reason_code)
+        seen_reason_codes.add(finding.reason_code)
+    return tuple(reason_codes)
 
 
 def _next_step(status: str) -> str:

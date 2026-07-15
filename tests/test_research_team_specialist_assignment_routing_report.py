@@ -97,6 +97,8 @@ def test_assignment_routing_scores_topics_and_validates_digest() -> None:
     assert report.watch_count == d("1.000000")
     assert report.block_count == d("1.000000")
     assert report.routed_topic_count == d("3.000000")
+    assert report.manual_review_topic_count == d("2.000000")
+    assert report.manual_review_topic_ratio == d("0.666667")
     assert report.max_routing_pressure_score == d("0.862500")
     assert report.avg_routing_pressure_score == d("0.512500")
     assert report.max_source_gap_score == d("0.950000")
@@ -136,6 +138,8 @@ def test_assignment_routing_scores_topics_and_validates_digest() -> None:
     assert len(payload["derived_validation_digest"]) == 64
     int(payload["derived_validation_digest"], 16)
     assert payload["generated_at"] == "2026-07-08T12:00:00+00:00"
+    assert payload["manual_review_topic_count"] == "2.000000"
+    assert payload["manual_review_topic_ratio"] == "0.666667"
     assert payload["rows"][0]["routing_pressure_score"] == "0.862500"
     assert api().research_team_specialist_assignment_routing_report_digest(report) == (
         payload["derived_validation_digest"]
@@ -170,6 +174,8 @@ def test_assignment_routing_is_report_only_public_safe_and_decimal_strict() -> N
     assert empty.paper_queue_action == "paper_specialist_assignment_monitor"
     assert empty.reason_codes == ("assignment_routing_no_topics",)
     assert empty.topic_count == d("0.000000")
+    assert empty.manual_review_topic_count == d("0.000000")
+    assert empty.manual_review_topic_ratio == d("0.000000")
     assert empty.rows == ()
     assert empty.reason_code_counts == ()
 

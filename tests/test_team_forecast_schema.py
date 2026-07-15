@@ -9,11 +9,24 @@ MIGRATION = (
     / "migrations"
     / "20260701000000_team_forecast_tables.sql"
 )
+PROBABILITY_YES_CONTRACT_MIGRATION = (
+    REPO_ROOT
+    / "supabase"
+    / "migrations"
+    / "20260713000000_team_forecast_probability_yes_contract.sql"
+)
 
 
 def migration_sql() -> str:
     assert MIGRATION.exists(), f"missing migration: {MIGRATION}"
     return MIGRATION.read_text(encoding="utf-8")
+
+
+def probability_yes_contract_migration_sql() -> str:
+    assert PROBABILITY_YES_CONTRACT_MIGRATION.exists(), (
+        f"missing migration: {PROBABILITY_YES_CONTRACT_MIGRATION}"
+    )
+    return PROBABILITY_YES_CONTRACT_MIGRATION.read_text(encoding="utf-8")
 
 
 def compact(sql: str) -> str:
@@ -255,3 +268,34 @@ def test_migration_does_not_include_non_phase_one_surfaces():
     )
     for pattern in forbidden_patterns:
         assert not re.search(pattern, sql), pattern
+
+
+def test_probability_yes_contract_migration_contains_only_column_comments() -> None:
+    sql = probability_yes_contract_migration_sql()
+    expected_sql = """
+    COMMENT ON COLUMN public.team_forecasts.forecast_probability IS
+        'Canonical Decimal P(YES) for the event; never P(selected_side).';
+    COMMENT ON COLUMN public.team_forecasts.selected_side IS
+        'Paper-review side being evaluated; does not reorient forecast_probability.';
+    """
+    normalize_whitespace = lambda value: re.sub(r"\s+", " ", value.strip())
+    assert normalize_whitespace(sql) == normalize_whitespace(expected_sql)
+
+    forbidden_patterns = (
+        r"\binsert\b",
+        r"\bupdate\b",
+        r"\bdelete\b",
+        r"\balter\s+table\b",
+        r"\bcreate\s+table\b",
+        r"\bdrop\b",
+        r"\bbegin\b",
+        r"\bcommit\b",
+        r"\brollback\b",
+        r"\bsavepoint\b",
+        r"\brelease\s+savepoint\b",
+        r"\bstart\s+transaction\b",
+        r"\bset\s+transaction\b",
+        r"\bprepare\s+transaction\b",
+    )
+    for pattern in forbidden_patterns:
+        assert re.search(pattern, sql, flags=re.IGNORECASE) is None, pattern

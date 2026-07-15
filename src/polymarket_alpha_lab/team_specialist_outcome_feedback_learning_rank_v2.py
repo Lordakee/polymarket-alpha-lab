@@ -22,6 +22,7 @@ ONE = Decimal("1.000000")
 
 ROW_STATUSES = ("pass", "watch", "blocked")
 REPORT_STATUSES = ("pass", "watch", "blocked")
+FORECAST_ERROR_BUCKETS = ("low", "medium", "high")
 ROW_REASON_CODES = (
     "outcome_feedback_learning_pass",
     "outcome_feedback_learning_watch",
@@ -46,6 +47,8 @@ REPORT_REASON_CODES = (
     "outcome_feedback_learning_rank_empty",
     "recent_improvement_boost_present",
     "poor_calibration_penalty_present",
+    "forecast_error_bucket_mix_present",
+    "high_forecast_error_bucket_present",
 )
 UNSAFE_PUBLIC_TEXT_FRAGMENTS = (
     "live",
@@ -219,6 +222,8 @@ class TeamSpecialistOutcomeFeedbackLearningRankV2Row:
     baseline_brier_score: Decimal
     recent_brier_score: Decimal
     brier_improvement_score: Decimal
+    forecast_error_bucket: str
+    forecast_error_bucket_rank: Decimal
     baseline_calibration_error: Decimal
     recent_calibration_error: Decimal
     calibration_improvement_score: Decimal
@@ -250,6 +255,7 @@ class TeamSpecialistOutcomeFeedbackLearningRankV2Row:
             "outcome_feedback_count",
             "incorporated_feedback_count",
             "poor_calibration_event_count",
+            "forecast_error_bucket_rank",
         ):
             object.__setattr__(
                 self,
@@ -280,6 +286,14 @@ class TeamSpecialistOutcomeFeedbackLearningRankV2Row:
             self,
             "row_status",
             _require_row_status("row_status", self.row_status),
+        )
+        object.__setattr__(
+            self,
+            "forecast_error_bucket",
+            _require_forecast_error_bucket(
+                "forecast_error_bucket",
+                self.forecast_error_bucket,
+            ),
         )
         object.__setattr__(
             self,
@@ -319,6 +333,9 @@ class TeamSpecialistOutcomeFeedbackLearningRankV2Report:
     blocked_count: Decimal
     recent_improvement_boost_count: Decimal
     poor_calibration_penalty_count: Decimal
+    low_forecast_error_bucket_count: Decimal
+    medium_forecast_error_bucket_count: Decimal
+    high_forecast_error_bucket_count: Decimal
     average_outcome_feedback_learning_score: Decimal
     top_outcome_feedback_learning_score: Decimal
     bottom_outcome_feedback_learning_score: Decimal
@@ -349,6 +366,9 @@ class TeamSpecialistOutcomeFeedbackLearningRankV2Report:
             "blocked_count",
             "recent_improvement_boost_count",
             "poor_calibration_penalty_count",
+            "low_forecast_error_bucket_count",
+            "medium_forecast_error_bucket_count",
+            "high_forecast_error_bucket_count",
         ):
             object.__setattr__(
                 self,
@@ -432,6 +452,9 @@ def build_team_specialist_outcome_feedback_learning_rank_v2(
         "blocked_count": _status_count(rows, "blocked"),
         "recent_improvement_boost_count": _boost_count(rows),
         "poor_calibration_penalty_count": _penalty_count(rows),
+        "low_forecast_error_bucket_count": _forecast_error_bucket_count(rows, "low"),
+        "medium_forecast_error_bucket_count": _forecast_error_bucket_count(rows, "medium"),
+        "high_forecast_error_bucket_count": _forecast_error_bucket_count(rows, "high"),
         "average_outcome_feedback_learning_score": _average_score(rows),
         "top_outcome_feedback_learning_score": _top_score(rows),
         "bottom_outcome_feedback_learning_score": _bottom_score(rows),
@@ -509,6 +532,10 @@ def _row_for_feedback(
         brier_improvement_score=_relative_improvement(
             feedback.baseline_brier_score,
             feedback.recent_brier_score,
+        ),
+        forecast_error_bucket=_forecast_error_bucket(feedback.recent_brier_score),
+        forecast_error_bucket_rank=_forecast_error_bucket_rank(
+            _forecast_error_bucket(feedback.recent_brier_score),
         ),
         baseline_calibration_error=feedback.baseline_calibration_error,
         recent_calibration_error=feedback.recent_calibration_error,
@@ -713,6 +740,10 @@ def _report_reason_codes(
         reasons.append("recent_improvement_boost_present")
     if any(row.poor_calibration_penalty > ZERO for row in rows):
         reasons.append("poor_calibration_penalty_present")
+    if len({row.forecast_error_bucket for row in rows}) > 1:
+        reasons.append("forecast_error_bucket_mix_present")
+    if any(row.forecast_error_bucket == "high" for row in rows):
+        reasons.append("high_forecast_error_bucket_present")
     return tuple(reasons)
 
 
@@ -731,6 +762,15 @@ def _boost_count(rows: tuple[TeamSpecialistOutcomeFeedbackLearningRankV2Row, ...
 
 def _penalty_count(rows: tuple[TeamSpecialistOutcomeFeedbackLearningRankV2Row, ...]) -> Decimal:
     return Decimal(sum(1 for row in rows if row.poor_calibration_penalty > ZERO)).quantize(
+        COUNT_QUANT,
+    )
+
+
+def _forecast_error_bucket_count(
+    rows: tuple[TeamSpecialistOutcomeFeedbackLearningRankV2Row, ...],
+    bucket: str,
+) -> Decimal:
+    return Decimal(sum(1 for row in rows if row.forecast_error_bucket == bucket)).quantize(
         COUNT_QUANT,
     )
 
@@ -830,6 +870,12 @@ def _validate_report_consistency(
         raise ValueError("recent_improvement_boost_count must match rows")
     if report.poor_calibration_penalty_count != _penalty_count(rows):
         raise ValueError("poor_calibration_penalty_count must match rows")
+    if report.low_forecast_error_bucket_count != _forecast_error_bucket_count(rows, "low"):
+        raise ValueError("low_forecast_error_bucket_count must match rows")
+    if report.medium_forecast_error_bucket_count != _forecast_error_bucket_count(rows, "medium"):
+        raise ValueError("medium_forecast_error_bucket_count must match rows")
+    if report.high_forecast_error_bucket_count != _forecast_error_bucket_count(rows, "high"):
+        raise ValueError("high_forecast_error_bucket_count must match rows")
     if report.average_outcome_feedback_learning_score != _average_score(rows):
         raise ValueError("average_outcome_feedback_learning_score must match rows")
     if report.top_outcome_feedback_learning_score != _top_score(rows):
@@ -876,8 +922,13 @@ def _as_optional_utc(field_name: str, value: object) -> datetime | None:
 
 
 def _seconds_between(start: datetime, end: datetime) -> Decimal:
-    seconds = Decimal(str((end - start).total_seconds()))
+    delta = end - start
     with localcontext(DECIMAL_CONTEXT):
+        seconds = (
+            Decimal(delta.days) * Decimal("86400")
+            + Decimal(delta.seconds)
+            + Decimal(delta.microseconds) / Decimal("1000000")
+        )
         return seconds.quantize(SECONDS_QUANT)
 
 
@@ -901,6 +952,25 @@ def _require_report_status(field_name: str, value: object) -> str:
     if normalized not in REPORT_STATUSES:
         raise ValueError(f"{field_name} must be pass, watch, or blocked")
     return normalized
+
+
+def _require_forecast_error_bucket(field_name: str, value: object) -> str:
+    normalized = _require_non_empty_string(field_name, value)
+    if normalized not in FORECAST_ERROR_BUCKETS:
+        raise ValueError(f"{field_name} must be low, medium, or high")
+    return normalized
+
+
+def _forecast_error_bucket(recent_brier_score: Decimal) -> str:
+    if recent_brier_score <= Decimal("0.050000"):
+        return "low"
+    if recent_brier_score <= Decimal("0.200000"):
+        return "medium"
+    return "high"
+
+
+def _forecast_error_bucket_rank(bucket: str) -> Decimal:
+    return Decimal(FORECAST_ERROR_BUCKETS.index(bucket) + 1).quantize(COUNT_QUANT)
 
 
 def _normalize_reason_codes(

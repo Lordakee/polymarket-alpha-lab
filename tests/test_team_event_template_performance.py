@@ -38,6 +38,7 @@ def _forecast_row(
     event_template: str = "btc_hit_price",
     probability: Decimal = d("0.800000"),
     confidence: Decimal = d("0.700000"),
+    selected_side: str = "yes",
     generated_at: datetime | None = None,
 ) -> TeamForecastDbRow:
     generated = generated_at if generated_at is not None else GENERATED_AT
@@ -50,7 +51,7 @@ def _forecast_row(
             question=f"Will {forecast_id} resolve yes?",
             category_id=category_id,
             event_template=event_template,
-            selected_side="yes",
+            selected_side=selected_side,
             forecast_probability=probability,
             confidence=confidence,
             evidence_quality=d("0.800000"),
@@ -248,6 +249,26 @@ def test_build_team_event_template_performance_report_groups_settled_templates()
     assert eth.average_forecast_probability == d("0.300000")
     assert eth.status == "candidate"
     assert eth.reason_codes == ("insufficient_settled_forecasts",)
+
+
+def test_no_selected_forecast_keeps_canonical_pyes_in_production_report() -> None:
+    api = _api()
+    forecast = _forecast_row(
+        "forecast-no-selected",
+        probability=d("0.200000"),
+        selected_side="no",
+    )
+
+    report = api.build_team_event_template_performance_report(
+        (forecast,),
+        (_outcome_row(forecast, actual_outcome="no"),),
+        config=api.TeamEventTemplatePerformanceConfig(min_settled_forecasts=1),
+        generated_at=GENERATED_AT,
+    )
+
+    assert forecast.selected_side == "no"
+    assert forecast.forecast_probability == d("0.200000")
+    assert report.rows[0].average_forecast_probability == d("0.200000")
 
 
 def test_status_marks_watch_for_dispute_or_profitability_threshold_breaches() -> None:

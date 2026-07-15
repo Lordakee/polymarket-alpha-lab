@@ -78,6 +78,12 @@ class TeamForecastEvidencePacket:
 
 @dataclass(frozen=True)
 class TeamForecastPacket:
+    (
+        "forecast_probability always denotes canonical Decimal P(YES), regardless of "
+        "selected_side; selected_side identifies the paper-review side being evaluated "
+        "and never reorients forecast_probability; P(NO) is 1 - P(YES)."
+    )
+
     forecast_id: str
     team_id: str
     condition_id: str
@@ -214,6 +220,12 @@ def team_forecast_to_side_edge_input(
     *,
     cost_input: TeamForecastCostInterfaceInput,
 ) -> PaperProbabilitySideEdgeInput:
+    (
+        "forecast_probability always denotes canonical Decimal P(YES), regardless of "
+        "selected_side; selected_side identifies the paper-review side being evaluated "
+        "and never reorients forecast_probability; P(NO) is 1 - P(YES)."
+    )
+
     if type(forecast) is not TeamForecastPacket:
         raise ValueError("forecast must be a TeamForecastPacket")
     if type(cost_input) is not TeamForecastCostInterfaceInput:
@@ -278,10 +290,13 @@ def _validate_payload_safety_flags(value: object, field_path: str) -> None:
 
 
 def _normalize_probability(field_name: str, value: object) -> Decimal:
-    normalized = _normalize_decimal(field_name, value)
-    if normalized < ZERO or normalized > ONE:
+    if type(value) is not Decimal:
+        raise ValueError(f"{field_name} must be a Decimal")
+    if not value.is_finite():
+        raise ValueError(f"{field_name} must be finite")
+    if value < ZERO or value > ONE:
         raise ValueError(f"{field_name} must be between zero and one")
-    return normalized
+    return _normalize_decimal(field_name, value)
 
 
 def _normalize_nonnegative_decimal(field_name: str, value: object) -> Decimal:

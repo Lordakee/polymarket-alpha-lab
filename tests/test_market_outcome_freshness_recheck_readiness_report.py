@@ -240,6 +240,52 @@ def test_builds_deterministic_phase_1_outcome_freshness_recheck_readiness() -> N
     )
 
 
+def test_pending_acknowledgement_metrics_surface_manual_review_readiness() -> None:
+    readiness = report(
+        source(
+            "market-ready",
+            queued_at=GENERATED_AT - timedelta(minutes=18),
+            acknowledged_at=GENERATED_AT - timedelta(minutes=12),
+        ),
+        source(
+            "market-pending-short",
+            queued_at=GENERATED_AT - timedelta(minutes=7),
+            acknowledged_at=None,
+        ),
+        source(
+            "market-pending-long",
+            queued_at=GENERATED_AT - timedelta(minutes=33),
+            acknowledged_at=None,
+        ),
+        source(
+            "market-not-queued",
+            queued_at=None,
+            acknowledged_at=None,
+        ),
+    )
+
+    assert readiness.pending_ack_count == d("2")
+    assert readiness.pending_ack_ratio == d("0.500000")
+    assert readiness.max_pending_ack_age_seconds == d("1980.000000")
+
+    pending_rows = {
+        row.market_id: row.pending_ack_age_seconds
+        for row in readiness.rows
+        if row.queue_bucket == "queued_waiting_ack"
+    }
+    assert pending_rows == {
+        "market-pending-long": d("1980.000000"),
+        "market-pending-short": d("420.000000"),
+    }
+    assert readiness.rows[-1].pending_ack_age_seconds == d("0.000000")
+
+    payload = market_outcome_freshness_recheck_readiness_payload(readiness)
+    assert payload["pending_ack_count"] == "2"
+    assert payload["pending_ack_ratio"] == "0.500000"
+    assert payload["max_pending_ack_age_seconds"] == "1980.000000"
+    assert payload["rows"][1]["pending_ack_age_seconds"] == "1980.000000"
+
+
 def test_empty_report_is_report_only_and_json_ready() -> None:
     readiness = report()
 
@@ -257,11 +303,14 @@ def test_empty_report_is_report_only_and_json_ready() -> None:
         stale_recheck_count=d("0"),
         queue_ready_count=d("0"),
         ack_ready_count=d("0"),
+        pending_ack_count=d("0"),
         ready_ratio=d("0.000000"),
         queue_ready_ratio=d("0.000000"),
         ack_ready_ratio=d("0.000000"),
+        pending_ack_ratio=d("0.000000"),
         max_outcome_age_seconds=d("0.000000"),
         max_recheck_age_seconds=d("0.000000"),
+        max_pending_ack_age_seconds=d("0.000000"),
         status="empty",
         reason_codes=("outcome_freshness_recheck_readiness_empty",),
         category_rollups=(),
@@ -368,12 +417,20 @@ def test_public_dataclasses_are_frozen_and_validate_strict_types_flags_and_times
         recheck_age_seconds=row.recheck_age_seconds,
         outcome_age_delta_seconds=row.outcome_age_delta_seconds,
         recheck_age_delta_seconds=row.recheck_age_delta_seconds,
+        pending_ack_age_seconds=row.pending_ack_age_seconds,
         queue_bucket=row.queue_bucket,
         ack_bucket=row.ack_bucket,
         status=row.status,
         reason_codes=row.reason_codes,
     )
     assert explicit_row == row
+
+    with pytest.raises(ValueError, match="pending_ack_count must match rows"):
+        replace(readiness, pending_ack_count=d("2"))
+    with pytest.raises(ValueError, match="pending_ack_ratio must match rows"):
+        replace(readiness, pending_ack_ratio=d("0.500000"))
+    with pytest.raises(ValueError, match="max_pending_ack_age_seconds must match rows"):
+        replace(readiness, max_pending_ack_age_seconds=d("1.000000"))
 
     for instance in (config(), source("market-decimal"), readiness, readiness.rows[0]):
         assert_public_numeric_fields_are_decimal(instance)

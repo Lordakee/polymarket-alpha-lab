@@ -9,6 +9,8 @@ memory, and manual/operator execution before any live automation. It is an
 operator-facing research and decision-support roadmap, not a promise of
 automated execution.
 
+forecast_probability always denotes canonical Decimal P(YES), regardless of selected_side; selected_side identifies the paper-review side being evaluated and never reorients forecast_probability; P(NO) is 1 - P(YES).
+
 ## Current Phase Priority
 
 The lab should first become good at choosing which probability-event markets
@@ -37,8 +39,8 @@ lockup, finalization/settlement timing, and team memory.
 
 The required decision packet should make these inputs explicit:
 
-- `event probability`: the team's side-aware probability forecast, with the
-  evidence and assumptions that moved it away from the market price;
+- `event probability`: the team's canonical `P(YES)` forecast, with the evidence
+  and assumptions that moved it away from the market price;
 - `outcome criteria`: the exact market question, outcome labels, close time,
   resolution rules, source hierarchy, and proof needed for final resolution;
 - `resolution risk`: ambiguity, disputed-source risk, delayed reporting,

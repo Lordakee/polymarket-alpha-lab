@@ -144,6 +144,10 @@ from polymarket_alpha_lab.performance_summary import (
 )
 from polymarket_alpha_lab.project_screening import PaperProjectScreeningConfig
 from polymarket_alpha_lab.runner import RunLoopSummary, run_strategy_loop
+from polymarket_alpha_lab.report_discovery import (
+    REPORT_DISCOVERY_CATEGORIES,
+    format_report_discovery,
+)
 from polymarket_alpha_lab.strategy_cycle import (
     PaperStrategyCycleConfig,
     PaperStrategyCycleLog,
@@ -402,6 +406,8 @@ ProbabilitySelectionScorerAgreementTrendGateRunner = Callable[..., object]
 PaperCandidateDecisionEngineRunner = Callable[..., object]
 TeamDiagnosticsRowsLoader = Callable[..., object]
 TeamDiagnosticsBundleBuilder = Callable[..., object]
+# Team-diagnostics formatters must emit these exact Phase 1 boundary tokens:
+# paper_only=True, report_only=True, readonly=True.
 TeamDiagnosticsFormatter = Callable[[object], str]
 TeamDiagnosticsSnapshotBuilder = Callable[..., object]
 TeamDiagnosticsSnapshotDbSink = Callable[..., object]
@@ -1395,7 +1401,29 @@ def _run_team_diagnostics(
         if stdout_formatter is None
         else stdout_formatter
     )
-    return formatter(artifacts.bundle)
+    stdout = formatter(artifacts.bundle)
+    _require_report_only_cli_stdout(
+        "team diagnostics",
+        stdout,
+        required_tokens=("paper_only=True", "report_only=True", "readonly=True"),
+    )
+    return stdout
+
+
+def _require_report_only_cli_stdout(
+    command_name: str,
+    stdout: str,
+    *,
+    required_tokens: tuple[str, ...],
+) -> None:
+    if type(stdout) is not str:
+        raise ValueError(f"{command_name} stdout must be a string")
+    missing_tokens = tuple(token for token in required_tokens if token not in stdout)
+    if missing_tokens:
+        raise ValueError(
+            f"{command_name} stdout must include "
+            + ", ".join(missing_tokens),
+        )
 
 
 def _build_team_diagnostics_bundle_from_db(
@@ -4239,6 +4267,28 @@ def main(
         action="store_true",
         default=False,
         dest="persist",
+    )
+
+    report_discovery = subparsers.add_parser(
+        "report-discovery",
+        allow_abbrev=False,
+        description=(
+            "List read-only, report-only operator report entrypoints by "
+            "aggregate category."
+        ),
+        help="discover read-only report-only operator report entrypoints",
+    )
+    report_discovery.add_argument(
+        "--category",
+        choices=REPORT_DISCOVERY_CATEGORIES,
+        default=None,
+        dest="category",
+    )
+    report_discovery.add_argument(
+        "--format",
+        choices=("text",),
+        default="text",
+        dest="output_format",
     )
 
     paper_research_packet_operator_flow = subparsers.add_parser(
@@ -7539,6 +7589,16 @@ def main(
                 file=sys.stderr,
             )
             return 1
+
+    if args.command == "report-discovery":
+        print(
+            format_report_discovery(
+                category=args.category,
+                output_format=args.output_format,
+            ),
+            end="",
+        )
+        return 0
 
     if args.command == "paper-research-packet-operator-flow":
         try:
@@ -13483,6 +13543,9 @@ def _print_paper_research_packet_summary(
         f"high_priority_count={report.high_priority_count} "
         f"medium_priority_count={report.medium_priority_count} "
         f"low_priority_count={report.low_priority_count} "
+        f"paper_only={report.paper_only} "
+        f"report_only={report.report_only} "
+        f"readonly={report.readonly} "
         f"persisted={persisted}",
     )
     if not report.packet_rows:

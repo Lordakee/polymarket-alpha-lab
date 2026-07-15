@@ -156,6 +156,48 @@ def test_maps_contradictory_evidence_by_family_rank_recency_independence_and_rul
     assert family.status == "blocked"
 
 
+def test_reference_selection_preserves_one_microsecond_recency_ties() -> None:
+    generated_at = datetime(9999, 12, 31, 23, 59, 59, 999999, tzinfo=UTC)
+    older = replace(
+        evidence(
+            "evidence-a-older",
+            source_family="official-release",
+            source_id="source-older",
+            source_role="official",
+            hours_ago=1,
+            independence_group="older-source",
+            claimed_outcome="rate-cut-no",
+            official_source_rank_score="0.950000",
+            resolution_rule_relevance_score="1.000000",
+        ),
+        observed_at=generated_at - timedelta(microseconds=1),
+    )
+    newer = replace(
+        evidence(
+            "evidence-z-newer",
+            source_family="official-release",
+            source_id="source-newer",
+            source_role="official",
+            hours_ago=1,
+            independence_group="newer-source",
+            claimed_outcome="rate-cut-yes",
+            official_source_rank_score="0.950000",
+            resolution_rule_relevance_score="1.000000",
+        ),
+        observed_at=generated_at,
+    )
+
+    mapped = build_research_packet_source_contradiction_evidence_map_v2_report(
+        (older, newer),
+        config=config(),
+        generated_at=generated_at,
+    )
+
+    assert {row.reference_source_id for row in mapped.evidence_rows} == {
+        "source-newer",
+    }
+
+
 def test_payload_uses_decimal_strings_flags_digest_and_no_numeric_scalars() -> None:
     mapped = report()
 
@@ -315,6 +357,8 @@ def test_module_is_readonly_report_only_and_has_no_live_io_surface() -> None:
             assert node.module.split(".")[0] not in forbidden_import_roots
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
             assert node.func.id not in {"open", "eval", "exec", "compile"}
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            assert node.func.attr not in {"timestamp", "total_seconds"}
 
     assert "paper_only" in source
     assert "report_only" in source

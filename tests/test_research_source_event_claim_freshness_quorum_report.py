@@ -340,6 +340,34 @@ def test_rejects_temporal_inconsistency_empty_inputs_and_bad_quorum_counts() -> 
     assert "fresh_source_quorum_block" in row.reason_codes
 
 
+def test_missing_latest_verification_is_reported_apart_from_stale_age() -> None:
+    freshness_report = report(
+        observation(
+            event_claim_bucket="missing-check",
+            latest_verified_at=None,
+            source_family_count=d("3"),
+            fresh_source_count=d("2"),
+            primary_fresh_source_count=d("1"),
+        ),
+        observation(
+            event_claim_bucket="stale-check",
+            latest_verified_at=ago(28800),
+            source_family_count=d("3"),
+            fresh_source_count=d("2"),
+            primary_fresh_source_count=d("1"),
+        ),
+    )
+
+    rows = {row.event_claim_bucket: row for row in freshness_report.rows}
+
+    assert freshness_report.missing_latest_verification_count == d("1")
+    assert rows["missing-check"].latest_verification_missing is True
+    assert rows["stale-check"].latest_verification_missing is False
+    assert "latest_verification_missing" in rows["missing-check"].reason_codes
+    assert "latest_verification_age_block" in rows["missing-check"].reason_codes
+    assert "latest_verification_missing" not in rows["stale-check"].reason_codes
+
+
 def test_module_scope_has_no_forbidden_runtime_surfaces() -> None:
     source = Path(
         "src/polymarket_alpha_lab/research_source_event_claim_freshness_quorum_report.py",

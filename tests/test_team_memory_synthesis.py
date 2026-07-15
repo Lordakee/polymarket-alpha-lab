@@ -48,6 +48,7 @@ def forecast_packet(
     payload_probability: Decimal | None = None,
     row_probability: Decimal | None = None,
     confidence: Decimal = d("0.700000"),
+    selected_side: str = "yes",
 ) -> TeamForecastPacket:
     probability = payload_probability or d("0.600000")
     return TeamForecastPacket(
@@ -58,7 +59,7 @@ def forecast_packet(
         question=f"Will {team_id} market {index:03d} resolve yes?",
         category_id=category_id,
         event_template=event_template,
-        selected_side="yes",
+        selected_side=selected_side,
         forecast_probability=row_probability or probability,
         confidence=confidence,
         evidence_quality=d("0.800000"),
@@ -271,6 +272,36 @@ def test_build_team_memory_synthesis_report_emits_category_and_event_template_ro
     assert template_row.average_forecast_error == d("0.250000")
     assert template_row.average_brier_score == d("0.085000")
     assert template_row.gate_status == "eligible"
+
+
+def test_no_selected_forecast_keeps_canonical_pyes_in_production_report() -> None:
+    forecast = forecast_row(
+        1,
+        payload_probability=d("0.200000"),
+        selected_side="no",
+    )
+
+    report = build_team_memory_synthesis_report(
+        (forecast,),
+        (),
+        (
+            outcome(
+                1,
+                actual_outcome="no",
+                forecast_error=d("0.200000"),
+                brier_score=d("0.040000"),
+            ),
+        ),
+        config=low_threshold_config(),
+        generated_at=GENERATED_AT,
+    )
+
+    assert forecast.selected_side == "no"
+    assert forecast.forecast_probability == d("0.200000")
+    assert tuple(row.average_forecast_probability for row in report.rows) == (
+        d("0.200000"),
+        d("0.200000"),
+    )
 
 
 def test_default_gates_suppress_small_samples_but_report_low_sample_rows() -> None:

@@ -38,11 +38,12 @@ def test_candidate_selection_module_imports_only_allowed_modules() -> None:
     text = SOURCE.read_text()
     allowed_prefixes = (
         "from __future__",
-        "from dataclasses",
-        "from datetime",
-        "from decimal",
-        "from polymarket_alpha_lab.strategy_candidate_research_queue",
-        "import __future__",
+            "from dataclasses",
+            "from datetime",
+            "from decimal",
+            "from polymarket_alpha_lab.strategy_candidate_decision_matrix",
+            "from polymarket_alpha_lab.strategy_candidate_research_queue",
+            "import __future__",
         "import dataclasses",
         "import datetime",
         "import decimal",

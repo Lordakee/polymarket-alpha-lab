@@ -11,6 +11,8 @@ order placement, no wallet handling, no account authentication, no private-key
 handling, no order signing, no order submission, no order cancellation, no order
 replacement, and no exchange or account mutation.
 
+forecast_probability always denotes canonical Decimal P(YES), regardless of selected_side; selected_side identifies the paper-review side being evaluated and never reorients forecast_probability; P(NO) is 1 - P(YES).
+
 ## Medium-Scale Team Design
 
 The target operating model is a medium-scale team design: teams are organized by

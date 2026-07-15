@@ -34,6 +34,8 @@ _SELECT_COLUMNS = (
     "account_equity_before_trade",
     "payload_json",
     "paper_only",
+    "report_only",
+    "readonly",
 )
 
 
@@ -60,8 +62,10 @@ def insert_paper_trade_record(
             fill_average_price,
             account_equity_before_trade,
             payload_json,
-            paper_only
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            paper_only,
+            report_only,
+            readonly
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (record_sha256) DO NOTHING
         """
     params = (
@@ -79,6 +83,8 @@ def insert_paper_trade_record(
         row.account_equity_before_trade,
         row.payload_json,
         row.paper_only,
+        row.report_only,
+        row.readonly,
     )
     cursor = connection.cursor()
     try:
@@ -169,6 +175,8 @@ def _db_row_from_record(record: Any) -> PaperTradeJournalDbRow:
         account_equity_before_trade=values[11],
         payload_json=_normalize_json_object("payload_json", values[12]),
         paper_only=values[13],
+        report_only=values[14],
+        readonly=values[15],
     )
 
 

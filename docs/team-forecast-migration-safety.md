@@ -21,11 +21,22 @@ Polymarket is a probability event market. Phase 1 supports automatic screening, 
 
 The current migration establishes the local Team Forecast persistence surface:
 
+- `supabase/migrations/20260701000000_team_forecast_tables.sql`
+
 - `team_profiles`
 - `team_market_routes`
 - `team_forecasts`
 - `team_forecast_evidence`
 - `team_forecast_outcomes`
+
+The append-only migration inventory continues with:
+
+- `supabase/migrations/20260713000000_team_forecast_probability_yes_contract.sql`
+
+This corrective migration contains column comments only, with no table rewrite, DML, or row rewrite. It records these contracts without changing stored forecasts:
+
+- `Canonical Decimal P(YES) for the event; never P(selected_side).`
+- `Paper-review side being evaluated; does not reorient forecast_probability.`
 
 These table names align with the defaults exported from `supabase_team_forecast_config`:
 

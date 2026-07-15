@@ -525,7 +525,7 @@ def _require_outcome_matches_forecast(
 
 
 def _brier_score(forecast: _ForecastInput, outcome: _OutcomeInput) -> Decimal:
-    actual_value = _actual_value_for_forecast_side(forecast, outcome)
+    actual_value = _actual_yes_value(outcome)
     with localcontext(DECIMAL_CONTEXT):
         return _normalize_probability_decimal(
             "brier_score",
@@ -533,11 +533,8 @@ def _brier_score(forecast: _ForecastInput, outcome: _OutcomeInput) -> Decimal:
         )
 
 
-def _actual_value_for_forecast_side(
-    forecast: _ForecastInput,
-    outcome: _OutcomeInput,
-) -> Decimal:
-    if outcome.actual_outcome == forecast.selected_side:
+def _actual_yes_value(outcome: _OutcomeInput) -> Decimal:
+    if outcome.actual_outcome == "yes":
         return ONE
     return ZERO
 
@@ -545,10 +542,7 @@ def _actual_value_for_forecast_side(
 def _directionally_correct(forecast: _ForecastInput, outcome: _OutcomeInput) -> bool:
     if outcome.directionally_correct is not None:
         return outcome.directionally_correct
-    actual_value = _actual_value_for_forecast_side(forecast, outcome)
-    if forecast.forecast_probability >= Decimal("0.500000"):
-        return actual_value == ONE
-    return actual_value == ZERO
+    return forecast.selected_side == outcome.actual_outcome
 
 
 def _profitable_after_cost(outcome: _OutcomeInput) -> bool:

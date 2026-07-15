@@ -304,11 +304,14 @@ def _candidate_row(
     resolution_source_evidence_count = _count(
         sum(1 for row in rows if row.resolution_source_evidence),
     )
+    fresh_resolution_source_evidence_count = _count(
+        sum(1 for row in fresh_rows if row.resolution_source_evidence),
+    )
     reason_codes = _row_reason_codes(
         fresh_source_count=_count(len(fresh_rows)),
         fresh_source_family_count=_count(len(fresh_source_families)),
         stale_source_count=_count(len(rows) - len(fresh_rows)),
-        resolution_source_evidence_count=resolution_source_evidence_count,
+        resolution_source_evidence_count=fresh_resolution_source_evidence_count,
         config=config,
     )
     return StrategyRecommendationSourceCoverageDigestRow(
@@ -533,8 +536,13 @@ def _coverage_ratio(numerator: Decimal, denominator: Decimal) -> Decimal:
 
 
 def _count_age_hours(generated_at: datetime, observed_at: datetime) -> Decimal:
-    age_seconds = Decimal(str((generated_at - observed_at).total_seconds()))
+    delta = generated_at - observed_at
     with localcontext(DECIMAL_CONTEXT):
+        age_seconds = (
+            Decimal(delta.days) * Decimal("86400")
+            + Decimal(delta.seconds)
+            + Decimal(delta.microseconds) / Decimal("1000000")
+        )
         return (age_seconds / Decimal("3600")).quantize(RATIO_QUANTUM)
 
 
