@@ -56,9 +56,12 @@ the user explicitly changes them in a later instruction.
 5. **Fast mode is forbidden.** Do not use fast mode for the main Codex agent,
    Codex subagents, Claude Code reviews, implementation workers, planning workers,
    or audit workers.
-6. **Codex subagents use GPT-5.5 xhigh.** Codex subagents dispatched for this
-   project must use model `gpt-5.5` with reasoning effort `xhigh`. If the user
-   informally writes `xhign`, treat it as the executable setting `xhigh`.
+6. **Codex subagent model is fixed.** Every Codex subagent, including nested
+   subagents, implementation workers, planning workers, explorers, test workers,
+   and audit workers, must be spawned with model `gpt-5.6-sol` and reasoning
+   effort `max` explicitly specified. Do not omit either setting, inherit a
+   different model or effort, or substitute another Codex model. Fast mode
+   remains forbidden.
 
 ## CodeGraph
 
@@ -102,10 +105,11 @@ Avoid using website scraping as a primary data path unless a needed field is una
 
 ## Model Defaults
 
-- Codex subagents dispatched for this project must use model `gpt-5.5` with reasoning effort `xhigh`.
+- Every Codex subagent must explicitly use model `gpt-5.6-sol` with reasoning
+  effort `max`, as required by Project Iron Rule 6. No other Codex subagent
+  model or reasoning effort is permitted.
 - Local Claude Code reviews for this project must use model `claude-opus-4-8`
   with thinking level `max`.
-- If the user informally writes `xhign` for the Codex subagent reasoning level, treat it as the executable setting `xhigh`.
 - Do not use fast mode for the main Codex agent, Codex subagents, Claude Code
   reviews, or local implementation/review gates.
 

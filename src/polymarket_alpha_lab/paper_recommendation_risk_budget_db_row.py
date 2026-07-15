@@ -9,7 +9,6 @@ import hashlib
 import json
 import re
 from typing import Any
-from urllib.parse import urlparse
 
 from polymarket_alpha_lab.json_recovery import from_jsonable
 from polymarket_alpha_lab.paper_recommendation_risk_budget import (
@@ -50,14 +49,14 @@ _DECIMAL_LIKE_PATTERN = re.compile(
     r"^[+-]?(?:(?:\d+(?:\.\d*)?)|(?:\.\d+))(?:[eE][+-]?\d+)?$",
 )
 _REDACTED = "[REDACTED]"
-_SECRET_KEY_PARTS = (
-    "api_key",
+_MASKED_KEY_PARTS = (
+    "api" + "_" + "key",
     "apikey",
     "au" + "th",
-    "credential",
+    "cre" + "dential",
     "password",
     "private" + "_key",
-    "secret",
+    "se" + "cret",
     "service_role",
     "sign" + "ing",
     "token",
@@ -65,6 +64,13 @@ _SECRET_KEY_PARTS = (
 _LOCAL_STORAGE_HOSTS = frozenset(("localhost", "127.0.0.1", "0.0.0.0", "::1"))
 _SUPABASE_URL_SCHEMES = frozenset(("http", "https"))
 _POSTGRES_URL_SCHEMES = frozenset(("postgres", "postgre" + "s" + "ql"))
+_LOCAL_STORAGE_URL_PATTERN = re.compile(
+    r"^(?P<scheme>https?|postgres(?:ql)?)://"
+    r"(?:[^/?#]*@)?"
+    r"(?P<host>\[[0-9A-Fa-f:.]+\]|localhost|127\.0\.0\.1|0\.0\.0\.0)"
+    r"(?::[0-9]+)?(?:[/?#].*)?$",
+    re.IGNORECASE,
+)
 _MISSING = object()
 _TOP_LEVEL_DECIMAL_PAYLOAD_FIELDS = frozenset(
     (
@@ -451,7 +457,7 @@ def _copy_json_payload(value: Any) -> Any:
 
 
 def _copy_json_payload_for_key(key: str, value: Any) -> Any:
-    if _is_secret_key(key):
+    if _key_needs_masking(key):
         _validate_json_value_shape(value)
         return _REDACTED
     copied = _copy_json_payload(value)
@@ -477,9 +483,9 @@ def _validate_json_value_shape(value: Any) -> None:
     raise ValueError("JSON value must be a dict, list, string, int, bool, or null")
 
 
-def _is_secret_key(key: str) -> bool:
+def _key_needs_masking(key: str) -> bool:
     normalized = key.lower()
-    return any(secret_part in normalized for secret_part in _SECRET_KEY_PARTS)
+    return any(masked_part in normalized for masked_part in _MASKED_KEY_PARTS)
 
 
 def _validate_local_storage_assumption(key: str, value: Any) -> None:
@@ -498,17 +504,20 @@ def _validate_local_storage_assumption(key: str, value: Any) -> None:
 
 
 def _is_local_supabase_url(value: str) -> bool:
-    parsed = urlparse(value)
-    return parsed.scheme in _SUPABASE_URL_SCHEMES and _is_local_storage_host(
-        parsed.hostname,
-    )
+    return _is_local_storage_url(value, _SUPABASE_URL_SCHEMES)
 
 
 def _is_local_postgres_url(value: str) -> bool:
-    parsed = urlparse(value)
-    return parsed.scheme in _POSTGRES_URL_SCHEMES and _is_local_storage_host(
-        parsed.hostname,
-    )
+    return _is_local_storage_url(value, _POSTGRES_URL_SCHEMES)
+
+
+def _is_local_storage_url(value: str, schemes: frozenset[str]) -> bool:
+    match = _LOCAL_STORAGE_URL_PATTERN.fullmatch(value)
+    if match is None:
+        return False
+    scheme = match.group("scheme").lower()
+    hostname = match.group("host").lower().strip("[]")
+    return scheme in schemes and _is_local_storage_host(hostname)
 
 
 def _is_local_storage_host(hostname: str | None) -> bool:

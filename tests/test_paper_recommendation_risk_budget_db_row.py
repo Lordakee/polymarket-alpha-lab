@@ -241,6 +241,7 @@ def test_risk_budget_db_row_rejects_remote_supabase_and_postgres_payload_assumpt
         "http://localhost:54321/project.supabase.local",
         "http://127.0.0.1:54321/project.supabase.local",
         "postgres://localhost:5432/postgres",
+        "postgres://user:p@ss@127.0.0.1:5432/postgres",
         "postgresql://127.0.0.1:5432/postgres",
     ),
 )

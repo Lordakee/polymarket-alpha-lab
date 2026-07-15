@@ -10,12 +10,6 @@ from polymarket_alpha_lab.strategy_candidate_research_queue import (
     PaperStrategyCandidateResearchQueueReport,
     PaperStrategyCandidateResearchQueueRow,
 )
-from polymarket_alpha_lab.strategy_candidate_decision_matrix import (
-    PaperStrategyCandidateDecisionMatrixReport,
-    PaperStrategyCandidateDecisionRow,
-)
-
-
 DEFAULT_PAPER_AUTONOMOUS_CANDIDATE_SELECTION_CONFIG_VERSION = (
     "paper-autonomous-candidate-selection-v0"
 )
@@ -572,7 +566,7 @@ def _row_selection_result(
     config: PaperAutonomousCandidateSelectionConfig,
     selected_keys: set[tuple[str, str]],
     selected_count: int,
-    decision_matrix_rows_by_slug: dict[str, PaperStrategyCandidateDecisionRow] | None,
+    decision_matrix_rows_by_slug: dict[str, object] | None,
 ) -> tuple[bool, tuple[str, ...]]:
     reason_codes = _base_not_selected_reason_codes(source_report, source_row, config)
     if reason_codes:
@@ -593,7 +587,7 @@ def _row_selection_result(
 
 def _decision_matrix_not_selected_reason_codes(
     source_row: PaperStrategyCandidateResearchQueueRow,
-    decision_matrix_rows_by_slug: dict[str, PaperStrategyCandidateDecisionRow] | None,
+    decision_matrix_rows_by_slug: dict[str, object] | None,
 ) -> tuple[str, ...]:
     if decision_matrix_rows_by_slug is None:
         return ()
@@ -789,19 +783,34 @@ def _rows_with_reason(
 def _decision_matrix_rows_by_slug(
     decision_matrix_report: object | None,
     source_reports: tuple[PaperStrategyCandidateResearchQueueReport, ...],
-) -> dict[str, PaperStrategyCandidateDecisionRow] | None:
+) -> dict[str, object] | None:
     if decision_matrix_report is None:
         return None
-    if type(decision_matrix_report) is not PaperStrategyCandidateDecisionMatrixReport:
+    try:
+        decision_rows = getattr(decision_matrix_report, "decision_rows")
+    except AttributeError:
+        raise ValueError(
+            "decision_matrix_report must be exactly "
+            "PaperStrategyCandidateDecisionMatrixReport",
+        ) from None
+    if type(decision_rows) is not tuple:
         raise ValueError(
             "decision_matrix_report must be exactly "
             "PaperStrategyCandidateDecisionMatrixReport",
         )
     _require_hard_flags("decision_matrix_report", decision_matrix_report)
     source_market_slugs = _source_market_slugs(source_reports)
-    matrix_rows_by_slug: dict[str, PaperStrategyCandidateDecisionRow] = {}
-    for row in decision_matrix_report.decision_rows:
-        if type(row) is not PaperStrategyCandidateDecisionRow:
+    matrix_rows_by_slug: dict[str, object] = {}
+    for row in decision_rows:
+        if (
+            type(getattr(row, "market_slug", None)) is not str
+            or type(getattr(row, "decision_status", None)) is not str
+            or type(getattr(row, "reason_codes", None)) is not tuple
+            or any(
+                type(reason_code) is not str
+                for reason_code in getattr(row, "reason_codes", ())
+            )
+        ):
             raise ValueError(
                 "decision_matrix_report rows must be exact "
                 "PaperStrategyCandidateDecisionRow values",

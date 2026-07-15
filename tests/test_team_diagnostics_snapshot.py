@@ -129,8 +129,8 @@ def _outcome_row(
     resolution_dispute_flag: bool = False,
     directionally_correct: bool | None = None,
 ) -> TeamForecastOutcomeDbRow:
-    resolved = resolved_at or GENERATED_AT + timedelta(days=1)
-    generated = generated_at or resolved + timedelta(minutes=5)
+    resolved = resolved_at or GENERATED_AT
+    generated = generated_at or GENERATED_AT
     actual_value = d("1.000000") if actual_outcome == "yes" else d("0.000000")
     forecast_error = abs(forecast.forecast_probability - actual_value)
     if directionally_correct is None:
@@ -201,7 +201,7 @@ def _bundle_report():
         "forecast-btc-2",
         probability=d("0.400000"),
         confidence=d("0.600000"),
-        generated_at=GENERATED_AT + timedelta(minutes=1),
+        generated_at=GENERATED_AT - timedelta(minutes=2),
     )
     eth = _forecast_row(
         "forecast-eth-1",
@@ -210,7 +210,7 @@ def _bundle_report():
         event_template="eth_hit_price",
         market_slug="market-forecast-eth-1",
         probability=d("0.300000"),
-        generated_at=GENERATED_AT + timedelta(minutes=2),
+        generated_at=GENERATED_AT - timedelta(minutes=1),
     )
 
     return build_team_diagnostics_bundle_report(

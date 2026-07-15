@@ -5,11 +5,11 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, fields, is_dataclass
 from datetime import UTC, datetime
-from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from decimal import Context, Decimal, InvalidOperation, ROUND_HALF_UP, localcontext
 import hashlib
 import json
 import re
-from typing import Any
+from typing import Any, final
 
 
 DEFAULT_RESEARCH_STRATEGY_TEAM_SOURCE_CONFIDENCE_DECAY_CONFIG_VERSION = (
@@ -19,6 +19,7 @@ DEFAULT_RESEARCH_STRATEGY_TEAM_SOURCE_CONFIDENCE_DECAY_CONFIG_VERSION = (
 _QUANT = Decimal("0.000001")
 _ZERO = Decimal("0.000000")
 _ONE = Decimal("1.000000")
+_FIXED_DECIMAL_CONTEXT = Context(prec=50, rounding=ROUND_HALF_UP)
 _PUBLIC_IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 _PUBLIC_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 _DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -81,7 +82,8 @@ _UNSAFE_PUBLIC_TERMS = (
 )
 
 
-@dataclass(frozen=True)
+@final
+@dataclass(frozen=True, slots=True)
 class ResearchStrategyTeamSourceConfidenceDecayConfig:
     config_version: str = DEFAULT_RESEARCH_STRATEGY_TEAM_SOURCE_CONFIDENCE_DECAY_CONFIG_VERSION
     fresh_age_seconds: Decimal = Decimal("3600.000000")
@@ -96,7 +98,7 @@ class ResearchStrategyTeamSourceConfidenceDecayConfig:
     readonly: bool = True
 
     def __init_subclass__(cls, **kwargs: object) -> None:
-        super().__init_subclass__(**kwargs)
+        object.__init_subclass__(**kwargs)
         if cls is not ResearchStrategyTeamSourceConfidenceDecayConfig:
             raise TypeError(
                 "ResearchStrategyTeamSourceConfidenceDecayConfig does not support subclassing",
@@ -141,7 +143,9 @@ class ResearchStrategyTeamSourceConfidenceDecayConfig:
                 "pass_effective_confidence_score must exceed "
                 "watch_effective_confidence_score",
             )
-        if _quantize(self.age_weight + self.base_confidence_weight) != _ONE:
+        with localcontext(_FIXED_DECIMAL_CONTEXT):
+            weights_sum = self.age_weight + self.base_confidence_weight
+        if _quantize(weights_sum) != _ONE:
             raise ValueError("age_weight and base_confidence_weight must sum to one")
         object.__setattr__(
             self,
@@ -155,7 +159,8 @@ class ResearchStrategyTeamSourceConfidenceDecayConfig:
         _reject_unsafe_public_payload("config", self)
 
 
-@dataclass(frozen=True)
+@final
+@dataclass(frozen=True, slots=True)
 class ResearchStrategyTeamSourceConfidenceDecayInput:
     candidate_id: str
     market_id: str
@@ -176,7 +181,7 @@ class ResearchStrategyTeamSourceConfidenceDecayInput:
     readonly: bool = True
 
     def __init_subclass__(cls, **kwargs: object) -> None:
-        super().__init_subclass__(**kwargs)
+        object.__init_subclass__(**kwargs)
         if cls is not ResearchStrategyTeamSourceConfidenceDecayInput:
             raise TypeError(
                 "ResearchStrategyTeamSourceConfidenceDecayInput does not support subclassing",
@@ -223,7 +228,8 @@ class ResearchStrategyTeamSourceConfidenceDecayInput:
         _require_hard_flags("input", self)
 
 
-@dataclass(frozen=True)
+@final
+@dataclass(frozen=True, slots=True)
 class ResearchStrategyTeamSourceConfidenceDecayRow:
     source_public_key: str
     source_family: str
@@ -244,7 +250,7 @@ class ResearchStrategyTeamSourceConfidenceDecayRow:
     readonly: bool = True
 
     def __init_subclass__(cls, **kwargs: object) -> None:
-        super().__init_subclass__(**kwargs)
+        object.__init_subclass__(**kwargs)
         if cls is not ResearchStrategyTeamSourceConfidenceDecayRow:
             raise TypeError(
                 "ResearchStrategyTeamSourceConfidenceDecayRow does not support subclassing",
@@ -290,7 +296,8 @@ class ResearchStrategyTeamSourceConfidenceDecayRow:
         _reject_unsafe_public_payload("row", self)
 
 
-@dataclass(frozen=True)
+@final
+@dataclass(frozen=True, slots=True)
 class ResearchStrategyTeamSourceConfidenceDecayReport:
     generated_at: datetime
     config_version: str
@@ -309,7 +316,7 @@ class ResearchStrategyTeamSourceConfidenceDecayReport:
     readonly: bool = True
 
     def __init_subclass__(cls, **kwargs: object) -> None:
-        super().__init_subclass__(**kwargs)
+        object.__init_subclass__(**kwargs)
         if cls is not ResearchStrategyTeamSourceConfidenceDecayReport:
             raise TypeError(
                 "ResearchStrategyTeamSourceConfidenceDecayReport does not support subclassing",
@@ -361,6 +368,7 @@ def build_research_strategy_team_source_confidence_decay_report(
         config = ResearchStrategyTeamSourceConfidenceDecayConfig()
     if type(config) is not ResearchStrategyTeamSourceConfidenceDecayConfig:
         raise ValueError("config must be ResearchStrategyTeamSourceConfidenceDecayConfig")
+    ResearchStrategyTeamSourceConfidenceDecayConfig.__post_init__(config)
     _require_hard_flags("config", config)
     generated_at = _as_utc("generated_at", generated_at)
     inputs = _normalize_source_inputs(source_inputs)
@@ -418,6 +426,8 @@ def research_strategy_team_source_confidence_decay_report_payload(
         raise ValueError("report must be ResearchStrategyTeamSourceConfidenceDecayReport")
     if type(payload) is not dict:
         raise ValueError("payload must be a JSON object")
+    if type(report) is ResearchStrategyTeamSourceConfidenceDecayReport:
+        _validate_public_payload_schema(payload)
     _reject_unsafe_public_payload("payload", payload, allow_json_containers=True)
     return payload
 
@@ -430,7 +440,10 @@ def _row_from_input(
 ) -> ResearchStrategyTeamSourceConfidenceDecayRow:
     age_seconds = _age_seconds(generated_at, item.observed_at)
     age_score = _age_confidence_score(age_seconds, config.stale_age_seconds)
-    sample_count = item.historical_success_count + item.historical_miss_count
+    sample_count = _decimal_add(
+        item.historical_success_count,
+        item.historical_miss_count,
+    )
     track_score = _track_record_score(
         item.historical_success_count,
         item.historical_miss_count,
@@ -493,14 +506,18 @@ def _source_public_key(item: ResearchStrategyTeamSourceConfidenceDecayInput) -> 
 def _age_confidence_score(age_seconds: Decimal, stale_age_seconds: Decimal) -> Decimal:
     if age_seconds >= stale_age_seconds:
         return _ZERO
-    return _clamp_ratio(_ONE - (age_seconds / stale_age_seconds))
+    with localcontext(_FIXED_DECIMAL_CONTEXT):
+        value = _ONE - (age_seconds / stale_age_seconds)
+    return _clamp_ratio(value)
 
 
 def _track_record_score(success_count: Decimal, miss_count: Decimal) -> Decimal:
-    sample_count = success_count + miss_count
+    sample_count = _decimal_add(success_count, miss_count)
     if sample_count <= _ZERO:
         return _ZERO
-    return _clamp_ratio(success_count / sample_count)
+    with localcontext(_FIXED_DECIMAL_CONTEXT):
+        value = success_count / sample_count
+    return _clamp_ratio(value)
 
 
 def _effective_confidence_score(
@@ -510,13 +527,14 @@ def _effective_confidence_score(
     track_record_score: Decimal,
     config: ResearchStrategyTeamSourceConfidenceDecayConfig,
 ) -> Decimal:
-    miss_rate = _ONE - track_record_score
-    miss_penalty_base = max(age_confidence_score, base_confidence_score)
-    raw_score = (
-        (age_confidence_score * config.age_weight)
-        + (base_confidence_score * config.base_confidence_weight)
-        - (miss_rate * config.base_confidence_weight * miss_penalty_base)
-    )
+    with localcontext(_FIXED_DECIMAL_CONTEXT):
+        miss_rate = _ONE - track_record_score
+        miss_penalty_base = max(age_confidence_score, base_confidence_score)
+        raw_score = (
+            (age_confidence_score * config.age_weight)
+            + (base_confidence_score * config.base_confidence_weight)
+            - (miss_rate * config.base_confidence_weight * miss_penalty_base)
+        )
     return _clamp_ratio(raw_score)
 
 
@@ -589,16 +607,19 @@ def _status_count(
 def _average(values: tuple[Decimal, ...]) -> Decimal:
     if not values:
         return _ZERO
-    return _quantize(sum(values, _ZERO) / Decimal(len(values)))
+    with localcontext(_FIXED_DECIMAL_CONTEXT):
+        value = sum(values, _ZERO) / Decimal(len(values))
+    return _quantize(value)
 
 
 def _age_seconds(generated_at: datetime, observed_at: datetime) -> Decimal:
     delta = generated_at - observed_at
-    value = (
-        Decimal(delta.days * 86_400)
-        + Decimal(delta.seconds)
-        + (Decimal(delta.microseconds) / Decimal("1000000"))
-    )
+    with localcontext(_FIXED_DECIMAL_CONTEXT):
+        value = (
+            Decimal(delta.days * 86_400)
+            + Decimal(delta.seconds)
+            + (Decimal(delta.microseconds) / Decimal("1000000"))
+        )
     return _require_nonnegative_decimal("source_age_seconds", _quantize(value))
 
 
@@ -617,6 +638,7 @@ def _normalize_source_inputs(
             raise ValueError(
                 "source_inputs must contain ResearchStrategyTeamSourceConfidenceDecayInput",
             )
+        ResearchStrategyTeamSourceConfidenceDecayInput.__post_init__(item)
         _require_hard_flags("input", item)
         normalized.append(item)
     return tuple(normalized)
@@ -1154,7 +1176,7 @@ def _require_hard_flags(label: str, value: object) -> None:
 def _decimal_count(value: int) -> Decimal:
     if type(value) is not int or value < 0:
         raise ValueError("count must be a nonnegative int")
-    return Decimal(value).quantize(_QUANT)
+    return _quantize(Decimal(value))
 
 
 def _clamp_ratio(value: Decimal) -> Decimal:
@@ -1167,7 +1189,15 @@ def _clamp_ratio(value: Decimal) -> Decimal:
 
 
 def _quantize(value: Decimal) -> Decimal:
-    return value.quantize(_QUANT, rounding=ROUND_HALF_UP)
+    with localcontext(_FIXED_DECIMAL_CONTEXT):
+        normalized = value.quantize(_QUANT, rounding=ROUND_HALF_UP)
+    return _ZERO if normalized.is_zero() else normalized
+
+
+def _decimal_add(left: Decimal, right: Decimal) -> Decimal:
+    with localcontext(_FIXED_DECIMAL_CONTEXT):
+        value = left + right
+    return _quantize(value)
 
 
 def _as_utc(field_name: str, value: object) -> datetime:

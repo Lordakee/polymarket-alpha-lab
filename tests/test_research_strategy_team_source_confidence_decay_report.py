@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import FrozenInstanceError, replace
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal
+from decimal import Decimal, ROUND_DOWN, localcontext
 import hashlib
 import json
 from pathlib import Path
@@ -343,6 +343,96 @@ def test_dataclasses_are_frozen_and_digest_rejects_tampering() -> None:
         replace(report, source_count=d("2.000000"))
     with pytest.raises(ValueError, match="status"):
         replace(report.rows[0], status="watch")
+
+
+def test_report_dataclasses_are_slotted_final_and_exact() -> None:
+    models = (
+        ResearchStrategyTeamSourceConfidenceDecayConfig,
+        ResearchStrategyTeamSourceConfidenceDecayInput,
+        ResearchStrategyTeamSourceConfidenceDecayRow,
+        ResearchStrategyTeamSourceConfidenceDecayReport,
+    )
+
+    for model in models:
+        assert getattr(model, "__final__", False) is True
+        assert hasattr(model, "__slots__")
+        assert "__dict__" not in model.__slots__
+        with pytest.raises(TypeError, match="does not support subclassing"):
+            type("UnsupportedChild", (model,), {})
+
+
+def test_decimal_arithmetic_is_independent_of_ambient_context() -> None:
+    item = source_input(1)
+    cfg = config()
+    expected = build_report((item,), cfg=cfg)
+
+    with localcontext() as context:
+        context.prec = 6
+        context.rounding = ROUND_DOWN
+        actual = build_report((item,), cfg=cfg)
+
+    assert actual.rows[0].effective_confidence_score == expected.rows[0].effective_confidence_score
+    assert actual.derived_validation_digest == expected.derived_validation_digest
+
+
+def test_decimal_signed_zero_is_canonicalized_at_all_boundaries() -> None:
+    item = source_input(
+        1,
+        observed_at=GENERATED_AT - timedelta(days=2),
+        base_confidence_score=d("-0.000000"),
+        historical_success_count=d("-0.000000"),
+        historical_miss_count=d("-0.000000"),
+    )
+
+    assert str(item.base_confidence_score) == "0.000000"
+    assert str(item.historical_success_count) == "0.000000"
+    assert str(item.historical_miss_count) == "0.000000"
+
+    report = build_report((item,))
+    row = report.rows[0]
+    assert str(row.base_confidence_score) == "0.000000"
+    assert str(row.historical_success_count) == "0.000000"
+    assert str(row.historical_miss_count) == "0.000000"
+    assert str(row.effective_confidence_score) == "0.000000"
+    assert str(report.average_effective_confidence_score) == "0.000000"
+
+    payload = research_strategy_team_source_confidence_decay_report_payload(report)
+    assert payload["rows"][0]["base_confidence_score"] == "0.000000"
+    assert payload["rows"][0]["historical_success_count"] == "0.000000"
+    assert payload["rows"][0]["historical_miss_count"] == "0.000000"
+    assert payload["rows"][0]["effective_confidence_score"] == "0.000000"
+    assert payload["average_effective_confidence_score"] == "0.000000"
+
+
+def test_build_revalidates_tampered_config_before_arithmetic() -> None:
+    cfg = config()
+    object.__setattr__(cfg, "age_weight", d("0.600000"))
+
+    with pytest.raises(ValueError, match="age_weight and base_confidence_weight"):
+        build_report((source_input(1),), cfg=cfg)
+
+
+def test_build_revalidates_tampered_input_before_arithmetic() -> None:
+    item = source_input(1)
+    object.__setattr__(item, "reason_codes", ["manual_reviewed"])
+
+    with pytest.raises(ValueError, match="reason_codes"):
+        build_report((item,))
+
+
+def test_typed_payload_revalidates_a_resigned_derived_row() -> None:
+    report = build_report((source_input(1),))
+    tampered_payload = research_strategy_team_source_confidence_decay_report_payload(report)
+    tampered_rows = [dict(tampered_payload["rows"][0])]
+    tampered_rows[0]["track_record_score"] = "0.123456"
+    tampered_payload["rows"] = tampered_rows
+    tampered_payload["derived_validation_digest"] = canonical_digest(tampered_payload)
+
+    object.__setattr__(report.rows[0], "track_record_score", d("0.123456"))
+    object.__setattr__(report, "derived_validation_digest", tampered_payload["derived_validation_digest"])
+
+    with pytest.raises(ValueError, match="track_record_score"):
+        research_strategy_team_source_confidence_decay_report_payload(report)
 
 
 def test_owned_module_has_no_network_storage_wallet_order_or_recommendation_surface() -> None:
