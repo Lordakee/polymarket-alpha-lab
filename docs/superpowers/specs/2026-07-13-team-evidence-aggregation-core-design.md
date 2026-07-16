@@ -1266,7 +1266,7 @@ max-flow network:
 
 ```text
 source
-  -> evidence node                          capacity max assignments per evidence
+  -> evidence node (record join key)        capacity max assignments per record
   -> (requirement_id, independence_key)    capacity 1 per candidate edge
   -> requirement node                      capacity 1 per independence group
   -> sink                                  capacity minimum witness count
@@ -1275,8 +1275,18 @@ source
 The intermediate node enforces that one independence group can contribute at
 most one witness to a particular requirement. The evidence-node capacity is
 `max_requirement_assignments_per_evidence`, shared globally across all
-requirements. A record cannot evade either capacity by listing the same
-requirement twice because requirement tuples are unique.
+requirements for one exact four-field record/allocation join key
+`(source_lineage_id, capture_id, evidence_revision_id,
+assessment_revision_id)`. Despite the historical field name, this flow
+capacity is per record node, not shared globally by `evidence_revision_id`.
+Multiple assessment records carrying the same exact evidence-revision
+projection each receive independent capacity when passed directly to this
+public API. Production Node 2C current-selection semantics provide one selected
+record per lineage for an evaluation, but the pure witness function preserves
+its wider direct-call contract. The same configuration field separately bounds
+the requirement-ID tuple on each distinct evidence-revision projection. A
+record cannot evade either capacity by listing the same requirement twice
+because requirement tuples are unique.
 
 The implementation uses a deterministic standard-library integer max-flow
 algorithm. No graph dependency is added to `pyproject.toml`. A per-requirement
@@ -1290,6 +1300,14 @@ edge can never consume capacity that could increase blocked-requirement
 coverage. If all blocked demand is jointly feasible, every optimum must
 saturate it; lexical requirement names cannot turn an avoidable watch into a
 block.
+
+This objective maximizes severity-partitioned assignment counts, not the number
+of fully satisfied requirements. When all blocked demand is not jointly
+feasible, a lexical optimum may assign scarce evidence partially to a
+high-demand blocked requirement even when assigning it elsewhere would fully
+satisfy a lower-demand blocked requirement. Both outcomes remain blocked under
+the status contract because at least one blocked requirement is unsatisfied;
+the canonical coverage rows retain the exact partial-assignment evidence.
 
 ### Canonical optimum matching
 

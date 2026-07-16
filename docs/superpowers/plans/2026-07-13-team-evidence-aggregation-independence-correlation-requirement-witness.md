@@ -83,6 +83,7 @@ The two `$NODE2A_PREREQ_SHA` strings above mean the exact runtime value, not lit
 
 ```bash
 set -euo pipefail
+test -n "${TMUX:-}"
 : "${NODE2A_PREREQ_SHA:?NODE2A_PREREQ_SHA is required}"
 : "${NODE2A_PASS_RECEIPT_PATH:?NODE2A_PASS_RECEIPT_PATH is required}"
 : "${NODE2A_PASS_RECEIPT_SHA256:?NODE2A_PASS_RECEIPT_SHA256 is required}"
@@ -123,7 +124,10 @@ if not os.path.isabs(repo_root) or not os.path.isdir(repo_root):
     raise SystemExit("REPO_ROOT must resolve to a directory")
 
 try:
-    descriptor = os.open(receipt_path, os.O_RDONLY | os.O_NOFOLLOW)
+    descriptor = os.open(
+        receipt_path,
+        os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW,
+    )
 except OSError:
     raise SystemExit("Node 2A PASS receipt open failed") from None
 
@@ -214,28 +218,28 @@ git cat-file -e "$NODE2A_PREREQ_SHA^{commit}"
 git merge-base --is-ancestor "$NODE2A_PREREQ_SHA" "$NODE_BASE"
 git merge-base --is-ancestor "$NODE_BASE" HEAD
 
-NODE2A_PATHS=(
-  src/polymarket_alpha_lab/team_evidence_aggregation_types.py
+NODE2A_PREREQ_PATHS=(
   src/polymarket_alpha_lab/team_evidence_aggregation_codec.py
   src/polymarket_alpha_lab/team_evidence_aggregation_temporal.py
-  tests/test_team_evidence_aggregation_types.py
+  src/polymarket_alpha_lab/team_evidence_aggregation_types.py
   tests/test_team_evidence_aggregation_codec.py
   tests/test_team_evidence_aggregation_temporal.py
+  tests/test_team_evidence_aggregation_types.py
 )
-readonly -a NODE2A_PATHS
+readonly -a NODE2A_PREREQ_PATHS
 
-for path in "${NODE2A_PATHS[@]}"
+for path in "${NODE2A_PREREQ_PATHS[@]}"
 do
   git cat-file -e "$NODE2A_PREREQ_SHA:$path"
 done
-git diff --quiet "$NODE2A_PREREQ_SHA..$NODE_BASE" -- "${NODE2A_PATHS[@]}"
+git diff --quiet "$NODE2A_PREREQ_SHA..$NODE_BASE" -- "${NODE2A_PREREQ_PATHS[@]}"
 
 readonly NODE_BASE REPO_ROOT NODE2A_PREREQ_SHA NODE2A_PASS_RECEIPT_PATH NODE2A_PASS_RECEIPT_SHA256 INITIAL_NODE2A_RECEIPT_EVIDENCE
 ```
 
 Expected outcome: every command exits `0`; the worktree is clean; local `HEAD`
 equals fetched `origin/main`; the reviewed Node 2A commit is an ancestor of
-`NODE_BASE`; one `os.open(..., os.O_RDONLY | os.O_NOFOLLOW)` descriptor is
+`NODE_BASE`; one `os.open(..., os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)` descriptor is
 fstat-checked, resolved outside `REPO_ROOT`, read once, and closed; the exact
 bytes satisfy the handoff SHA-256 and duplicate-key-safe closed JSON contract;
 the helper emits one canonical non-secret `INITIAL_NODE2A_RECEIPT_EVIDENCE`
@@ -291,7 +295,7 @@ export NODE2B_PASS_RECEIPT_PATH
 export NODE2B_PASS_RECEIPT_SHA256
 ```
 
-Before treating Node 2B as a dependency, Node 2C must apply the same security posture as Node 2B's incoming validator: one `os.open(path, os.O_RDONLY | os.O_NOFOLLOW)`, regular-file `fstat`, descriptor-resolved path proof outside `REPO_ROOT`, one read from that descriptor, SHA-256 over those same bytes, duplicate-key rejection through `object_pairs_hook`, exact key/type/value equality to the fifteen-field schema above, `head_sha == pushed_remote_main_sha == NODE2B_PREREQ_SHA`, and an ancestor check from `NODE2B_PREREQ_SHA` to Node 2C's fetched base. A path-only precheck, second file read, permissive JSON parser, extra key, wrong boolean type/value, hash mismatch, or non-PASS field blocks Node 2C.
+Before treating Node 2B as a dependency, Node 2C must apply the same security posture as Node 2B's incoming validator: one `os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)`, regular-file `fstat`, descriptor-resolved path proof outside `REPO_ROOT`, one read from that descriptor, SHA-256 over those same bytes, duplicate-key rejection through `object_pairs_hook`, exact key/type/value equality to the fifteen-field schema above, `head_sha == pushed_remote_main_sha == NODE2B_PREREQ_SHA`, and an ancestor check from `NODE2B_PREREQ_SHA` to Node 2C's fetched base. A path-only precheck, blocking open, second file read, permissive JSON parser, extra key, wrong boolean type/value, hash mismatch, or non-PASS field blocks Node 2C.
 
 ---
 
@@ -459,22 +463,44 @@ def _apply_cap_stage(
 ) -> tuple[tuple[int, ...], tuple[bool, ...]]: ...
 ```
 
-`_validate_allocation_inputs` must perform all checks before sorting or arithmetic:
+`_validate_allocation_inputs` must perform every semantic check before
+arithmetic. Only validated canonical sort-key components may reach sorting:
 
-1. Require an exact-base `tuple`, every element to be exactly `TeamEvidenceAggregationRecord`, and an exact `TeamEvidenceAggregationConfig`; reject bools, subclasses, mocks, duck types, and constructor-bypassed malformed values.
+1. Require an exact-base `tuple`, every element to be exactly `TeamEvidenceAggregationRecord`, and an exact `TeamEvidenceAggregationConfig`; reject bools, subclasses, mocks, and duck types.
 2. Revalidate `paper_only is True`, `report_only is True`, and `readonly is True` on the config, every record, and every nested lineage/capture/evidence/assessment object used by the function.
 3. Require `maximum_records` to be exact `int`, not `bool`, in `1..128`; require `len(records) <= maximum_records` and `len(records) <= 128`.
 4. Require both group caps to be exact finite base `Decimal`, raw-bounded in `[0, 1]`, already canonical fixed-six, and unsigned when zero. Require every allocation-input requested weight to be exact finite base `Decimal`, raw-bounded in `(0, 1]`, and already canonical fixed-six. Zero requested weights are structurally valid in Node 2A but are excluded by Node 2C before this function and are invalid at this direct allocation boundary. Reject before conversion rather than rounding or clipping.
-5. Require every canonical-key component to have its Node 2A exact scalar type and require unique canonical record keys. Revalidate each assessment's `independence_key` and `correlation_key` as exact base strings satisfying the complete Node 2A canonical-identifier syntax and 160-byte bound before either key reaches grouping; implement this without an additional import. Return the canonically sorted tuple.
+5. In original input order, require every canonical record-key component to have its Node 2A exact canonical scalar representation, including UTC-identity `captured_at`. Revalidate each assessment's `independence_key` and `correlation_key` as exact base strings satisfying the complete Node 2A canonical-identifier syntax and 160-byte bound before either key reaches grouping; implement this without an additional import. Sort only after these fields are safe, then require unique canonical record keys.
+6. After the targeted resource, Decimal, hard-flag, and sort-key checks above, reconstruct the config and every canonically sorted record through their exact public constructors. Compare supplied and reconstructed values using the representation-sensitive equality below. Map reconstruction failure or inequality to the exact `config must be canonical` or canonical-sorted `records[index] must be canonical` error. Return the canonically sorted tuple.
 
-Use these exact stable `ValueError` descriptions and assert them with escaped exact matches in negative tests. Indexed field paths use the canonical sorted index after tuple/type validation:
+Exact type and hard-flag checks are not sufficient for constructor-bypassed
+instances. Reconstruct the config and every record through their exact public
+constructors, then compare the supplied and reconstructed values recursively
+with Node 2A-equivalent canonical equality: exact runtime type;
+`Decimal.as_tuple()` equality; datetime value equality plus identical UTC
+`tzinfo`; tuple element recursion; and slotted public-dataclass field
+recursion. Reject before arithmetic when reconstruction fails or
+canonical equality differs. This catches wrong Decimal exponents, non-UTC
+datetime representations, unsorted tuples, malformed nested exact types, and
+other bypassed noncanonical state without importing Node 2A private helpers.
+
+Use these exact stable `ValueError` descriptions and assert them with escaped
+exact matches in negative tests. Exact element-type and sort-key-component
+errors use the original input index because canonical order is not yet safe.
+In particular, `records[index] must be exactly
+TeamEvidenceAggregationRecord` always reports the original tuple position;
+pre-sort sort-key canonical failures use `records[index] must be canonical` at
+that original input index. All post-sort canonical-record errors use the same
+message at the canonical sorted index:
 
 ```text
 records must be an exact tuple
 config must be exactly TeamEvidenceAggregationConfig
+config must be canonical
 config.maximum_records must be an exact int in 1..128
 records exceeds config.maximum_records
 records[index] must be exactly TeamEvidenceAggregationRecord
+records[index] must be canonical
 records contains duplicate canonical record key
 field_path must preserve paper_only=True, report_only=True, readonly=True
 field_path must be an exact finite canonical fixed-six Decimal in [0, 1]
@@ -574,9 +600,16 @@ def build_team_evidence_requirement_coverage(
 - Exact candidate edge key: `(requirement_id, source_lineage_id, evidence_revision_id, assessment_revision_id, capture_id)`.
 - Exact objective: maximize `(blocked_assignment_count, watch_assignment_count)` lexicographically, then select the lexicographically smallest sorted edge tuple at that vector.
 
+The objective maximizes assignment counts inside each severity, not the number
+of fully satisfied requirements. When total blocked demand is infeasible, the
+lexical optimum may assign a scarce edge partially to a high-demand blocked
+requirement even when another blocked requirement could be fully satisfied.
+That is the approved deterministic policy: both outcomes remain blocked, and
+coverage preserves the exact partial counts.
+
 - [ ] **Step 1: Write the complete failing witness, oracle, and child-scope test module**
 
-Repeat the deterministic Node 2A fixture constructors locally so this test file is independently executable. Use requested weight `0.010000`, caps `1.000000`, and unique correlation keys in matching tests unless a test explicitly needs a cap-zero row. Every configured requirement uses an exact positive `minimum_witness_count`, exact fixed-six `minimum_effective_weight`, and explicit `unmet_status` of `"blocked"` or `"watch"`.
+Repeat the deterministic Node 2A fixture constructors locally so this test file is independently executable. Use requested weight `0.010000`, caps `1.000000`, and unique correlation keys in matching tests unless a test explicitly needs a cap-zero row. Every configured requirement uses an exact positive `minimum_witness_count`, exact fixed-six `minimum_effective_weight`, and explicit `unmet_status` of `"blocked"` or `"watch"`. The default fixture threshold is positive; the required zero-threshold test below supplies exact `Decimal("0.000000")` explicitly.
 
 Create these exact public-behavior tests:
 
@@ -585,6 +618,12 @@ def test_witness_threshold_is_inclusive_and_rows_are_sorted_for_every_requiremen
     # Effective weight exactly equals minimum_effective_weight.
     # Assert it is a candidate, coverage IDs are sorted, all configured scalar fields are preserved,
     # and a zero-candidate requirement emits assigned_witness_count=0, witnesses=(), satisfied=False.
+    pass
+
+def test_zero_minimum_effective_weight_threshold_accepts_only_positive_effective_rows() -> None:
+    # Configure minimum_effective_weight=0.000000. Supply one positive-effective row and one row
+    # exhausted to exact 0.000000. Assert only the positive row becomes a witness and its exact
+    # effective weight is preserved; zero-effective rows never create candidate edges.
     pass
 
 def test_witness_enforces_evidence_assignment_and_requirement_independence_capacities() -> None:
@@ -612,6 +651,12 @@ def test_severity_optimum_uses_the_lexically_smallest_edge_set() -> None:
     # Assert exact matching requirement-a/evidence-a and requirement-b/evidence-b.
     pass
 
+def test_assignment_objective_does_not_maximize_fully_satisfied_requirements() -> None:
+    # One evidence with capacity 1 can serve blocked requirement-a with demand 2 or blocked
+    # requirement-b with demand 1. Both choices have objective (1, 0). Assert the lexical optimum
+    # assigns requirement-a, leaving both requirements unsatisfied, and preserves exact partial counts.
+    pass
+
 def test_witness_recomputes_and_requires_the_exact_canonical_allocation(monkeypatch: pytest.MonkeyPatch) -> None:
     # Spy on the module-local allocate_team_evidence_weights binding and assert one call with the exact
     # allocation_input_records object and config. Reject missing, duplicate, extra, reordered, or altered rows.
@@ -633,6 +678,12 @@ def test_membership_count_deduplicates_repeated_evidence_revision_projections() 
     # configured requirement IDs. Set each 0.010000 effective weight below the 0.020000 thresholds.
     # Assert the distinct-revision membership count is exactly 32 * 32 == 1024 rather than 2048,
     # the call succeeds, and all 32 coverage rows have zero candidates/witnesses.
+    pass
+
+def test_witness_assignment_capacity_is_per_record_join_not_evidence_revision() -> None:
+    # Represent one evidence_revision_id with two assessment records carrying distinct independence
+    # keys and positive effective weights. With per-record capacity 1 and requirement demand 2,
+    # assert both records are assigned despite sharing the evidence revision identity.
     pass
 
 def test_33_by_32_threshold_filtered_memberships_fail_before_recomputation_or_candidates(
@@ -821,14 +872,15 @@ def _build_candidate_edges(
 
 `_validate_witness_inputs` must execute this exact order:
 
-1. Require exact tuples and exact Node 2A record/allocation/config/requirement types with all hard flags exactly true.
+1. Require exact record/allocation tuples, an exact config, and exact Node 2A record/allocation element types with all applicable hard flags exactly true. Wrong element types fail with their dedicated exact-type messages below before any constructor call.
 2. Revalidate the five config resource ceilings as positive exact ints, reject `bool`, and enforce their absolute maxima `32`, `128`, `32`, `1024`, and `256` before collection work.
-3. Require canonical unique sorted requirements and enforce `len(requirements) <= maximum_requirements`.
-4. Before allocation recomputation or candidate generation, deduplicate evidence revisions by exact `evidence_revision_id`. Every repeated ID must carry an exactly equal `TeamEvidenceRevision` projection, including the same digest and all owned fields. Sum `len(evidence_revision.requirement_ids)` once per distinct exact projection, incrementally, and require the sum to be no greater than both `config.maximum_requirement_memberships` and absolute `1024`.
-5. Recompute `canonical_allocations = allocate_team_evidence_weights(allocation_input_records, config=config)` before candidate generation.
-6. Require caller `allocations == canonical_allocations` exactly. Tuple order, identity, fields, flags, and values all participate; missing, extra, duplicate, reordered, or altered rows fail.
-7. Join each canonical record and allocation exactly by the four-field join key. Require one-to-one key equality and require allocation independence key, correlation key, and requested weight to equal the assessment fields.
-8. Preserve the complete allocation-input tuple. Do not reduce it to positive rows before recomputation or equality validation.
+3. Require `config.requirements` to be an exact tuple of exact requirements with exact hard flags, require canonical unique sorted requirement IDs, and enforce `len(requirements) <= maximum_requirements`. These resource and structure checks intentionally precede config reconstruction so their dedicated stable errors remain reachable.
+4. Reconstruct every received config, requirement, record, and allocation through its exact public constructor and compare recursively with the same representation-sensitive canonical equality required by Task 1. Map reconstruction failure or inequality to the corresponding exact canonical error below. Reject constructor-bypassed wrong Decimal exponents, non-UTC datetime representations, unsorted nested tuples, malformed exact scalar fields, or altered nested values before membership counting, recomputation, equality, arithmetic, or graph work.
+5. Before allocation recomputation or candidate generation, deduplicate evidence revisions by exact `evidence_revision_id`. Every repeated ID must carry an exactly equal `TeamEvidenceRevision` projection, including the same digest and all owned fields. Sum `len(evidence_revision.requirement_ids)` once per distinct exact projection, incrementally, and require the sum to be no greater than both `config.maximum_requirement_memberships` and absolute `1024`. Both bounds are inclusive: an exact total of `1024` is valid when the configured bound is at least `1024`; raise only when the next incremental total is strictly greater than either bound.
+6. Recompute `canonical_allocations = allocate_team_evidence_weights(allocation_input_records, config=config)` before candidate generation.
+7. Require caller `allocations == canonical_allocations` exactly. Tuple order, identity, fields, flags, and values all participate; missing, extra, duplicate, reordered, or altered rows fail.
+8. Join each canonical record and allocation exactly by the four-field join key. Require one-to-one key equality and require allocation independence key, correlation key, and requested weight to equal the assessment fields.
+9. Preserve the complete allocation-input tuple. Do not reduce it to positive rows before recomputation or equality validation.
 
 Use these exact stable `ValueError` descriptions and assert them with escaped exact matches in negative tests:
 
@@ -836,6 +888,14 @@ Use these exact stable `ValueError` descriptions and assert them with escaped ex
 allocation_input_records must be an exact tuple
 allocations must be an exact tuple
 config must be exactly TeamEvidenceAggregationConfig
+allocation_input_records[index] must be exactly TeamEvidenceAggregationRecord
+allocations[index] must be exactly TeamEvidenceWeightAllocation
+config.requirements[index] must be exactly TeamEvidenceRequirement
+field_path must preserve paper_only=True, report_only=True, readonly=True
+config must be canonical
+config.requirements[index] must be canonical
+allocation_input_records[index] must be canonical
+allocations[index] must be canonical
 config.resource_field must be an exact int within its implementation maximum
 config.requirements must contain exact unique requirements sorted by requirement_id
 repeated evidence revision identity must have one exact projection
@@ -910,6 +970,13 @@ source
   -> blocked/watch severity node           remaining requirement demand
   -> sink                                  exact remaining severity target
 ```
+
+Despite the historical configuration-field name
+`max_requirement_assignments_per_evidence`, the capacity is per exact
+four-field record join. Two accepted assessment records sharing an
+`evidence_revision_id` therefore receive independent capacities. The direct
+regression above fixes this behavior; the small-graph oracle continues to model
+one capacity per record node and is not evidence-revision-capacity coverage.
 
 Enforce the two severity-to-sink edges with lower bound equal to upper bound equal to the respective remaining target. Convert this bounded flow to a feasible circulation exactly:
 
@@ -1003,7 +1070,17 @@ Expected outcome: the literal staged-path equality check passes, no matched secr
 - Consumes: the two focused implementation commits above and immutable `NODE_BASE`/Node 2A handoff values.
 - Produces: one fully gated, reviewed, clean committed range pushed non-force to `origin/main`.
 
-Run the preflight and Task 3 Steps 1-6 in one coordinator shell. A review-fix
+Run the preflight and Task 3 Steps 1-6 in one persistent coordinator shell
+inside a named `tmux` session using `bash --noprofile --norc`; executing one
+shell per fenced block is forbidden. Require `test -n "${TMUX:-}"` before
+preflight and do not terminate the session until the outgoing receipt has been
+published and independently verified. If that shell or tmux session is lost
+after the push begins and before receipt publication completes, do not rerun
+preflight against the moved remote base; stop with a hard manual-publication
+classification requirement. This hard stop applies only when the accepted
+process state is lost. While the same coordinator shell remains alive,
+transient receipt-only remote-observation failures retry every five seconds
+without terminating that shell or attempting another push. A review-fix
 commit invalidates every Task 3 marker; after such a commit, terminate that
 shell, start a fresh coordinator shell, rerun the immutable preflight, and
 repeat Task 3 from Step 1. No marker from an earlier `HEAD` may be reused.
@@ -1012,6 +1089,7 @@ repeat Task 3 from Step 1. No marker from an earlier `HEAD` may be reused.
 
 ```bash
 set -euo pipefail
+test -n "${TMUX:-}"
 : "${NODE_BASE:?NODE_BASE must remain exported from preflight}"
 : "${NODE2A_PREREQ_SHA:?NODE2A_PREREQ_SHA must remain exported from preflight}"
 : "${NODE2A_PASS_RECEIPT_PATH:?NODE2A_PASS_RECEIPT_PATH must remain exported from preflight}"
@@ -1022,16 +1100,8 @@ test "$(type -t validate_node2a_pass_receipt)" = function
 NODE2A_RECEIPT_EVIDENCE="$(validate_node2a_pass_receipt)"
 test "$NODE2A_RECEIPT_EVIDENCE" = "$INITIAL_NODE2A_RECEIPT_EVIDENCE"
 
-NODE2A_PREREQ_PATHS=(
-  src/polymarket_alpha_lab/team_evidence_aggregation_codec.py
-  src/polymarket_alpha_lab/team_evidence_aggregation_temporal.py
-  src/polymarket_alpha_lab/team_evidence_aggregation_types.py
-  tests/test_team_evidence_aggregation_codec.py
-  tests/test_team_evidence_aggregation_temporal.py
-  tests/test_team_evidence_aggregation_types.py
-)
-test "$(printf '%s\n' "${NODE2A_PREREQ_PATHS[@]}" | LC_ALL=C sort)" = "$(printf '%s\n' "${NODE2A_PREREQ_PATHS[@]}")"
-readonly -a NODE2A_PREREQ_PATHS
+declare -p NODE2A_PREREQ_PATHS 2>/dev/null | rg -q '^declare -ar NODE2A_PREREQ_PATHS='
+test "$(printf '%s\n' "${NODE2A_PREREQ_PATHS[@]}")" = $'src/polymarket_alpha_lab/team_evidence_aggregation_codec.py\nsrc/polymarket_alpha_lab/team_evidence_aggregation_temporal.py\nsrc/polymarket_alpha_lab/team_evidence_aggregation_types.py\ntests/test_team_evidence_aggregation_codec.py\ntests/test_team_evidence_aggregation_temporal.py\ntests/test_team_evidence_aggregation_types.py'
 
 git cat-file -e "$NODE2A_PREREQ_SHA^{commit}"
 git merge-base --is-ancestor "$NODE2A_PREREQ_SHA" "$NODE_BASE"
@@ -1280,20 +1350,14 @@ test -z "${ACCEPTED_REVIEW_HEAD+x}"
 test "$(type -t validate_node2a_pass_receipt)" = function
 command -v claude >/dev/null
 command -v jq >/dev/null
+command -v tar >/dev/null
 command -v timeout >/dev/null
 
 NODE2A_RECEIPT_EVIDENCE="$(validate_node2a_pass_receipt)"
 test "$NODE2A_RECEIPT_EVIDENCE" = "$INITIAL_NODE2A_RECEIPT_EVIDENCE"
 
-NODE2A_PREREQ_PATHS=(
-  src/polymarket_alpha_lab/team_evidence_aggregation_codec.py
-  src/polymarket_alpha_lab/team_evidence_aggregation_temporal.py
-  src/polymarket_alpha_lab/team_evidence_aggregation_types.py
-  tests/test_team_evidence_aggregation_codec.py
-  tests/test_team_evidence_aggregation_temporal.py
-  tests/test_team_evidence_aggregation_types.py
-)
-readonly -a NODE2A_PREREQ_PATHS
+declare -p NODE2A_PREREQ_PATHS 2>/dev/null | rg -q '^declare -ar NODE2A_PREREQ_PATHS='
+test "$(printf '%s\n' "${NODE2A_PREREQ_PATHS[@]}")" = $'src/polymarket_alpha_lab/team_evidence_aggregation_codec.py\nsrc/polymarket_alpha_lab/team_evidence_aggregation_temporal.py\nsrc/polymarket_alpha_lab/team_evidence_aggregation_types.py\ntests/test_team_evidence_aggregation_codec.py\ntests/test_team_evidence_aggregation_temporal.py\ntests/test_team_evidence_aggregation_types.py'
 git diff --quiet "$NODE2A_PREREQ_SHA..$NODE_BASE" -- "${NODE2A_PREREQ_PATHS[@]}"
 
 EXPECTED_NODE2B_PATHS=$'src/polymarket_alpha_lab/team_evidence_aggregation_allocation.py\nsrc/polymarket_alpha_lab/team_evidence_aggregation_witness.py\ntests/test_team_evidence_aggregation_allocation.py\ntests/test_team_evidence_aggregation_witness.py'
@@ -1307,20 +1371,28 @@ test -z "$(git status --porcelain=v1 --untracked-files=all)"
 
 REVIEW_TMP_DIR="$(mktemp -d /home/ubuntu/test-sandbox/tmp/node2b-claude-review.XXXXXX)"
 readonly REVIEW_HEAD REVIEW_TMP_DIR
+REVIEW_SNAPSHOT_DIR="$REVIEW_TMP_DIR/snapshot"
 REVIEW_PROMPT_PATH="$REVIEW_TMP_DIR/prompt.txt"
 REVIEW_STREAM_PATH="$REVIEW_TMP_DIR/stream.jsonl"
 REVIEW_STDERR_PATH="$REVIEW_TMP_DIR/stderr.txt"
 REVIEW_REPORT_PATH="$REVIEW_TMP_DIR/report.md"
-readonly REVIEW_PROMPT_PATH REVIEW_STREAM_PATH REVIEW_STDERR_PATH REVIEW_REPORT_PATH
+readonly REVIEW_SNAPSHOT_DIR REVIEW_PROMPT_PATH REVIEW_STREAM_PATH REVIEW_STDERR_PATH REVIEW_REPORT_PATH
 
 cleanup_node2b_review_tmp() {
+  chmod -R u+w -- "$REVIEW_SNAPSHOT_DIR" 2>/dev/null || true
   rm -rf -- "$REVIEW_TMP_DIR"
 }
 trap cleanup_node2b_review_tmp EXIT
 
+mkdir -- "$REVIEW_SNAPSHOT_DIR"
+git archive "$REVIEW_HEAD" | tar -x -C "$REVIEW_SNAPSHOT_DIR"
+chmod -R a-w -- "$REVIEW_SNAPSHOT_DIR"
+test ! -w "$REVIEW_SNAPSHOT_DIR"
+
 {
   printf '%s\n' \
     'Read-only Node 2B full-range review. Do not modify, create, or delete files.' \
+    'Your current working directory is a read-only git-archive snapshot of REVIEW_HEAD. Read only this snapshot; never inspect the mutable implementation worktree.' \
     'Fast mode is forbidden.' \
     "NODE_BASE=$NODE_BASE" \
     "REVIEW_HEAD=$REVIEW_HEAD" \
@@ -1347,23 +1419,27 @@ trap cleanup_node2b_review_tmp EXIT
 } > "$REVIEW_PROMPT_PATH"
 
 set +e
-timeout --signal=TERM --kill-after=10s 330s \
-  claude --print \
-    --input-format text \
-    --output-format stream-json \
-    --include-partial-messages \
-    --verbose \
-    --bare \
-    --safe-mode \
-    --model claude-opus-4-8 \
-    --effort max \
-    --tools Read,Glob,Grep \
-    --permission-mode dontAsk \
-    --no-session-persistence \
-    --system-prompt 'You are a read-only senior engineering reviewer. Use only Read, Glob, and Grep. Return findings first and the exact required verdict. Do not modify, create, or delete files.' \
-    < "$REVIEW_PROMPT_PATH" \
-    > "$REVIEW_STREAM_PATH" \
-    2> "$REVIEW_STDERR_PATH"
+(
+  set -e
+  cd -- "$REVIEW_SNAPSHOT_DIR"
+  timeout --signal=TERM --kill-after=10s 330s \
+    claude --print \
+      --input-format text \
+      --output-format stream-json \
+      --include-partial-messages \
+      --verbose \
+      --bare \
+      --safe-mode \
+      --model claude-opus-4-8 \
+      --effort max \
+      --tools Read,Glob,Grep \
+      --permission-mode dontAsk \
+      --no-session-persistence \
+      --system-prompt 'You are a read-only senior engineering reviewer. Use only Read, Glob, and Grep inside the immutable current-directory snapshot. Return findings first and the exact required verdict. Do not modify, create, or delete files.' \
+      < "$REVIEW_PROMPT_PATH" \
+      > "$REVIEW_STREAM_PATH" \
+      2> "$REVIEW_STDERR_PATH"
+)
 REVIEW_STATUS=$?
 set -e
 
@@ -1743,11 +1819,17 @@ test -z "$(git status --porcelain=v1 --untracked-files=all)"
 git diff --quiet
 git diff --cached --quiet
 
-if ! RECEIPT_REMOTE_SHA="$(observe_remote_main)"; then
-  printf 'receipt-only remote observation is unstable; no receipt was created.\n' >&2
-  exit 74
-fi
-test "$RECEIPT_REMOTE_SHA" = "$NODE2B_PREREQ_SHA"
+while true; do
+  if RECEIPT_REMOTE_SHA="$(observe_remote_main)"; then
+    if [ "$RECEIPT_REMOTE_SHA" = "$NODE2B_PREREQ_SHA" ]; then
+      break
+    fi
+    printf 'receipt-only remote observation diverged from the accepted HEAD; retaining the coordinator shell and creating no receipt.\n' >&2
+  else
+    printf 'receipt-only remote observation is unstable; retaining the coordinator shell and creating no receipt.\n' >&2
+  fi
+  sleep 5
+done
 
 export REPO_ROOT CONFIRMED_REMOTE_MAIN_SHA NODE2B_PREREQ_SHA NODE2B_PASS_RECEIPT_PATH \
   ACCEPTED_REVIEW_HEAD ACCEPTED_REVIEW_MODEL ACCEPTED_REVIEW_EFFORT ACCEPTED_REVIEW_READ_ONLY \
