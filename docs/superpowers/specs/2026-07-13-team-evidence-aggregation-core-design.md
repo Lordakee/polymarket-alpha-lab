@@ -553,9 +553,21 @@ maximum_witness_edges <= 256
 
 The sum of `requirement_ids` lengths across distinct evidence-revision
 projections must not exceed `maximum_requirement_memberships` or the absolute
-`1024` limit. These hard bounds constrain canonicalization and graph work even
-when a hostile caller supplies permissive configuration values; they are
-resource-safety limits, not BTC evidence policy.
+`1024` limit. At the witness boundary, each raw `requirement_ids` value must
+also be an exact tuple whose individual length does not exceed either of those
+aggregate ceilings before any record reconstruction or element traversal. The
+per-tuple check is a cheap necessary resource preflight; the distinct-revision
+sum remains the authoritative aggregate check.
+
+At the pure Node 2B direct-call boundary,
+`max_requirement_assignments_per_evidence` is not a requirement-membership
+ceiling and is used only as the per-record witness-flow capacity defined below.
+The Node 2A aggregate-input validator separately retains its historical use of
+that same configuration field as the per-revision `requirement_ids` tuple
+bound. In both boundaries, the distinct-membership and edge bounds constrain
+canonicalization and graph work even when a hostile caller supplies permissive
+configuration values; they are resource-safety limits, not BTC evidence
+policy.
 
 Tests use conspicuously non-BTC example bounds, such as `0.110000` and
 `0.890000`, to prove the core obeys supplied values instead of embedding the
@@ -1230,14 +1242,101 @@ def build_team_evidence_requirement_coverage(
 ) -> tuple[TeamEvidenceRequirementCoverage, ...]: ...
 ```
 
-The witness builder first recomputes
+### Resource-first witness validation
+
+The public witness boundary treats every argument and dataclass slot as
+untrusted even when the outer object has an exact public type. It performs the
+following bounded preflight in this exact order, before canonical
+reconstruction, unsafe sorting/hashing/equality, generic
+`Decimal.as_tuple()`, allocation recomputation, candidate generation, or graph
+construction:
+
+1. Require exact base tuples for `allocation_input_records` and `allocations`
+   and exact `TeamEvidenceAggregationConfig` for `config`. No tuple element is
+   visited before all three top-level type checks pass.
+2. Read the five resource slots from the exact config and require exact base
+   `int` values in their documented positive implementation ranges. Validate
+   the config hard flags, then use only exact-tuple `len` calls to require first
+   that records are at most `min(config.maximum_records, 128)`, and next that
+   allocations are independently at most that bound and have the same length
+   as records. Then require `config.requirements` to be an exact tuple and at
+   most `min(config.maximum_requirements, 32)`. None of these checks iterates or
+   reconstructs an element.
+3. Within those established bounds, require every record, allocation, and
+   requirement element to have its exact documented dataclass type. Require
+   all four nested layers of every record to have their exact documented types
+   before validating any record/layer, allocation, or requirement hard flag by
+   identity with `True`. Slot access on those exact slotted dataclasses is
+   permitted, but no caller-controlled comparison, ordering, hashing, iterator,
+   timezone hook, or representation method is.
+4. For every raw record, require
+   `record.evidence_revision.requirement_ids` to be an exact tuple and check
+   its length against both `config.maximum_requirement_memberships` and `1024`
+   before visiting any requirement ID or reconstructing any record. After that
+   O(1) length gate, visit at most 1024 members and require each to be an exact
+   base string in the 1..160 representation envelope; this prevents nested
+   tuple recursion or caller-defined member behavior. This is a per-raw-
+   projection resource preflight only; it does not use
+   `max_requirement_assignments_per_evidence` and does not replace the later
+   deduplicated aggregate-membership check.
+5. Preflight every scalar representation across the entire bounded input before
+   reconstructing any element. Exact strings have a cheap 160-code-point
+   envelope before UTF-8 encoding or canonical-ID matching. An exact-base
+   Decimal must be finite, share the fixed-six quantum through the quiet
+   `same_quantum(Decimal("0.000001"))` operation, and have an adjusted exponent
+   bounded by the 64-digit local context before it can reach `as_tuple`,
+   quantization, comparison, or a constructor. An exact-base `datetime` must
+   have `tzinfo is timezone.utc` before any datetime comparison or constructor.
+   An exact tuple occupying a scalar slot, and all other wrong scalar types, are
+   carried only by identity through this callback-free representation walk;
+   tuple members are traversed here only for already bounded, schema-authorized
+   tuple slots. The existing exact constructors then reject wrong scalar types
+   without invoking a caller-defined equality, ordering, representation,
+   timezone, or iterator hook. Those constructors retain the authoritative
+   field-specific ID/digest/status, Decimal range and unsigned-zero checks after
+   the representation envelope has made that work bounded.
+6. After the representation walk, hash only the already exact-base,
+   160-code-point-bounded `evidence_revision_id` strings. Track the maximum raw
+   membership-tuple length observed for each ID, increment the distinct-ID sum
+   by only that maximum's increase, and fail at either aggregate ceiling before
+   reconstruction. Then canonically reconstruct config requirements, records,
+   allocations, and config; compare canonical representations; sort canonical
+   scalar values; and require every repeated evidence-revision ID and every
+   repeated assessment-revision ID to carry one exact projection before
+   allocation recomputation. The assessment check prevents one immutable
+   assessment identity from forking its independence/correlation projection
+   across multiple record joins. For inputs that survive projection validation,
+   the bounded raw aggregate is the same authoritative
+   distinct-revision membership sum; no second aggregate traversal is needed.
+
+`minimum_witness_count` is the deliberate exception to scalar-size bounding:
+the Node 2A contract permits an arbitrarily large positive exact base `int`,
+the witness output preserves it exactly, and matching clamps every derived
+demand, objective bound, loop, and graph capacity to candidate degree or the
+256-edge ceiling before arithmetic work. The representation walk carries that
+exact integer only by object identity; it never converts it to text, hashes it,
+or sizes a graph from its bit length.
+
+Thus constructor-bypassed objects cannot trigger a dataclass constructor,
+Decimal representation operation, timezone callback, user-defined dunder, or
+downstream allocation/graph callback before cheap cardinality and exact-leaf
+validation. The preflight is fail-closed: `AttributeError`, `TypeError`,
+Decimal signaling/invalid-operation conditions, and object representations do
+not escape the stable public `ValueError` mapping specified below.
+
+After that validation, the witness builder recomputes
 `allocate_team_evidence_weights(allocation_input_records, config=config)` and
 requires the caller-supplied allocation tuple to equal that canonical result
-exactly. The record argument is the complete temporally eligible, current,
-canonical, positive-requested-weight tuple originally passed to allocation,
-not its post-cap positive-effective subset. The builder rejects missing,
-duplicate, extra, reordered, or altered allocation rows before candidate
-generation. The exact record/allocation join key is:
+exactly. Under the Node 2C production caller contract, the record argument is
+the complete temporally eligible, selected-current, canonical-capture,
+positive-requested-weight tuple originally passed to allocation, not its
+post-cap positive-effective subset. Those selection, capture, and temporal
+properties are established by Node 2C before the call; the pure public witness
+boundary neither derives nor validates them and also supports structurally
+valid bounded direct calls that do not represent a Node 2C reduction. In both
+call modes, the builder rejects missing, duplicate, extra, reordered, or
+altered allocation rows before candidate generation. The exact
+record/allocation join key is:
 
 ```text
 (source_lineage_id, capture_id, evidence_revision_id, assessment_revision_id)
@@ -1252,12 +1351,17 @@ requirement `r` exists exactly when:
 - `r.requirement_id` appears in `e.evidence_revision.requirement_ids`; and
 - `a.effective_weight >= r.minimum_effective_weight`.
 
-Every requirement ID on an `included` positive-effective arithmetic record
-must exist in config. Historical non-current records and current records whose
-allocation is exhausted to zero may retain retired requirement IDs because
-they remain diagnostic only and create no witness candidate edges. The
-candidate edge count is checked against `maximum_witness_edges` before graph
-construction.
+At the pure direct-call boundary, every requirement ID on a joined
+positive-effective row must exist in config; the witness builder does not
+classify a row as historical, current, selected, canonical, or temporally
+eligible. A joined zero-effective row may retain a retired requirement ID
+because it creates no candidate edge. Under the Node 2C production caller
+contract, positive-effective rows correspond to `included` arithmetic records,
+zero-effective rows correspond to current cap-exhausted diagnostics, and
+historical or non-current records never enter the witness call at all. They may
+retain retired IDs elsewhere in the diagnostic input without weakening the
+pure witness rule. The candidate edge count is checked against
+`maximum_witness_edges` before graph construction.
 
 ### B-matching network
 
@@ -1283,10 +1387,17 @@ Multiple assessment records carrying the same exact evidence-revision
 projection each receive independent capacity when passed directly to this
 public API. Production Node 2C current-selection semantics provide one selected
 record per lineage for an evaluation, but the pure witness function preserves
-its wider direct-call contract. The same configuration field separately bounds
-the requirement-ID tuple on each distinct evidence-revision projection. A
-record cannot evade either capacity by listing the same requirement twice
-because requirement tuples are unique.
+its wider direct-call contract. Within that pure direct-call boundary,
+`max_requirement_assignments_per_evidence` is only the per-record flow capacity;
+the child is bounded instead by exact aggregate-membership and candidate-edge
+ceilings and does not reapply the Node 2A tuple check. The Node 2A aggregate
+boundary separately uses the same historical field as its per-revision tuple
+bound. A direct-call record may therefore list more distinct requirements than
+its assignment capacity while remaining within the aggregate membership
+ceilings, even though that fixture would fail the narrower Node 2A aggregate
+boundary; matching may select no more than the per-record flow capacity. A
+record cannot list the same requirement twice because requirement tuples are
+unique.
 
 The implementation uses a deterministic standard-library integer max-flow
 algorithm. No graph dependency is added to `pyproject.toml`. A per-requirement
@@ -1734,12 +1845,17 @@ forecast fallback, or default BTC configuration fallback in this core.
 
 Node 2A public validation failures use canonical field or relationship paths
 and stable contract descriptions. The Node 2B and Node 2C plans additionally
-lock the following literal public `ValueError` descriptions. `index`,
+lock the spelling of the following literal public `ValueError` descriptions.
+The two Node 2B catalogs are explicitly non-exhaustive: nested canonical
+allocation recomputation may propagate any stable allocation-boundary error,
+and canonical reconstruction may map a malformed nested field to its stable
+enclosing path. Listing a description here freezes its spelling; omission does
+not authorize an unstable exception or a value-dependent message. `index`,
 `field_path`, and `resource_field` below are placeholders replaced only by the
 canonical sorted index or canonical public field path/name; rejected values and
 object representations are never interpolated.
 
-Allocation failures use exactly:
+Allocation failures include:
 
 ```text
 records must be an exact tuple
@@ -1755,15 +1871,22 @@ records[index].assessment_revision.independence_key must be an exact canonical i
 records[index].assessment_revision.correlation_key must be an exact canonical identifier
 ```
 
-Witness failures use exactly:
+Witness-specific failures include:
 
 ```text
 allocation_input_records must be an exact tuple
 allocations must be an exact tuple
 config must be exactly TeamEvidenceAggregationConfig
 config.resource_field must be an exact int within its implementation maximum
+records exceeds config.maximum_records
+allocation_input_records[index] must be exactly TeamEvidenceAggregationRecord
+allocations[index] must be exactly TeamEvidenceWeightAllocation
 config.requirements must contain exact unique requirements sorted by requirement_id
+config.requirements[index] must be exactly TeamEvidenceRequirement
+field_path must preserve paper_only=True, report_only=True, readonly=True
+field_path must be canonical
 repeated evidence revision identity must have one exact projection
+repeated assessment revision identity must have one exact projection
 distinct evidence revision requirement memberships exceed config.maximum_requirement_memberships or 1024
 allocations must equal canonical recomputation for allocation_input_records
 record/allocation join keys must match exactly
@@ -1774,6 +1897,21 @@ positive-effective requirement ID must exist in config.requirements
 candidate witness edge count exceeds config.maximum_witness_edges
 internal witness matching invariant failed
 ```
+
+Moving validation earlier changes only deterministic precedence when one call
+contains multiple independent defects; it does not create new public error
+descriptions. A record-count overflow maps to `records exceeds
+config.maximum_records`. An allocation length overflow or record/allocation
+length mismatch maps to `allocations must equal canonical recomputation for
+allocation_input_records` without invoking recomputation. An invalid or
+oversized requirements envelope maps to the existing
+`config.requirements must contain exact unique requirements sorted by
+requirement_id` description. A non-tuple raw `requirement_ids` or malformed
+Decimal/datetime/scalar representation maps to `field_path must be canonical`
+at the enclosing config, requirement, record, or allocation path. A raw
+`requirement_ids` tuple over either aggregate membership ceiling maps to the
+existing distinct-membership overflow description. No preflight failure leaks
+an implementation exception or interpolates the rejected value.
 
 The Node 2C result validator uses exactly:
 
@@ -1792,11 +1930,16 @@ order data.
 The five caller-supplied resource ceilings are mandatory and are themselves
 bounded by the non-overridable implementation maxima in the configuration
 contract. Node 2A checks record, requirement, and distinct-revision membership
-counts before expensive graph validation where possible. Node 2B counts
-post-threshold candidate edges incrementally and fails before residual-graph
-construction or max-flow. These layered bounds constrain diagnostic,
-canonicalization, force/forbid, and witness-graph work without embedding BTC
-evidence thresholds in the generic core.
+counts before expensive graph validation where possible. Node 2B checks its
+exact top-level types, hard config resources, all top-level tuple lengths, and
+each raw membership-tuple length before element traversal or reconstruction;
+it completes exact scalar preflight before constructors, generic equality,
+sorting, hashing, or allocation callbacks. It then enforces the deduplicated
+distinct-revision membership sum before allocation recomputation and counts
+post-threshold candidate edges incrementally before residual-graph construction
+or max-flow. These layered bounds constrain diagnostic, canonicalization,
+force/forbid, and witness-graph work without embedding BTC evidence thresholds
+in the generic core.
 
 The whole-node scope test uses these exact normalized import allowlists; every
 unlisted import is rejected:
@@ -1814,7 +1957,7 @@ team_evidence_aggregation_allocation:
   __future__, decimal, typing,
   polymarket_alpha_lab.team_evidence_aggregation_types
 team_evidence_aggregation_witness:
-  __future__, collections, typing,
+  __future__, collections, datetime, decimal, typing,
   polymarket_alpha_lab.team_evidence_aggregation_types,
   polymarket_alpha_lab.team_evidence_aggregation_allocation
 team_evidence_aggregation:
@@ -1971,8 +2114,27 @@ scope guard.
 - input, requirement, and adjacency permutation invariance;
 - exact allocation recomputation, record/allocation join and projection
   mismatch rejection, and edge-resource failure;
-- config-resident requirement IDs enforced for included records while
-  cap-exhausted diagnostic records may retain retired requirement IDs;
+- resource-first precedence for exact top-level tuple/config types, all five
+  hard config resources, bounded record/requirement/allocation lengths, and
+  allocation-length equality before any element traversal or reconstruction;
+- exact raw `requirement_ids` tuples and per-raw-tuple aggregate-ceiling
+  preflight plus exact short-string members before record reconstruction,
+  followed by the deduplicated
+  distinct-revision aggregate check before allocation recomputation;
+- Option B capacity separation: a raw requirement tuple may exceed
+  `max_requirement_assignments_per_evidence` while remaining within membership
+  ceilings, and that field limits only assignments from each exact record join;
+- constructor-bypassed hostile scalar representations proving every exact
+  Decimal is finite, fixed-six, and coefficient-bounded and every exact
+  datetime uses the UTC singleton before constructors, generic `as_tuple`,
+  timezone hooks, sorting/hashing, or monkeypatched downstream callbacks; the
+  constructors then retain exact type/range/unsigned-zero validation and the
+  literal stable `ValueError` mapping;
+- config-resident requirement IDs enforced for positive-effective direct-call
+  rows while zero-effective rows may retain retired requirement IDs; the
+  separate production mapping remains deferred to Node 2C and its own tests;
+- conflicting repeated evidence and assessment revision identities rejected
+  before allocation recomputation, including assessment independence forks;
 - a brute-force small-graph oracle.
 
 The same test module contains Node 2B's child-local AST/import/size gate. Before
