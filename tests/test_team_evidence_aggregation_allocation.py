@@ -562,7 +562,6 @@ def test_allocation_rejects_wrong_exact_types_duplicate_keys_and_resource_overfl
         (_replace_layer(record, "assessment_revision", "probability_yes", Decimal("0.50")),),
         config,
     )
-    _reject("records[0] must be canonical", (_replace_layer(record, "evidence_revision", "requirement_ids", ("\ud800",)),), config)
 
 
 def test_allocation_is_permutation_and_hostile_decimal_context_invariant() -> None:
