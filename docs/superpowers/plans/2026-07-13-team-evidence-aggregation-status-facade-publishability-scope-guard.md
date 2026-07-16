@@ -4,7 +4,7 @@
 
 **Goal:** Build the pure Node 2C reducer that composes the reviewed Node 2A and Node 2B contracts into deterministic diagnostics, capped arithmetic `P(YES)`, requirement coverage, contradiction, readiness, reasons, ready-only publication, and tamper-evident result validation, then enforce the complete six-module Node 2 boundary with one unified scope guard.
 
-**Architecture:** `team_evidence_aggregation.py` enters through both Node 2A canonical-record selectors, evaluates every supplied input record, passes the exact eligible tuple through Node 2B allocation and witness APIs, and materializes one immutable `TeamEvidenceAggregationResult`. The public builder and validator share one private semantic materializer; the validator rematerializes from the exact input and config and compares every field, while the codec remains the sole owner of config/core digest encoding. `tests/test_team_evidence_aggregation_scope.py` parses all six production modules and the package root, enforces the approved import/export and forbidden-surface contract, and applies every individual and aggregate physical-line ceiling.
+**Architecture:** `team_evidence_aggregation.py` enters through both Node 2A canonical-record selectors, evaluates every supplied input record, passes the exact eligible tuple through Node 2B allocation and witness APIs, and materializes one immutable `TeamEvidenceAggregationResult`. The public builder and validator share one private semantic materializer; the validator rematerializes from the exact input and config and compares every field, while the codec remains the sole owner of config/core digest encoding. `tests/test_team_evidence_aggregation_scope.py` parses all six production modules and the package root, enforces the approved module-import/export and forbidden-surface contract, and applies every individual and aggregate physical-line ceiling.
 
 **Tech Stack:** Python 3.12, exact frozen/slotted dataclasses from Node 2A, fixed-six `Decimal` under an isolated `Context(prec=64, rounding=ROUND_HALF_EVEN)`, Node 2A canonical selectors and temporal API, Node 2B largest-remainder allocation and canonical global witness matching, canonical SHA-256 codec helpers, pytest, Python `ast`, CodeGraph, git, and local Claude Code `claude-opus-4-8` at effort `max`.
 
@@ -874,7 +874,7 @@ Run the named tests. Expected: FAIL until the reducer composes the predecessor A
 
 - [ ] **Step 5: Implement the minimal canonical diagnostic/allocation/witness pipeline**
 
-Create `src/polymarket_alpha_lab/team_evidence_aggregation.py` with only the approved imports and literal `__all__`. Use these exact private keys and branch order:
+Create `src/polymarket_alpha_lab/team_evidence_aggregation.py` with only the approved import modules and literal `__all__`. Use these exact private keys and branch order:
 
 ```python
 def _record_key(record: TeamEvidenceAggregationRecord) -> tuple[object, ...]:
@@ -1381,7 +1381,7 @@ TEST_TOTAL_LINE_LIMIT = 4_850
 
 Count exactly with `len(path.read_text(encoding="utf-8").splitlines())`; comments and blank lines count. Assert every individual ceiling, production total `<= 3_500`, test total `<= 4_850`, and this scope file `<= 500`.
 
-- [ ] **Step 2: Encode the exact normalized import allowlists**
+- [ ] **Step 2: Encode the exact normalized module allowlists**
 
 Use this literal mapping:
 
@@ -1403,7 +1403,7 @@ IMPORT_ALLOWLISTS = {
         "polymarket_alpha_lab.team_evidence_aggregation_types",
     },
     "team_evidence_aggregation_witness": {
-        "__future__", "collections", "typing",
+        "__future__", "collections", "datetime", "decimal", "typing",
         "polymarket_alpha_lab.team_evidence_aggregation_types",
         "polymarket_alpha_lab.team_evidence_aggregation_allocation",
     },
@@ -1418,76 +1418,19 @@ IMPORT_ALLOWLISTS = {
 }
 ```
 
-For direct sibling imports, add this member allowlist:
-
-```python
-SIBLING_IMPORT_MEMBER_ALLOWLISTS = {
-    ("team_evidence_aggregation_codec", "polymarket_alpha_lab.team_evidence_aggregation_types"): {
-        "TeamEvidenceAggregationConfig",
-        "TeamEvidenceAggregationInput",
-        "TeamEvidenceAggregationResult",
-    },
-    ("team_evidence_aggregation_temporal", "polymarket_alpha_lab.team_evidence_aggregation_types"): {
-        "TeamEvidenceAggregationConfig",
-        "TeamEvidenceAggregationRecord",
-        "TeamEvidenceTemporalAssessment",
-    },
-    ("team_evidence_aggregation_allocation", "polymarket_alpha_lab.team_evidence_aggregation_types"): {
-        "TeamEvidenceAggregationConfig",
-        "TeamEvidenceAggregationRecord",
-        "TeamEvidenceWeightAllocation",
-    },
-    ("team_evidence_aggregation_witness", "polymarket_alpha_lab.team_evidence_aggregation_types"): {
-        "TeamEvidenceAggregationConfig",
-        "TeamEvidenceAggregationRecord",
-        "TeamEvidenceRequirement",
-        "TeamEvidenceRequirementCoverage",
-        "TeamEvidenceRequirementWitness",
-        "TeamEvidenceWeightAllocation",
-    },
-    ("team_evidence_aggregation_witness", "polymarket_alpha_lab.team_evidence_aggregation_allocation"): {
-        "allocate_team_evidence_weights",
-    },
-    ("team_evidence_aggregation", "polymarket_alpha_lab.team_evidence_aggregation_types"): {
-        "TeamEvidenceAggregationConfig",
-        "TeamEvidenceAggregationInput",
-        "TeamEvidenceAggregationRecord",
-        "TeamEvidenceAggregationResult",
-        "TeamEvidenceContradictionResult",
-        "TeamEvidenceDiagnosticRow",
-        "TeamEvidenceRequirementCoverage",
-        "TeamEvidenceTemporalAssessment",
-        "TeamEvidenceWeightAllocation",
-        "select_team_evidence_canonical_capture_records",
-        "select_team_evidence_canonical_current_records",
-    },
-    ("team_evidence_aggregation", "polymarket_alpha_lab.team_evidence_aggregation_codec"): {
-        "team_evidence_aggregation_config_digest",
-        "team_evidence_aggregation_core_digest",
-        "team_evidence_aggregation_payload",
-        "validate_team_evidence_aggregation_core_digest",
-    },
-    ("team_evidence_aggregation", "polymarket_alpha_lab.team_evidence_aggregation_temporal"): {
-        "assess_team_evidence_temporal",
-    },
-    ("team_evidence_aggregation", "polymarket_alpha_lab.team_evidence_aggregation_allocation"): {
-        "allocate_team_evidence_weights",
-    },
-    ("team_evidence_aggregation", "polymarket_alpha_lab.team_evidence_aggregation_witness"): {
-        "build_team_evidence_requirement_coverage",
-    },
-}
-```
-
-Normalization is exact: each `ast.Import` alias contributes `alias.name`; every
-`ast.ImportFrom` requires `level == 0` and a nonempty `module`, then contributes
-that absolute `module`. Reject every relative import and every normalized module
-not in the module's allowlist. Every `ImportFrom` rejects `*` and a member name
-beginning with `_`. A `polymarket_alpha_lab.team_evidence_aggregation_*`
-sibling must be imported only with `ImportFrom`, with no `asname`, and every
-member must belong to the exact `(consumer, module)` member allowlist above.
-This prevents an allowlisted module from becoming a private-helper or wildcard
-bypass while preserving the legitimate sibling-module strings.
+Normalization is exact and module-only. Each `ast.Import` alias contributes
+`alias.name`. Every `ast.ImportFrom` requires `level == 0` and a nonempty
+`module`, then contributes that absolute `module`; imported member names and
+local aliases do not change the normalized module. Reject every relative import
+and every normalized module not in the consumer module's allowlist. Independently
+reject wildcard syntax in every `ImportFrom`. The gate otherwise enforces no
+second member-name or alias allowlist: it does not force sibling modules to use
+`ImportFrom`, prohibit `asname`, or restrict an allowed module to an exact
+imported-member set. A member is not rejected merely because its spelling begins
+with `_`; this import-gate rule does not authorize Node 2C to consume a
+predecessor private helper, which remains prohibited by the public-interface
+boundary above. Imported members and local aliases remain subject to the
+forbidden-name and forbidden-call scans specified below.
 
 - [ ] **Step 3: Encode all six exact literal `__all__` tuples**
 
@@ -1541,7 +1484,15 @@ PUBLIC_EXPORTS = {
 }
 ```
 
-AST assertions require one direct assignment to `__all__`, an `ast.Tuple` of string constants, exact tuple equality including order, no duplicates, and every exported name defined or imported in that module. Private graph, validation, apportionment, materialization, and serialization helpers must remain absent from `__all__`.
+AST assertions require one direct assignment to `__all__`, an `ast.Tuple` of
+string constants, exact tuple equality including order, and no duplicates. Every
+exported name must have exactly one definition among the direct children of
+`ast.Module.body`, with its documented node kind: `ClassDef` for the sixteen
+public types and `FunctionDef` for every public function. No import, assignment,
+named-expression target, nested or async definition, or other binding may
+satisfy or rebind an exported name; reject every missing, duplicate, rebound, or
+wrong-kind export. Private graph, validation, apportionment, materialization,
+and serialization helpers must remain absent from `__all__`.
 
 - [ ] **Step 4: Write the unified AST, hard-maxima, and package-root tests**
 
@@ -1557,7 +1508,8 @@ test_node_2_has_no_outer_identity_packet_legacy_or_persistence_surface
 
 The unified AST test must reject:
 
-- unlisted and relative imports;
+- unlisted and relative imports, `ImportFrom` nodes with an empty module, and
+  wildcard imports;
 - DB, Supabase, PostgreSQL, SQL, migration, persistence, store, filesystem, JSONL, CSV, cache, temporary-file, network, HTTP, socket, browser, scraper, public-client, external API, CLI, environment, subprocess, process, or logging imports/references;
 - auth, hosted-account, credential, token, private-key, wallet, signing, order, sizing, allocation-to-capital, execution, exchange mutation, and live-trading surfaces, using token-aware AST name/attribute checks so legitimate `correlation_group_weight_cap` does not fail;
 - calls to `open`, `print`, `input`, `eval`, `exec`, `compile`, `__import__`, dynamic import, `datetime.now`, `datetime.utcnow`, `timedelta.total_seconds`, `datetime.timestamp`, randomness, or built-in `hash`;
@@ -1566,30 +1518,52 @@ The unified AST test must reject:
 - embedded `btc`, `bitcoin`, `0.020000`, or `0.980000` production constants;
 - `tea:v1`, `tfr:v1`, `tfe:v1`, forecast-packet construction, legacy projection, decoder, persistence API, or outer replay/run/forecast/evidence identity.
 
+Table-driven snippets exercising the six production-module import gates must
+prove the module-only boundary directly. An allowlisted absolute module imported
+with either `Import` or `ImportFrom` keeps the same normalized module when benign
+imported-member names or local aliases change. Exact-prefix extensions, relative
+forms, empty `ImportFrom.module` values, and wildcards fail. The exact normalized
+module `polymarket_alpha_lab` also fails because it is absent from every
+production-module allowlist. Benign member and alias variants include a
+leading-underscore member spelling and do not create a second allowlist, while
+forbidden semantic identifiers in those same AST positions still fail the scans
+below. These assertions do not govern imports in test modules and are separate
+from the package-root `__init__.py` assertion below, which verifies that the
+documented Node 2 public names are not re-exported there.
+
 Forbidden-name matching is lexical, not substring-based. Normalize identifier
 values from `ast.Name.id`, each `ast.Attribute.attr`,
 `ast.FunctionDef.name`, `ast.AsyncFunctionDef.name`, `ast.ClassDef.name`,
 every `ast.arg.arg`, each non-`None` `ast.keyword.arg`, string-valued
 `ast.ExceptHandler.name`, and every `ast.Global.names`/`ast.Nonlocal.names`
-entry into snake-case and CamelCase components. The unified test also parses
-table-driven synthetic snippets that place one forbidden identifier in every
-one of those AST fields and requires the scanner to reject each snippet. Compare
-whole components or an explicitly forbidden adjacent component sequence. The
-capital-allocation prohibition matches only
+entry, plus every `ast.alias.name` and non-`None` `ast.alias.asname`, into
+snake-case and CamelCase components. The unified test also parses table-driven
+synthetic snippets that place one forbidden identifier in every one of those AST
+fields and requires the scanner to reject each snippet. Compare whole components
+or an explicitly forbidden adjacent component sequence. The capital-allocation
+prohibition matches only
 an explicit `capital_allocation` or `allocation_to_capital` sequence;
 standalone `allocation` remains valid evidence-aggregation terminology.
 Normalized `ast.Import` and `ast.ImportFrom` module strings are governed only by
-the exact import allowlist and must not be fed through the forbidden semantic
+the exact module allowlist and must not be fed through the forbidden semantic
 name scan after that check. For `ast.ImportFrom`, scan every `alias.name` member
 and optional `alias.asname` separately as semantic identifiers; for
 `ast.Import`, scan every optional `alias.asname` separately while retaining
-`alias.name` as the allowlisted module string. Consequently the allowlisted
-sibling modules
+`alias.name` as the allowlisted module string. Imported members and aliases also
+remain inside the ordinary forbidden-call scan; the module-name exemption does
+not exempt calls made through them. Consequently, the allowlisted sibling modules
 `polymarket_alpha_lab.team_evidence_aggregation_types` and
 `polymarket_alpha_lab.team_evidence_aggregation_allocation`, together with
 legitimate domain names such as `TeamEvidenceWeightAllocation` and
 `allocate_team_evidence_weights`, must pass without a false forbidden-name
-finding.
+finding. Table-driven failures must include a forbidden terminal call component
+through both an allowlisted module alias and an imported-member alias, such as
+`import datetime as clock; clock.now()` and
+`from datetime import datetime as clock; clock.utcnow()`. The ordinary lexical
+scan of `ast.Call` targets and their `Name`/`Attribute` components must reject
+both without introducing an import-member allowlist: terminal call components
+`now`, `utcnow`, `timestamp`, and `total_seconds` are forbidden regardless of
+their qualifier.
 
 The dataclass test parses every exported public class in the types module and requires `@final`, `@dataclass(frozen=True, slots=True)`, exact hard-flag fields with literal `True` defaults, and explicit non-subclassability. The config-default test inspects `TeamEvidenceAggregationConfig` and requires no defaults on any policy field; then constructs values above each hard maximum and asserts `ValueError` for `33`, `129`, `33`, `1025`, and `257` respectively, while the exact maxima `32`, `128`, `32`, `1024`, and `256` remain structurally admissible when all other invariants hold. No implementation-max name may appear in any `__all__`.
 
@@ -2054,7 +2028,7 @@ trap cleanup_node2c_review_tmp EXIT
     'Inspect the complete unrestricted NODE_BASE..REVIEW_HEAD patch and exact three-path allowlist printed below.' \
     'Verify both selector identity sets, pair-level selected_current_revision, all thirteen disposition precedence branches, exact allocation/witness data flow, weighted canonical P(YES), contradiction boundaries, blocked > watch > ready, complete exact reasons, ready-only supplied-bound publication, shared private rematerializer, config/core digest validation, and tuple/Decimal-context determinism.' \
     'Verify witnesses preserve the exact five-field candidate-edge order: (requirement_id, source_lineage_id, evidence_revision_id, assessment_revision_id, capture_id), while the separate four-field allocation join remains unchanged.' \
-    'Verify the unified six-module AST/import/export/forbidden-surface/package-root/line-size gate, including the 500-line scope-file ceiling and 4,850 total test-line ceiling.' \
+    'Verify the unified six-module AST/module-import/export/forbidden-surface/package-root/line-size gate, including exact module-only normalization, both absolute import forms, benign member names and aliases without a second member allowlist, witness datetime/decimal permissions, exact-prefix/package-root/relative/empty-module/wildcard rejection, alias-resistant forbidden-name/call scans, direct export ownership, every individual line ceiling, the 500-line scope-file ceiling, and 4,850 total test-line ceiling.' \
     'Verify paper_only=True, report_only=True, readonly=True and absence of persistence, DB, network, CLI, live/auth/account/private-key/wallet/signing/order/execution surfaces.' \
     'Confirm future persistence wording remains local Supabase/Postgres only and requires validate_local_postgres_dsn before any connection, wrapper, adapter, repository, or store construction; this pure child performs no persistence.' \
     'Actual focused/compile/collect/full/CodeGraph/history/range/clean/classification evidence follows; assess every classified path rather than assuming it is acceptable.' \
@@ -2539,7 +2513,9 @@ exact staged allowlist equality: pass
 focused Node 2C tests: pass
 unified six-module/package-root child-local gate: pass
 scope file <= 500 physical lines: pass
+all seven Node 2 test modules satisfy their individual physical-line ceilings: pass
 all seven Node 2 tests <= 4,850 physical lines total: pass
+all six Node 2 production modules satisfy their individual physical-line ceilings: pass
 all six Node 2 production modules <= 3,500 physical lines total: pass
 compileall: pass
 pytest collect-only: pass
