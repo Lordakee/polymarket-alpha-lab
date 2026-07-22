@@ -296,6 +296,26 @@ and exact remote publication before consuming Node 2, just as Node 2A pins the
 already-known Node 1 SHA. This deliberate terminal handoff must not be replaced
 with remote-tip trust or a generic receipt parser.
 
+The closed 19-key `pal.governance-candidate-publication.v1` record attests only
+the reviewed and exactly published two-document governance-amendment commit
+with exact subject `docs: align Node 2C witness ownership governance` and sole
+parent `e31c3951b06f06e995c0c8f6f8fe2f22320a38da`. That commit changes exactly
+`docs/superpowers/plans/2026-07-13-team-evidence-aggregation-status-facade-publishability-scope-guard.md`
+and
+`docs/superpowers/specs/2026-07-13-team-evidence-aggregation-core-design.md`
+under `LC_ALL=C`. The record is inbound authorization for that commit to serve
+as the Node 2C implementation base. It is not a Node 2A/2B child PASS receipt and
+does not attest the Node 2C implementation `GATED_HEAD` or completion. Neither
+its path, payload, nor parser is a Node 3 input, and it cannot satisfy Node 3's
+fixed-predecessor gate. Terminal Node 2C still publishes no third child receipt.
+Node 3 pins the literal accepted Node 2C implementation SHA and separately
+defined accepted-review and exact-publication manifest digests; its validators
+never consume the governance-publication record path or payload.
+Node 3 receives no separately handed governance-publication digest. A
+`governance_candidate_publication_sha256` value nested in either manifest is
+nested audit-provenance continuity only; it cannot select the Node 2C implementation SHA and
+cannot satisfy accepted-review, fixed-predecessor, or exact-publication validation.
+
 ## Core Model
 
 ### Public type conventions
@@ -1793,17 +1813,25 @@ The Node 2C builder performs this exact sequence:
    at evaluation to two-stage allocation. That allocation applies the
    independence-key cap first and the correlation-key cap second; it never
    reverses, merges, or simultaneously optimizes those stages.
-8. Apply stage-one `independence_cap_exhausted` and then stage-two
-   `correlation_cap_exhausted` zero dispositions and finalize the arithmetic
-   universe.
-9. Call `build_team_evidence_requirement_coverage` with the exact allocation-
-   input record tuple from step 7 and the complete canonical allocation tuple.
+8. Immediately after `allocate_team_evidence_weights` returns, call
+   `build_team_evidence_requirement_coverage` with the same allocation-input
+   tuple object passed to the allocator in step 7 and the exact allocation
+   object it returned, preserving both object identities, including when both
+   are empty tuples. Before the witness call succeeds, Node 2C neither inspects
+   nor transforms the allocation return. Node 2B's witness boundary therefore
+   owns allocation-output validation and its deterministic error precedence.
    The witness builder derives the positive-`effective_weight` included subset
    internally before candidate-edge construction and builds one global
    canonical requirement b-matching.
+9. Only after the witness call succeeds may Node 2C read validated allocation
+   rows. A zero at stage one receives `independence_cap_exhausted`; a positive
+   stage-one weight reduced to zero at stage two receives
+   `correlation_cap_exhausted`; and a positive effective weight receives
+   `included`. Finalize the diagnostics and arithmetic universe.
 10. Compute weight totals and diagnostic arithmetic `P(YES)`.
-11. Derive contradiction, requirement state, top-level status, and reason
-    codes with blocked/watch/ready precedence.
+11. Derive contradiction. Use the exact coverage tuple returned in step 8 as
+    the result's authoritative `requirement_coverage` for requirement state,
+    top-level status, and reason codes with blocked/watch/ready precedence.
 12. Populate `publishable_probability_yes` only when ready, applying only the
     supplied publication bounds.
 13. Compute the exact config digest. Instantiate one internal provisional
@@ -2301,14 +2329,18 @@ test run must execute its child-local two-module checks from
 final unified six-module/package-root scope guard. A child cannot defer a
 local import, export, forbidden-surface, or physical-line failure to Node 2C.
 
-Every child review goes directly to local Claude Code using model
-`claude-opus-4-8` with effort `max`; it is read-only, has fast mode off, and
-must inspect the exact child allowlist. The exact final nonblank output line
-must be `VERDICT: PASS`. Empty output, a missing verdict, or any other final
-line fails the gate. If local Claude Code is unavailable, the gate is blocked
-with no fallback reviewer. A child is not a valid dependency until its focused
-tests, full suite, CodeGraph sync, static gates, diff hygiene, required review,
-focused commit, and non-force push all pass.
+Already accepted Node 2A and Node 2B child reviews remain bound to their
+immutable accepted evidence identities, including `review_model`
+`claude-opus-4-8` at effort `max`. The future Node 2C review goes directly to
+local Claude Code using model `claude-fable-5` with effort `max`; it is
+read-only, has fast mode off, and must inspect the exact child allowlist. The
+exact final nonblank output line must be `VERDICT: PASS`. Empty output, a
+missing verdict, or any other final line fails the gate. If local Claude Code
+is unavailable, the gate is blocked with no fallback reviewer. The dependency
+rule must accept each child under the review policy that actually governed its
+immutable accepted evidence. A child is not a valid dependency until its
+focused tests, full suite, CodeGraph sync, static gates, diff hygiene, required
+review, focused commit, and non-force push all pass.
 
 ## Resolved Design Decisions
 
