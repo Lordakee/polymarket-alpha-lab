@@ -31,6 +31,19 @@ reports, test output, and documentation. Reviewers must not modify, create,
 delete, migrate, backfill, mutate databases, mutate exchange state, alter
 account state, handle credentials, or submit/cancel/replace orders.
 
+## Long-Running Review Monitoring
+
+Claude Code review invocations must not be wrapped in a fixed elapsed-time
+timeout. Run long reviews in an inspectable session and check them about every
+30 seconds. At each check, observe process/session liveness and, when available,
+stream growth or event count, stderr or terminal events, CPU, and network
+activity. Elapsed time alone or a quiet interval is not evidence of a stall.
+While the review remains alive and no concrete terminal failure or stall is
+proven, do not interrupt, terminate, restart, duplicate, or replace it, and do
+not route around it; keep waiting and monitoring. Act only on an explicit result
+or error, confirmed process/session exit, concrete auth/permission/provider
+failure, proven stall, or a newer user instruction.
+
 ## Required Review Packet Contents
 
 Every implementation-stage review packet should include:

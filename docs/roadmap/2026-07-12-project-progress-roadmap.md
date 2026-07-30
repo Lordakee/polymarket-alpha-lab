@@ -149,6 +149,17 @@ If local Claude Code is unavailable, the review gate is blocked. There is no
 fallback reviewer under the current project rule unless the user explicitly
 changes the rule.
 
+Claude Code review invocations must not be wrapped in a fixed elapsed-time
+timeout. Run long reviews in an inspectable session and check them about every
+30 seconds. At each check, observe process/session liveness and, when available,
+stream growth or event count, stderr or terminal events, CPU, and network
+activity. Elapsed time alone or a quiet interval is not evidence of a stall.
+While the review remains alive and no concrete terminal failure or stall is
+proven, do not interrupt, terminate, restart, duplicate, or replace it, and do
+not route around it; keep waiting and monitoring. Act only on an explicit result
+or error, confirmed process/session exit, concrete auth/permission/provider
+failure, proven stall, or a newer user instruction.
+
 ## Local Supabase/Postgres Iron Rule
 
 All durable project data must use the local Supabase/Postgres instance on this

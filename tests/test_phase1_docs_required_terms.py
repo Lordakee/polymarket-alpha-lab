@@ -88,6 +88,12 @@ AGENT_POLICY_PATH = Path("AGENTS.md")
 AGENT_CONCURRENCY_PATH = Path(
     "docs/maintenance/phase1-agent-concurrency-and-review-rules.md",
 )
+CLAUDE_REVIEW_MONITORING_PATHS = (
+    AGENT_POLICY_PATH,
+    AGENT_CONCURRENCY_PATH,
+    Path("docs/review/2026-07-12-operating-review-rules.md"),
+    Path("docs/roadmap/2026-07-12-project-progress-roadmap.md"),
+)
 
 
 def _read(path: Path) -> str:
@@ -310,3 +316,27 @@ def test_project_policy_freezes_sustained_parallel_development_iron_rule() -> No
     ):
         assert stale_text not in agents_text
         assert stale_text not in concurrency_text
+
+
+def test_project_policy_freezes_long_running_claude_review_monitoring() -> None:
+    for path in CLAUDE_REVIEW_MONITORING_PATHS:
+        text = _normalized(_read(path))
+
+        assert "must not be wrapped in a fixed elapsed-time timeout" in text
+        assert "inspectable session" in text
+        assert "check them about every 30 seconds" in text
+        assert "process/session liveness" in text
+        assert "when available, stream growth or event count" in text
+        assert "stderr or terminal events, CPU, and network activity" in text
+        assert (
+            "Elapsed time alone or a quiet interval is not evidence of a stall"
+            in text
+        )
+        assert "do not interrupt, terminate, restart, duplicate, or replace it" in text
+        assert "do not route around" in text
+        assert "keep waiting and monitoring" in text
+        assert "Act only on an explicit result or error" in text
+        assert "confirmed process/session exit" in text
+        assert "concrete auth/permission/provider failure" in text
+        assert "proven stall" in text
+        assert "newer user instruction" in text

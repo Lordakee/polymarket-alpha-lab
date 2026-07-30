@@ -63,6 +63,29 @@ def test_codex_node_push_policy_continues_after_verified_push_by_default():
     ) < normalized.index("## omo / sisyphus session workflow (historical)")
 
 
+def test_claude_review_monitoring_has_no_fixed_timeout_or_live_interruption():
+    instructions, normalized = _agents_instructions()
+
+    assert "must not be wrapped in a fixed elapsed-time timeout" in normalized
+    assert "inspectable session" in normalized
+    assert "check them about every 30 seconds" in normalized
+    assert "process/session liveness" in normalized
+    assert "when available, stream growth or event count" in normalized
+    assert "stderr or terminal events, cpu, and network activity" in normalized
+    assert (
+        "elapsed time alone or a quiet interval is not evidence of a stall"
+        in normalized
+    )
+    assert "do not interrupt, terminate, restart, duplicate, or replace it" in normalized
+    assert "do not route around" in normalized
+    assert "keep waiting and monitoring" in normalized
+    assert "act only on an explicit result or error" in normalized
+    assert "confirmed process/session exit" in normalized
+    assert "concrete auth/permission/provider failure" in normalized
+    assert "proven stall" in normalized
+    assert "newer user instruction" in normalized
+
+
 def test_agent_coordination_defaults_capture_parallel_cap_and_conflict_rule():
     instructions, normalized = _agents_instructions()
 
