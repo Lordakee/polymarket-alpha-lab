@@ -125,9 +125,10 @@ preserve quality and avoid write conflicts.
   files, or tightly coupled logic at the same time.
 - Keep completed workers closed promptly and redeploy capacity only when the
   next task is independent.
-- The current subagent concurrency cap is 20 active threads with nested depth
-  capped at 3; use less when rate limits, memory pressure, shared test
-  resources, or ownership overlap would reduce quality.
+- The project sets no fixed subagent concurrency count; discover usable
+  capacity dynamically from the current runtime. Nested depth remains capped
+  at 3, and concurrency should fall when rate limits, memory pressure, shared
+  test resources, or ownership overlap would reduce quality.
 - Every implementation node must preserve the Phase 1 boundary, local
   Supabase/Postgres persistence rule, and Claude Code review rule.
 
@@ -136,7 +137,7 @@ preserve quality and avoid write conflicts.
 All plan reviews, code reviews, stage audits, post-node external review gates,
 and handoff review gates go directly to local Claude Code using:
 
-- model: `claude-opus-4-8`;
+- model: `claude-opus-5`;
 - thinking level: `max`;
 - prompt mode: read-only review.
 
@@ -189,7 +190,7 @@ Every future node should explicitly confirm:
 - no alternate durable persistence backend is introduced;
 - no market score, candidate score, assignment, digest, gate, or memory policy
   is described as a trade instruction;
-- Claude Code review is read-only and uses `claude-opus-4-8` with thinking
+- Claude Code review is read-only and uses `claude-opus-5` with thinking
   level `max`.
 
 ## Audit Source Map

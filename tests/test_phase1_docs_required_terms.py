@@ -281,24 +281,22 @@ def test_project_policy_freezes_sustained_parallel_development_iron_rule() -> No
 
     for required_text in (
         "Sustained parallel development is a project iron rule",
-        "20 active subagent threads",
-        "nested subagent depth cap of **3**",
-        "ceilings, not quotas or minimums",
-        "use fewer threads whenever",
+        "The project sets no fixed subagent concurrency count",
+        "Nested subagent depth remains capped at **3**",
+        "discover usable capacity dynamically",
+        "Use fewer threads whenever",
         "multiple modules and multiple development nodes",
         "Reclaim agents immediately",
-        "permanent lower artificial cap",
     ):
         assert required_text in agents_text
 
     for required_text in (
         "implements Project Iron Rule 6",
-        "20 active subagent threads",
-        "nested depth **3**",
-        "ceilings, not quotas, minimums",
+        "project defines no fixed subagent-thread count",
+        "discover usable capacity dynamically",
+        "Nested depth remains capped at **3**",
         "may run fewer active threads",
         "multiple modules and multiple development nodes",
-        "permanent lower ceiling",
         "Failed or blocked agents must also be reclaimed promptly",
         "primary Codex coordinator follows the `AGENTS.md` Codex Node Push Policy",
         "Subagents must not create commits or push branches",

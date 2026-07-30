@@ -32,7 +32,7 @@ def test_codex_node_push_policy_preserves_verified_push_gate():
     assert "codegraph is synced" in normalized
     assert "secret scan finds no leaked credentials or tokens" in normalized
     assert "post-node external review gate passes through claude code" in normalized
-    assert "claude-opus-4-8" in normalized
+    assert "claude-opus-5" in normalized
     assert "thinking level `max`" in normalized
     assert "if local claude code is unavailable" in normalized
     assert "treat the review gate as blocked" in normalized
@@ -67,8 +67,9 @@ def test_agent_coordination_defaults_capture_parallel_cap_and_conflict_rule():
     instructions, normalized = _agents_instructions()
 
     assert "agent coordination defaults" in instructions
-    assert "20 active subagent threads" in normalized
-    assert "nested subagent depth cap of **3**" in normalized
+    assert "project sets no fixed subagent concurrency count" in normalized
+    assert "discover usable capacity dynamically" in normalized
+    assert "nested subagent depth remains capped at **3**" in normalized
     assert "independent, non-conflicting work" in normalized
     assert "write-scope overlap" in normalized
     assert "avoid assigning multiple subagents to edit the same files" in normalized

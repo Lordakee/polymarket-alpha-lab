@@ -18,7 +18,7 @@ and handoff review gates must go directly to local Claude Code.
 
 Required settings:
 
-- model: `claude-opus-4-8`;
+- model: `claude-opus-5`;
 - thinking level: `max`;
 - mode: read-only review.
 
@@ -61,8 +61,9 @@ Active rules:
   the same tightly coupled behavior at the same time.
 - Close completed workers promptly and redeploy capacity only to independent
   follow-up work.
-- The current concurrency cap is 20 active subagent threads with nested depth
-  capped at 3.
+- The project sets no fixed subagent concurrency count; discover usable
+  capacity dynamically from the current runtime. Nested depth remains capped
+  at 3.
 - Use lower concurrency when rate limits, memory pressure, shared test
   resources, or write-scope overlap would reduce quality.
 - Every worker must preserve the Phase 1 paper-only/report-only/readonly

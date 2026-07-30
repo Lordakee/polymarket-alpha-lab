@@ -43,15 +43,15 @@ Before dispatching parallel agents, the coordinator must define:
 
 This section implements Project Iron Rule 6 from `AGENTS.md`. While useful,
 independent work exists, the coordinator must keep useful collaboration
-capacity occupied, up to the project maximum of **20 active subagent threads**
-and nested depth **3**. These values are ceilings, not quotas, minimums, or a
-requirement to start 20 threads. A slot may run implementation, focused tests,
-documentation, audit, review, or preparation for a subsequent node. The
-coordinator may run fewer active threads when independent work is limited or
-when conflicts, rate limits, resource contention, or coordination overhead
-would reduce quality. Imposing a permanent lower ceiling or leaving useful
-capacity idle merely to preserve a sequential workflow is not compliant with
-this rule.
+capacity occupied. The project defines no fixed subagent-thread count; the
+coordinator must discover usable capacity dynamically from the current runtime.
+Nested depth remains capped at **3**. Available capacity may run implementation,
+focused tests, documentation, audit, review, or preparation for a subsequent
+node. The coordinator may run fewer active threads when independent work is
+limited or when conflicts, rate limits, resource contention, or coordination
+overhead would reduce quality. Imposing a remembered thread-count ceiling or
+leaving useful capacity idle merely to preserve a sequential workflow is not
+compliant with this rule.
 
 Parallel work may span multiple modules and multiple development nodes when
 their write scopes are disjoint. Separate nodes should use isolated worktrees
@@ -132,7 +132,7 @@ and handoff review gates go directly to local Claude Code.
 
 Required settings:
 
-- model: `claude-opus-4-8`;
+- model: `claude-opus-5`;
 - thinking level: `max`;
 - mode: read-only review.
 
@@ -276,7 +276,7 @@ This document is satisfied when the maintenance rules explicitly cover:
 - multi-agent parallel development rules;
 - non-overlapping file boundaries;
 - prompt reclamation of completed agents;
-- Claude Code read-only review with `claude-opus-4-8` and thinking level
+- Claude Code read-only review with `claude-opus-5` and thinking level
   `max`;
 - local Supabase/Postgres durable-only persistence;
 - DSN validation before connection;
