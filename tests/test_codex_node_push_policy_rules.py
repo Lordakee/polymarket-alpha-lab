@@ -22,6 +22,10 @@ def _assert_phrases_appear_in_order(text: str, phrases: tuple[str, ...]) -> None
 
 def test_codex_node_push_policy_preserves_verified_push_gate():
     instructions, normalized = _agents_instructions()
+    push_policy = normalized.split("## codex node push policy", 1)[1].split(
+        "## omo / sisyphus session workflow",
+        1,
+    )[0]
 
     assert "codex node push policy" in instructions
     assert "focused local commit with a clean worktree" in normalized
@@ -37,7 +41,7 @@ def test_codex_node_push_policy_preserves_verified_push_gate():
     assert "if local claude code is unavailable" in normalized
     assert "treat the review gate as blocked" in normalized
     assert "no fallback reviewer" in normalized
-    assert "opencode" not in normalized.split("## omo / sisyphus session workflow", 1)[0]
+    assert "opencode" not in push_policy
     _assert_phrases_appear_in_order(
         normalized,
         (

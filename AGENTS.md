@@ -63,6 +63,9 @@ the user explicitly changes them in a later instruction.
    around it; keep waiting and monitoring. Act only on an explicit result or
    error, confirmed process/session exit, concrete auth/permission/provider
    failure, proven stall, or a newer user instruction.
+   Historical review records may retain the model that actually produced them;
+   never rewrite historical records to make them appear to follow the current
+   review policy.
 5. **Fast mode is forbidden.** Do not use fast mode for the main Codex agent,
    Codex subagents, Claude Code reviews, implementation workers, planning workers,
    or audit workers.
@@ -90,6 +93,18 @@ the user explicitly changes them in a later instruction.
    effort `max` explicitly specified. Do not omit either setting, inherit a
    different model or effort, or substitute another Codex model. Fast mode
    remains forbidden.
+
+8. **User-directed OpenCode implementation lane.** OpenCode is a separate
+   external implementation process, not a Codex subagent and not a reviewer.
+   When the user-directed workflow selects OpenCode after the Claude plan gate,
+   invoke it with model `grok-4.5` and thinking level `high`. OpenCode receives
+   a Codex-approved execution plan and an exclusive file scope; it may inspect
+   and edit only that scope, must remain paper/report/readonly, and must not
+   read secrets, use credentials, access accounts or wallets, perform live
+   trading/order/exchange mutations, commit, push, or bypass Claude review
+   gates. Codex remains responsible for integration, tests, review handoffs,
+   commit, and GitHub push. This external lane does not relax the fixed
+   `gpt-5.6-sol`/`max` requirement for any Codex subagent.
 
 ## CodeGraph
 
