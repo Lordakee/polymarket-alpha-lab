@@ -10,6 +10,9 @@ SRC_ROOT = REPO_ROOT / "src" / "polymarket_alpha_lab"
 TESTS_ROOT = REPO_ROOT / "tests"
 MIGRATIONS_ROOT = REPO_ROOT / "supabase" / "migrations"
 DOC_PATH = REPO_ROOT / "docs" / "team-forecast-migration-safety.md"
+NODE_B_CENTRAL_DATA_EVIDENCE_MIGRATION = (
+    MIGRATIONS_ROOT / "20260731000000_central_data_evidence.sql"
+)
 
 FORBIDDEN_DURABLE_BACKEND_IMPORTS = frozenset(
     (
@@ -111,6 +114,33 @@ PUBLIC_OUTPUT_REDACTION_MARKERS = (
     "redacted_",
     "selected_",
 )
+
+_NODE_B_BARE_SERVICE_ROLE_DDL_LINE = re.compile(
+    r"""
+    (?:
+        (?:revoke|grant)\s+
+        [a-z_][a-z0-9_$]*(?:\s*,\s*[a-z_][a-z0-9_$]*)*\s+
+        on\s+
+        (?:
+            schema\s+[a-z_][a-z0-9_$]*
+            |
+            (?:table|function|sequence|database|type|domain|language)\s+
+            [a-z_][a-z0-9_$]*(?:\.[a-z_][a-z0-9_$]*)?
+            (?:\s*\(\s*[a-z_][a-z0-9_$]*(?:\s*,\s*[a-z_][a-z0-9_$]*)*\s*\))?
+        )
+        \s+(?:from|to)\s+service_role
+        |
+        alter\s+default\s+privileges
+        (?:\s+for\s+(?:role|user)\s+[a-z_][a-z0-9_$]*)?
+        \s+in\s+schema\s+[a-z_][a-z0-9_$]*
+        \s+(?:revoke|grant)\s+
+        [a-z_][a-z0-9_$]*(?:\s*,\s*[a-z_][a-z0-9_$]*)*\s+
+        on\s+(?:tables|functions|sequences|types)\s+(?:from|to)\s+service_role
+    )
+    \s*;
+    """,
+    flags=re.IGNORECASE | re.VERBOSE,
+)
 LEGACY_PHASE_FLAG_MIGRATION_ALLOWLIST = frozenset(
     (
         "supabase/migrations/20260619010000_paper_trade_journal_records.sql missing report_only boolean",
@@ -153,6 +183,22 @@ def _durable_persistence_python_files() -> tuple[Path, ...]:
 
 def _migration_files() -> tuple[Path, ...]:
     return tuple(sorted(MIGRATIONS_ROOT.glob("*.sql")))
+
+
+def _has_only_bare_node_b_service_role_ddl(path: Path, sql: str) -> bool:
+    if path != NODE_B_CENTRAL_DATA_EVIDENCE_MIGRATION:
+        return False
+
+    service_role_lines = tuple(
+        line.strip()
+        for line in sql.splitlines()
+        if "service_role" in line.lower()
+    )
+    return bool(service_role_lines) and all(
+        line.lower().count("service_role") == 1
+        and _NODE_B_BARE_SERVICE_ROLE_DDL_LINE.fullmatch(line) is not None
+        for line in service_role_lines
+    )
 
 
 def _migration_corpus() -> str:
@@ -318,6 +364,10 @@ def test_supabase_migrations_do_not_document_or_create_alternate_durable_stores(
         sql = path.read_text(encoding="utf-8").lower()
         for token in FORBIDDEN_MIGRATION_TOKENS:
             if token in sql:
+                if token == "service_role" and _has_only_bare_node_b_service_role_ddl(
+                    path, sql
+                ):
+                    continue
                 violations.append(f"{path.relative_to(REPO_ROOT)} contains {token!r}")
 
     assert violations == []

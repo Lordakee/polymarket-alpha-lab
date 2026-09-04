@@ -245,3 +245,12 @@ Before treating a new durable persistence surface as compliant, verify:
 - readback and diagnostics remain readonly;
 - live trading, execution, auth, wallet, account, order, and exchange mutation
   surfaces remain outside the persistence path.
+
+## Central Data Node B Retention (added by Node B)
+- Retention owner and scheduler role: local `postgres` in database `postgres`.
+- Exact job contract: `central_data_raw_retention_15m`, schedule `*/15 * * * *`, command `select central_data_internal.purge_expired_central_data_raw_response_events();`, database `postgres`, username `postgres`, active `true`.
+- Health gate before every new raw write checks the exact job row, a successful `purge_run` audit in the last hour with `backlog_remaining = false`, no failed `cron.job_run_details` run, and no expired raw row.
+- Audit/readback: `SELECT audit_kind, run_status, deleted_count, backlog_remaining, run_completed_at FROM central_data_internal.central_data_raw_retention_audit ORDER BY inserted_at DESC LIMIT 20;`
+- Catalog/ACL checks include `relrowsecurity`, `relforcerowsecurity`, table owners, and `has_table_privilege` for `PUBLIC`, `anon`, `authenticated`, and `service_role`.
+- Repair is to re-apply the checked-in migration as `postgres`; do not create a second job manually. A failed or missing health gate blocks raw writes and requires an operator purge before resuming.
+- The local smoke test inserts only synthetic public bytes, verifies an idempotent replay and identity collision, purges with an explicit future cutoff, confirms audit-before-delete and normalized-row survival, then removes its synthetic rows.

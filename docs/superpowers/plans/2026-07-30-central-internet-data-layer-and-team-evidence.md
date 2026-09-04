@@ -137,9 +137,11 @@ callers is a later node with its own review.
 
 ### Node B: Raw payload persistence and normalization
 
-- Add one Supabase migration for raw responses and normalized observations,
-  with unique payload hash/idempotency keys, source metadata, timestamps,
-  parse status, and explicit hard flags.
+- Add one Supabase migration for raw response acquisition events, normalized
+  observations, and redacted retention audit rows. Raw-byte SHA-256 is indexed
+  provenance and intentionally non-unique; a deterministic source-bound event
+  identity is the idempotency key, and conflicts are field-compared rather than
+  silently discarded.
 - Add a central DB-API store and psycopg boundary following existing local-DSN
   validation and redaction patterns. Reads and writes are explicit central
   evidence persistence operations; no generic store abstraction.
@@ -148,18 +150,12 @@ callers is a later node with its own review.
   stale, contradictory, and parse-failed values instead of silently coercing
   them.
 - Define an internal value shape that distinguishes `null`, numeric zero, and
-  `unknown`. For downstream packet compatibility, a required source item that
-  is missing, stale, parse-failed, or unknown emits a deterministic placeholder
-  `TeamForecastEvidencePacket` with exactly one of these canonical texts:
-  `central_evidence_missing`, `central_evidence_stale`,
-  `central_evidence_parse_failed`, `central_evidence_unknown`, or
-  `central_evidence_quorum_blocked`. Each placeholder has
-  `weight=Decimal("0")` and the identically named mandatory reason code
-  (`central_evidence_missing`, `central_evidence_stale`,
-  `central_evidence_parse_failed`, `central_evidence_unknown`, or
-  `central_evidence_quorum_blocked`, respectively); it never
-  fabricates a value. The bundle also carries structured availability so Node E
-  can block forecast use when required evidence is absent.
+  `unknown`. Node C's frozen evidence bundle, not Node B persistence, owns the
+  downstream `TeamForecastEvidencePacket` placeholders: a required source item
+  that is missing, stale, parse-failed, unknown, or quorum-blocked emits exactly
+  one canonical zero-weight placeholder/reason code and structured availability
+  for Node E to block forecast use. Node B stores the parse/value/freshness
+  states and never fabricates a packet or probability impact.
 - Add schema/store tests for idempotency, ordering, filters, malformed payloads,
   DSN validation before psycopg import/connect, cleanup, hard flags, the 2 MiB
   raw-response cap, 30-day retention metadata, and credential/PII refusal or
