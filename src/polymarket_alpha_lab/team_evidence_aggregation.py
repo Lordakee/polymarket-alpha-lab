@@ -11,10 +11,12 @@ from polymarket_alpha_lab.team_evidence_aggregation_codec import (
 )
 from polymarket_alpha_lab.team_evidence_aggregation_temporal import assess_team_evidence_temporal
 from polymarket_alpha_lab.team_evidence_aggregation_types import (
+    datetime as _CanonicalDatetime,
     TeamEvidenceAggregationConfig, TeamEvidenceAggregationInput,
     TeamEvidenceAggregationRecord, TeamEvidenceAggregationResult,
     TeamEvidenceContradictionResult, TeamEvidenceDiagnosticRow,
-    TeamEvidenceRequirementCoverage, TeamEvidenceTemporalAssessment,
+    TeamEvidenceRequirementCoverage, TeamEvidenceRequirementWitness,
+    TeamEvidenceTemporalAssessment,
     TeamEvidenceWeightAllocation,
     select_team_evidence_canonical_capture_records,
     select_team_evidence_canonical_current_records,
@@ -32,6 +34,12 @@ _ARITHMETIC_CONTEXT = Context(prec=64, rounding=ROUND_HALF_EVEN)
 _ALLOCATION_DISPOSITIONS = ("included", "independence_cap_exhausted", "correlation_cap_exhausted")
 _INVARIANT_ERROR = "materialized aggregation result violates canonical invariants"
 _RESULT_MISMATCH = "aggregation result must equal rematerialized result"
+_RESULT_ERRORS = (AttributeError, DecimalException, TypeError, UnicodeError,
+                  ValueError)
+_PREFLIGHT_MAXIMUM_REQUIREMENTS = 32
+_PREFLIGHT_MAXIMUM_DIAGNOSTICS = 128
+_PREFLIGHT_MAXIMUM_WITNESSES = 256
+_PREFLIGHT_MAXIMUM_REASON_CODES = 16
 
 _RecordIdentity = tuple[str, str, str, str]
 _SelectedPairIdentity = tuple[str, str, str]
@@ -188,15 +196,134 @@ def _require_materialized_invariant(condition: bool) -> None:
         raise ValueError(_INVARIANT_ERROR)
 
 
-def _require_coverage_requirement_projection(
+def _require_config_coverage_projection(
     coverage: tuple[TeamEvidenceRequirementCoverage, ...],
     *,
     config: TeamEvidenceAggregationConfig,
 ) -> None:
     _require_materialized_invariant(
-        tuple(row.requirement_id for row in coverage)
-        == tuple(requirement.requirement_id for requirement in config.requirements)
-    )
+        type(coverage) is tuple and len(coverage) == len(config.requirements))
+    for row, requirement in zip(coverage, config.requirements, strict=True):
+        _require_materialized_invariant(
+            type(row) is TeamEvidenceRequirementCoverage
+            and type(row.requirement_id) is str
+            and row.requirement_id == requirement.requirement_id
+            and type(row.minimum_witness_count) is int
+            and row.minimum_witness_count == requirement.minimum_witness_count
+            and _same_decimal_representation(
+                row.minimum_effective_weight,
+                requirement.minimum_effective_weight)
+            and type(row.unmet_status) is str
+            and row.unmet_status == requirement.unmet_status)
+
+
+def _all_exact(expected_type: type[object], values: tuple[object, ...]) -> bool:
+    return all(type(value) is expected_type for value in values)
+
+
+def _exact_contradiction_shape(value: object) -> bool:
+    return (
+        type(value) is TeamEvidenceContradictionResult
+        and _all_exact(Decimal, (
+            value.yes_support_weight, value.no_support_weight,
+            value.neutral_weight, value.contradiction_score))
+        and type(value.status) is str
+        and _all_exact(bool, (
+            value.paper_only, value.report_only, value.readonly)))
+
+
+def _exact_witness_shape(value: object) -> bool:
+    return (
+        type(value) is TeamEvidenceRequirementWitness
+        and _all_exact(str, (
+            value.requirement_id, value.source_lineage_id, value.capture_id,
+            value.evidence_revision_id, value.assessment_revision_id,
+            value.independence_key))
+        and type(value.effective_weight) is Decimal
+        and _all_exact(bool, (
+            value.paper_only, value.report_only, value.readonly)))
+
+
+def _exact_coverage_shape(value: object) -> bool:
+    return (
+        type(value) is TeamEvidenceRequirementCoverage
+        and _all_exact(str, (value.requirement_id, value.unmet_status))
+        and _all_exact(int, (
+            value.minimum_witness_count, value.assigned_witness_count))
+        and type(value.minimum_effective_weight) is Decimal
+        and type(value.witnesses) is tuple
+        and _all_exact(bool, (
+            value.satisfied, value.paper_only, value.report_only,
+            value.readonly)))
+
+
+def _exact_diagnostic_shape(value: object) -> bool:
+    return (
+        type(value) is TeamEvidenceDiagnosticRow
+        and _all_exact(str, (
+            value.source_lineage_id, value.capture_id,
+            value.evidence_revision_id, value.assessment_revision_id,
+            value.disposition))
+        and type(value.captured_at) is _CanonicalDatetime
+        and _all_exact(Decimal, (
+            value.probability_yes, value.requested_weight,
+            value.independence_allocated_weight, value.effective_weight,
+            value.evidence_age_seconds, value.capture_lag_seconds))
+        and _all_exact(bool, (
+            value.captured_at_evaluation,
+            value.evidence_revision_available_at_evaluation,
+            value.assessment_revision_available_at_evaluation,
+            value.selected_current_revision, value.canonical_capture,
+            value.paper_only, value.report_only, value.readonly)))
+
+
+def _exact_result_shape(result: TeamEvidenceAggregationResult) -> bool:
+    return (
+        type(result.evaluated_at) is _CanonicalDatetime
+        and _all_exact(str, (
+            result.config_version, result.config_digest, result.status,
+            result.core_digest))
+        and _all_exact(int, (
+            result.diagnostic_record_count, result.arithmetic_record_count))
+        and _all_exact(Decimal, (
+            result.requested_weight_total,
+            result.independence_allocated_weight_total,
+            result.effective_weight_total))
+        and (result.arithmetic_probability_yes is None
+             or type(result.arithmetic_probability_yes) is Decimal)
+        and (result.publishable_probability_yes is None
+             or type(result.publishable_probability_yes) is Decimal)
+        and type(result.requirement_coverage) is tuple
+        and type(result.diagnostics) is tuple
+        and type(result.reason_codes) is tuple
+        and _all_exact(bool, (
+            result.paper_only, result.report_only, result.readonly)))
+
+
+def _preflight_result_shape(result: TeamEvidenceAggregationResult) -> None:
+    _require_materialized_invariant(
+        _exact_result_shape(result)
+        and _exact_contradiction_shape(result.contradiction))
+    coverage = result.requirement_coverage
+    diagnostics = result.diagnostics
+    reason_codes = result.reason_codes
+    _require_materialized_invariant(
+        len(coverage) <= _PREFLIGHT_MAXIMUM_REQUIREMENTS
+        and len(diagnostics) <= _PREFLIGHT_MAXIMUM_DIAGNOSTICS
+        and len(reason_codes) <= _PREFLIGHT_MAXIMUM_REASON_CODES)
+    _require_materialized_invariant(
+        all(type(code) is str for code in reason_codes))
+    witness_count = 0
+    for row in coverage:
+        _require_materialized_invariant(_exact_coverage_shape(row))
+        witnesses = row.witnesses
+        witness_count += len(witnesses)
+        _require_materialized_invariant(
+            witness_count <= _PREFLIGHT_MAXIMUM_WITNESSES)
+        for witness in witnesses:
+            _require_materialized_invariant(_exact_witness_shape(witness))
+    for row in diagnostics:
+        _require_materialized_invariant(_exact_diagnostic_shape(row))
 
 
 def _build_diagnostics(
@@ -374,6 +501,8 @@ def _validate_materialized_result_invariants(
         and result.readonly is True)
     _require_materialized_invariant(result.config_version == config.config_version)
     _require_materialized_invariant(result.config_digest == expected_config_digest)
+    coverage = result.requirement_coverage
+    _require_config_coverage_projection(coverage, config=config)
     diagnostics = result.diagnostics
     _require_materialized_invariant(type(diagnostics) is tuple and all(
         type(row) is TeamEvidenceDiagnosticRow for row in diagnostics))
@@ -419,13 +548,11 @@ def _validate_materialized_result_invariants(
         and result.contradiction == summary.contradiction)
     status, publishable, reason_codes = _derive_status_fields(
         summary.probability_yes, summary.contradiction,
-        result.requirement_coverage, config=config)
+        coverage, config=config)
     _require_materialized_invariant(
         result.status == status
         and _same_optional_decimal(result.publishable_probability_yes, publishable)
         and result.reason_codes == reason_codes)
-    _require_coverage_requirement_projection(
-        result.requirement_coverage, config=config)
 
 
 def _materialize_team_evidence_aggregation_result(
@@ -458,7 +585,7 @@ def _materialize_team_evidence_aggregation_result(
     allocations = allocate_team_evidence_weights(allocation_input_records, config=config)
     coverage = build_team_evidence_requirement_coverage(
         allocation_input_records, allocations, config=config)
-    _require_coverage_requirement_projection(coverage, config=config)
+    _require_config_coverage_projection(coverage, config=config)
     diagnostics = _build_diagnostics(evaluated_records, allocations)
     summary = _summarize_arithmetic(diagnostics, config=config)
     status, publishable, reason_codes = _derive_status_fields(
@@ -503,15 +630,9 @@ def validate_team_evidence_aggregation_result(
         raise ValueError("result must be exactly TeamEvidenceAggregationResult")
     with localcontext(_ARITHMETIC_CONTEXT):
         try:
+            _preflight_result_shape(result)
             validate_team_evidence_aggregation_core_digest(result)
-        except (
-            AttributeError,
-            DecimalException,
-            RecursionError,
-            TypeError,
-            UnicodeError,
-            ValueError,
-        ):
+        except _RESULT_ERRORS:
             raise ValueError(_RESULT_MISMATCH) from None
         expected = _materialize_team_evidence_aggregation_result(
             aggregation_input, config=config)
@@ -519,14 +640,7 @@ def validate_team_evidence_aggregation_result(
             _validate_materialized_result_invariants(
                 result, config=config, expected_config_digest=expected.config_digest)
             matches_expected = result == expected
-        except (
-            AttributeError,
-            DecimalException,
-            RecursionError,
-            TypeError,
-            UnicodeError,
-            ValueError,
-        ):
+        except _RESULT_ERRORS:
             raise ValueError(_RESULT_MISMATCH) from None
     if not matches_expected:
         raise ValueError(_RESULT_MISMATCH)

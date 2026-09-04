@@ -182,50 +182,15 @@ def record_variant(
         revision,
         assessed,
     )
-def successor(
-    record: TeamEvidenceAggregationRecord,
-    stem: str,
-    *,
-    freshness_anchor_offset: int = 51,
-    captured_offset: int = 56,
-    recorded_offset: int = 61,
-    assessed_offset: int = 66,
-) -> TeamEvidenceAggregationRecord:
+def successor(record: TeamEvidenceAggregationRecord, stem: str, *, freshness_anchor_offset: int = 51, captured_offset: int = 56, recorded_offset: int = 61, assessed_offset: int = 66) -> TeamEvidenceAggregationRecord:
     content_digest = digest(f"content:{stem}")
     evidence_id = f"evidence:{stem}"
     evidence_digest = digest(f"evidence-digest:{stem}")
     return record_variant(
         record,
-        capture={
-            "capture_id": f"capture:{stem}",
-            "capture_digest": digest(f"capture-digest:{stem}"),
-            "content_digest": content_digest,
-            "captured_at": BASE_TIME + timedelta(seconds=captured_offset),
-        },
-        evidence={
-            "evidence_revision_id": evidence_id,
-            "evidence_revision_digest": evidence_digest,
-            "previous_evidence_revision_id": record.evidence_revision.evidence_revision_id,
-            "previous_evidence_revision_digest": record.evidence_revision.evidence_revision_digest,
-            "content_digest": content_digest,
-            "freshness_anchor_at": BASE_TIME
-            + timedelta(seconds=freshness_anchor_offset),
-            "recorded_at": BASE_TIME + timedelta(seconds=recorded_offset),
-        },
-        assessment={
-            "assessment_revision_id": f"assessment:{stem}",
-            "assessment_revision_digest": digest(f"assessment-digest:{stem}"),
-            "previous_assessment_revision_id": (
-                record.assessment_revision.assessment_revision_id
-            ),
-            "previous_assessment_revision_digest": (
-                record.assessment_revision.assessment_revision_digest
-            ),
-            "evidence_revision_id": evidence_id,
-            "evidence_revision_digest": evidence_digest,
-            "assessed_at": BASE_TIME + timedelta(seconds=assessed_offset),
-            "rationale_digest": digest(f"rationale:{stem}"),
-        },
+        capture={"capture_id": f"capture:{stem}", "capture_digest": digest(f"capture-digest:{stem}"), "content_digest": content_digest, "captured_at": BASE_TIME + timedelta(seconds=captured_offset)},
+        evidence={"evidence_revision_id": evidence_id, "evidence_revision_digest": evidence_digest, "previous_evidence_revision_id": record.evidence_revision.evidence_revision_id, "previous_evidence_revision_digest": record.evidence_revision.evidence_revision_digest, "content_digest": content_digest, "freshness_anchor_at": BASE_TIME + timedelta(seconds=freshness_anchor_offset), "recorded_at": BASE_TIME + timedelta(seconds=recorded_offset)},
+        assessment={"assessment_revision_id": f"assessment:{stem}", "assessment_revision_digest": digest(f"assessment-digest:{stem}"), "previous_assessment_revision_id": record.assessment_revision.assessment_revision_id, "previous_assessment_revision_digest": record.assessment_revision.assessment_revision_digest, "evidence_revision_id": evidence_id, "evidence_revision_digest": evidence_digest, "assessed_at": BASE_TIME + timedelta(seconds=assessed_offset), "rationale_digest": digest(f"rationale:{stem}")},
     )
 def assessment_successor(
     record: TeamEvidenceAggregationRecord,
@@ -280,19 +245,48 @@ def ready_fixture(
     config_value = config(requirements=requirements)
     input_value = aggregation_input((record,), current_records=(record,))
     return input_value, config_value, build(input_value, config_value)
-DISPOSITION_CASES = (
-    ("not_current_revision", "not_current_revision"),
-    ("duplicate_capture", "duplicate_capture"),
-    ("freshness_anchor_after_evaluation", "freshness_anchor_after_evaluation"),
-    ("capture_after_evaluation", "capture_after_evaluation"),
-    ("evidence_revision_after_evaluation", "evidence_revision_after_evaluation"),
-    ("assessment_revision_after_evaluation", "assessment_revision_after_evaluation"),
-    ("stale", "stale"),
-    ("capture_before_freshness_anchor", "capture_before_freshness_anchor"),
-    ("capture_lag_exceeded", "capture_lag_exceeded"),
-    ("zero_requested_weight", "zero_requested_weight"),
-    ("included", "included"),
-)
+def coverage_fixture() -> tuple[TeamEvidenceAggregationInput, TeamEvidenceAggregationConfig, TeamEvidenceAggregationResult]:
+    requirements = (requirement("req:a", count=2), requirement("req:b", status="blocked"))
+    records = crossed_records(tuple(item.requirement_id for item in requirements))
+    input_value, policy = aggregation_input(records, current_records=records), config(requirements=requirements)
+    return input_value, policy, build(input_value, policy)
+def malformed_coverage_variants(result: TeamEvidenceAggregationResult) -> tuple[tuple[str, tuple[TeamEvidenceRequirementCoverage, ...]], ...]:
+    rows = result.requirement_coverage
+    extra_witness = replace(rows[0].witnesses[0], requirement_id="req:extra")
+    extra = TeamEvidenceRequirementCoverage("req:extra", 1, 1, d("0.000001"), "watch", True, (extra_witness,))
+    count = replace(rows[0], minimum_witness_count=1)
+    weight = replace(rows[0], minimum_effective_weight=d("0.000000"))
+    representation = bypassed(rows[0], minimum_effective_weight=Decimal("0.0000010"))
+    status = replace(rows[0], unmet_status="blocked")
+    duplicate_id = bypassed(rows[1], requirement_id=rows[0].requirement_id)
+    extra_id = bypassed(rows[1], requirement_id="req:extra")
+    return (("incomplete", rows[:-1]), ("appended-extra", rows + (extra,)), ("appended-duplicate", rows + rows[:1]), ("reordered", rows[::-1]), ("minimum-witness-count-drift", (count,) + rows[1:]), ("minimum-effective-weight-drift", (weight,) + rows[1:]), ("minimum-effective-weight-representation-drift", (representation,) + rows[1:]), ("unmet-status-drift", (status,) + rows[1:]), ("same-cardinality-duplicate-id", (rows[0], duplicate_id)), ("same-cardinality-extra-id", (rows[0], extra_id)))
+def cyclic_nested_results(result: TeamEvidenceAggregationResult) -> tuple[tuple[str, TeamEvidenceAggregationResult], ...]:
+    diagnostic = bypassed(result.diagnostics[0]); object.__setattr__(diagnostic, "source_lineage_id", diagnostic)
+    coverage = bypassed(result.requirement_coverage[0]); object.__setattr__(coverage, "requirement_id", coverage)
+    witness = bypassed(result.requirement_coverage[0].witnesses[0]); object.__setattr__(witness, "source_lineage_id", witness)
+    witnessed = bypassed(result.requirement_coverage[0], witnesses=(witness,) + result.requirement_coverage[0].witnesses[1:])
+    contradiction = bypassed(result.contradiction); object.__setattr__(contradiction, "status", contradiction)
+    return (("diagnostic-cycle", bypassed(result, diagnostics=(diagnostic,) + result.diagnostics[1:])), ("coverage-cycle", bypassed(result, requirement_coverage=(coverage,) + result.requirement_coverage[1:])), ("witness-cycle", bypassed(result, requirement_coverage=(witnessed,) + result.requirement_coverage[1:])), ("contradiction-cycle", bypassed(result, contradiction=contradiction)))
+def nested_inner_results(result: TeamEvidenceAggregationResult) -> tuple[tuple[str, TeamEvidenceAggregationResult], ...]:
+    nested: object = "leaf"
+    for _ in range(1025): nested = (nested,)
+    diagnostic = result.diagnostics[0]
+    deep = bypassed(diagnostic, source_lineage_id=nested)
+    wide = bypassed(diagnostic, source_lineage_id=(("leaf",),) * 4096)
+    return (("result-scalar-type", bypassed(result, effective_weight_total="0.400000")), ("diagnostic-depth-1025", bypassed(result, diagnostics=(deep,) + result.diagnostics[1:])), ("diagnostic-wide-nested-4096", bypassed(result, diagnostics=(wide,) + result.diagnostics[1:])))
+def assert_shape_preflight_rejections(monkeypatch: pytest.MonkeyPatch, cases: tuple[tuple[str, TeamEvidenceAggregationResult], ...], input_value: TeamEvidenceAggregationInput, policy: TeamEvidenceAggregationConfig) -> None:
+    module, calls, current, outcomes = api(), [], [""], []
+    def codec_must_not_run(value): calls.append(current[0]); raise ValueError("recursive codec entered")
+    monkeypatch.setattr(module, "validate_team_evidence_aggregation_core_digest", codec_must_not_run)
+    for name, malformed in cases:
+        current[0] = name
+        try: module.validate_team_evidence_aggregation_result(malformed, aggregation_input=input_value, config=policy)
+        except ValueError as error: outcomes.append((name, str(error)))
+        else: outcomes.append((name, None))
+    assert outcomes == [(name, "aggregation result must equal rematerialized result") for name, _ in cases]
+    assert calls == [], calls
+DISPOSITION_CASES = (("not_current_revision", "not_current_revision"), ("duplicate_capture", "duplicate_capture"), ("freshness_anchor_after_evaluation", "freshness_anchor_after_evaluation"), ("capture_after_evaluation", "capture_after_evaluation"), ("evidence_revision_after_evaluation", "evidence_revision_after_evaluation"), ("assessment_revision_after_evaluation", "assessment_revision_after_evaluation"), ("stale", "stale"), ("capture_before_freshness_anchor", "capture_before_freshness_anchor"), ("capture_lag_exceeded", "capture_lag_exceeded"), ("zero_requested_weight", "zero_requested_weight"), ("included", "included"))
 def disposition_fixture(
     case: str,
 ) -> tuple[TeamEvidenceAggregationInput, TeamEvidenceAggregationConfig, TeamEvidenceAggregationRecord]:
@@ -330,14 +324,16 @@ def test_builder_calls_both_canonical_selectors_with_exact_input_and_config(
     monkeypatch.setattr(module, "select_team_evidence_canonical_current_records", current_selector)
     module.build_team_evidence_aggregation_result(input_value, config=config_value)
     assert calls == [("capture", input_value, config_value), ("current", input_value, config_value)]
-def test_canonical_capture_is_true_for_a_wholly_noncurrent_revision() -> None:
-    current = root_record("noncurrent-root")
-    noncurrent = successor(current, "noncurrent-successor")
-    result = build(aggregation_input((noncurrent, current), current_records=(current,)), config())
-    row = diagnostic_row_for_record(result, noncurrent)
-    assert [(row.canonical_capture, row.selected_current_revision, row.disposition)] == [
-        (True, False, "not_current_revision")
-    ]
+def test_wholly_noncurrent_recapture_precedes_duplicate_and_all_feasible_later_gates() -> None:
+    canonical = root_record("noncurrent-overlap", freshness_anchor_offset=39, captured_offset=101, recorded_offset=102, assessed_offset=103, requested_weight=d("0.000000"))
+    duplicate = recapture(canonical, stem="noncurrent-overlap-later", captured_offset=102)
+    policy = config()
+    result = build(aggregation_input((duplicate, canonical), current_records=()), policy)
+    canonical_row, row = diagnostic_row_for_record(result, canonical), diagnostic_row_for_record(result, duplicate)
+    assert (canonical_row.canonical_capture, canonical_row.selected_current_revision, canonical_row.disposition) == (True, False, "not_current_revision")
+    assert (row.selected_current_revision, row.canonical_capture, row.captured_at_evaluation, row.evidence_revision_available_at_evaluation, row.assessment_revision_available_at_evaluation) == (False,) * 5
+    assert row.evidence_age_seconds > policy.max_evidence_age_seconds and row.capture_lag_seconds > policy.max_capture_lag_seconds
+    assert (row.requested_weight, row.independence_allocated_weight, row.effective_weight, row.disposition) == (d("0.000000"), d("0.000000"), d("0.000000"), "not_current_revision")
 def test_selected_current_revision_is_pair_level_across_recaptures() -> None:
     canonical = root_record("pair-level")
     duplicate = recapture(canonical, stem="pair-level-later", captured_offset=56)
@@ -408,15 +404,7 @@ def test_earlier_identity_dispositions_dominate_later_temporal_and_weight_gates(
     noncurrent = root_record("precedence-noncurrent", freshness_anchor_offset=39, captured_offset=40, recorded_offset=41, assessed_offset=101)
     result = build(aggregation_input((noncurrent,), current_records=()), config())
     assert result.diagnostics[0].disposition == "not_current_revision"
-TEMPORAL_PRECEDENCE_CASES = (
-    ("freshness_anchor_after_evaluation", dict(freshness_anchor_offset=101, captured_offset=102, recorded_offset=102, assessed_offset=102)),
-    ("capture_after_evaluation", dict(freshness_anchor_offset=90, captured_offset=101, recorded_offset=102, assessed_offset=102)),
-    ("evidence_revision_after_evaluation", dict(freshness_anchor_offset=50, captured_offset=55, recorded_offset=101, assessed_offset=102)),
-    ("assessment_revision_after_evaluation", dict(freshness_anchor_offset=39, captured_offset=40, recorded_offset=41, assessed_offset=101)),
-    ("stale", dict(freshness_anchor_offset=39, captured_offset=38, recorded_offset=41, assessed_offset=42)),
-    ("capture_before_freshness_anchor", dict(freshness_anchor_offset=50, captured_offset=49, recorded_offset=50, assessed_offset=51, requested_weight=d("0.000000"))),
-    ("capture_lag_exceeded", dict(freshness_anchor_offset=50, captured_offset=71, recorded_offset=71, assessed_offset=72, requested_weight=d("0.000000"))),
-)
+TEMPORAL_PRECEDENCE_CASES = (("freshness_anchor_after_evaluation", dict(freshness_anchor_offset=101, captured_offset=102, recorded_offset=102, assessed_offset=102)), ("capture_after_evaluation", dict(freshness_anchor_offset=90, captured_offset=101, recorded_offset=102, assessed_offset=102)), ("evidence_revision_after_evaluation", dict(freshness_anchor_offset=50, captured_offset=55, recorded_offset=101, assessed_offset=102)), ("assessment_revision_after_evaluation", dict(freshness_anchor_offset=39, captured_offset=40, recorded_offset=41, assessed_offset=101)), ("stale", dict(freshness_anchor_offset=39, captured_offset=38, recorded_offset=41, assessed_offset=42)), ("capture_before_freshness_anchor", dict(freshness_anchor_offset=50, captured_offset=49, recorded_offset=50, assessed_offset=51, requested_weight=d("0.000000"))), ("capture_lag_exceeded", dict(freshness_anchor_offset=50, captured_offset=71, recorded_offset=71, assessed_offset=72, requested_weight=d("0.000000"))))
 @pytest.mark.parametrize(("expected", "overrides"), TEMPORAL_PRECEDENCE_CASES, ids=[item[0] for item in TEMPORAL_PRECEDENCE_CASES])
 def test_feasible_temporal_disposition_overlaps_use_exact_precedence(expected: str, overrides: dict[str, object]) -> None:
     record = root_record(f"overlap-{expected}", **overrides)
@@ -465,15 +453,6 @@ def test_allocation_and_witness_receive_the_exact_same_candidate_tuple(monkeypat
     assert calls == [("allocation", expected_candidates, policy), ("witness", expected_candidates, canonical_allocations, policy)]
     assert calls[1][1] is owned[0]
     assert calls[1][2] is owned[1]
-def test_requirement_coverage_witnesses_preserve_exact_five_field_candidate_edge_order() -> None:
-    requirements = (requirement("req:a", count=2, weight="0.100000", status="blocked"), requirement("req:b", count=2, weight="0.100000"))
-    records = crossed_records(("req:b", "req:a"))
-    result = build(aggregation_input(records[::-1], current_records=records[::-1]), config(requirements=requirements))
-    keys = tuple((coverage.requirement_id, witness.source_lineage_id, witness.evidence_revision_id, witness.assessment_revision_id, witness.capture_id) for coverage in result.requirement_coverage for witness in coverage.witnesses)
-    expected = tuple(sorted((req.requirement_id, record.source_lineage.source_lineage_id, record.evidence_revision.evidence_revision_id, record.assessment_revision.assessment_revision_id, record.capture.capture_id) for req in requirements for record in records))
-    assert keys == expected == tuple(sorted(keys))
-    assert tuple(item.source_lineage.source_lineage_id for item in sorted(records, key=record_key)) == ("lineage:cross-source-z", "lineage:cross-source-a")
-    assert keys[:2] == (("req:a", "lineage:cross-source-a", "evidence:cross-z", "assessment:cross-z", "capture:cross-z"), ("req:a", "lineage:cross-source-z", "evidence:cross-a", "assessment:cross-a", "capture:cross-a"))
 def test_old_exact_pair_remains_current_while_successors_are_present() -> None:
     old = root_record("old-pair")
     assessment = assessment_successor(old, "old-pair-assessment-2")
@@ -483,14 +462,7 @@ def test_old_exact_pair_remains_current_while_successors_are_present() -> None:
     assert diagnostic_row_for_record(result, old).disposition == "included"
     successor_rows = tuple(diagnostic_row_for_record(result, item) for item in (assessment, revision))
     assert successor_rows and all(row.disposition == "not_current_revision" for row in successor_rows)
-RECAPTURE_NON_REPAIR_CASES = (
-    ("freshness_anchor_after_evaluation", 102, "freshness_anchor_after_evaluation"),
-    ("capture_after_evaluation", 102, "capture_after_evaluation"),
-    ("stale", 41, "stale"),
-    ("capture_lag_exceeded", 72, "capture_lag_exceeded"),
-    ("evidence_revision_after_evaluation", 56, "evidence_revision_after_evaluation"),
-    ("assessment_revision_after_evaluation", 56, "assessment_revision_after_evaluation"),
-)
+RECAPTURE_NON_REPAIR_CASES = (("freshness_anchor_after_evaluation", 102, "freshness_anchor_after_evaluation"), ("capture_after_evaluation", 102, "capture_after_evaluation"), ("stale", 41, "stale"), ("capture_lag_exceeded", 72, "capture_lag_exceeded"), ("evidence_revision_after_evaluation", 56, "evidence_revision_after_evaluation"), ("assessment_revision_after_evaluation", 56, "assessment_revision_after_evaluation"))
 @pytest.mark.parametrize(("case", "recaptured_offset", "expected_disposition"), RECAPTURE_NON_REPAIR_CASES, ids=[item[0] for item in RECAPTURE_NON_REPAIR_CASES])
 def test_recapture_cannot_repair_freshness_lag_or_availability(case: str, recaptured_offset: int, expected_disposition: str) -> None:
     _, policy, canonical = disposition_fixture(case)
@@ -506,17 +478,29 @@ def test_future_evidence_or_assessment_revision_never_leaks_into_historical_arit
     assert result.arithmetic_record_count == 0
     assert result.effective_weight_total == d("0.000000")
 def test_malformed_allocator_output_reaches_real_witness_once_with_exact_objects(monkeypatch: pytest.MonkeyPatch) -> None:
-    module, record, policy, malformed, allocation_calls, witness_calls = api(), root_record("owner-validation"), config(), [], [], []
-    owner_witness = module.build_team_evidence_requirement_coverage
-    monkeypatch.setattr(module, "allocate_team_evidence_weights", lambda records, *, config: allocation_calls.append(records) or malformed)
+    module, record, policy = api(), root_record("owner-validation"), config()
+    class HostileAllocatorOutput:
+        def __init__(self): self.callback_count = 0
+        def inspected(self, *args): self.callback_count += 1; raise AssertionError("allocator output inspected before witness type validation")
+        __iter__ = __len__ = __getitem__ = __eq__ = inspected
+    malformed = HostileAllocatorOutput()
+    allocation_calls, witness_calls = [], []
+    real_witness = module.build_team_evidence_requirement_coverage
+    def allocator_spy(records, *, config):
+        allocation_calls.append((records, config))
+        return malformed
+    monkeypatch.setattr(module, "allocate_team_evidence_weights", allocator_spy)
     def witness_spy(records, allocations, *, config):
-        witness_calls.append((records, allocations, config)); assert allocations is malformed
-        return owner_witness(records, allocations, config=config)
+        witness_calls.append((records, allocations, config))
+        return real_witness(records, allocations, config=config)
     monkeypatch.setattr(module, "build_team_evidence_requirement_coverage", witness_spy)
     with pytest.raises(ValueError) as error:
         module.build_team_evidence_aggregation_result(aggregation_input((record,), current_records=(record,)), config=policy)
     assert str(error.value) == "allocations must be an exact tuple"
-    assert len(allocation_calls) == len(witness_calls) == 1 and witness_calls[0][1] is malformed and getattr(malformed, "callback_count", 0) == 0
+    assert len(allocation_calls) == len(witness_calls) == 1
+    candidate_tuple, allocations, witness_config = witness_calls[0]
+    assert candidate_tuple is allocation_calls[0][0] and candidate_tuple == (record,)
+    assert allocations is malformed and witness_config is policy and malformed.callback_count == 0
 def test_retired_requirement_ids_reject_only_positive_effective_candidates() -> None:
     active, retired = requirement("req:active"), ("req:retired",)
     positive = root_record("retired-positive", requirement_ids=retired)
@@ -531,6 +515,11 @@ def test_retired_requirement_ids_reject_only_positive_effective_candidates() -> 
     exhausted = root_record("z-retired-cap-exhausted", requirement_ids=retired, requested_weight=d("0.000001"), independence_key="ind:retired")
     capped = build(aggregation_input((exhausted, kept), current_records=(exhausted, kept)), config(requirements=(active,), independence_group_weight_cap=d("0.000001")))
     assert diagnostic_row_for_record(capped, exhausted).disposition == "independence_cap_exhausted"
+    correlation_kept = root_record("a-retired-correlation-kept", requirement_ids=(active.requirement_id,), requested_weight=d("0.000001"), correlation_key="corr:retired")
+    correlation_exhausted = root_record("z-retired-correlation-exhausted", requirement_ids=retired, requested_weight=d("0.000001"), correlation_key="corr:retired")
+    correlation_capped = build(aggregation_input((correlation_exhausted, correlation_kept), current_records=(correlation_exhausted, correlation_kept)), config(requirements=(active,), correlation_group_weight_cap=d("0.000001")))
+    row = diagnostic_row_for_record(correlation_capped, correlation_exhausted)
+    assert (row.independence_allocated_weight > d("0.000000"), row.effective_weight, row.disposition) == (True, d("0.000000"), "correlation_cap_exhausted")
 def assert_selector_rejection(monkeypatch: pytest.MonkeyPatch, input_value: TeamEvidenceAggregationInput, description: str) -> None:
     module, policy, calls = api(), config(), []
     def capture_selector(value, *, config):
@@ -634,8 +623,8 @@ def test_one_sided_support_has_no_contradiction_even_when_watch_threshold_is_zer
     records = (root_record("one-sided-yes", probability_yes=d("0.750000"), requested_weight=d("0.700000")), root_record("one-sided-neutral", probability_yes=d("0.500000"), requested_weight=d("0.300000")))
     result = build(aggregation_input(records, current_records=records), policy)
     assert result.contradiction == TeamEvidenceContradictionResult(yes_support_weight=d("0.700000"), no_support_weight=d("0.000000"), neutral_weight=d("0.300000"), contradiction_score=d("0.000000"), status="none")
-CONTRADICTION_BOUNDARY_CASES = ((d("0.750000"), d("0.050000"), d("0.125000"), "none"), (d("0.700000"), d("0.100000"), d("0.250000"), "watch"), (d("0.500000"), d("0.300000"), d("0.750000"), "blocked"))
-@pytest.mark.parametrize(("yes_weight", "no_weight", "expected_score", "expected_status"), CONTRADICTION_BOUNDARY_CASES, ids=("below-watch", "watch-boundary", "block-boundary"))
+CONTRADICTION_BOUNDARY_CASES = ((d("0.750000"), d("0.050000"), d("0.125000"), "none"), (d("0.700000"), d("0.100000"), d("0.250000"), "watch"), (d("0.500000"), d("0.300000"), d("0.750000"), "blocked"), (d("0.500000"), d("0.100000"), d("0.333333"), "watch"))
+@pytest.mark.parametrize(("yes_weight", "no_weight", "expected_score", "expected_status"), CONTRADICTION_BOUNDARY_CASES, ids=("below-watch", "watch-boundary", "block-boundary", "final-only-quantization"))
 def test_contradiction_thresholds_are_inclusive_and_block_is_checked_first(yes_weight: Decimal, no_weight: Decimal, expected_score: Decimal, expected_status: str) -> None:
     result = weighted_result((("0.750000", str(yes_weight)), ("0.250000", str(no_weight))))
     assert result.contradiction.contradiction_score == expected_score
@@ -643,36 +632,18 @@ def test_contradiction_thresholds_are_inclusive_and_block_is_checked_first(yes_w
 def test_neutral_weight_is_reported_but_does_not_dilute_opposing_support() -> None:
     result = weighted_result((("0.750000", "0.050000"), ("0.250000", "0.050000"), ("0.500000", "0.900000")))
     assert result.contradiction == TeamEvidenceContradictionResult(d("0.050000"), d("0.050000"), d("0.900000"), d("1.000000"), "blocked")
-STATUS_REASON_CASES = (
-    ("no_arithmetic_plus_block_and_watch_requirements", "blocked", ("blocking_requirement_unmet", "no_arithmetic_evidence", "watch_requirement_unmet")),
-    ("contradiction_blocked_plus_watch_requirement", "blocked", ("contradiction_blocked", "watch_requirement_unmet")),
-    ("blocking_requirement_plus_contradiction_blocked", "blocked", ("blocking_requirement_unmet", "contradiction_blocked")),
-    ("blocking_and_watch_requirements_plus_contradiction_blocked", "blocked", ("blocking_requirement_unmet", "contradiction_blocked", "watch_requirement_unmet")),
-    ("blocking_requirement_plus_contradiction_watch", "blocked", ("blocking_requirement_unmet", "contradiction_watch")),
-    ("watch_requirement_plus_contradiction_watch", "watch", ("contradiction_watch", "watch_requirement_unmet")),
-)
+STATUS_REASON_CASES = (("no_arithmetic_plus_block_and_watch_requirements", "blocked", ("blocking_requirement_unmet", "no_arithmetic_evidence", "watch_requirement_unmet")), ("contradiction_blocked_plus_watch_requirement", "blocked", ("contradiction_blocked", "watch_requirement_unmet")), ("blocking_requirement_plus_contradiction_blocked", "blocked", ("blocking_requirement_unmet", "contradiction_blocked")), ("blocking_and_watch_requirements_plus_contradiction_blocked", "blocked", ("blocking_requirement_unmet", "contradiction_blocked", "watch_requirement_unmet")), ("blocking_requirement_plus_contradiction_watch", "blocked", ("blocking_requirement_unmet", "contradiction_watch")), ("watch_requirement_plus_contradiction_watch", "watch", ("contradiction_watch", "watch_requirement_unmet")), ("no_arithmetic_plus_blocking_requirement", "blocked", ("blocking_requirement_unmet", "no_arithmetic_evidence")), ("no_arithmetic_plus_watch_requirement", "blocked", ("no_arithmetic_evidence", "watch_requirement_unmet")), ("blocking_requirement_only", "blocked", ("blocking_requirement_unmet",)), ("blocking_plus_watch_requirements", "blocked", ("blocking_requirement_unmet", "watch_requirement_unmet")), ("contradiction_watch_only", "watch", ("contradiction_watch",)), ("blocking_and_watch_requirements_plus_contradiction_watch", "blocked", ("blocking_requirement_unmet", "contradiction_watch", "watch_requirement_unmet")), ("contradiction_blocked_only", "blocked", ("contradiction_blocked",)))
 @pytest.mark.parametrize(("case", "expected_status", "expected_reasons"), STATUS_REASON_CASES, ids=[item[0] for item in STATUS_REASON_CASES])
 def test_status_precedence_and_mixed_reason_tuples_are_exact(case: str, expected_status: str, expected_reasons: tuple[str, ...]) -> None:
-    blocked_requirement, watch_requirement = requirement("req:block", status="blocked"), requirement("req:watch")
-    if case == "no_arithmetic_plus_block_and_watch_requirements":
-        requirements, values = (blocked_requirement, watch_requirement), ()
-    elif case == "contradiction_blocked_plus_watch_requirement":
-        requirements, values = (watch_requirement,), (("0.750000", "0.500000"), ("0.250000", "0.300000"))
-    elif case.endswith("contradiction_blocked"):
-        requirements = (blocked_requirement, watch_requirement) if case.startswith("blocking_and_watch") else (blocked_requirement,)
-        values = (("0.750000", "0.500000"), ("0.250000", "0.300000"))
-    else:
-        requirements = (blocked_requirement,) if case.startswith("blocking") else (watch_requirement,)
-        values = (("0.750000", "0.700000"), ("0.250000", "0.100000"))
+    requirement_by_reason = {"blocking_requirement_unmet": requirement("req:block", status="blocked"), "watch_requirement_unmet": requirement("req:watch")}
+    requirements = tuple(requirement_by_reason[reason] for reason in expected_reasons if reason in requirement_by_reason)
+    if "no_arithmetic_evidence" in expected_reasons: values = ()
+    elif "contradiction_blocked" in expected_reasons: values = (("0.750000", "0.500000"), ("0.250000", "0.300000"))
+    elif "contradiction_watch" in expected_reasons: values = (("0.750000", "0.700000"), ("0.250000", "0.100000"))
+    else: values = (("0.500000", "1.000000"),)
     result = weighted_result(values, requirements=requirements)
     assert (result.status, result.reason_codes, result.publishable_probability_yes) == (expected_status, expected_reasons, None)
-READY_PUBLICATION_CASES = (
-    (d("0.050000"), d("0.110000"), ("aggregation_ready", "publish_probability_floor_applied")),
-    (d("0.950000"), d("0.890000"), ("aggregation_ready", "publish_probability_ceiling_applied")),
-    (d("0.110000"), d("0.110000"), ("aggregation_ready",)),
-    (d("0.890000"), d("0.890000"), ("aggregation_ready",)),
-    (d("0.500000"), d("0.500000"), ("aggregation_ready",)),
-)
+READY_PUBLICATION_CASES = ((d("0.050000"), d("0.110000"), ("aggregation_ready", "publish_probability_floor_applied")), (d("0.950000"), d("0.890000"), ("aggregation_ready", "publish_probability_ceiling_applied")), (d("0.110000"), d("0.110000"), ("aggregation_ready",)), (d("0.890000"), d("0.890000"), ("aggregation_ready",)), (d("0.500000"), d("0.500000"), ("aggregation_ready",)))
 @pytest.mark.parametrize(("probability", "expected_publishable", "expected_reasons"), READY_PUBLICATION_CASES, ids=("below-floor", "above-ceiling", "at-floor", "at-ceiling", "in-range"))
 def test_ready_publication_uses_only_supplied_nonbtc_bounds(probability: Decimal, expected_publishable: Decimal, expected_reasons: tuple[str, ...]) -> None:
     result = weighted_result(((str(probability), "1.000000"),))
@@ -698,38 +669,33 @@ def test_all_excluded_input_is_blocked_without_erasing_diagnostics() -> None:
     result = build(aggregation_input((stale,), current_records=(stale,)), config())
     assert (result.status, result.arithmetic_record_count, result.reason_codes) == ("blocked", 0, ("no_arithmetic_evidence",))
     assert len(result.diagnostics) == 1 and result.diagnostics[0].disposition == "stale"
-def test_result_contains_exactly_one_coverage_row_per_config_requirement() -> None:
-    requirements = (requirement("req:z"), requirement("req:a", status="blocked"))
-    result = weighted_result((), requirements=requirements)
-    assert tuple(row.requirement_id for row in result.requirement_coverage) == tuple(item.requirement_id for item in config(requirements=requirements).requirements)
-    assert len(result.requirement_coverage) == len(requirements)
+def test_result_contains_exact_config_projection_and_rejects_malformed_node_2b_handoffs(monkeypatch: pytest.MonkeyPatch) -> None:
+    module, (input_value, policy, result) = api(), coverage_fixture()
+    projection = lambda item: (item.requirement_id, item.minimum_witness_count, item.minimum_effective_weight, item.unmet_status)
+    assert tuple(map(projection, result.requirement_coverage)) == tuple(map(projection, policy.requirements))
+    edges = tuple((w.requirement_id, w.source_lineage_id, w.evidence_revision_id, w.assessment_revision_id, w.capture_id) for row in result.requirement_coverage for w in row.witnesses)
+    assert edges == (("req:a", "lineage:cross-source-a", "evidence:cross-z", "assessment:cross-z", "capture:cross-z"), ("req:a", "lineage:cross-source-z", "evidence:cross-a", "assessment:cross-a", "capture:cross-a"), ("req:b", "lineage:cross-source-a", "evidence:cross-z", "assessment:cross-z", "capture:cross-z"))
+    outcomes = []
+    for name, coverage in malformed_coverage_variants(result):
+        monkeypatch.setattr(module, "build_team_evidence_requirement_coverage", lambda *args, _coverage=coverage, **kwargs: _coverage)
+        try: module.build_team_evidence_aggregation_result(input_value, config=policy)
+        except ValueError as error: outcomes.append((name, str(error)))
+        else: outcomes.append((name, None))
+    unexpected = tuple((name, message) for name, message in outcomes if message != "materialized aggregation result violates canonical invariants")
+    assert not unexpected, "\n".join(f"{name}: {message}" for name, message in unexpected)
 def test_zero_candidate_requirement_preserves_every_configured_coverage_field() -> None:
     configured = requirement("req:zero", count=2, weight="0.400000", status="blocked")
     input_value, policy = aggregation_input((), current_records=()), config(requirements=(configured,))
     result = build(input_value, policy)
     assert result.requirement_coverage == (TeamEvidenceRequirementCoverage(requirement_id="req:zero", minimum_witness_count=2, assigned_witness_count=0, minimum_effective_weight=d("0.400000"), unmet_status="blocked", satisfied=False, witnesses=()),)
     assert api().validate_team_evidence_aggregation_result(result, aggregation_input=input_value, config=policy) is None
-def test_facade_rejects_raw_witness_requirement_id_projection_drift(monkeypatch: pytest.MonkeyPatch) -> None:
-    module, record, requirements = api(), root_record("projection-drift"), (requirement("req:a"), requirement("req:b", status="blocked"))
-    policy = config(requirements=requirements)
-    real = module.build_team_evidence_requirement_coverage
-    variants = (
-        lambda *a, **k: real(*a, **k)[:-1],
-        lambda *a, **k: real(*a, **k) + (TeamEvidenceRequirementCoverage("req:extra", 1, 0, d("0.100000"), "watch", False, ()),),
-        lambda *a, **k: real(*a, **k)[::-1],
-        lambda *a, **k: (),
-    )
-    for witness in variants:
-        monkeypatch.setattr(module, "build_team_evidence_requirement_coverage", witness)
-        with pytest.raises(ValueError) as error:
-            module.build_team_evidence_aggregation_result(aggregation_input((record,), current_records=(record,)), config=policy)
-        assert str(error.value) == "materialized aggregation result violates canonical invariants"
 def assert_rematerialization_rejection(result: object, input_value: TeamEvidenceAggregationInput, policy: TeamEvidenceAggregationConfig) -> None:
     with pytest.raises(ValueError) as error:
         api().validate_team_evidence_aggregation_result(result, aggregation_input=input_value, config=policy)
     assert str(error.value) == "aggregation result must equal rematerialized result"
 def test_result_validator_returns_exact_none_for_builder_result() -> None:
     input_value, policy, result = ready_fixture()
+    assert (result.evaluated_at, result.config_version) == (input_value.evaluated_at, policy.config_version)
     assert api().validate_team_evidence_aggregation_result(result, aggregation_input=input_value, config=policy) is None
 def test_builder_and_validator_never_call_each_others_public_entrypoint(monkeypatch: pytest.MonkeyPatch) -> None:
     module = api()
@@ -783,13 +749,20 @@ def test_result_validator_rejects_self_digested_nested_semantic_tampers() -> Non
     tampered = self_digested(result, requirement_coverage=(replace(coverage, witnesses=(forged_witness,)),))
     assert validate_team_evidence_aggregation_core_digest(tampered) is None
     assert_rematerialization_rejection(tampered, input_value, policy)
-def test_result_validator_rejects_missing_extra_duplicate_or_reordered_requirement_coverage() -> None:
-    requirements = (requirement("req:a"), requirement("req:b", status="blocked"))
-    input_value, policy, result = ready_fixture(requirements=requirements)
-    extra = TeamEvidenceRequirementCoverage("req:extra", 1, 0, d("0.100000"), "watch", False, ())
-    variants = (result.requirement_coverage[:-1], result.requirement_coverage + (extra,), result.requirement_coverage + result.requirement_coverage[:1], result.requirement_coverage[::-1])
-    for coverage in variants:
-        assert_rematerialization_rejection(bypassed(result, requirement_coverage=coverage), input_value, policy)
+def test_result_validator_rejects_self_digested_malformed_requirement_coverage_at_materialized_invariant() -> None:
+    module, (input_value, policy, result), outcomes = api(), coverage_fixture(), []
+    for name, coverage in malformed_coverage_variants(result):
+        malformed = bypassed(result, requirement_coverage=coverage)
+        try: module._validate_materialized_result_invariants(malformed, config=policy, expected_config_digest=result.config_digest)
+        except ValueError as error: outcomes.append((name, str(error)))
+        else: outcomes.append((name, None))
+        if name in ("incomplete", "appended-extra", "minimum-witness-count-drift", "minimum-effective-weight-drift", "unmet-status-drift"):
+            provisional = bypassed(malformed, core_digest="0" * 64)
+            malformed = bypassed(provisional, core_digest=team_evidence_aggregation_core_digest(provisional))
+            assert validate_team_evidence_aggregation_core_digest(malformed) is None
+        assert_rematerialization_rejection(malformed, input_value, policy)
+    unexpected = tuple((name, message) for name, message in outcomes if message != "materialized aggregation result violates canonical invariants")
+    assert not unexpected, "\n".join(f"{name}: {message}" for name, message in unexpected)
 def test_result_validator_rejects_wrong_exact_result_type_and_constructor_bypass() -> None:
     input_value, policy, result = ready_fixture()
     with pytest.raises(ValueError) as error:
@@ -799,36 +772,48 @@ def test_result_validator_rejects_wrong_exact_result_type_and_constructor_bypass
     for field in fields(result):
         if field.name != "core_digest": object.__setattr__(incomplete, field.name, getattr(result, field.name))
     assert_rematerialization_rejection(incomplete, input_value, policy)
-def test_result_validator_rejects_constructor_bypassed_snan_with_stable_mismatch_error() -> None:
-    input_value, policy, result = ready_fixture()
+def test_result_validator_rejects_constructor_bypassed_snan_and_nested_cycles_before_codec(monkeypatch: pytest.MonkeyPatch) -> None:
+    input_value, policy, result = coverage_fixture()
     assert_rematerialization_rejection(bypassed(result, requested_weight_total=Decimal("sNaN")), input_value, policy)
-def test_result_validator_maps_bypassed_wrong_field_type() -> None:
-    input_value, policy, result = ready_fixture()
-    assert_rematerialization_rejection(bypassed(result, effective_weight_total="0.400000"), input_value, policy)
+    assert_shape_preflight_rejections(monkeypatch, cyclic_nested_results(result), input_value, policy)
+def test_result_validator_rejects_wrong_deep_and_wide_inner_shapes_before_codec(monkeypatch: pytest.MonkeyPatch) -> None:
+    input_value, policy, result = coverage_fixture()
+    assert_shape_preflight_rejections(monkeypatch, nested_inner_results(result), input_value, policy)
 def test_result_validator_codec_precedes_rematerialization_and_supplied_callbacks(monkeypatch: pytest.MonkeyPatch) -> None:
-    input_value, policy, result, module, events = *ready_fixture(), api(), []
-    original_materialize = module._materialize_team_evidence_aggregation_result
-    monkeypatch.setattr(module, "_materialize_team_evidence_aggregation_result", lambda *a, **k: events.append("rematerialize") or original_materialize(*a, **k))
-    assert module.validate_team_evidence_aggregation_result(result, aggregation_input=input_value, config=policy) is None
-    assert events == ["rematerialize"]; events.clear()
+    input_value, policy, supplied = ready_fixture()
+    module, events = api(), []
+    codec_validator, rematerializer = module.validate_team_evidence_aggregation_core_digest, module._materialize_team_evidence_aggregation_result
+    def codec_spy(value):
+        if value is supplied: events.append("supplied-codec")
+        return codec_validator(value)
+    def rematerialize_spy(*args, **kwargs): events.append("rematerialize"); return rematerializer(*args, **kwargs)
+    monkeypatch.setattr(module, "validate_team_evidence_aggregation_core_digest", codec_spy); monkeypatch.setattr(module, "_materialize_team_evidence_aggregation_result", rematerialize_spy)
+    assert (module.validate_team_evidence_aggregation_result(supplied, aggregation_input=input_value, config=policy), events) == (None, ["supplied-codec", "rematerialize"]); events.clear()
+    def recursive_codec(value):
+        if value is supplied: raise RecursionError("simulated internal codec recursion")
+        return codec_validator(value)
+    monkeypatch.setattr(module, "validate_team_evidence_aggregation_core_digest", recursive_codec)
+    with pytest.raises(RecursionError) as recursion: module.validate_team_evidence_aggregation_result(supplied, aggregation_input=input_value, config=policy)
+    assert str(recursion.value) == "simulated internal codec recursion"
+    monkeypatch.setattr(module, "validate_team_evidence_aggregation_core_digest", codec_spy)
     class EqualityTripwire:
-        def __eq__(self, other: object) -> bool:
-            events.append("field-equality"); raise RuntimeError("supplied-result callback executed")
-    hostile, codec_validator = bypassed(result, config_version=EqualityTripwire()), module.validate_team_evidence_aggregation_core_digest
-    monkeypatch.setattr(module, "validate_team_evidence_aggregation_core_digest", lambda value: events.append("supplied-codec") or codec_validator(value) if value is hostile else codec_validator(value))
+        def __eq__(self, other: object) -> bool: events.append("field-equality"); raise RuntimeError("supplied-result callback executed")
+    supplied = bypassed(supplied, config_version=EqualityTripwire())
     with pytest.raises(ValueError) as error:
-        module.validate_team_evidence_aggregation_result(hostile, aggregation_input=input_value, config=policy)
-    assert str(error.value) == "aggregation result must equal rematerialized result" and events == ["supplied-codec"]
+        module.validate_team_evidence_aggregation_result(supplied, aggregation_input=input_value, config=policy)
+    assert str(error.value) == "aggregation result must equal rematerialized result"
+    assert events == []
 def test_result_validator_preserves_malformed_input_and_config_errors() -> None:
     ready_input, policy, result = ready_fixture()
     alpha, beta = root_record("validator-fd-alpha"), root_record("validator-fd-beta")
     conflict = record_variant(beta, capture={"capture_id": alpha.capture.capture_id})
     malformed_input = aggregation_input((alpha, conflict), current_records=())
     malformed_config = bypassed(policy, maximum_records=0)
+    supplied_result = result
     cases = ((malformed_input, policy, "capture.capture_id must determine one complete projection"), (ready_input, malformed_config, "maximum_records must be an exact positive int in 1..128"))
     for input_value, config_value, description in cases:
         with pytest.raises(ValueError) as error:
-            api().validate_team_evidence_aggregation_result(result, aggregation_input=input_value, config=config_value)
+            api().validate_team_evidence_aggregation_result(supplied_result, aggregation_input=input_value, config=config_value)
         assert str(error.value) == description
 def test_result_validator_is_hostile_decimal_context_invariant() -> None:
     input_value, policy, result = ready_fixture()
@@ -868,9 +853,11 @@ def test_materializer_uses_codec_helpers_in_exact_sequence(monkeypatch: pytest.M
     assert tuple(name for name, _ in calls) == ("validate", "config", "core", "validate")
     assert calls[0][1] is result and calls[-1][1] is not result
 def test_builder_config_digest_equals_exact_codec_digest() -> None:
-    _, policy, result = ready_fixture(); assert result.config_digest == team_evidence_aggregation_config_digest(policy)
+    _, policy, result = ready_fixture()
+    assert result.config_digest == team_evidence_aggregation_config_digest(policy)
 def test_builder_core_digest_equals_exact_codec_digest() -> None:
-    _, _, result = ready_fixture(); assert result.core_digest == team_evidence_aggregation_core_digest(result)
+    _, _, result = ready_fixture()
+    assert result.core_digest == team_evidence_aggregation_core_digest(result)
 def test_core_digest_changes_when_any_semantic_result_field_changes() -> None:
     configured = requirement("req:digest", weight="0.100000")
     record = root_record("digest-fields", requested_weight=d("0.600000"), requirement_ids=(configured.requirement_id,))
