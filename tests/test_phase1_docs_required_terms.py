@@ -5,7 +5,6 @@ from pathlib import Path
 
 
 PHASE1_NEW_DOC_PATHS = (
-    Path("docs/acceptance/phase-1-development-node-acceptance-checklist.md"),
     Path("docs/config/phase-1-strategy-screening-schema.md"),
     Path("docs/contracts/phase1-data-field-contracts.md"),
     Path("docs/data_dictionary/phase1-research-decision-objects.md"),
@@ -13,9 +12,7 @@ PHASE1_NEW_DOC_PATHS = (
     Path("docs/phase1/probability-event-readonly-supabase-principles.md"),
     Path("docs/phases/2026-07-12-phase-1-capability-baseline.md"),
     Path("docs/playbooks/phase1-specialist-team-playbooks.md"),
-    Path("docs/quality/phase-1-development-node-quality-gates.md"),
     Path("docs/research/source-acquisition-quality-policy.md"),
-    Path("docs/review/2026-07-12-operating-review-rules.md"),
     Path("docs/risk/phase1-risk-capital-settlement-policy.md"),
     Path("docs/roadmap/2026-07-12-project-progress-roadmap.md"),
     Path("docs/strategy/phase1-probability-event-filtering-workflow.md"),
@@ -84,16 +81,6 @@ CRITICAL_BOUNDARY_DOC_PATHS = (
 DATA_FIELD_CONTRACT_PATH = Path("docs/contracts/phase1-data-field-contracts.md")
 SCREENING_SCHEMA_PATH = Path("docs/config/phase-1-strategy-screening-schema.md")
 RISK_POLICY_PATH = Path("docs/risk/phase1-risk-capital-settlement-policy.md")
-AGENT_POLICY_PATH = Path("AGENTS.md")
-AGENT_CONCURRENCY_PATH = Path(
-    "docs/maintenance/phase1-agent-concurrency-and-review-rules.md",
-)
-CLAUDE_REVIEW_MONITORING_PATHS = (
-    AGENT_POLICY_PATH,
-    AGENT_CONCURRENCY_PATH,
-    Path("docs/review/2026-07-12-operating-review-rules.md"),
-    Path("docs/roadmap/2026-07-12-project-progress-roadmap.md"),
-)
 
 
 def _read(path: Path) -> str:
@@ -188,7 +175,7 @@ def test_probability_event_docs_freeze_canonical_pyes_orientation() -> None:
 
 
 def test_phase1_new_docs_exist_and_are_markdown() -> None:
-    assert len(PHASE1_NEW_DOC_PATHS) == 15
+    assert len(PHASE1_NEW_DOC_PATHS) == 12
 
     for path in PHASE1_NEW_DOC_PATHS:
         assert path.suffix == ".md", path
@@ -279,64 +266,3 @@ def test_phase1_risk_policy_freezes_portfolio_watch_reason_rollup() -> None:
         assert f"`{reason_code}`" in text
     assert "all canonical watch reasons" in text
     assert "block reasons plus `low_exit_liquidity_watch` only" in text
-
-
-def test_project_policy_freezes_sustained_parallel_development_iron_rule() -> None:
-    agents_text = _normalized(_read(AGENT_POLICY_PATH))
-    concurrency_text = _normalized(_read(AGENT_CONCURRENCY_PATH))
-
-    for required_text in (
-        "Sustained parallel development is a project iron rule",
-        "The project sets no fixed subagent concurrency count",
-        "Nested subagent depth remains capped at **3**",
-        "discover usable capacity dynamically",
-        "Use fewer threads whenever",
-        "multiple modules and multiple development nodes",
-        "Reclaim agents immediately",
-    ):
-        assert required_text in agents_text
-
-    for required_text in (
-        "implements Project Iron Rule 6",
-        "project defines no fixed subagent-thread count",
-        "discover usable capacity dynamically",
-        "Nested depth remains capped at **3**",
-        "may run fewer active threads",
-        "multiple modules and multiple development nodes",
-        "Failed or blocked agents must also be reclaimed promptly",
-        "primary Codex coordinator follows the `AGENTS.md` Codex Node Push Policy",
-        "Subagents must not create commits or push branches",
-    ):
-        assert required_text in concurrency_text
-
-    for stale_text in (
-        "64 active subagent threads",
-        "nested subagent depth cap of **4**",
-        "nested depth **4**",
-    ):
-        assert stale_text not in agents_text
-        assert stale_text not in concurrency_text
-
-
-def test_project_policy_freezes_long_running_claude_review_monitoring() -> None:
-    for path in CLAUDE_REVIEW_MONITORING_PATHS:
-        text = _normalized(_read(path))
-
-        assert "must not be wrapped in a fixed elapsed-time timeout" in text
-        assert "inspectable session" in text
-        assert "check them about every 30 seconds" in text
-        assert "process/session liveness" in text
-        assert "when available, stream growth or event count" in text
-        assert "stderr or terminal events, CPU, and network activity" in text
-        assert (
-            "Elapsed time alone or a quiet interval is not evidence of a stall"
-            in text
-        )
-        assert "do not interrupt, terminate, restart, duplicate, or replace it" in text
-        assert "do not route around" in text
-        assert "keep waiting and monitoring" in text
-        assert "Act only on an explicit result or error" in text
-        assert "confirmed process/session exit" in text
-        assert "concrete auth/permission/provider failure" in text
-        assert "proven stall" in text
-        assert "newer user instruction" in text

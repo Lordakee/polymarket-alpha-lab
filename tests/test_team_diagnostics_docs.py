@@ -355,7 +355,7 @@ def test_team_diagnostics_docs_cover_snapshot_history_readback_surface() -> None
             gate_section = _section_between(
                 text,
                 "Gate persisted diagnostics snapshot history",
-                "## Project Iron Rules",
+                "## Team Research Assignment",
             )
 
         assert "team-diagnostics-snapshot-history" in text
@@ -449,7 +449,7 @@ def test_team_diagnostics_docs_cover_team_memory_readiness_digest_surface() -> N
             digest_section = _section_between(
                 text,
                 "Summarize team readiness for long-term team-memory",
-                "## Project Iron Rules",
+                "## Team Research Assignment",
             )
 
         assert "polymarket-alpha-lab team-memory-readiness-digest" in digest_section

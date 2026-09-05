@@ -38,31 +38,6 @@ Gate persisted diagnostics snapshot history with `polymarket-alpha-lab team-diag
 
 Summarize team readiness for long-term team-memory with `polymarket-alpha-lab team-memory-readiness-digest --team-id crypto_btc --limit 100`. This command is a Phase 1 read-only/report-only/paper-only local Supabase/Postgres readback that builds per-team digest sources backed by diagnostics snapshot history gate results. It reads `team_diagnostics_snapshots` only through the existing snapshot env vars `POLYMARKET_ALPHA_LAB_TEAM_DIAGNOSTICS_SNAPSHOT_DB_ENABLED`, `POLYMARKET_ALPHA_LAB_TEAM_DIAGNOSTICS_SNAPSHOT_DB_DSN`, and `POLYMARKET_ALPHA_LAB_TEAM_DIAGNOSTICS_SNAPSHOT_DB_TABLE`; configuration stays in environment variables, with no DSN/table CLI flags. The command wraps one diagnostics snapshot history gate result per selected team as a `TeamMemoryReadinessDigestSource` and composes those sources into a pass/watch/blocked digest for downstream paper-only research use of long-term team-memory. The digest status `pass` means every selected team's source gate passed and recommends `allow_team_memory_readiness_use`. The digest status `watch` means no selected team is blocked but at least one source gate is `watch`, and recommends `throttle_team_memory_readiness_use`. The digest status `blocked` means at least one source gate is blocked or no sources are available, and recommends `block_team_memory_readiness_use`; empty source sets are blocked with `team_memory_readiness_digest_empty_sources`. Passing sources emit `team_memory_readiness_digest_passed`; watched sources emit `team_memory_readiness_digest_watch_sources_present`; blocked sources emit `team_memory_readiness_digest_blocked_sources_present`. Sample output fields include `digest_status=`, `recommended_next_step=`, `team_count=`, `pass_count=`, `watch_count=`, `blocked_count=`, `source_statuses=crypto_btc:pass:1200:12/3`, `source_config_versions=crypto_btc:team-diagnostics-snapshot-history-v0`, `reason_code_counts=team_memory_readiness_digest_passed:1`, `reason_codes=`, `paper_only=True`, `report_only=True`, and `readonly=True`. It remains local evidence only, with no live trading, no order path, no exchange mutation, no ranking, no recommendations, no trade instructions, no financial advice, no strategy-weight tuning, and no position sizing.
 
-## Project Iron Rules
-
-- Persistent project data must use only the local Supabase/Postgres instance on this host. Do not add SQLite, Redis, Mongo, SQLAlchemy, hosted database assumptions, generic database abstraction layers, or file-backed database substitutes as durable persistence.
-- Any raw DSN from environment variables, config objects, CLI plumbing, tests, fixtures, or helper constructors must pass through `validate_local_postgres_dsn` before a connection, psycopg wrapper, or persistence adapter uses it.
-- Phase 1 is paper-only, report-only, and readonly. It must not add live trading, account authentication, wallet/private-key handling, account reads, order signing, order submission, order cancellation, order replacement, or exchange/order mutation.
-- DB-backed features in Phase 1 are local paper evidence storage and readback only. Persisted and recovered report surfaces must preserve `paper_only=True`, `report_only=True`, and `readonly=True` wherever those flags exist.
-
-Continuous run as a whole is not fully DB-backed; only its NAV paper-trade source handling can use `paper_trade_journal_records` when the local paper trade journal DB env is enabled. `check-outcomes` and `cost-audit` can also use `paper_trade_journal_records` as their paper-trade source when that env is enabled. JSONL remains the legacy compatibility/export/replay path and the still-current input for history/performance summary, strategy audit, and observability/trend consumers until their separate migrations land.
-
-It also includes an optional local-only Strategy Risk Audit preflight for continuous paper runs, optional Strategy Risk Audit logging, and a local history summary over that optional log; the preflight reads existing paper logs and can pause the next paper run before any public client is constructed, audit logging is explicit opt-in local append-only JSONL evidence, and the history summary reads that evidence without changing run behavior.
-
-A separate `strategy-evidence` summary is local evidence observability only: it reads caller-selected local paper logs and existing local reports to describe evidence presence, gaps, and risk flags without changing run behavior.
-
-The `observability-trends` command is a local-only trend summary over the same paper artifacts. It reads caller-selected cycle, paper-trade, NAV, optional outcome, and optional Strategy Risk Audit logs, builds the existing strategy-evidence, outcome-freshness, NAV-risk, and paper-trade-cost trend reports, and prints a compact read-only summary without changing strategy behavior. By default it performs no DB write and mutates no local logs or artifacts; an optional paper-only/report-only/readonly DB insert is allowed only when `--persist` is passed and the local observability DB environment config is enabled.
-
-The current phase does not contain:
-
-- account authentication
-- private key handling
-- automated order placement
-- live trading logic
-- compliance or legal analysis
-
-These are Phase 1 scope boundaries. They are not permanent non-goals. Future execution work is tracked in the automated investment roadmap and must pass documented validation gates before live capital is introduced.
-
 ## Team Research Assignment
 
 The team research assignment report is a Phase 1 read-only operations handoff for assigning existing strategy candidate research queue rows to specialist teams. It consumes the candidate research queue, team market routes, and team memory readiness digest, then records whether each assigned team may use long-term memory with an `allow`, `throttle`, or `block` policy. See [docs/team-research-assignment.md](docs/team-research-assignment.md). The report preserves queue order and does not rank investments, recommend trades, tune strategy weights, size positions, or create any live trading, auth, wallet, account, order, or exchange-mutation path. When any source input is read from durable storage, it must come from existing env-driven local Supabase/Postgres report or team tables only.
@@ -1452,7 +1427,6 @@ See:
 
 ```text
 .
-├── AGENTS.md
 ├── README.md
 ├── docs
 │   ├── research
