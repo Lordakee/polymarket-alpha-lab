@@ -103,8 +103,9 @@ Priority: P0. Dependencies: none. Estimate: 2-4 engineering days.
   references and sensitive-payload refusal.
 - Test intended application-role permissions and sanitized errors without
   printing DSNs. Keep fake tests distinct from real integration results.
-- Measure CLI import/help latency and representative cycle duration before
-  refactoring. Select performance targets from measurements, not guesses.
+- Measure CLI import/help latency before refactoring; representative
+  end-to-end cycle duration is measured when the M3 vertical slice exists.
+  Select performance targets from measurements, not guesses.
 
 Exit: rerunnable lifecycle command and fixtures provide real DB evidence;
 branch reuse decisions and compatibility baseline are documented.

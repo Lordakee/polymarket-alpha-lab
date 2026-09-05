@@ -254,3 +254,23 @@ Before treating a new durable persistence surface as compliant, verify:
 - Catalog/ACL checks include `relrowsecurity`, `relforcerowsecurity`, table owners, and `has_table_privilege` for `PUBLIC`, `anon`, `authenticated`, and `service_role`.
 - Repair is to re-apply the checked-in migration as `postgres`; do not create a second job manually. A failed or missing health gate blocks raw writes and requires an operator purge before resuming.
 - The local smoke test inserts only synthetic public bytes, verifies an idempotent replay and identity collision, purges with an explicit future cutoff, confirms audit-before-delete and normalized-row survival, then removes its synthetic rows.
+
+### Opt-in DB lifecycle acceptance (added by M0)
+
+`tests/test_central_data_db_lifecycle.py` is the rerunnable, opt-in
+real-database acceptance for the central-data lifecycle. It is skipped in
+the default suite with a visible reason and requires:
+
+- `PAL_CENTRAL_DATA_DB_LIFECYCLE=1`;
+- `POLYMARKET_ALPHA_LAB_CENTRAL_DATA_PERSISTENCE_DSN` set to a DSN that
+  passes `validate_local_postgres_dsn` before any connection;
+- a loopback endpoint that reaches `supabase-db` directly (the host's
+  published 5432 is the Supavisor pooler in transaction mode and cannot
+  serve the session). A disposable forward is documented in
+  `docs/roadmap/2026-09-05-m0-baseline-decisions.md` and must be removed
+  after the run.
+
+The whole scenario, including migration reapplication and the retention
+purge, runs inside one transaction that is always rolled back; the test
+then asserts baseline table counts and explicit synthetic-ID absence. DSNs
+and credentials are never echoed, logged, or committed.
