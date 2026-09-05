@@ -2,6 +2,12 @@
 
 Date: 2026-07-30
 
+Historical plan notice (2026-09-05): Node A/B implementation is now present.
+Current delivery status, sequencing and acceptance gaps are maintained in
+[Project Delivery Plan](../../roadmap/2026-09-05-project-delivery-plan.md).
+The reviewer/model/delegation requirements below are historical records, not
+active project governance. Technical design details remain reference material.
+
 Status: Approved with minor fixes adopted from the 2026-07-30 Claude Code
 plan review. Node A is now ready for the separately gated OpenCode execution
 handoff. The review used `claude-opus-5` with effort `max`.
