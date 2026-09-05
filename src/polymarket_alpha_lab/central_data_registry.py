@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Iterable
+from urllib.parse import urlsplit
 
-from .central_data_contracts import SourceDefinition
+from .central_data_contracts import RequestParamSpec, SourceDefinition
+from .central_data_request_params import PaginationPolicy
 from .team_taxonomy import require_team_id
 
 
@@ -100,6 +102,12 @@ class SourceRegistry:
         return type(family) is str and family in self.list_current_families()
 
 
+GAMMA_MARKETS_PAGINATION = PaginationPolicy(
+    max_pages=10,
+    min_items_per_page=1,
+    max_items_per_page=100,
+)
+
 DEFAULT_SOURCE_DEFINITIONS = (
     SourceDefinition(
         source_id="polymarket_gamma_markets",
@@ -108,6 +116,12 @@ DEFAULT_SOURCE_DEFINITIONS = (
         content_type="application/json",
         freshness_policy_seconds=300,
         is_official=True,
+        query_params=(
+            RequestParamSpec("condition_id", "pattern", pattern=r"[0-9a-fA-Fx]{1,66}"),
+            RequestParamSpec("slug", "pattern", pattern=r"[a-z0-9-]{1,80}"),
+            RequestParamSpec("limit", "int_range", min_value=1, max_value=100),
+            RequestParamSpec("offset", "int_range", min_value=0, max_value=100000),
+        ),
     ),
     SourceDefinition(
         source_id="polymarket_clob_book",
@@ -116,6 +130,9 @@ DEFAULT_SOURCE_DEFINITIONS = (
         content_type="application/json",
         freshness_policy_seconds=30,
         is_official=True,
+        query_params=(
+            RequestParamSpec("token_id", "pattern", pattern=r"[0-9]{1,19}"),
+        ),
     ),
     SourceDefinition(
         source_id="polymarket_data_trades",
@@ -125,7 +142,34 @@ DEFAULT_SOURCE_DEFINITIONS = (
         freshness_policy_seconds=300,
         is_official=True,
     ),
+    SourceDefinition(
+        source_id="kraken_btc_ticker",
+        source_family="kraken_public",
+        url_template="https://api.kraken.com/0/public/Ticker",
+        content_type="application/json",
+        # Conservative default: the provider documents no update guarantee;
+        # retune only with recorded smoke evidence.
+        freshness_policy_seconds=300,
+        is_official=False,
+        query_params=(
+            RequestParamSpec("pair", "enum", required=True, choices=("XBTUSD",)),
+        ),
+    ),
 )
+
+DEFAULT_PAGINATION_POLICIES = {
+    "polymarket_gamma_markets": GAMMA_MARKETS_PAGINATION,
+}
+
+
+def default_allowed_hosts() -> frozenset[str]:
+    """Hosts of every default source, for transport construction."""
+
+    return frozenset(
+        urlsplit(source.url_template).hostname.lower()
+        for source in DEFAULT_SOURCE_DEFINITIONS
+        if urlsplit(source.url_template).hostname
+    )
 
 DEFAULT_TEAM_SOURCE_REQUIREMENTS = tuple(
     TeamSourceRequirement(
@@ -157,9 +201,12 @@ def build_default_source_registry() -> SourceRegistry:
 
 
 __all__ = (
+    "DEFAULT_PAGINATION_POLICIES",
     "DEFAULT_SOURCE_DEFINITIONS",
     "DEFAULT_TEAM_SOURCE_REQUIREMENTS",
+    "GAMMA_MARKETS_PAGINATION",
     "SourceRegistry",
     "TeamSourceRequirement",
     "build_default_source_registry",
+    "default_allowed_hosts",
 )

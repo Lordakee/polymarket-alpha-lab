@@ -6,7 +6,9 @@ import pytest
 
 from polymarket_alpha_lab.central_data_contracts import (
     MAX_RESPONSE_BYTES,
+    CentralDataRequest,
     FailureStatus,
+    RequestParamSpec,
     SourceDefinition,
 )
 from polymarket_alpha_lab.central_data_registry import SourceRegistry
@@ -359,3 +361,107 @@ def test_transport_timeout_attempt_budget_is_bounded():
         safe.fetch(source())
     assert error.value.status is FailureStatus.TIMEOUT
     assert http.calls == 2
+
+
+def param_source():
+    return SourceDefinition(
+        source_id="param_source",
+        source_family="param_family",
+        url_template="https://example.com/data",
+        content_type="application/json",
+        freshness_policy_seconds=60,
+        query_params=(
+            RequestParamSpec("limit", "int_range", min_value=1, max_value=100),
+            RequestParamSpec("condition_id", "pattern", pattern=r"[0-9a-fA-Fx]{1,66}"),
+        ),
+    )
+
+
+def param_catalog() -> SourceRegistry:
+    registry = SourceRegistry()
+    registry.register(param_source())
+    return registry
+
+
+def param_transport(response: FakeResponse | None = None) -> tuple[SafeGETTransport, FakeHTTP]:
+    http = FakeHTTP(response or FakeResponse())
+    return (
+        SafeGETTransport(
+            allowed_hosts=("example.com",),
+            source_catalog=param_catalog(),
+            resolver=FakeResolver(),
+            http=http,
+        ),
+        http,
+    )
+
+
+def test_transport_fetches_template_with_canonical_query():
+    safe, http = param_transport(FakeResponse(body=b'{"page":[]}'))
+    request = CentralDataRequest(
+        source_id="param_source",
+        url="https://example.com/data",
+        headers={"accept": "application/json", "user-agent": "t"},
+        query={"condition_id": "0xAbC", "limit": "25"},
+    )
+    response = safe.fetch(param_source(), request)
+    assert response.failure_status is FailureStatus.NONE
+    sent = http.requests[0]
+    assert sent.full_url == "https://example.com/data?condition_id=0xAbC&limit=25"
+    assert response.url == "https://example.com/data"
+    assert response.request_url == "https://example.com/data"
+
+
+def test_transport_rejects_unregistered_and_offspec_query_parameters():
+    safe, _http = param_transport(FakeResponse(body=b"[]"))
+    with pytest.raises(CentralTransportError) as error:
+        safe.fetch(
+            param_source(),
+            CentralDataRequest(
+                source_id="param_source",
+                url="https://example.com/data",
+                query={"pair": "XBTUSD"},
+            ),
+        )
+    assert error.value.status is FailureStatus.INVALID_REQUEST
+    with pytest.raises(CentralTransportError) as error:
+        safe.fetch(
+            param_source(),
+            CentralDataRequest(
+                source_id="param_source",
+                url="https://example.com/data",
+                query={"limit": "101"},
+            ),
+        )
+    assert error.value.status is FailureStatus.INVALID_REQUEST
+
+
+def test_transport_rejects_query_on_sources_without_specs():
+    plain = SafeGETTransport(
+        allowed_hosts=("example.com",),
+        source_catalog=catalog(),
+        resolver=FakeResolver(),
+        http=FakeHTTP(FakeResponse(body=b"[]")),
+    )
+    with pytest.raises(CentralTransportError) as error:
+        plain.fetch(
+            source(),
+            CentralDataRequest(
+                source_id="test_source",
+                url="https://example.com/data",
+                query={"limit": "5"},
+            ),
+        )
+    assert error.value.status is FailureStatus.INVALID_REQUEST
+
+
+def test_private_client_rejects_non_canonical_query_urls():
+    client = _UrlLibHTTPClient(allowed_hosts=frozenset({"example.com"}))
+    smuggled = Request("https://example.com/data?limit=%31%30%30", method="GET")
+    with pytest.raises(CentralTransportError) as error:
+        client.open(smuggled, timeout=1.0)
+    assert error.value.status is FailureStatus.INVALID_REQUEST
+    plus_encoded = Request("https://example.com/data?condition=a+b", method="GET")
+    with pytest.raises(CentralTransportError) as error:
+        client.open(plus_encoded, timeout=1.0)
+    assert error.value.status is FailureStatus.INVALID_REQUEST

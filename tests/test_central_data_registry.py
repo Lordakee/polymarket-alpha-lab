@@ -7,6 +7,7 @@ from polymarket_alpha_lab.central_data_registry import (
     SourceRegistry,
     TeamSourceRequirement,
     build_default_source_registry,
+    default_allowed_hosts,
 )
 
 
@@ -79,7 +80,20 @@ def test_registry_enforces_family_threshold_and_default_team_requirements():
     assert all(item.minimum_current_source_families == 1 for item in registry.requirements)
 
 
-def test_default_registry_contains_only_official_polymarket_sources():
+def test_default_registry_mixes_official_and_registered_public_sources():
     registry = build_default_source_registry()
     assert registry.source_ids == tuple(sorted(item.source_id for item in DEFAULT_SOURCE_DEFINITIONS))
-    assert all(item.is_official for item in DEFAULT_SOURCE_DEFINITIONS)
+    assert {item.source_id: item.is_official for item in DEFAULT_SOURCE_DEFINITIONS} == {
+        "polymarket_gamma_markets": True,
+        "polymarket_clob_book": True,
+        "polymarket_data_trades": True,
+        "kraken_btc_ticker": False,
+    }
+    assert default_allowed_hosts() == frozenset(
+        {
+            "gamma-api.polymarket.com",
+            "clob.polymarket.com",
+            "data-api.polymarket.com",
+            "api.kraken.com",
+        }
+    )

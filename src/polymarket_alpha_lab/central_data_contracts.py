@@ -25,6 +25,14 @@ DEFAULT_PARSER_VERSION = "central-data-v1"
 _SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
 _MIME_RE = re.compile(r"[a-z0-9!#$&^_.+-]+/[a-z0-9!#$&^_.+-]+\Z")
 _DNS_LABEL_RE = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\Z")
+_PARAM_NAME_RE = re.compile(r"[a-z0-9_]{1,32}\Z")
+_PARAM_VALUE_RE = re.compile(r"[A-Za-z0-9._~-]{1,64}\Z")
+_PARAM_KINDS = frozenset({"pattern", "int_range", "enum"})
+# These names would make a composed URL trip the persistence policy's
+# sensitive query regex; rejecting them here fails at registration time.
+RESERVED_REQUEST_PARAM_NAMES = frozenset(
+    {"id", "uid", "user_id", "account_id", "wallet"}
+)
 
 
 class ParseState(str, Enum):
@@ -46,6 +54,7 @@ class FailureStatus(str, Enum):
     UNSUPPORTED_CONTENT_TYPE = "unsupported_content_type"
     UNSUPPORTED_CONTENT_ENCODING = "unsupported_content_encoding"
     INVALID_REQUEST = "invalid_request"
+    PAGINATION_BUDGET_EXHAUSTED = "pagination_budget_exhausted"
     UNKNOWN = "unknown"
 
 
@@ -120,6 +129,74 @@ def _validate_url_template(value: str) -> str:
 
 
 @dataclass(frozen=True)
+class RequestParamSpec:
+    """Typed, registered query parameter with fail-fast name safety."""
+
+    name: str
+    kind: str
+    required: bool = False
+    default: str | None = None
+    pattern: str | None = None
+    min_value: int | None = None
+    max_value: int | None = None
+    choices: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if type(self.name) is not str or _PARAM_NAME_RE.fullmatch(self.name) is None:
+            raise ValueError("request parameter name must be [a-z0-9_]{1,32}")
+        if self.name in RESERVED_REQUEST_PARAM_NAMES:
+            raise ValueError(f"request parameter name {self.name!r} is reserved")
+        if type(self.kind) is not str or self.kind not in _PARAM_KINDS:
+            raise ValueError("request parameter kind must be pattern, int_range, or enum")
+        if self.kind == "pattern":
+            if type(self.pattern) is not str or not self.pattern:
+                raise ValueError("pattern parameters require a pattern")
+            try:
+                re.compile(self.pattern)
+            except re.error as exc:
+                raise ValueError("request parameter pattern is invalid") from exc
+        if self.kind == "int_range":
+            if type(self.min_value) is not int or type(self.max_value) is not int:
+                raise ValueError("int_range parameters require integer bounds")
+            if self.min_value > self.max_value:
+                raise ValueError("int_range bounds are inverted")
+        if self.kind == "enum":
+            if not isinstance(self.choices, tuple) or not self.choices:
+                raise ValueError("enum parameters require nonempty choices")
+            if any(
+                type(choice) is not str or _PARAM_VALUE_RE.fullmatch(choice) is None
+                for choice in self.choices
+            ):
+                raise ValueError("enum choices must be canonical parameter values")
+            if len(set(self.choices)) != len(self.choices):
+                raise ValueError("enum choices must not contain duplicates")
+        if self.required and self.default is not None:
+            raise ValueError("required parameters cannot carry a default")
+        if self.default is not None:
+            self.validate_value(self.default)
+
+    def validate_value(self, value: object) -> str:
+        if type(value) is not str or _PARAM_VALUE_RE.fullmatch(value) is None:
+            raise ValueError(f"parameter {self.name} must be a canonical value")
+        if self.kind == "pattern":
+            assert self.pattern is not None
+            if re.compile(self.pattern).fullmatch(value) is None:
+                raise ValueError(f"parameter {self.name} does not match its pattern")
+        elif self.kind == "int_range":
+            try:
+                number = int(value)
+            except ValueError as exc:
+                raise ValueError(f"parameter {self.name} must be an integer") from exc
+            assert self.min_value is not None and self.max_value is not None
+            if not self.min_value <= number <= self.max_value:
+                raise ValueError(f"parameter {self.name} is out of range")
+        else:
+            if value not in self.choices:
+                raise ValueError(f"parameter {self.name} is not an allowed choice")
+        return value
+
+
+@dataclass(frozen=True)
 class SourceDefinition:
     source_id: str
     source_family: str
@@ -130,6 +207,7 @@ class SourceDefinition:
     paper_only: bool = True
     report_only: bool = True
     readonly: bool = True
+    query_params: tuple[RequestParamSpec, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "source_id", _canonical_string("source_id", self.source_id))
@@ -150,6 +228,15 @@ class SourceDefinition:
         for field_name in ("paper_only", "report_only", "readonly"):
             if getattr(self, field_name) is not True:
                 raise ValueError(f"{field_name} must be True")
+        if not isinstance(self.query_params, tuple):
+            raise ValueError("query_params must be a tuple of RequestParamSpec")
+        seen: set[str] = set()
+        for spec in self.query_params:
+            if type(spec) is not RequestParamSpec:
+                raise ValueError("query_params must be a tuple of RequestParamSpec")
+            if spec.name in seen:
+                raise ValueError("query_params must not contain duplicate names")
+            seen.add(spec.name)
 
     @property
     def host(self) -> str:
@@ -165,6 +252,7 @@ class CentralDataRequest:
     url: str
     headers: Mapping[str, str] = field(default_factory=dict)
     method: str = "GET"
+    query: Mapping[str, str] = field(default_factory=dict)
     paper_only: bool = True
     report_only: bool = True
     readonly: bool = True
@@ -174,6 +262,18 @@ class CentralDataRequest:
         object.__setattr__(self, "url", _validate_url_template(self.url))
         if self.method != "GET":
             raise ValueError("method must be GET")
+        if not isinstance(self.query, Mapping):
+            raise ValueError("query must be a mapping of canonical parameter names to values")
+        canonical_query: dict[str, str] = {}
+        for name, value in dict(self.query).items():
+            if type(name) is not str or _PARAM_NAME_RE.fullmatch(name) is None:
+                raise ValueError("query parameter names must be [a-z0-9_]{1,32}")
+            if name in RESERVED_REQUEST_PARAM_NAMES:
+                raise ValueError(f"query parameter name {name!r} is reserved")
+            if type(value) is not str or _PARAM_VALUE_RE.fullmatch(value) is None:
+                raise ValueError("query parameter values must be canonical [A-Za-z0-9._~-]{1,64}")
+            canonical_query[name] = value
+        object.__setattr__(self, "query", MappingProxyType(dict(sorted(canonical_query.items()))))
         normalized_headers: dict[str, str] = {}
         for key, value in dict(self.headers).items():
             key = _canonical_string("request header name", key).lower()

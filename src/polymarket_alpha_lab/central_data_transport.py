@@ -9,7 +9,7 @@ import re
 import socket
 from typing import Any, Protocol
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, urlsplit
 from urllib.request import (
     HTTPRedirectHandler,
     OpenerDirector,
@@ -25,10 +25,14 @@ from .central_data_contracts import (
     RawResponse,
     SourceDefinition,
 )
+from .central_data_request_params import canonical_query_string
 
 
 _DNS_LABEL_RE = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\Z")
 _ASCII_DECIMAL_RE = re.compile(r"[0-9]+\Z")
+_QUERY_NAME_RE = re.compile(r"[a-z0-9_]{1,32}\Z")
+_QUERY_VALUE_RE = re.compile(r"[A-Za-z0-9._~-]{1,64}\Z")
+_RESERVED_QUERY_NAMES = frozenset({"id", "uid", "user_id", "account_id", "wallet"})
 _READ_CHUNK_SIZE = 64 * 1024
 
 
@@ -154,7 +158,7 @@ class _UrlLibHTTPClient:
         for key, _value in request.header_items():
             if key.lower() in {"authorization", "cookie", "proxy-authorization"}:
                 raise CentralTransportError(FailureStatus.INVALID_REQUEST, "credentials are not allowed")
-        _validate_request_url(request.full_url, self.allowed_hosts)
+        _validate_request_url(request.full_url, self.allowed_hosts, allow_canonical_query=True)
         try:
             return _UrlLibResponse(self._opener.open(request, timeout=timeout))
         except HTTPError as exc:
@@ -163,7 +167,12 @@ class _UrlLibHTTPClient:
             raise
 
 
-def _validate_request_url(url: str, allowed_hosts: frozenset[str]) -> tuple[str, str]:
+def _validate_request_url(
+    url: str,
+    allowed_hosts: frozenset[str],
+    *,
+    allow_canonical_query: bool = False,
+) -> tuple[str, str]:
     if type(url) is not str or not url or any(char.isspace() for char in url) or "{" in url or "}" in url:
         raise CentralTransportError(FailureStatus.INVALID_REQUEST, "invalid public source URL")
     parsed = urlsplit(url)
@@ -171,8 +180,22 @@ def _validate_request_url(url: str, allowed_hosts: frozenset[str]) -> tuple[str,
         raise CentralTransportError(FailureStatus.INVALID_REQUEST, "only HTTPS sources are allowed")
     if parsed.username is not None or parsed.password is not None:
         raise CentralTransportError(FailureStatus.INVALID_REQUEST, "source URL credentials are not allowed")
-    if parsed.query or parsed.fragment:
+    if parsed.fragment:
         raise CentralTransportError(FailureStatus.INVALID_REQUEST, "source URL query and fragment are not allowed")
+    if parsed.query:
+        if not allow_canonical_query:
+            raise CentralTransportError(FailureStatus.INVALID_REQUEST, "source URL query and fragment are not allowed")
+        pairs = parse_qsl(parsed.query, keep_blank_values=True)
+        rebuilt = canonical_query_string(dict(pairs))
+        if parsed.query != rebuilt or len(pairs) != len(dict(pairs)):
+            raise CentralTransportError(FailureStatus.INVALID_REQUEST, "source URL query is not canonical")
+        for name, value in pairs:
+            if (
+                _QUERY_NAME_RE.fullmatch(name) is None
+                or name in _RESERVED_QUERY_NAMES
+                or _QUERY_VALUE_RE.fullmatch(value) is None
+            ):
+                raise CentralTransportError(FailureStatus.INVALID_REQUEST, "source URL query is not canonical")
     try:
         port = parsed.port
     except ValueError as exc:
@@ -199,6 +222,41 @@ def _validate_request_url(url: str, allowed_hosts: frozenset[str]) -> tuple[str,
     if host not in allowed_hosts:
         raise CentralTransportError(FailureStatus.INVALID_REQUEST, "source host is not allowlisted")
     return url, host
+
+
+def _validate_composed_query_url(
+    template_url: str,
+    query: Mapping[str, str],
+    allowed_hosts: frozenset[str],
+) -> str:
+    """Compose template + typed query and fail closed on non-canonical forms."""
+
+    _validate_request_url(template_url, allowed_hosts)
+    if not query:
+        return template_url
+    for name, value in query.items():
+        if (
+            type(name) is not str
+            or _QUERY_NAME_RE.fullmatch(name) is None
+            or name in _RESERVED_QUERY_NAMES
+            or type(value) is not str
+            or _QUERY_VALUE_RE.fullmatch(value) is None
+        ):
+            raise CentralTransportError(FailureStatus.INVALID_REQUEST, "request query is not canonical")
+    template_parsed = urlsplit(template_url)
+    composed = f"{template_url}?{canonical_query_string(query)}"
+    composed_parsed = urlsplit(composed)
+    if (
+        composed_parsed.scheme != template_parsed.scheme
+        or composed_parsed.hostname != template_parsed.hostname
+        or composed_parsed.path != template_parsed.path
+        or composed_parsed.port != template_parsed.port
+        or composed_parsed.username != template_parsed.username
+        or composed_parsed.password != template_parsed.password
+        or composed_parsed.fragment
+    ):
+        raise CentralTransportError(FailureStatus.INVALID_REQUEST, "composed URL does not match its template")
+    return _validate_request_url(composed, allowed_hosts, allow_canonical_query=True)[0]
 
 
 def _validate_allowed_host(host: str) -> str:
@@ -335,6 +393,25 @@ class SafeGETTransport:
             raise ValueError("request must be a CentralDataRequest")
         elif request.source_id != source_def.source_id or request.url != request_url:
             raise CentralTransportError(FailureStatus.INVALID_REQUEST, "request does not match source definition")
+        specs = {spec.name: spec for spec in source_def.query_params}
+        for name, value in request.query.items():
+            if name not in specs:
+                raise CentralTransportError(
+                    FailureStatus.INVALID_REQUEST,
+                    "request query parameter is not registered for this source",
+                )
+            try:
+                specs[name].validate_value(value)
+            except ValueError as exc:
+                raise CentralTransportError(
+                    FailureStatus.INVALID_REQUEST,
+                    "request query parameter failed its spec",
+                ) from exc
+        fetch_url = _validate_composed_query_url(
+            source_def.url_template,
+            dict(request.query),
+            self.allowed_hosts,
+        )
         raw_addresses = self.resolver.resolve(host)
         if isinstance(raw_addresses, str):
             raw_addresses = (raw_addresses,)
@@ -342,7 +419,7 @@ class SafeGETTransport:
         if not resolved or not all(_is_public_address(address) for address in resolved):
             raise CentralTransportError(FailureStatus.RESOLVER_ERROR, "host resolved to a non-public address")
         request = Request(
-            request.url,
+            fetch_url,
             method=request.method,
             headers=dict(request.headers),
         )
