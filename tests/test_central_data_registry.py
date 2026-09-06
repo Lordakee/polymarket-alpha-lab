@@ -88,7 +88,11 @@ def test_default_registry_mixes_official_and_registered_public_sources():
         "polymarket_clob_book": True,
         "polymarket_data_trades": True,
         "kraken_btc_ticker": False,
+        "kraken_eth_ticker": False,
     }
+    registry = build_default_source_registry()
+    assert registry.get("kraken_eth_ticker").source_family == "kraken_public"
+    assert registry.get("kraken_btc_ticker").source_family == "kraken_public"
     assert default_allowed_hosts() == frozenset(
         {
             "gamma-api.polymarket.com",

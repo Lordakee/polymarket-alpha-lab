@@ -17,7 +17,7 @@ from polymarket_alpha_lab.central_evidence_dispatch import (
     BTC_ITEM_REQUIREMENTS,
     build_evidence_bundle,
 )
-from polymarket_alpha_lab.btc_research_cycle_cli import run_btc_research_cycle_command
+from polymarket_alpha_lab.crypto_research_cycle_cli import run_btc_research_cycle_command
 from polymarket_alpha_lab.crypto_btc_team import CryptoBtcTeamConfig
 
 

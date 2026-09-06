@@ -155,6 +155,19 @@ DEFAULT_SOURCE_DEFINITIONS = (
             RequestParamSpec("pair", "enum", required=True, choices=("XBTUSD",)),
         ),
     ),
+    SourceDefinition(
+        source_id="kraken_eth_ticker",
+        source_family="kraken_public",
+        url_template="https://api.kraken.com/0/public/Ticker",
+        content_type="application/json",
+        # Same provider, same conservative freshness default as the BTC
+        # ticker; one family per spot item until a second family registers.
+        freshness_policy_seconds=300,
+        is_official=False,
+        query_params=(
+            RequestParamSpec("pair", "enum", required=True, choices=("ETHUSD",)),
+        ),
+    ),
 )
 
 DEFAULT_PAGINATION_POLICIES = {

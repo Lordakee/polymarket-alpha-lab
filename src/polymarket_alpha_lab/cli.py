@@ -3059,6 +3059,22 @@ def main(
         help="Market slug or 0x condition id from Gamma.",
     )
 
+    crypto_cycle = subparsers.add_parser(
+        "crypto-research-cycle",
+        help="Run one bounded crypto-team market research cycle (M5).",
+    )
+    crypto_cycle.add_argument(
+        "--team",
+        required=True,
+        choices=("crypto_btc", "crypto_eth"),
+        help="Specialist crypto team whose evidence set drives the cycle.",
+    )
+    crypto_cycle.add_argument(
+        "--market",
+        required=True,
+        help="Market slug or 0x condition id from Gamma.",
+    )
+
     scan = subparsers.add_parser("scan")
     scan.add_argument("--limit", type=int, default=25)
     scan.add_argument("--archive-root", type=Path, default=Path("data/raw"))
@@ -4490,11 +4506,21 @@ def main(
         args.strategy_audit_preflight = False
 
     if args.command == "btc-research-cycle":
-        from polymarket_alpha_lab.btc_research_cycle_cli import (
+        from polymarket_alpha_lab.crypto_research_cycle_cli import (
             run_btc_research_cycle_command,
         )
 
         return run_btc_research_cycle_command(market=args.market)
+
+    if args.command == "crypto-research-cycle":
+        from polymarket_alpha_lab.crypto_research_cycle_cli import (
+            run_crypto_research_cycle_command,
+        )
+
+        return run_crypto_research_cycle_command(
+            team=args.team,
+            market=args.market,
+        )
 
     if args.command == "scan":
         try:

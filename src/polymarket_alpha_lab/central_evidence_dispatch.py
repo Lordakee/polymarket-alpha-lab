@@ -64,6 +64,25 @@ BTC_ITEM_REQUIREMENTS = (
     ),
 )
 
+ETH_ITEM_REQUIREMENTS = (
+    EvidenceItemRequirement(
+        item_name="eth_spot_price",
+        source_ids=("kraken_eth_ticker",),
+        minimum_current_families=1,
+        max_age_seconds=300,
+    ),
+    EvidenceItemRequirement(
+        item_name="gamma_market_metadata",
+        source_ids=("polymarket_gamma_markets",),
+        minimum_current_families=1,
+    ),
+    EvidenceItemRequirement(
+        item_name="clob_book_depth",
+        source_ids=("polymarket_clob_book",),
+        minimum_current_families=1,
+    ),
+)
+
 _GENERIC_ITEM_REQUIREMENTS = (
     EvidenceItemRequirement(
         item_name="gamma_market_metadata",
@@ -82,11 +101,11 @@ _GENERIC_ITEM_REQUIREMENTS = (
 # domain adapters land.
 REQUIRED_ITEM_CATALOG: Mapping[str, tuple[EvidenceItemRequirement, ...]] = {
     "crypto_btc": BTC_ITEM_REQUIREMENTS,
+    "crypto_eth": ETH_ITEM_REQUIREMENTS,
     **{
         team_id: _GENERIC_ITEM_REQUIREMENTS
         for team_id in (
             "politics",
-            "crypto_eth",
             "macro_rates",
             "equity_indices",
             "commodities_gold",
@@ -257,6 +276,7 @@ def build_evidence_bundle(
 
 __all__ = (
     "BTC_ITEM_REQUIREMENTS",
+    "ETH_ITEM_REQUIREMENTS",
     "REQUIRED_ITEM_CATALOG",
     "TeamRouting",
     "build_evidence_bundle",

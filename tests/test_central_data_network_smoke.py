@@ -26,6 +26,8 @@ pytestmark = pytest.mark.skipif(
 
 def test_registered_sources_answer_through_safe_transport() -> None:
     registry = build_default_source_registry()
+    assert registry.get("kraken_eth_ticker").source_family == "kraken_public"
+    assert registry.get("kraken_btc_ticker").source_family == "kraken_public"
     transport = SafeGETTransport(
         allowed_hosts=default_allowed_hosts(),
         source_catalog=registry,
@@ -152,3 +154,23 @@ def test_full_btc_cycle_smoke_through_dispatch_and_reducer() -> None:
     assert result.status in {"ready", "blocked"}
     assert result.operator_packet
     assert result.cycle_id
+
+
+def test_eth_ticker_answers_through_safe_transport() -> None:
+    eth = build_default_source_registry().get("kraken_eth_ticker")
+    transport = SafeGETTransport(
+        allowed_hosts=default_allowed_hosts(),
+        source_catalog=build_default_source_registry(),
+        max_attempts=1,
+    )
+    response = transport.fetch(
+        eth,
+        CentralDataRequest(
+            source_id=eth.source_id,
+            url=eth.url_template,
+            headers={"accept": "application/json", "user-agent": transport.user_agent},
+            query={"pair": "ETHUSD"},
+        ),
+    )
+    assert response.failure_status is FailureStatus.NONE, response.failure_status
+    assert response.body
