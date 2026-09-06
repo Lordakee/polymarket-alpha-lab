@@ -13,6 +13,12 @@ DOC_PATH = REPO_ROOT / "docs" / "team-forecast-migration-safety.md"
 NODE_B_CENTRAL_DATA_EVIDENCE_MIGRATION = (
     MIGRATIONS_ROOT / "20260731000000_central_data_evidence.sql"
 )
+P1_RESEARCH_SETTLEMENT_MIGRATION = (
+    MIGRATIONS_ROOT / "20260907000000_research_settlement.sql"
+)
+BARE_SERVICE_ROLE_DDL_MIGRATIONS = frozenset(
+    (NODE_B_CENTRAL_DATA_EVIDENCE_MIGRATION, P1_RESEARCH_SETTLEMENT_MIGRATION)
+)
 
 FORBIDDEN_DURABLE_BACKEND_IMPORTS = frozenset(
     (
@@ -185,8 +191,8 @@ def _migration_files() -> tuple[Path, ...]:
     return tuple(sorted(MIGRATIONS_ROOT.glob("*.sql")))
 
 
-def _has_only_bare_node_b_service_role_ddl(path: Path, sql: str) -> bool:
-    if path != NODE_B_CENTRAL_DATA_EVIDENCE_MIGRATION:
+def _has_only_allowlisted_bare_service_role_ddl(path: Path, sql: str) -> bool:
+    if path not in BARE_SERVICE_ROLE_DDL_MIGRATIONS:
         return False
 
     service_role_lines = tuple(
@@ -364,7 +370,7 @@ def test_supabase_migrations_do_not_document_or_create_alternate_durable_stores(
         sql = path.read_text(encoding="utf-8").lower()
         for token in FORBIDDEN_MIGRATION_TOKENS:
             if token in sql:
-                if token == "service_role" and _has_only_bare_node_b_service_role_ddl(
+                if token == "service_role" and _has_only_allowlisted_bare_service_role_ddl(
                     path, sql
                 ):
                     continue

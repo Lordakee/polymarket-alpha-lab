@@ -8,6 +8,7 @@ bind raw bytes to a SQL statement.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import json
 import re
 from typing import Any, Mapping
 from urllib.parse import urlsplit
@@ -42,6 +43,7 @@ _JSON_WALLET_KV_RE = re.compile(r'"((?:[^"\\]|\\.)+)"\s*:\s*"((?:0x|0X)[0-9a-fA-
 _PUBLIC_METADATA_ADDRESS_KEYS = frozenset(
     {
         "assetaddress",
+        "marketmakeraddress",
         "submitted_by",
         "submittedby",
         "resolvedby",
@@ -54,6 +56,8 @@ _PUBLIC_METADATA_ADDRESS_KEYS = frozenset(
         "negriskrequestid",
     }
 )
+_PUBLIC_METADATA_SENSITIVE_KEYS = frozenset({"clobtokenids"})
+_PUBLIC_SLUG_RE = re.compile(r"[a-z0-9-]{1,128}\Z")
 _MIME_RE = re.compile(r"[a-z0-9!#$&^_.+-]+/[a-z0-9!#$&^_.+-]+\Z")
 _HEADER_NAME_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,127}\Z")
 _SAFE_HEADER_ALLOWLIST = frozenset(
@@ -148,10 +152,64 @@ def _json_wallet_violation(text: str) -> bool:
     return False
 
 
+def _is_public_media_url(value: object) -> bool:
+    if type(value) is not str or not value or any(ch.isspace() for ch in value):
+        return False
+    try:
+        parsed = urlsplit(value)
+    except ValueError:
+        return False
+    return (
+        parsed.scheme.lower() == "https"
+        and parsed.hostname is not None
+        and parsed.username is None
+        and parsed.password is None
+        and not parsed.query
+        and not parsed.fragment
+    )
+
+
+def _json_contains_sensitive_key(value: Any) -> bool:
+    if isinstance(value, Mapping):
+        for key, nested in value.items():
+            if type(key) is not str:
+                return True
+            normalized = key.strip().lower()
+            if (
+                normalized not in _PUBLIC_METADATA_SENSITIVE_KEYS
+                and _BODY_SENSITIVE_RE.search(json.dumps({key: None}))
+            ):
+                return True
+            if normalized == "slug" and type(nested) is str and _PUBLIC_SLUG_RE.fullmatch(nested):
+                continue
+            if normalized in {"image", "icon"} and _is_public_media_url(nested):
+                continue
+            if _json_contains_sensitive_key(nested):
+                return True
+    elif isinstance(value, list):
+        return any(_json_contains_sensitive_key(item) for item in value)
+    elif isinstance(value, str):
+        return _contains_sensitive(value)
+    return False
+
+
 def _body_contains_sensitive(text: str, media_type: str) -> bool:
-    if _BODY_SENSITIVE_RE.search(text) or _EMAIL_RE.search(text):
+    if media_type == "application/json":
+        try:
+            decoded = json.loads(text)
+        except (json.JSONDecodeError, RecursionError):
+            if _BODY_SENSITIVE_RE.search(text):
+                return True
+        else:
+            if _json_contains_sensitive_key(decoded):
+                return True
+    elif _BODY_SENSITIVE_RE.search(text):
         return True
-    if any(_looks_like_phone(match.group(0)) for match in _PHONE_CANDIDATE_RE.finditer(text)):
+    if media_type != "application/json" and _EMAIL_RE.search(text):
+        return True
+    if media_type != "application/json" and any(
+        _looks_like_phone(match.group(0)) for match in _PHONE_CANDIDATE_RE.finditer(text)
+    ):
         return True
     if media_type == "application/json":
         return _json_wallet_violation(text)

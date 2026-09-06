@@ -67,6 +67,8 @@ def _gamma_market_body(**overrides: object) -> bytes:
         "endDate": "2026-12-31T00:00:00Z",
         "active": True,
         "closed": False,
+        "volume24hr": 12345.67,
+        "liquidity": "98765.43",
         "outcomePrices": '["0.6", "0.4"]',
         "outcomes": '["Yes", "No"]',
         "extraIgnored": {"nested": 1},
@@ -169,6 +171,31 @@ def test_clob_adapter_drift_cases() -> None:
     assert parse_clob_book(CLOB, _raw(CLOB, b"[]"))[0].reason_codes == ("type_mismatch",)
 
 
+def test_every_acquired_default_source_has_a_parser() -> None:
+    from polymarket_alpha_lab.central_data_registry import DEFAULT_SOURCE_DEFINITIONS
+    from polymarket_alpha_lab.central_data_source_adapters import SOURCE_PARSERS
+
+    acquired_source_ids = {
+        "polymarket_gamma_markets",
+        "polymarket_clob_book",
+        "kraken_btc_ticker",
+        "kraken_eth_ticker",
+    }
+    registered = {source.source_id for source in DEFAULT_SOURCE_DEFINITIONS}
+    assert acquired_source_ids <= registered
+    assert acquired_source_ids <= SOURCE_PARSERS.keys()
+
+
+def test_both_kraken_sources_share_the_public_ticker_parser() -> None:
+    from polymarket_alpha_lab.central_data_source_adapters import (
+        SOURCE_PARSERS,
+        parse_kraken_ticker,
+    )
+
+    assert SOURCE_PARSERS["kraken_btc_ticker"] is parse_kraken_ticker
+    assert SOURCE_PARSERS["kraken_eth_ticker"] is parse_kraken_ticker
+
+
 def test_kraken_adapter_happy_path_and_failures() -> None:
     from polymarket_alpha_lab.central_data_source_adapters import parse_kraken_ticker
 
@@ -215,3 +242,18 @@ def test_null_and_unknown_states_survive_the_envelope() -> None:
     assert value["active"] is None
     assert value["end_date_iso"] is None
     assert value["condition_id"] == "0x1234"
+
+
+def test_gamma_adapter_extracts_volume_and_liquidity_as_decimals() -> None:
+    from polymarket_alpha_lab.central_data_db_row import TypedEnvelope
+    from polymarket_alpha_lab.central_data_source_adapters import parse_gamma_markets
+
+    raw = _raw(GAMMA, _gamma_market_body())
+    row = parse_gamma_markets(GAMMA, raw)[0]
+    value = TypedEnvelope.decode(dict(row.typed_value))
+    assert value["volume24hr"] == Decimal("12345.67")
+    assert value["liquidity"] == Decimal("98765.43")
+
+    missing = _raw(GAMMA, _gamma_market_body(volume24hr=None, liquidity=None))
+    value = TypedEnvelope.decode(dict(parse_gamma_markets(GAMMA, missing)[0].typed_value))
+    assert value["volume24hr"] is None and value["liquidity"] is None

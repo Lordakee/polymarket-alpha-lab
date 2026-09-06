@@ -93,6 +93,14 @@ def test_default_registry_mixes_official_and_registered_public_sources():
     registry = build_default_source_registry()
     assert registry.get("kraken_eth_ticker").source_family == "kraken_public"
     assert registry.get("kraken_btc_ticker").source_family == "kraken_public"
+    gamma_params = {
+        spec.name: spec for spec in registry.get("polymarket_gamma_markets").query_params
+    }
+    assert gamma_params["condition_ids"].pattern == r"0x[0-9a-fA-F]{64}"
+    assert "condition_id" not in gamma_params
+    assert gamma_params["closed"].choices == ("true", "false")
+    assert gamma_params["tag_id"].min_value == 1
+    assert "search" not in gamma_params and "active" not in gamma_params
     assert default_allowed_hosts() == frozenset(
         {
             "gamma-api.polymarket.com",

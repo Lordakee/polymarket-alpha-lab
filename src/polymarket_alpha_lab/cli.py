@@ -3059,6 +3059,34 @@ def main(
         help="Market slug or 0x condition id from Gamma.",
     )
 
+    research_inventory = subparsers.add_parser(
+        "research-inventory",
+        help="Read-only census of persisted research rows and env gates (P1).",
+    )
+
+    collect = subparsers.add_parser(
+        "collect-research-cycles",
+        help="Run the frozen cohort filter and collect forecasts (P1).",
+    )
+    collect.add_argument("--team", required=True, choices=("crypto_btc", "crypto_eth"))
+    collect.add_argument("--limit", type=int, default=10)
+    collect.add_argument("--offset", type=int, default=0)
+
+    import_outcomes = subparsers.add_parser(
+        "import-settled-outcomes",
+        help="Import auditable settled outcomes for persisted forecasts (P1).",
+    )
+    import_outcomes.add_argument(
+        "--condition-id", action="append", dest="condition_ids", default=None,
+    )
+
+    export_samples = subparsers.add_parser(
+        "export-settlement-samples",
+        help="Export the settlement-evaluation sample document (P1).",
+    )
+    export_samples.add_argument("--cutoff", required=True)
+    export_samples.add_argument("--out", required=True)
+
     settlement = subparsers.add_parser(
         "settlement-evaluation",
         help="Evaluate settled forecast samples against the market baseline (M6).",
@@ -4521,6 +4549,40 @@ def main(
         )
 
         return run_btc_research_cycle_command(market=args.market)
+
+    if args.command == "research-inventory":
+        from polymarket_alpha_lab.crypto_research_cycle_cli import (
+            run_research_inventory_command,
+        )
+
+        return run_research_inventory_command()
+
+    if args.command == "collect-research-cycles":
+        from polymarket_alpha_lab.crypto_research_cycle_cli import (
+            run_collect_research_cycles_command,
+        )
+
+        return run_collect_research_cycles_command(
+            team=args.team, limit=args.limit, offset=args.offset,
+        )
+
+    if args.command == "import-settled-outcomes":
+        from polymarket_alpha_lab.crypto_research_cycle_cli import (
+            run_import_settled_outcomes_command,
+        )
+
+        return run_import_settled_outcomes_command(
+            condition_ids=tuple(args.condition_ids or ()),
+        )
+
+    if args.command == "export-settlement-samples":
+        from polymarket_alpha_lab.crypto_research_cycle_cli import (
+            run_export_settlement_samples_command,
+        )
+
+        return run_export_settlement_samples_command(
+            cutoff=args.cutoff, out_path=args.out,
+        )
 
     if args.command == "settlement-evaluation":
         from pathlib import Path as _Path

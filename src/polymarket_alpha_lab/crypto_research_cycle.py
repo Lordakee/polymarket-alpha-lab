@@ -11,7 +11,7 @@ reuse.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace as _dataclass_replace
 from datetime import datetime
 from decimal import Decimal
 import hashlib
@@ -56,7 +56,7 @@ class CryptoCycleResult:
             raise ValueError("blocked cycles must not carry a forecast")
 
 
-def _yes_token_id(metadata_value: Mapping[str, object]) -> str | None:
+def yes_token_id_from_metadata(metadata_value: Mapping[str, object]) -> str | None:
     """Extract the affirmative token id from Gamma metadata.
 
     The token is identified only by mapping ``clobTokenIds`` to an outcome
@@ -146,7 +146,7 @@ def run_crypto_research_cycle(
     else:
         reasons.append("metadata_shape_invalid")
 
-    yes_token = _yes_token_id(metadata_value) if isinstance(metadata_value, Mapping) else None
+    yes_token = yes_token_id_from_metadata(metadata_value) if isinstance(metadata_value, Mapping) else None
     if yes_token is None:
         reasons.append("yes_token_unidentified")
 
@@ -228,6 +228,17 @@ def run_crypto_research_cycle(
         as_of=as_of,
     )
     reasons.extend(adaptation.reason_codes)
+    # Baseline provenance: persist the contemporaneous YES-book midpoint
+    # that actually produced this forecast as the observed market
+    # probability. The builders copy the config hint into
+    # market_implied_probability_observed, so the hint must carry the
+    # midpoint here rather than its 0.5 default. Under the zero-impact
+    # control this makes selected_side a tie ("yes" via the builder's
+    # >= rule), which is honest for a control slice.
+    config = _dataclass_replace(
+        config,
+        market_implied_probability_hint=base_probability,
+    )
     forecast, evidence_packets = build_forecast(
         condition_id=condition_id,
         market_slug=market_slug,
@@ -343,6 +354,7 @@ def _render_operator_packet(
 
 __all__ = (
     "CRYPTO_CYCLE_VERSION",
+    "yes_token_id_from_metadata",
     "CryptoCycleResult",
     "run_crypto_research_cycle",
 )

@@ -500,6 +500,53 @@ def test_lifecycle_scenario(connection, wrapped) -> None:
     connection.rollback()
 
 
+def test_research_settlement_schema_contract(connection) -> None:
+    outcomes_table = "research_settlement.research_settled_outcomes"
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT r.rolname, c.relrowsecurity, c.relforcerowsecurity "
+            "FROM pg_catalog.pg_class c "
+            "JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace "
+            "JOIN pg_catalog.pg_roles r ON r.oid = c.relowner "
+            "WHERE n.nspname || '.' || c.relname = %s",
+            (outcomes_table,),
+        )
+        row = cursor.fetchone()
+    assert row is not None, outcomes_table
+    owner, rls, force = row
+    assert owner == "postgres" and rls is True and force is False
+    for role in ("anon", "authenticated", "service_role"):
+        assert _scalar(
+            connection,
+            "SELECT has_table_privilege(%s, %s, 'SELECT')",
+            (role, outcomes_table),
+        ) is False
+        assert _scalar(
+            connection,
+            "SELECT has_schema_privilege(%s, 'research_settlement', 'USAGE')",
+            (role,),
+        ) is False
+    with connection.transaction():
+        cursor = connection.cursor()
+        try:
+            cursor.execute(
+                "INSERT INTO research_settlement.research_settled_outcomes "
+                "(condition_id, observed_at, outcome, resolution_source, "
+                "outcome_prices_snapshot, payload_sha256) "
+                "VALUES (%s, statement_timestamp(), 'yes', 'fixture', %s::jsonb, %s)",
+                ("f" * 64, '["1","0"]', "e" * 64),
+            )
+            with connection.cursor() as probe:
+                probe.execute(
+                    "SELECT count(*) FROM research_settlement.research_settled_outcomes"
+                )
+                assert probe.fetchone()[0] >= 1
+        finally:
+            cursor.execute("DELETE FROM research_settlement.research_settled_outcomes")
+            cursor.close()
+    connection.rollback()
+
+
 def test_catalog_and_privilege_contract(connection) -> None:
     if not _pg_cron_available(connection):
         pytest.skip("pg_cron must already be installed for the lifecycle run")

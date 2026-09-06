@@ -117,8 +117,10 @@ DEFAULT_SOURCE_DEFINITIONS = (
         freshness_policy_seconds=300,
         is_official=True,
         query_params=(
-            RequestParamSpec("condition_id", "pattern", pattern=r"[0-9a-fA-Fx]{1,66}"),
+            RequestParamSpec("condition_ids", "pattern", pattern=r"0x[0-9a-fA-F]{64}"),
             RequestParamSpec("slug", "pattern", pattern=r"[a-z0-9-]{1,128}"),
+            RequestParamSpec("closed", "enum", choices=("true", "false")),
+            RequestParamSpec("tag_id", "int_range", min_value=1, max_value=1000000),
             RequestParamSpec("limit", "int_range", min_value=1, max_value=100),
             RequestParamSpec("offset", "int_range", min_value=0, max_value=100000),
         ),

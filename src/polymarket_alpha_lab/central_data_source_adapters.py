@@ -121,6 +121,8 @@ def parse_gamma_markets(
             "active": bool(item.get("active")) if isinstance(item.get("active"), bool) else None,
             "closed": bool(item.get("closed")) if isinstance(item.get("closed"), bool) else None,
             "end_date_iso": item.get("endDate") if type(item.get("endDate")) is str else None,
+            "volume24hr": _decimal(item.get("volume24hr")),
+            "liquidity": _decimal(item.get("liquidity")),
         }
         reason_codes: list[str] = []
         for embedded_name, key in (
@@ -283,6 +285,7 @@ SOURCE_PARSERS: dict[str, Adapter] = {
     "polymarket_gamma_markets": parse_gamma_markets,
     "polymarket_clob_book": parse_clob_book,
     "kraken_btc_ticker": parse_kraken_ticker,
+    "kraken_eth_ticker": parse_kraken_ticker,
 }
 
 

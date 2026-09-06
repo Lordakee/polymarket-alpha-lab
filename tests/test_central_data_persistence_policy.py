@@ -54,6 +54,7 @@ def test_sensitive_body_values_are_rejected_without_echoing_input() -> None:
     policy = CentralDataPersistencePolicy()
     for sample in (
         b'{"token":"secret-value"}',
+        b'{"nested":{"token":"secret-value"},"clobTokenIds":["123"]}',
         b'{"contact":"alice@example.com"}',
         b'{"wallet":"0x0000000000000000000000000000000000000000"}',
     ):
@@ -151,6 +152,10 @@ def test_public_market_metadata_addresses_are_not_personal_data() -> None:
     for sample in (
         b'{"assetAddress":"0x91430cad2d6170971b5ba9a8e5f0a00000000000"}',
         b'{"submitted_by":"0x91430cad2d6170971b5ba9a8e5f0a00000000000"}',
+        b'{"marketMakerAddress":"0x91430cad2d6170971b5ba9a8e5f0a00000000000"}',
+        b'{"clobTokenIds":["123","456"]}',
+        b'{"slug":"netanyahu-out-before-2027-684-719-226-657"}',
+        b'{"image":"https://polymarket-upload.s3.us-east-2.amazonaws.com/image-684-719-226-657.png"}',
         b'{"resolvedBy":"0x91430cad2d6170971b5ba9a8e5f0a00000000000"}',
         b'{"volume":"1234567890123"}',
         b'{"questionID":"0x123456789012345678901234567890123456789012345678901234567890abcd"}',
@@ -176,6 +181,8 @@ def test_account_context_wallets_and_formatted_phones_still_refuse() -> None:
         b'{"userWallet":"0X91430CAD2D6170971B5BA9A8E5F0A00000000000"}',
         b'{"contact":"+1 (555) 123-4567"}',
         b'{"note":"call 555-123-4567 now"}',
+        b'{"note":"netanyahu-out-before-2027-684-719-226-657"}',
+        b'{"image":"https://example.com/image.png?token=secret"}',
         b'{"intl":"+44 20 1234 5678"}',
         b'{"local":"1234-5678"}',
         b'{"eu":"+49-30-1234-5678"}',

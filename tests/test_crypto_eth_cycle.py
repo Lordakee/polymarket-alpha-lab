@@ -226,3 +226,33 @@ def test_btc_and_eth_team_ids_route_supported_and_others_refuse() -> None:
     assert route_team("crypto_btc").supported is True
     with pytest.raises(ValueError):
         route_team("not-a-team")
+
+
+def test_persisted_observed_baseline_is_book_midpoint_not_hint() -> None:
+    metadata, book, spot = eth_rows()
+    book_value = {"market": "0xeth", "asset_id": "9",
+                  "bids": [{"price": Decimal("0.25"), "size": Decimal("5")}],
+                  "asks": [{"price": Decimal("0.45"), "size": Decimal("5")}]}
+    from polymarket_alpha_lab.central_data_contracts import Freshness, ObservationValueState, ParseState
+    from polymarket_alpha_lab.central_data_contracts import RawResponse
+    from polymarket_alpha_lab.central_data_db_row import RawEventRow
+
+    catalog = registry()
+    src = catalog.get("polymarket_clob_book")
+    response = RawResponse(
+        200, {"content-type": "application/json"}, b'{"b": 1}', src.url_template,
+        retrieval_time=RETRIEVAL, request_url=src.url_template, content_type="application/json",
+    )
+    raw = RawEventRow.from_contracts(src, response)
+    contract = CentralDataNormalizer.build_observation(
+        src, raw.identity, observation_time=RETRIEVAL, value=book_value,
+        freshness=Freshness.FRESH, parse_state=ParseState.SUCCESS,
+        value_state=ObservationValueState.PRESENT,
+    )
+    from polymarket_alpha_lab.central_data_db_row import NormalizedObservationRow
+    book = NormalizedObservationRow.from_contracts(src, contract, raw.identity)
+    result = run_eth(metadata=metadata, book=book, spot=spot)
+    assert result.status == "ready"
+    assert result.base_probability == Decimal("0.35")
+    assert result.forecast.market_implied_probability_observed == Decimal("0.35")
+    assert result.forecast.selected_side == "yes"

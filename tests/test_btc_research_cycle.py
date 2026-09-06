@@ -348,3 +348,30 @@ def test_non_yes_outcome_labels_block_instead_of_guessing_position() -> None:
     )
     assert result.status == "blocked"
     assert "yes_token_unidentified" in result.reason_codes
+
+
+def test_persisted_observed_baseline_is_book_midpoint_not_hint() -> None:
+    metadata, book, spot = metadata_row(), book_row(bid="0.30", ask="0.50"), spot_row()
+    bundle = _bundle(
+        {
+            "polymarket_gamma_markets": [metadata],
+            "polymarket_clob_book": [book],
+            "kraken_btc_ticker": [spot],
+        }
+    )
+    result = run_btc_research_cycle(
+        bundle=bundle,
+        metadata_observation=metadata,
+        book_observation=book,
+        spot_observation=spot,
+        as_of=AS_OF,
+        generated_at=AS_OF,
+        config=CryptoBtcTeamConfig(config_version="p1-test-v1"),
+    )
+    assert result.status == "ready"
+    assert result.base_probability == Decimal("0.4")
+    assert result.forecast.market_implied_probability_observed == Decimal("0.4")
+    # Zero-impact control: forecast equals the midpoint, so the side is a
+    # documented tie resolved "yes" by the builder's >= rule.
+    assert result.forecast.forecast_probability == Decimal("0.4")
+    assert result.forecast.selected_side == "yes"
