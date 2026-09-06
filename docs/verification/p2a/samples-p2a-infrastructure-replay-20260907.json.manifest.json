@@ -1,0 +1,43 @@
+{
+  "baseline_provenance": "config_version prefix p1-",
+  "config_versions": [
+    "p1-crypto_btc-v1",
+    "p1-crypto_eth-v1"
+  ],
+  "disputed_pending": 0,
+  "exclusion_reasons": {
+    "not_earliest_forecast": 2
+  },
+  "export_id": "553e7975a06cfb399b276829d5c241251073d00cd81c068b7be1707a934126b5",
+  "forecast_cutoff": "2026-09-06T16:00:00+00:00",
+  "included_count": 0,
+  "input_forecast_rows": 4,
+  "input_outcome_rows": 0,
+  "ordering": "condition_id asc, team_id asc, generated_at asc, forecast_id asc",
+  "outcome_cutoff": "2026-09-07T00:00:00+00:00",
+  "outcome_selection_rule": "latest outcome per condition observed at or before the outcome cutoff",
+  "pending_count": 2,
+  "prior_export_id": null,
+  "schema_version": "p2a-settlement-export-v1",
+  "selected_cohorts": [
+    "crypto_btc:p1-crypto_btc-v1",
+    "crypto_eth:p1-crypto_eth-v1"
+  ],
+  "selected_event_ids": [],
+  "selected_forecast_event_ids": [
+    null,
+    null
+  ],
+  "selected_forecast_ids": [
+    "0x02deb9538f5c123373adaa4ee6217b01745f1662bc902e46ac92f3fe6f8741e8:crypto_btc",
+    "0x3bdf487707735a1ca84079e6a4020147c5d865c4621b7a966ca2cdd0dd7ee5b0:crypto_eth"
+  ],
+  "selected_forecast_payload_sha256": [
+    "e4a5ba91ab2897b9ab3900a88e8c898f622ca5285a3b5c60a0ae81aff0268b0d",
+    "6ce1af0d135d7784f2f7700334550d87c686174d995fb88bb1a3aab61e414362"
+  ],
+  "selected_outcome_ids": [],
+  "selected_outcome_payload_sha256": [],
+  "selection_rule": "earliest eligible forecast per (condition_id, team_id, config_version) generated before the forecast cutoff",
+  "unknown_event_lineage_count": 2
+}

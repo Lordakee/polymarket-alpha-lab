@@ -1,7 +1,7 @@
 # Research-Cycle Operations Runbook
 
 Date: 2026-09-07
-Scope: M0-P1 research-cycle collection and settlement operations on this workstation
+Scope: M0-P2a research-cycle collection, lineage, settlement export, and offline evaluation
 Status: current operator entry point
 
 ## Setup
@@ -45,12 +45,16 @@ of the page or enter the cohort.
 
 An `flock` on `/tmp/pal-research-collection.lock` prevents overlapping runs.
 A connection interruption is recovered by re-running the same command. Raw
-request identities are idempotent, while forecasts are intentionally additive
-observation snapshots; settlement export selects the earliest eligible
-forecast per condition/team/config cohort. Stop collection if either
-persistence gate is disabled, the command reports an infrastructure failure,
-or Gamma identity validation blocks a market. Blocked research outcomes with
-explicit reason codes are recorded results and do not make the batch fail.
+request identities and forecast lineage rows are idempotent, while forecasts
+are intentionally additive observation snapshots; settlement export selects
+the earliest eligible forecast per condition/team/config cohort. Lineage is
+persisted after a ready forecast. If that final write fails, the command exits
+nonzero and reports `lineage=partial_failure recovery=rerun`; the forecast is
+preserved and the rerun must produce an exact lineage replay or fail closed on
+identity collision. Stop collection if either persistence gate is disabled,
+the command reports an infrastructure failure, or Gamma identity validation
+blocks a market. Blocked research outcomes with explicit reason codes are
+recorded results and do not make the batch fail.
 
 For one operator-selected market, the compatibility commands remain available:
 
@@ -66,9 +70,19 @@ spot ticker. They print the deterministic operator packet and redacted cycle
 diagnostics. Persistence occurs only when the corresponding local DSN gates
 are enabled; otherwise they use the discarding store.
 
-## Settlement Refresh And Export
+## Settlement Refresh, Export, And Report
 
-Refresh outcomes after collection and after known market resolution windows:
+Before refreshing outcomes for a prospective cohort, create and preserve a
+`p2a-settlement-checkpoint-v1` JSON checkpoint. It freezes the cohort ID,
+forecast cutoff, selected forecast IDs and payload hashes, per-forecast event
+IDs (including `null` for unknown lineage), aggregate event IDs/unknown count,
+team/config cohorts, Gamma tags and page bounds, end/lead rules, hypothesis
+`zero_impact_market_control`, independent-hypothesis status `not_implemented`,
+reassessment time, generated time, and the three hard flags. It deliberately
+does not contain outcome IDs or an outcome cutoff because those do not exist at
+prospective freeze time.
+
+Refresh outcomes after the checkpoint and after known market resolution windows:
 
 ```bash
 PYTHONPATH=src python -m polymarket_alpha_lab import-settled-outcomes
@@ -77,22 +91,41 @@ PYTHONPATH=src python -m polymarket_alpha_lab import-settled-outcomes
 Only `closed=true` markets with an explicit YES label and final prices exactly
 `1`/`0` are imported. Open, disputed, malformed, or ambiguous markets are
 reported as refused and never guessed. A refresh with no qualifying outcome is
-a valid zero-import result.
+a valid zero-import result. An exact same-time replay is idempotent; a different
+outcome, source, snapshot, hash, or dispute state at the same
+`(condition_id, observed_at)` is an `identity_collision` and exits nonzero.
+Later observations remain additive correction rows.
 
-Export a frozen cutoff and run the existing evaluator offline:
+Export with separate forecast and outcome cutoffs, then generate the verified
+offline report:
 
 ```bash
 PYTHONPATH=src python -m polymarket_alpha_lab export-settlement-samples \
-  --cutoff <ISO8601-timezone-aware-timestamp> --out /tmp/settlement-samples.json
-PYTHONPATH=src python -m polymarket_alpha_lab settlement-evaluation \
-  --samples /tmp/settlement-samples.json
+  --cutoff <forecast-ISO8601-timezone-aware-timestamp> \
+  --outcome-cutoff <outcome-ISO8601-timezone-aware-timestamp> \
+  --out /tmp/settlement-samples.json
+PYTHONPATH=src python -m polymarket_alpha_lab evaluate-settlement-cohort \
+  --samples /tmp/settlement-samples.json \
+  --manifest /tmp/settlement-samples.json.manifest.json \
+  --checkpoint /path/to/checkpoint.json \
+  --out /tmp/settlement-report
 ```
 
-The adjacent `.manifest.json` records input, included, pending, disputed, and
-reason-coded exclusion counts plus the SHA-256 of the exact sample file bytes.
-Re-exporting an unchanged database snapshot at the same cutoff must reproduce
-both files. Preserve the samples and manifest together for replay after raw
-evidence expiry.
+For a correction export, add `--prior-export-id <64-lowercase-hex-export-id>`.
+The adjacent sample manifest records both cutoffs, input/included/pending/
+disputed counts, every exclusion, forecast/outcome payload identities, frozen
+cohorts and event lineage, plus the SHA-256 of the exact sample bytes. Outcome
+rows after the outcome cutoff are counted but cannot enter the sample. Repeating
+an unchanged database snapshot with the same arguments reproduces both files.
+
+`evaluate-settlement-cohort` reads files only. It verifies exact-byte hash,
+schema, cutoffs, counts, row identities and checkpoint provenance before
+writing `<PREFIX>.json`, `<PREFIX>.md`, and `<PREFIX>.manifest.json`. It reports
+paired Brier and clipped log loss, calibration, team/condition/event
+concentration, settlement lag, coverage, and at most five deterministic
+hand-check rows. With N=0, metrics are `undefined`, not zero; P2 remains open.
+The compatibility `settlement-evaluation --samples FILE` command remains
+available for plain-text replay without the checkpoint gate.
 
 ## Offline Replay And Tests
 
@@ -129,7 +162,7 @@ evidence expiry.
 | Interpreter startup | 0.0264 s | 0.0293 s |
 | CLI import | 1.8527 s | 0.9579 s |
 | `--help` wall time | 0.9643 s | 1.0724 s |
-| Commands | 77 | 78 (`btc-research-cycle` added by M3); current P1 inventory is 84 |
+| Commands | 77 | 78 (`btc-research-cycle` added by M3); current P2a inventory is 85 |
 
 Reproduce with `PYTHONPATH=src python scripts/m0_baseline_measure.py`;
 the command inventory contract is

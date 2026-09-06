@@ -1,0 +1,18 @@
+{
+  "checkpoint_sha256": "22dcd89dff5d2988cf8106a9f8642c8bb3cccdf3456ae28eecc27d55b278bd52",
+  "cohort_id": "p2a-infrastructure-replay-20260907",
+  "disposition": "continue_bounded_collection",
+  "evaluator_version": "p2a-settlement-evaluator-v1",
+  "generated_at": "2026-09-07T00:00:00+00:00",
+  "hypothesis_label": "zero_impact_market_control",
+  "independent_hypothesis_status": "not_implemented",
+  "paper_only": true,
+  "readonly": true,
+  "report_json_sha256": "11289e1edf9c722abe8975714d5becca4a48766bffabb7023157edf23afe6d6e",
+  "report_markdown_sha256": "5de5746ba1a0beb6fd38de7d9363357ad286a47d3e9766b6f79db3f77431eb05",
+  "report_only": true,
+  "sample_export_id": "553e7975a06cfb399b276829d5c241251073d00cd81c068b7be1707a934126b5",
+  "sample_manifest_sha256": "e49edcf31887c747c00560966178c32bc5016c973ec0275d523c3113752a4a47",
+  "schema_version": "p2a-settlement-report-manifest-v1",
+  "verdict": "insufficient_sample"
+}

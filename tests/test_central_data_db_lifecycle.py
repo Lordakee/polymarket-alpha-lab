@@ -12,6 +12,7 @@ The DSN must pass ``validate_local_postgres_dsn`` and is never echoed.
 """
 
 from datetime import UTC, datetime, timedelta
+from dataclasses import replace
 import os
 from pathlib import Path
 
@@ -55,6 +56,18 @@ MIGRATION_PATH = (
     / "supabase"
     / "migrations"
     / "20260731000000_central_data_evidence.sql"
+)
+LINEAGE_MIGRATION_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "supabase"
+    / "migrations"
+    / "20260907000001_research_forecast_lineage.sql"
+)
+LINEAGE_IDENTITY_MIGRATION_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "supabase"
+    / "migrations"
+    / "20260907000002_research_forecast_lineage_identity.sql"
 )
 
 _RAW_COLUMNS = (
@@ -544,6 +557,84 @@ def test_research_settlement_schema_contract(connection) -> None:
         finally:
             cursor.execute("DELETE FROM research_settlement.research_settled_outcomes")
             cursor.close()
+    connection.rollback()
+
+
+def test_research_forecast_lineage_lifecycle(connection) -> None:
+    from polymarket_alpha_lab.research_forecast_lineage_db_row import (
+        ResearchForecastLineageRow,
+    )
+    from polymarket_alpha_lab.research_forecast_lineage_store import (
+        ResearchForecastLineageStore,
+        ResearchForecastLineageStoreError,
+    )
+
+    table = "research_settlement.research_forecast_lineage"
+    table_existed = bool(
+        _scalar(connection, "SELECT to_regclass(%s) IS NOT NULL", (table,))
+    )
+    forecast_id = "pal-p2a-lineage-lifecycle"
+    row = ResearchForecastLineageRow(
+        forecast_payload_sha256="f" * 64,
+        forecast_id=forecast_id,
+        condition_id="pal-p2a-condition",
+        team_id="crypto_btc",
+        config_version="p1-crypto_btc-v1",
+        event_id="pal-p2a-event",
+        event_slug="pal-p2a-event",
+        market_end_at=datetime(2026, 10, 1, tzinfo=UTC),
+        event_lineage_state="verified",
+        metadata_observed_at=datetime(2026, 9, 7, tzinfo=UTC),
+        metadata_payload_sha256="a" * 64,
+    )
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(LINEAGE_MIGRATION_PATH.read_text(encoding="utf-8"))
+            cursor.execute(
+                LINEAGE_IDENTITY_MIGRATION_PATH.read_text(encoding="utf-8")
+            )
+        store = ResearchForecastLineageStore(connection)
+        assert store.insert(row).status == "inserted"
+        assert store.insert(row).status == "already_present"
+        with pytest.raises(ResearchForecastLineageStoreError) as caught:
+            store.insert(replace(row, condition_id="pal-p2a-conflict"))
+        assert caught.value.code == "identity_collision"
+
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT r.rolname, c.relrowsecurity, c.relforcerowsecurity "
+                "FROM pg_catalog.pg_class c "
+                "JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace "
+                "JOIN pg_catalog.pg_roles r ON r.oid = c.relowner "
+                "WHERE n.nspname || '.' || c.relname = %s",
+                (table,),
+            )
+            catalog = cursor.fetchone()
+        assert catalog == ("postgres", True, False)
+        for role in ("anon", "authenticated", "service_role"):
+            assert _scalar(
+                connection,
+                "SELECT has_table_privilege(%s, %s, 'SELECT')",
+                (role, table),
+            ) is False
+            assert _scalar(
+                connection,
+                "SELECT has_schema_privilege(%s, 'research_settlement', 'USAGE')",
+                (role,),
+            ) is False
+    finally:
+        connection.rollback()
+
+    if table_existed:
+        assert _scalar(
+            connection,
+            f"SELECT count(*) FROM {table} WHERE forecast_id = %s",
+            (forecast_id,),
+        ) == 0
+    else:
+        assert _scalar(
+            connection, "SELECT to_regclass(%s) IS NULL", (table,)
+        ) is True
     connection.rollback()
 
 

@@ -3082,9 +3082,11 @@ def main(
 
     export_samples = subparsers.add_parser(
         "export-settlement-samples",
-        help="Export the settlement-evaluation sample document (P1).",
+        help="Export the correction-safe settlement sample document (P2a).",
     )
     export_samples.add_argument("--cutoff", required=True)
+    export_samples.add_argument("--outcome-cutoff", required=True)
+    export_samples.add_argument("--prior-export-id")
     export_samples.add_argument("--out", required=True)
 
     settlement = subparsers.add_parser(
@@ -3096,6 +3098,15 @@ def main(
         required=True,
         help="Path to a JSON sample export (schema in settlement_evaluation.py).",
     )
+
+    evaluate_cohort = subparsers.add_parser(
+        "evaluate-settlement-cohort",
+        help="Verify and write a deterministic frozen-cohort settlement report.",
+    )
+    evaluate_cohort.add_argument("--samples", required=True)
+    evaluate_cohort.add_argument("--manifest", required=True)
+    evaluate_cohort.add_argument("--checkpoint", required=True)
+    evaluate_cohort.add_argument("--out", required=True)
 
     crypto_cycle = subparsers.add_parser(
         "crypto-research-cycle",
@@ -4581,7 +4592,10 @@ def main(
         )
 
         return run_export_settlement_samples_command(
-            cutoff=args.cutoff, out_path=args.out,
+            cutoff=args.cutoff,
+            outcome_cutoff=args.outcome_cutoff,
+            prior_export_id=args.prior_export_id,
+            out_path=args.out,
         )
 
     if args.command == "settlement-evaluation":
@@ -4597,6 +4611,25 @@ def main(
         report = evaluate_settlement_samples(rows, config)
         print(report.render())
         return 0
+
+    if args.command == "evaluate-settlement-cohort":
+        from polymarket_alpha_lab.settlement_evaluation_report import (
+            run_evaluate_settlement_cohort_command,
+        )
+
+        try:
+            return run_evaluate_settlement_cohort_command(
+                samples_path=args.samples,
+                manifest_path=args.manifest,
+                checkpoint_path=args.checkpoint,
+                out_prefix=args.out,
+            )
+        except (OSError, ValueError):
+            print(
+                "evaluate-settlement-cohort failed: input verification or file operation failed",
+                file=sys.stderr,
+            )
+            return 2
 
     if args.command == "crypto-research-cycle":
         from polymarket_alpha_lab.crypto_research_cycle_cli import (

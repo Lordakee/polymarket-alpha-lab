@@ -1,0 +1,120 @@
+{
+  "cohort_id": "p2a-infrastructure-replay-20260907",
+  "control_behavior": "undefined_no_settled_samples",
+  "disposition": "continue_bounded_collection",
+  "engineering_acceptance": "verified",
+  "evaluation": {
+    "calibration_buckets": [
+      {
+        "actual_yes_count": 0,
+        "count": 0,
+        "lower": "0",
+        "mean_forecast": null,
+        "upper": "0.1"
+      },
+      {
+        "actual_yes_count": 0,
+        "count": 0,
+        "lower": "0.1",
+        "mean_forecast": null,
+        "upper": "0.2"
+      },
+      {
+        "actual_yes_count": 0,
+        "count": 0,
+        "lower": "0.2",
+        "mean_forecast": null,
+        "upper": "0.3"
+      },
+      {
+        "actual_yes_count": 0,
+        "count": 0,
+        "lower": "0.3",
+        "mean_forecast": null,
+        "upper": "0.4"
+      },
+      {
+        "actual_yes_count": 0,
+        "count": 0,
+        "lower": "0.4",
+        "mean_forecast": null,
+        "upper": "0.5"
+      },
+      {
+        "actual_yes_count": 0,
+        "count": 0,
+        "lower": "0.5",
+        "mean_forecast": null,
+        "upper": "0.6"
+      },
+      {
+        "actual_yes_count": 0,
+        "count": 0,
+        "lower": "0.6",
+        "mean_forecast": null,
+        "upper": "0.7"
+      },
+      {
+        "actual_yes_count": 0,
+        "count": 0,
+        "lower": "0.7",
+        "mean_forecast": null,
+        "upper": "0.8"
+      },
+      {
+        "actual_yes_count": 0,
+        "count": 0,
+        "lower": "0.8",
+        "mean_forecast": null,
+        "upper": "0.9"
+      },
+      {
+        "actual_yes_count": 0,
+        "count": 0,
+        "lower": "0.9",
+        "mean_forecast": null,
+        "upper": "1"
+      }
+    ],
+    "coverage": null,
+    "excluded_count": 0,
+    "exclusion_reasons": {},
+    "hand_check_rows": [],
+    "included_count": 0,
+    "limitations": [
+      "uncertainty intervals not yet computed at small samples",
+      "drawdown and capital lockup not yet measured",
+      "cost-adjusted paper results (fee/slippage/fill sensitivity) arm activates at settled N >= 30",
+      "memory-as-context benefit unmeasured until memory-gated handoffs settle",
+      "forecast revision history not tracked; first-recorded generated_at used"
+    ],
+    "market_brier": null,
+    "market_log_loss": null,
+    "max_verified_event_concentration": null,
+    "pending_count": 2,
+    "per_event_counts": {},
+    "settlement_lag_seconds": {
+      "max": null,
+      "median": null,
+      "min": null
+    },
+    "team_brier": null,
+    "team_counts": {},
+    "team_log_loss": null,
+    "unique_condition_count": 0,
+    "unknown_event_row_count": 0,
+    "verdict": "insufficient_sample",
+    "verified_unique_event_count": 0
+  },
+  "evaluator_version": "p2a-settlement-evaluator-v1",
+  "generated_at": "2026-09-07T00:00:00+00:00",
+  "hypothesis_label": "zero_impact_market_control",
+  "independent_hypothesis_evidence": "none_not_implemented",
+  "independent_hypothesis_status": "not_implemented",
+  "paper_only": true,
+  "readonly": true,
+  "report_only": true,
+  "sample_export_id": "553e7975a06cfb399b276829d5c241251073d00cd81c068b7be1707a934126b5",
+  "schema_version": "p2a-settlement-report-v1",
+  "verdict": "insufficient_sample"
+}

@@ -92,6 +92,46 @@ def test_gamma_adapter_happy_path_and_determinism() -> None:
     assert rows == parse_gamma_markets(GAMMA, raw)
 
 
+def test_gamma_adapter_extracts_only_one_canonical_event_lineage() -> None:
+    from polymarket_alpha_lab.central_data_source_adapters import parse_gamma_markets
+
+    cases = (
+        (
+            {"events": [{"id": "event-1", "slug": "event-one"}]},
+            "verified",
+            "event-1",
+        ),
+        ({"events": []}, "missing_event", None),
+        (
+            {"events": [{"id": "event-1", "slug": "one"}, {"id": "event-2", "slug": "two"}]},
+            "ambiguous_events",
+            None,
+        ),
+        ({"events": [{"id": 7, "slug": "event-one"}]}, "malformed_event", None),
+        (
+            {
+                "events": [{"id": "event-1", "slug": "event-one"}],
+                "endDate": "not-a-timestamp",
+            },
+            "malformed_event",
+            None,
+        ),
+    )
+    for overrides, expected_state, expected_event_id in cases:
+        row = parse_gamma_markets(
+            GAMMA, _raw(GAMMA, _gamma_market_body(**overrides))
+        )[0]
+        value = TypedEnvelope.decode(dict(row.typed_value))
+        assert value["event_lineage_state"] == expected_state
+        assert value["event_id"] == expected_event_id
+        if expected_state == "verified":
+            assert value["event_slug"] == "event-one"
+            assert value["market_end_at"] == datetime(2026, 12, 31, tzinfo=UTC)
+        else:
+            assert value["event_slug"] is None
+            assert value["market_end_at"] is None
+
+
 def test_gamma_adapter_drift_cases() -> None:
     from polymarket_alpha_lab.central_data_source_adapters import parse_gamma_markets
 

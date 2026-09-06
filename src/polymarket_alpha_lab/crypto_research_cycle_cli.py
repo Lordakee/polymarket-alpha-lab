@@ -10,7 +10,7 @@ overlap.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from decimal import Decimal
 import fcntl
@@ -96,6 +96,8 @@ class _CycleExecution:
     result: object
     bundle: object
     outcomes: tuple
+    lineage_persistence_status: str = "not_applicable"
+    lineage_failure_code: str | None = None
 
 
 def _resolve_persistence():
@@ -121,6 +123,7 @@ def _execute_crypto_cycle(
     transport,
     store,
     forecast_config,
+    lineage_dsn: str | None = None,
     wiring=None,
 ) -> _CycleExecution:
     from polymarket_alpha_lab.central_data_acquisition import acquire_once
@@ -211,13 +214,15 @@ def _execute_crypto_cycle(
         condition_id_hint=market,
     )
 
+    lineage_status = "not_applicable"
+    lineage_failure_code = None
     if result.status == "ready" and forecast_config.enabled and forecast_config.dsn is not None:
         from polymarket_alpha_lab.team_forecast_psycopg import (
             insert_team_forecast_evidence_with_psycopg,
             insert_team_forecast_with_psycopg,
         )
 
-        insert_team_forecast_with_psycopg(
+        forecast_db_row = insert_team_forecast_with_psycopg(
             forecast_config.dsn,
             result.forecast,
             table_name=forecast_config.team_forecast_table_name,
@@ -232,12 +237,55 @@ def _execute_crypto_cycle(
                 table_name=forecast_config.team_forecast_evidence_table_name,
             )
 
+        from polymarket_alpha_lab.research_forecast_lineage_db_row import (
+            ResearchForecastLineageRow,
+        )
+        from polymarket_alpha_lab.research_forecast_lineage_psycopg import (
+            insert_research_forecast_lineage_with_psycopg,
+        )
+
+        lineage_row = ResearchForecastLineageRow(
+            forecast_payload_sha256=forecast_db_row.payload_sha256,
+            forecast_id=result.forecast.forecast_id,
+            condition_id=result.forecast.condition_id,
+            team_id=result.forecast.team_id,
+            config_version=result.forecast.config_version,
+            event_id=metadata_value.get("event_id"),
+            event_slug=metadata_value.get("event_slug"),
+            market_end_at=metadata_value.get("market_end_at"),
+            event_lineage_state=metadata_value.get(
+                "event_lineage_state", "missing_event"
+            ),
+            metadata_observed_at=metadata_row.observation_time,
+            metadata_payload_sha256=metadata_row.raw_payload_sha256,
+        )
+        if lineage_dsn is None:
+            lineage_status = "partial_failure"
+            lineage_failure_code = "lineage_persistence_disabled"
+        else:
+            try:
+                lineage_insert = insert_research_forecast_lineage_with_psycopg(
+                    lineage_dsn, lineage_row
+                )
+                lineage_status = lineage_insert.status
+            except Exception as exc:
+                lineage_status = "partial_failure"
+                lineage_failure_code = getattr(
+                    exc, "code", "lineage_persistence_failed"
+                )
+
     outcomes = tuple(
         outcome
         for outcome in (gamma_outcome, book_outcome, spot_outcome)
         if outcome is not None
     )
-    return _CycleExecution(result=result, bundle=bundle, outcomes=outcomes)
+    return _CycleExecution(
+        result=result,
+        bundle=bundle,
+        outcomes=outcomes,
+        lineage_persistence_status=lineage_status,
+        lineage_failure_code=lineage_failure_code,
+    )
 
 
 def run_crypto_research_cycle_command(*, team: str, market: str) -> int:
@@ -263,11 +311,13 @@ def run_crypto_research_cycle_command(*, team: str, market: str) -> int:
         source_catalog=registry,
         max_attempts=2,
     )
-    store, _central_config, forecast_config = _resolve_persistence()
+    store, central_config, forecast_config = _resolve_persistence()
     try:
         execution = _execute_crypto_cycle(
             team, market, registry=registry, transport=transport,
-            store=store, forecast_config=forecast_config, wiring=wiring,
+            store=store, forecast_config=forecast_config,
+            lineage_dsn=central_config.dsn if central_config.enabled else None,
+            wiring=wiring,
         )
     except _CycleBlocked as blocked:
         print(f"crypto-research-cycle blocked: {blocked}", file=sys.stderr)
@@ -277,6 +327,13 @@ def run_crypto_research_cycle_command(*, team: str, market: str) -> int:
     print(
         format_btc_cycle_diagnostics(execution.outcomes, execution.bundle, execution.result)
     )
+    if execution.lineage_persistence_status == "partial_failure":
+        print(
+            "crypto-research-cycle partial failure: forecast persisted; "
+            f"lineage recoverable by rerun ({execution.lineage_failure_code})",
+            file=sys.stderr,
+        )
+        return 1
     return 0 if execution.result.status == "ready" else 1
 
 
@@ -362,14 +419,16 @@ def run_collect_research_cycles_command(*, team: str, limit: int, offset: int) -
         f"{'central' if central_config.enabled else 'discarding'}"
         + ("+forecast" if forecast_config.enabled else "")
     )
-    attempted = ready = blocked = 0
+    attempted = ready = blocked = lineage_partial_failures = 0
     try:
         for candidate in selected:
             attempted += 1
             try:
                 execution = _execute_crypto_cycle(
                     team, candidate.market_slug, registry=registry,
-                    transport=transport, store=store, forecast_config=forecast_config,
+                    transport=transport, store=store,
+                    forecast_config=forecast_config,
+                    lineage_dsn=central_config.dsn if central_config.enabled else None,
                 )
             except _CycleBlocked as blocked_reason:
                 blocked += 1
@@ -382,18 +441,32 @@ def run_collect_research_cycles_command(*, team: str, limit: int, offset: int) -
                 ready += 1
             else:
                 blocked += 1
+            lineage_detail = ""
+            if execution.lineage_persistence_status == "partial_failure":
+                lineage_partial_failures += 1
+                lineage_detail = (
+                    " lineage=partial_failure"
+                    f" lineage_reason={execution.lineage_failure_code}"
+                    " recovery=rerun"
+                )
+            elif execution.result.status == "ready":
+                lineage_detail = f" lineage={execution.lineage_persistence_status}"
             print(
                 f"market {candidate.condition_id} status={execution.result.status} "
                 f"cycle_id={execution.result.cycle_id} "
                 f"reasons={','.join(execution.result.reason_codes) or 'none'}"
+                f"{lineage_detail}"
             )
     finally:
         try:
             fcntl.flock(lock_file, fcntl.LOCK_UN)
         finally:
             lock_file.close()
-    print(f"summary attempted={attempted} ready={ready} blocked={blocked}")
-    return 0
+    print(
+        f"summary attempted={attempted} ready={ready} blocked={blocked} "
+        f"lineage_partial_failures={lineage_partial_failures}"
+    )
+    return 1 if lineage_partial_failures else 0
 
 
 def run_research_inventory_command() -> int:
@@ -546,7 +619,7 @@ def run_import_settled_outcomes_command(*, condition_ids: tuple[str, ...] = ()) 
     from psycopg.types.json import Jsonb
 
     connection = psycopg.connect(central_config.dsn)
-    imported = refused = 0
+    imported = refused = collisions = 0
     try:
         with connection.cursor() as cursor:
             for condition_id in sorted(set(targets)):
@@ -561,31 +634,49 @@ def run_import_settled_outcomes_command(*, condition_ids: tuple[str, ...] = ()) 
                     )
                     continue
                 observed_at, result, payload_hash, snapshot = outcome
+                parameters = (
+                    condition_id,
+                    observed_at,
+                    result,
+                    "polymarket_gamma",
+                    Jsonb(snapshot),
+                    payload_hash,
+                )
                 cursor.execute(
                     "INSERT INTO research_settlement.research_settled_outcomes "
                     "(condition_id, observed_at, outcome, resolution_source, "
                     "outcome_prices_snapshot, payload_sha256) "
                     "VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING",
-                    (
-                        condition_id,
-                        observed_at,
-                        result,
-                        "polymarket_gamma",
-                        Jsonb(snapshot),
-                        payload_hash,
-                    ),
+                    parameters,
                 )
                 if cursor.rowcount == 1:
                     imported += 1
                     status = "imported"
                 else:
+                    cursor.execute(
+                        "SELECT outcome, resolution_source, outcome_prices_snapshot, "
+                        "payload_sha256, dispute_flag FROM "
+                        "research_settlement.research_settled_outcomes "
+                        "WHERE condition_id = %s AND observed_at = %s",
+                        (condition_id, observed_at),
+                    )
+                    existing = cursor.fetchone()
+                    expected = (result, "polymarket_gamma", snapshot, payload_hash, False)
+                    if existing is None or tuple(existing) != expected:
+                        refused += 1
+                        collisions += 1
+                        print(
+                            f"outcome {condition_id} status=refused "
+                            "reason=identity_collision"
+                        )
+                        continue
                     status = "already_present"
                 print(f"outcome {condition_id} status={status} outcome={result}")
         connection.commit()
     finally:
         connection.close()
     print(f"summary imported={imported} refused={refused}")
-    return 0
+    return 1 if collisions else 0
 
 
 def _atomic_write_text(path: Path, document: str) -> None:
@@ -607,7 +698,13 @@ def _atomic_write_text(path: Path, document: str) -> None:
         temporary_path.unlink(missing_ok=True)
 
 
-def run_export_settlement_samples_command(*, cutoff: str, out_path: str) -> int:
+def run_export_settlement_samples_command(
+    *,
+    cutoff: str,
+    outcome_cutoff: str,
+    out_path: str,
+    prior_export_id: str | None = None,
+) -> int:
     from datetime import datetime as _datetime
 
     from polymarket_alpha_lab.settlement_export import (
@@ -637,56 +734,108 @@ def run_export_settlement_samples_command(*, cutoff: str, out_path: str) -> int:
     with psycopg.connect(forecast_config.dsn) as connection:
         with connection.cursor() as cursor:
             cursor.execute(
-                "SELECT forecast_id, condition_id, team_id, config_version, "
-                "forecast_probability, generated_at, payload_json "
+                "SELECT payload_sha256, forecast_id, condition_id, team_id, "
+                "config_version, forecast_probability, generated_at, payload_json "
                 f"FROM {forecast_config.team_forecast_table_name}"
             )
             for record in cursor.fetchall():
-                payload = record[6] or {}
-                observed = payload.get("market_implied_probability_observed")
                 try:
+                    payload = record[7] or {}
+                    observed = payload.get("market_implied_probability_observed")
                     forecast_rows.append(
                         ForecastRowView(
-                            forecast_id=record[0],
-                            condition_id=record[1],
-                            team_id=record[2],
-                            config_version=record[3],
-                            forecast_p_yes=Decimal(str(record[4])),
+                            payload_sha256=record[0],
+                            forecast_id=record[1],
+                            condition_id=record[2],
+                            team_id=record[3],
+                            config_version=record[4],
+                            forecast_p_yes=Decimal(str(record[5])),
                             market_implied_p_yes=Decimal(str(observed)),
-                            generated_at=record[5],
+                            generated_at=record[6],
                         )
                     )
                 except (ValueError, ArithmeticError, TypeError):
                     invalid_forecast_rows += 1
     outcome_rows: list[SettledOutcomeView] = []
+    invalid_outcome_rows = 0
     with psycopg.connect(central_config.dsn) as connection:
         with connection.cursor() as cursor:
             cursor.execute(
-                "SELECT condition_id, outcome, observed_at, dispute_flag "
+                "SELECT forecast_payload_sha256, event_id "
+                "FROM research_settlement.research_forecast_lineage"
+            )
+            lineage_by_forecast_hash: dict[str, str | None] = {}
+            invalid_lineage_forecast_hashes: set[str] = set()
+            for record in cursor.fetchall():
+                try:
+                    forecast_hash, event_id = record
+                except (TypeError, ValueError):
+                    continue
+                if (
+                    type(forecast_hash) is not str
+                    or len(forecast_hash) != 64
+                    or any(char not in "0123456789abcdef" for char in forecast_hash)
+                ):
+                    continue
+                if event_id is not None and (
+                    type(event_id) is not str
+                    or not event_id
+                    or event_id.strip() != event_id
+                ):
+                    invalid_lineage_forecast_hashes.add(forecast_hash)
+                    continue
+                if forecast_hash in lineage_by_forecast_hash:
+                    invalid_lineage_forecast_hashes.add(forecast_hash)
+                else:
+                    lineage_by_forecast_hash[forecast_hash] = event_id
+            if invalid_lineage_forecast_hashes:
+                forecast_rows = [
+                    row
+                    for row in forecast_rows
+                    if row.payload_sha256 not in invalid_lineage_forecast_hashes
+                ]
+                invalid_forecast_rows += len(invalid_lineage_forecast_hashes)
+            forecast_rows = [
+                replace(
+                    row,
+                    event_id=lineage_by_forecast_hash.get(row.payload_sha256),
+                )
+                for row in forecast_rows
+            ]
+            cursor.execute(
+                "SELECT condition_id, outcome, observed_at, dispute_flag, payload_sha256 "
                 "FROM research_settlement.research_settled_outcomes"
             )
             for record in cursor.fetchall():
-                outcome_rows.append(
-                    SettledOutcomeView(
-                        condition_id=record[0],
-                        outcome=record[1],
-                        observed_at=record[2],
-                        dispute_flag=record[3],
+                try:
+                    outcome_rows.append(
+                        SettledOutcomeView(
+                            condition_id=record[0],
+                            outcome=record[1],
+                            observed_at=record[2],
+                            dispute_flag=record[3],
+                            payload_sha256=record[4],
+                        )
                     )
-                )
+                except (ValueError, ArithmeticError, TypeError):
+                    invalid_outcome_rows += 1
 
     try:
         parsed_cutoff = _datetime.fromisoformat(cutoff)
+        parsed_outcome_cutoff = _datetime.fromisoformat(outcome_cutoff)
         export = build_settlement_export(
             forecast_rows,
             outcome_rows,
             as_of_evaluation_cutoff=parsed_cutoff,
+            as_of_outcome_cutoff=parsed_outcome_cutoff,
             invalid_forecast_row_count=invalid_forecast_rows,
+            invalid_outcome_row_count=invalid_outcome_rows,
+            prior_export_id=prior_export_id,
         )
     except ValueError:
         print(
-            "export-settlement-samples failed: --cutoff must be an ISO8601 "
-            "timezone-aware timestamp",
+            "export-settlement-samples failed: invalid cutoff, prior export ID, "
+            "or export row contract",
             file=sys.stderr,
         )
         return 2

@@ -27,7 +27,7 @@ Sample JSON schema (CLI ``--samples`` file)::
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 from enum import Enum
 import json
@@ -70,6 +70,7 @@ class SettledForecastSample:
     actual_outcome: str
     generated_at: datetime
     settled_at: datetime
+    event_id: str | None = None
     paper_only: bool = True
     report_only: bool = True
     readonly: bool = True
@@ -79,6 +80,12 @@ class SettledForecastSample:
             value = getattr(self, name)
             if type(value) is not str or not value or value.strip() != value:
                 raise ValueError(f"{name} must be a canonical nonblank string")
+        if self.event_id is not None and (
+            type(self.event_id) is not str
+            or not self.event_id
+            or self.event_id.strip() != self.event_id
+        ):
+            raise ValueError("event_id must be a canonical nonblank string or None")
         object.__setattr__(
             self, "forecast_p_yes", _canonical_probability("forecast_p_yes", self.forecast_p_yes)
         )
@@ -133,6 +140,21 @@ class CalibrationBucket:
 
 
 @dataclass(frozen=True)
+class SettlementHandCheckRow:
+    condition_id: str
+    team_id: str
+    generated_at: datetime
+    event_id: str | None
+    forecast_p_yes: Decimal
+    market_implied_p_yes: Decimal
+    actual_outcome: str
+    team_squared_error: Decimal
+    market_squared_error: Decimal
+    team_log_loss: Decimal
+    market_log_loss: Decimal
+
+
+@dataclass(frozen=True)
 class SettlementEvaluationReport:
     verdict: SettlementVerdict
     included_count: int
@@ -143,8 +165,18 @@ class SettlementEvaluationReport:
     team_brier: Decimal | None
     market_brier: Decimal | None
     team_log_loss: Decimal | None
+    market_log_loss: Decimal | None
     calibration_buckets: tuple[CalibrationBucket, ...]
     team_counts: tuple[tuple[str, int], ...]
+    unique_condition_count: int
+    verified_unique_event_count: int
+    unknown_event_row_count: int
+    event_counts: tuple[tuple[str, int], ...]
+    max_verified_event_concentration: Decimal | None
+    settlement_lag_min_seconds: Decimal | None
+    settlement_lag_median_seconds: Decimal | None
+    settlement_lag_max_seconds: Decimal | None
+    hand_check_rows: tuple[SettlementHandCheckRow, ...]
     as_of_evaluation_cutoff: datetime
     config_min_indicative: int
     config_min_comparative: int
@@ -165,6 +197,13 @@ class SettlementEvaluationReport:
         for name in ("included_count", "excluded_count", "pending_count"):
             if type(getattr(self, name)) is not int or getattr(self, name) < 0:
                 raise ValueError(f"{name} must be a nonnegative int")
+        for name in (
+            "unique_condition_count",
+            "verified_unique_event_count",
+            "unknown_event_row_count",
+        ):
+            if type(getattr(self, name)) is not int or getattr(self, name) < 0:
+                raise ValueError(f"{name} must be a nonnegative int")
         for name in ("paper_only", "report_only", "readonly"):
             if getattr(self, name) is not True:
                 raise ValueError(f"{name} must be True")
@@ -182,14 +221,38 @@ class SettlementEvaluationReport:
             lines.append(
                 "exclusions: " + "; ".join(f"{reason}={count}" for reason, count in self.exclusion_reasons)
             )
-        if self.team_brier is not None:
-            lines.append(f"team_brier: {format(self.team_brier, 'f')}")
-        if self.market_brier is not None:
-            lines.append(f"market_brier: {format(self.market_brier, 'f')}")
-        if self.team_log_loss is not None:
-            lines.append(f"team_log_loss: {format(self.team_log_loss, 'f')}")
-        if self.coverage is not None:
-            lines.append(f"coverage_settled_ratio: {format(self.coverage, 'f')}")
+        for label, value in (
+            ("team_brier", self.team_brier),
+            ("market_brier", self.market_brier),
+            ("team_log_loss", self.team_log_loss),
+            ("market_log_loss", self.market_log_loss),
+            ("coverage_settled_ratio", self.coverage),
+        ):
+            lines.append(f"{label}: {format(value, 'f') if value is not None else 'undefined'}")
+        lines.extend(
+            (
+                f"unique_conditions: {self.unique_condition_count}",
+                f"verified_unique_events: {self.verified_unique_event_count}",
+                f"unknown_event_rows: {self.unknown_event_row_count}",
+                "max_verified_event_concentration: "
+                + (
+                    format(self.max_verified_event_concentration, "f")
+                    if self.max_verified_event_concentration is not None
+                    else "undefined"
+                ),
+            )
+        )
+        if self.event_counts:
+            lines.append(
+                "verified_events: "
+                + ", ".join(f"{event_id}={count}" for event_id, count in self.event_counts)
+            )
+        for label, value in (
+            ("settlement_lag_min_seconds", self.settlement_lag_min_seconds),
+            ("settlement_lag_median_seconds", self.settlement_lag_median_seconds),
+            ("settlement_lag_max_seconds", self.settlement_lag_max_seconds),
+        ):
+            lines.append(f"{label}: {format(value, 'f') if value is not None else 'undefined'}")
         lines.append("calibration:")
         for bucket in self.calibration_buckets:
             if bucket.count == 0:
@@ -220,6 +283,28 @@ def _clip(value: Decimal, epsilon: Decimal) -> Decimal:
     return min(max(value, low), high)
 
 
+def _log_loss_contribution(probability: Decimal, target: Decimal, epsilon: Decimal) -> Decimal:
+    clipped = _clip(probability, epsilon)
+    reference = clipped if target == Decimal(1) else Decimal(1) - clipped
+    return Decimal(-1) * Decimal(str(_ln(reference)))
+
+
+def _decimal_seconds(value: timedelta) -> Decimal:
+    return (
+        Decimal(value.days) * Decimal(86400)
+        + Decimal(value.seconds)
+        + Decimal(value.microseconds) / Decimal(1_000_000)
+    )
+
+
+def _median(values: Sequence[Decimal]) -> Decimal:
+    ordered = sorted(values)
+    midpoint = len(ordered) // 2
+    if len(ordered) % 2:
+        return ordered[midpoint]
+    return (ordered[midpoint - 1] + ordered[midpoint]) / Decimal(2)
+
+
 def evaluate_settlement_samples(
     samples: Sequence[Mapping[str, Any] | SettledForecastSample],
     config: SettlementEvaluationConfig,
@@ -240,6 +325,7 @@ def evaluate_settlement_samples(
                 sample = SettledForecastSample(
                     condition_id=raw["condition_id"],
                     team_id=raw["team_id"],
+                    event_id=raw.get("event_id"),
                     forecast_p_yes=Decimal(str(raw["forecast_p_yes"])),
                     market_implied_p_yes=Decimal(str(raw["market_implied_p_yes"])),
                     actual_outcome=raw["actual_outcome"],
@@ -272,12 +358,19 @@ def evaluate_settlement_samples(
         count = Decimal(len(included))
         team_brier = sum(team_errors, Decimal(0)) / count
         market_brier = sum(market_errors, Decimal(0)) / count
-        log_losses = []
+        team_log_losses = []
+        market_log_losses = []
         for s, target in zip(included, actual_targets):
-            p = _clip(s.forecast_p_yes, config.log_loss_epsilon)
-            reference = p if target == Decimal(1) else Decimal(1) - p
-            log_losses.append(Decimal(-1) * Decimal(str(_ln(reference))))
-        team_log_loss = sum(log_losses, Decimal(0)) / count
+            team_log_losses.append(
+                _log_loss_contribution(s.forecast_p_yes, target, config.log_loss_epsilon)
+            )
+            market_log_losses.append(
+                _log_loss_contribution(
+                    s.market_implied_p_yes, target, config.log_loss_epsilon
+                )
+            )
+        team_log_loss = sum(team_log_losses, Decimal(0)) / count
+        market_log_loss = sum(market_log_losses, Decimal(0)) / count
         buckets: list[CalibrationBucket] = []
         width = Decimal(1) / Decimal(CALIBRATION_BUCKET_COUNT)
         for index in range(CALIBRATION_BUCKET_COUNT):
@@ -294,6 +387,7 @@ def evaluate_settlement_samples(
         team_brier = None
         market_brier = None
         team_log_loss = None
+        market_log_loss = None
         buckets = tuple(
             CalibrationBucket(
                 Decimal(i) / Decimal(CALIBRATION_BUCKET_COUNT),
@@ -307,7 +401,7 @@ def evaluate_settlement_samples(
 
     n = len(included)
     denominator = n + config.pending_count
-    coverage = Decimal(n) / Decimal(denominator) if denominator > 0 else None
+    coverage = Decimal(n) / Decimal(denominator) if n > 0 and denominator > 0 else None
     if n < config.min_samples_indicative or team_brier is None or market_brier is None:
         verdict = SettlementVerdict.INSUFFICIENT_SAMPLE
     elif team_brier >= market_brier:
@@ -318,8 +412,44 @@ def evaluate_settlement_samples(
         verdict = SettlementVerdict.COMPARATIVE_EDGE
 
     team_counts: dict[str, int] = {}
+    event_counts: dict[str, int] = {}
     for sample in included:
         team_counts[sample.team_id] = team_counts.get(sample.team_id, 0) + 1
+        if sample.event_id is not None:
+            event_counts[sample.event_id] = event_counts.get(sample.event_id, 0) + 1
+
+    verified_event_rows = sum(event_counts.values())
+    max_verified_event_concentration = (
+        Decimal(max(event_counts.values())) / Decimal(verified_event_rows)
+        if verified_event_rows
+        else None
+    )
+    lags = [_decimal_seconds(sample.settled_at - sample.generated_at) for sample in included]
+    hand_check_rows = []
+    for sample in sorted(
+        included,
+        key=lambda item: (item.condition_id, item.team_id, item.generated_at),
+    )[:5]:
+        target = Decimal(1) if sample.actual_outcome == "yes" else Decimal(0)
+        hand_check_rows.append(
+            SettlementHandCheckRow(
+                condition_id=sample.condition_id,
+                team_id=sample.team_id,
+                generated_at=sample.generated_at,
+                event_id=sample.event_id,
+                forecast_p_yes=sample.forecast_p_yes,
+                market_implied_p_yes=sample.market_implied_p_yes,
+                actual_outcome=sample.actual_outcome,
+                team_squared_error=(sample.forecast_p_yes - target) ** 2,
+                market_squared_error=(sample.market_implied_p_yes - target) ** 2,
+                team_log_loss=_log_loss_contribution(
+                    sample.forecast_p_yes, target, config.log_loss_epsilon
+                ),
+                market_log_loss=_log_loss_contribution(
+                    sample.market_implied_p_yes, target, config.log_loss_epsilon
+                ),
+            )
+        )
 
     return SettlementEvaluationReport(
         verdict=verdict,
@@ -331,8 +461,18 @@ def evaluate_settlement_samples(
         team_brier=team_brier,
         market_brier=market_brier,
         team_log_loss=team_log_loss,
+        market_log_loss=market_log_loss,
         calibration_buckets=tuple(buckets),
         team_counts=tuple(sorted(team_counts.items())),
+        unique_condition_count=len({sample.condition_id for sample in included}),
+        verified_unique_event_count=len(event_counts),
+        unknown_event_row_count=sum(sample.event_id is None for sample in included),
+        event_counts=tuple(sorted(event_counts.items())),
+        max_verified_event_concentration=max_verified_event_concentration,
+        settlement_lag_min_seconds=min(lags) if lags else None,
+        settlement_lag_median_seconds=_median(lags) if lags else None,
+        settlement_lag_max_seconds=max(lags) if lags else None,
+        hand_check_rows=tuple(hand_check_rows),
         as_of_evaluation_cutoff=config.as_of_evaluation_cutoff,
         config_min_indicative=config.min_samples_indicative,
         config_min_comparative=config.min_samples_comparative,
@@ -365,6 +505,7 @@ __all__ = (
     "DEFAULT_EPSILON",
     "SettlementEvaluationConfig",
     "SettlementEvaluationReport",
+    "SettlementHandCheckRow",
     "SettledForecastSample",
     "SettlementVerdict",
     "evaluate_settlement_samples",

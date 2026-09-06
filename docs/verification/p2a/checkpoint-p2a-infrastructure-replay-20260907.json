@@ -1,0 +1,59 @@
+{
+    "flags": {
+        "readonly": true,
+        "paper_only": true,
+        "report_only": true
+    },
+    "teams": [
+        {
+            "tag_id": "235",
+            "team_id": "crypto_btc",
+            "config_version": "p1-crypto_btc-v1"
+        },
+        {
+            "tag_id": "39",
+            "team_id": "crypto_eth",
+            "config_version": "p1-crypto_eth-v1"
+        }
+    ],
+    "cohort_id": "p2a-infrastructure-replay-20260907",
+    "gamma_query": {
+        "limit": 100,
+        "closed": false,
+        "offset": 0
+    },
+    "generated_at": "2026-09-07T00:00:00+00:00",
+    "cohort_horizon": "2027-01-01T00:00:00+00:00",
+    "schema_version": "p2a-settlement-checkpoint-v1",
+    "market_selector": {
+        "active": true,
+        "binary": true,
+        "closed": false,
+        "team_keyword_required": true
+    },
+    "reassessment_at": "2026-10-07T00:00:00+00:00",
+    "hypothesis_label": "zero_impact_market_control",
+    "selected_cohorts": [
+        "crypto_btc:p1-crypto_btc-v1",
+        "crypto_eth:p1-crypto_eth-v1"
+    ],
+    "selected_event_ids": [
+    ],
+    "minimum_lead_seconds": 1800,
+    "selected_forecast_ids": [
+        "0x02deb9538f5c123373adaa4ee6217b01745f1662bc902e46ac92f3fe6f8741e8:crypto_btc",
+        "0x3bdf487707735a1ca84079e6a4020147c5d865c4621b7a966ca2cdd0dd7ee5b0:crypto_eth"
+    ],
+    "as_of_evaluation_cutoff": "2026-09-06T16:00:00+00:00",
+    "forecast_selection_rule": "earliest eligible forecast per (condition_id, team_id, config_version) generated before the forecast cutoff",
+    "selected_forecast_event_ids": [
+        null,
+        null
+    ],
+    "unknown_event_lineage_count": 2,
+    "independent_hypothesis_status": "not_implemented",
+    "selected_forecast_payload_sha256": [
+        "e4a5ba91ab2897b9ab3900a88e8c898f622ca5285a3b5c60a0ae81aff0268b0d",
+        "6ce1af0d135d7784f2f7700334550d87c686174d995fb88bb1a3aab61e414362"
+    ]
+}

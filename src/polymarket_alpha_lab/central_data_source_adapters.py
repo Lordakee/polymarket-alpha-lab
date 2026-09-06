@@ -87,6 +87,43 @@ def _decimal(value: object) -> Decimal | None:
     return None
 
 
+def _gamma_event_lineage(item: dict[str, Any]) -> dict[str, Any]:
+    unknown = {
+        "event_id": None,
+        "event_slug": None,
+        "market_end_at": None,
+    }
+    events = item.get("events")
+    if events is None or events == []:
+        return {**unknown, "event_lineage_state": "missing_event"}
+    if not isinstance(events, list):
+        return {**unknown, "event_lineage_state": "malformed_event"}
+    if len(events) != 1:
+        return {**unknown, "event_lineage_state": "ambiguous_events"}
+    event = events[0]
+    event_id = event.get("id") if isinstance(event, dict) else None
+    event_slug = event.get("slug") if isinstance(event, dict) else None
+    end_date = item.get("endDate")
+    if not all(
+        type(value) is str and bool(value) and value.strip() == value
+        for value in (event_id, event_slug, end_date)
+    ):
+        return {**unknown, "event_lineage_state": "malformed_event"}
+    try:
+        market_end_at = datetime.fromisoformat(end_date.replace("Z", "+00:00"))
+        if market_end_at.tzinfo is None:
+            raise ValueError
+        market_end_at = market_end_at.astimezone(UTC)
+    except (ValueError, OverflowError):
+        return {**unknown, "event_lineage_state": "malformed_event"}
+    return {
+        "event_id": event_id,
+        "event_slug": event_slug,
+        "market_end_at": market_end_at,
+        "event_lineage_state": "verified",
+    }
+
+
 def parse_gamma_markets(
     source_def: SourceDefinition,
     raw: RawEventRow,
@@ -123,6 +160,7 @@ def parse_gamma_markets(
             "end_date_iso": item.get("endDate") if type(item.get("endDate")) is str else None,
             "volume24hr": _decimal(item.get("volume24hr")),
             "liquidity": _decimal(item.get("liquidity")),
+            **_gamma_event_lineage(item),
         }
         reason_codes: list[str] = []
         for embedded_name, key in (

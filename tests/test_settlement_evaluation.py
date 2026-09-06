@@ -27,10 +27,12 @@ def sample(
     generated=GENERATED,
     settled=SETTLED,
     condition="0x1",
+    event=None,
 ) -> SettledForecastSample:
     return SettledForecastSample(
         condition_id=condition,
         team_id=team,
+        event_id=event,
         forecast_p_yes=Decimal(forecast),
         market_implied_p_yes=Decimal(market),
         actual_outcome=outcome,
@@ -60,6 +62,8 @@ def test_brier_logloss_and_paired_baseline_are_hand_verifiable() -> None:
 
     expected = (Decimal(str(-math.log(0.8))) + Decimal(str(-math.log(0.2)))) / 2
     assert abs(report.team_log_loss - expected) < Decimal("0.000001")
+    assert report.market_log_loss is not None
+    assert abs(report.market_log_loss - Decimal(str(-math.log(0.5)))) < Decimal("0.000001")
     assert report.verdict is SettlementVerdict.INSUFFICIENT_SAMPLE  # N=2 < 30
 
 
@@ -69,6 +73,65 @@ def test_log_loss_clipping_prevents_infinite_loss() -> None:
     # Clipped to 1-eps=0.999 -> reference 0.001 -> loss capped at -ln(0.001).
     assert report.team_log_loss is not None and report.team_log_loss.is_finite()
     assert abs(report.team_log_loss - Decimal("6.907755")) < Decimal("0.0001")
+
+
+def test_market_log_loss_clips_yes_and_no_edges_with_same_epsilon() -> None:
+    rows = [
+        sample(forecast="0.5", market="0.0000001", outcome="yes", condition="yes"),
+        sample(forecast="0.5", market="0.9999999", outcome="no", condition="no"),
+    ]
+    report = evaluate_settlement_samples(rows, config())
+    assert report.market_log_loss is not None
+    assert abs(report.market_log_loss - Decimal("6.907755")) < Decimal("0.0001")
+    assert all(
+        abs(row.market_log_loss - Decimal("6.907755")) < Decimal("0.0001")
+        for row in report.hand_check_rows
+    )
+
+
+def test_condition_event_concentration_lags_and_bounded_hand_checks() -> None:
+    rows = [
+        sample(condition="c6", event=None, settled=GENERATED + timedelta(seconds=6)),
+        sample(condition="c2", event="event-a", settled=GENERATED + timedelta(seconds=2)),
+        sample(condition="c4", event="event-b", settled=GENERATED + timedelta(seconds=4)),
+        sample(condition="c1", event="event-a", settled=GENERATED + timedelta(seconds=1)),
+        sample(condition="c5", event=None, settled=GENERATED + timedelta(seconds=5)),
+        sample(condition="c3", event="event-a", settled=GENERATED + timedelta(seconds=3)),
+    ]
+    report = evaluate_settlement_samples(rows, config())
+    assert report.unique_condition_count == 6
+    assert report.verified_unique_event_count == 2
+    assert report.unknown_event_row_count == 2
+    assert report.event_counts == (("event-a", 3), ("event-b", 1))
+    assert report.max_verified_event_concentration == Decimal("0.75")
+    assert report.settlement_lag_min_seconds == Decimal(1)
+    assert report.settlement_lag_median_seconds == Decimal("3.5")
+    assert report.settlement_lag_max_seconds == Decimal(6)
+    assert [row.condition_id for row in report.hand_check_rows] == ["c1", "c2", "c3", "c4", "c5"]
+    assert all(row.team_squared_error == Decimal("0.16") for row in report.hand_check_rows)
+
+
+def test_odd_lag_median_and_n_zero_render_undefined() -> None:
+    odd = evaluate_settlement_samples(
+        [
+            sample(condition="a", settled=GENERATED + timedelta(seconds=1)),
+            sample(condition="b", settled=GENERATED + timedelta(seconds=9)),
+            sample(condition="c", settled=GENERATED + timedelta(seconds=4)),
+        ],
+        config(),
+    )
+    assert odd.settlement_lag_median_seconds == Decimal(4)
+
+    empty = evaluate_settlement_samples([], config(pending_count=3))
+    assert empty.hand_check_rows == ()
+    assert empty.coverage is None
+    assert empty.market_log_loss is None
+    assert empty.max_verified_event_concentration is None
+    rendered = empty.render()
+    assert "team_brier: undefined" in rendered
+    assert "market_log_loss: undefined" in rendered
+    assert "coverage_settled_ratio: undefined" in rendered
+    assert "settlement_lag_median_seconds: undefined" in rendered
 
 
 def test_verdict_branches() -> None:

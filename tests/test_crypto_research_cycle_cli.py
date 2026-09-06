@@ -112,7 +112,9 @@ def test_import_and_export_require_both_persistence_gates(monkeypatch, capsys) -
 
     assert run_import_settled_outcomes_command() == 2
     assert run_export_settlement_samples_command(
-        cutoff="2026-10-01T00:00:00+00:00", out_path="unused.json"
+        cutoff="2026-10-01T00:00:00+00:00",
+        outcome_cutoff="2026-10-02T00:00:00+00:00",
+        out_path="unused.json",
     ) == 2
     errors = capsys.readouterr().err
     assert "team-forecast persistence is disabled" in errors
@@ -124,9 +126,10 @@ def test_import_adapts_snapshot_as_jsonb_and_reports_conflicts(monkeypatch, caps
             self.value = value
 
     class Cursor:
-        def __init__(self):
+        def __init__(self, existing):
             self.rowcount = 0
-            self.params = None
+            self.insert_params = None
+            self.existing = existing
 
         def __enter__(self):
             return self
@@ -134,12 +137,16 @@ def test_import_adapts_snapshot_as_jsonb_and_reports_conflicts(monkeypatch, caps
         def __exit__(self, *_args):
             return None
 
-        def execute(self, _sql, params):
-            self.params = params
+        def execute(self, sql, params):
+            if sql.startswith("INSERT"):
+                self.insert_params = params
+
+        def fetchone(self):
+            return self.existing
 
     class Connection:
-        def __init__(self):
-            self.cursor_instance = Cursor()
+        def __init__(self, existing):
+            self.cursor_instance = Cursor(existing)
             self.committed = False
             self.closed = False
 
@@ -152,7 +159,7 @@ def test_import_adapts_snapshot_as_jsonb_and_reports_conflicts(monkeypatch, caps
         def close(self):
             self.closed = True
 
-    connection = Connection()
+    connection = Connection(("yes", "polymarket_gamma", ["0", "1"], "a" * 64, False))
     psycopg = SimpleNamespace(connect=lambda _dsn: connection)
     monkeypatch.setitem(sys.modules, "psycopg", psycopg)
     monkeypatch.setitem(sys.modules, "psycopg.types", SimpleNamespace())
@@ -174,18 +181,83 @@ def test_import_adapts_snapshot_as_jsonb_and_reports_conflicts(monkeypatch, caps
     )
 
     assert run_import_settled_outcomes_command(condition_ids=("0xabc",)) == 0
-    assert isinstance(connection.cursor_instance.params[4], Jsonb)
-    assert connection.cursor_instance.params[4].value == ["0", "1"]
+    assert isinstance(connection.cursor_instance.insert_params[4], Jsonb)
+    assert connection.cursor_instance.insert_params[4].value == ["0", "1"]
     assert connection.committed and connection.closed
     output = capsys.readouterr().out
     assert "status=already_present" in output
     assert "summary imported=0 refused=0" in output
 
 
+def test_import_refuses_same_identity_with_different_outcome(monkeypatch, capsys) -> None:
+    class Jsonb:
+        def __init__(self, value):
+            self.value = value
+
+    class Cursor:
+        rowcount = 0
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def execute(self, _sql, _params):
+            return None
+
+        def fetchone(self):
+            return ("no", "polymarket_gamma", ["1", "0"], "b" * 64, False)
+
+    class Connection:
+        def __init__(self):
+            self.committed = False
+            self.closed = False
+
+        def cursor(self):
+            return Cursor()
+
+        def commit(self):
+            self.committed = True
+
+        def close(self):
+            self.closed = True
+
+    connection = Connection()
+    monkeypatch.setitem(
+        sys.modules, "psycopg", SimpleNamespace(connect=lambda _dsn: connection)
+    )
+    monkeypatch.setitem(sys.modules, "psycopg.types", SimpleNamespace())
+    monkeypatch.setitem(
+        sys.modules, "psycopg.types.json", SimpleNamespace(Jsonb=Jsonb)
+    )
+    central = SimpleNamespace(enabled=True, dsn=LOCAL_DSN)
+    forecast = SimpleNamespace(
+        enabled=True,
+        dsn=LOCAL_DSN,
+        team_forecast_table_name="team_forecasts",
+    )
+    monkeypatch.setattr(
+        "polymarket_alpha_lab.crypto_research_cycle_cli._resolve_persistence",
+        lambda: (object(), central, forecast),
+    )
+    monkeypatch.setattr(
+        "polymarket_alpha_lab.crypto_research_cycle_cli._derive_outcome_for_condition",
+        lambda *_args, **_kwargs: (RETRIEVED_AT, "yes", "a" * 64, ["0", "1"]),
+    )
+
+    assert run_import_settled_outcomes_command(condition_ids=("0xabc",)) == 1
+    assert connection.committed and connection.closed
+    output = capsys.readouterr().out
+    assert "status=refused reason=identity_collision" in output
+    assert "summary imported=0 refused=1" in output
+
+
 def test_export_accounts_for_invalid_db_rows(monkeypatch, tmp_path) -> None:
     valid_payload = {"market_implied_probability_observed": "0.4"}
     forecast_records = [
         (
+            "a" * 64,
             "forecast-1",
             "0xabc",
             "crypto_btc",
@@ -193,8 +265,10 @@ def test_export_accounts_for_invalid_db_rows(monkeypatch, tmp_path) -> None:
             "0.6",
             RETRIEVED_AT,
             valid_payload,
+            "event-1",
         ),
         (
+            "b" * 64,
             "forecast-invalid",
             "0xdef",
             "crypto_btc",
@@ -202,12 +276,25 @@ def test_export_accounts_for_invalid_db_rows(monkeypatch, tmp_path) -> None:
             "0.6",
             RETRIEVED_AT,
             {},
+            None,
+        ),
+        (
+            "e" * 64,
+            "forecast-invalid-payload",
+            "0xghi",
+            "crypto_btc",
+            "p1-crypto_btc-v1",
+            "0.6",
+            RETRIEVED_AT,
+            [],
+            None,
         ),
     ]
 
     class Cursor:
-        def __init__(self, rows):
-            self.rows = rows
+        def __init__(self, row_sets):
+            self.row_sets = iter(row_sets)
+            self.rows = []
 
         def __enter__(self):
             return self
@@ -216,14 +303,14 @@ def test_export_accounts_for_invalid_db_rows(monkeypatch, tmp_path) -> None:
             return None
 
         def execute(self, _sql):
-            return None
+            self.rows = next(self.row_sets)
 
         def fetchall(self):
             return self.rows
 
     class Connection:
-        def __init__(self, rows):
-            self.rows = rows
+        def __init__(self, row_sets):
+            self.row_sets = row_sets
 
         def __enter__(self):
             return self
@@ -232,9 +319,16 @@ def test_export_accounts_for_invalid_db_rows(monkeypatch, tmp_path) -> None:
             return None
 
         def cursor(self):
-            return Cursor(self.rows)
+            return Cursor(self.row_sets)
 
-    connections = iter((Connection(forecast_records), Connection([])))
+    lineage_records = [("a" * 64, "event-1")]
+    outcome_records = [
+        ("0xabc", "yes", RETRIEVED_AT, False, "c" * 64),
+        ("0xbad", "maybe", RETRIEVED_AT, False, "d" * 64),
+    ]
+    connections = iter(
+        (Connection([forecast_records]), Connection([lineage_records, outcome_records]))
+    )
     monkeypatch.setitem(
         sys.modules,
         "psycopg",
@@ -253,9 +347,19 @@ def test_export_accounts_for_invalid_db_rows(monkeypatch, tmp_path) -> None:
 
     output = tmp_path / "samples.json"
     assert run_export_settlement_samples_command(
-        cutoff="2026-10-01T00:00:00+00:00", out_path=str(output)
+        cutoff="2026-10-01T00:00:00+00:00",
+        outcome_cutoff="2026-10-02T00:00:00+00:00",
+        out_path=str(output),
     ) == 0
     manifest = json.loads((tmp_path / "samples.json.manifest.json").read_text())
-    assert manifest["input_forecast_rows"] == 2
-    assert manifest["exclusion_reasons"] == {"invalid_forecast_row": 1}
-    assert manifest["pending_count"] == 1
+    assert manifest["input_forecast_rows"] == 3
+    assert manifest["input_outcome_rows"] == 2
+    assert manifest["selected_forecast_payload_sha256"] == ["a" * 64]
+    assert manifest["selected_event_ids"] == ["event-1"]
+    assert manifest["unknown_event_lineage_count"] == 0
+    assert manifest["selected_outcome_payload_sha256"] == ["c" * 64]
+    assert manifest["exclusion_reasons"] == {
+        "invalid_forecast_row": 2,
+        "invalid_outcome_row": 1,
+    }
+    assert manifest["pending_count"] == 0
