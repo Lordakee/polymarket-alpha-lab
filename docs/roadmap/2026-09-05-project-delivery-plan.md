@@ -282,3 +282,31 @@ The next code batch is M0 plus pure M1 request-contract design: settle branch
 reuse decisions, make DB lifecycle tests reproducible, specify bounded request
 parameters and choose one BTC event/source fixture set. These tasks are planned,
 not claimed complete by this documentation change.
+
+## Delivery Status (2026-09-06)
+
+All milestones in this plan are delivered, each through the reviewed
+stage-plan loop (stage plan -> Claude Code plan review -> dispositioned
+revision -> implementation -> verification -> Claude Code hard review
+until PASS -> commit):
+
+| Milestone | Commit | Hard-review outcome |
+| --- | --- | --- |
+| M0 baseline & persistence acceptance | `72d0a23a` | PASS |
+| M1 parameterized requests & adapters | `c2920a0b` | PASS |
+| M2 evidence bundles & dispatch | `68d03355` | PASS (zero findings) |
+| M3 BTC vertical slice | `76c0a48e` | PASS (three-part review; gateway-outage handling and one rejected finding documented in the stage plan) |
+| M4 operational quality | `b28edd97` | PASS |
+| M5 Wave 1 ETH + domain matrix | `ba424e73` | PASS (one MINOR fixed pre-commit) |
+| M6 settlement evaluation | `58638b0b` | FAIL->fix->PASS (coverage ratio, terminology) |
+
+Ongoing work that remains by design (each needs its own reviewed plan
+when its trigger fires): M5 Waves 2+ as qualifying no-auth sources are
+found (macro rates first), the cost-adjusted paper-results arm at
+settled N >= 30, the memory-benefit arm once memory-gated handoffs
+settle, the first real settlement evaluation after 2026-09-05+ cycles
+resolve, and the long-term items under Deferred Scope.
+
+Final verification at delivery time: full Python 3.11 regression
+34284 passed, 8 skipped; CLI inventory 80 commands; live opt-in network
+smoke green for Gamma, CLOB, Kraken BTC and ETH.
