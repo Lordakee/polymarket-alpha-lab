@@ -31,7 +31,7 @@ from .central_data_request_params import canonical_query_string
 _DNS_LABEL_RE = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\Z")
 _ASCII_DECIMAL_RE = re.compile(r"[0-9]+\Z")
 _QUERY_NAME_RE = re.compile(r"[a-z0-9_]{1,32}\Z")
-_QUERY_VALUE_RE = re.compile(r"[A-Za-z0-9._~-]{1,64}\Z")
+_QUERY_VALUE_RE = re.compile(r"[A-Za-z0-9._~-]{1,128}\Z")
 _RESERVED_QUERY_NAMES = frozenset({"id", "uid", "user_id", "account_id", "wallet"})
 _READ_CHUNK_SIZE = 64 * 1024
 

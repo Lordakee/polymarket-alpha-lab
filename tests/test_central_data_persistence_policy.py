@@ -144,3 +144,42 @@ def test_registered_response_media_type_is_enforced_by_the_policy_gate() -> None
     )
     assert missing is not None
     assert missing.reason == "missing_content_type"
+
+
+def test_public_market_metadata_addresses_are_not_personal_data() -> None:
+    policy = CentralDataPersistencePolicy()
+    for sample in (
+        b'{"assetAddress":"0x91430cad2d6170971b5ba9a8e5f0a00000000000"}',
+        b'{"submitted_by":"0x91430cad2d6170971b5ba9a8e5f0a00000000000"}',
+        b'{"resolvedBy":"0x91430cad2d6170971b5ba9a8e5f0a00000000000"}',
+        b'{"volume":"1234567890123"}',
+        b'{"questionID":"0x123456789012345678901234567890123456789012345678901234567890abcd"}',
+    ):
+        assert policy.evaluate_raw_response(_raw(sample), source_definition=_source()) is None
+
+
+def test_account_context_wallets_and_formatted_phones_still_refuse() -> None:
+    policy = CentralDataPersistencePolicy()
+    for sample in (
+        b'{"user_wallet":"0x91430cad2d6170971b5ba9a8e5f0a00000000000"}',
+        b'{"ownerAddress":"0x91430cad2d6170971b5ba9a8e5f0a00000000000"}',
+        b'{"fromAddress":"0x91430cad2d6170971b5ba9a8e5f0a00000000000"}',
+        b'{"to_address":"0x91430cad2d6170971b5ba9a8e5f0a00000000000"}',
+        b'{"USER_WALLET":"0x91430cad2d6170971b5ba9a8e5f0a00000000000"}',
+        b'{"usr":"0x91430cad2d6170971b5ba9a8e5f0a00000000000"}',
+        b'{"acct":"0x91430cad2d6170971b5ba9a8e5f0a00000000000"}',
+        '{"w\u0430llet":"0x91430cad2d6170971b5ba9a8e5f0a00000000000"}'.encode(),
+        b'{"unknownAddressKey":"0x91430cad2d6170971b5ba9a8e5f0a00000000000"}',
+        b'{"nested":{"owner":"0x91430cad2d6170971b5ba9a8e5f0a00000000000"}}',
+        b'{"arr":["0x91430cad2d6170971b5ba9a8e5f0a00000000000"]}',
+        b'{"big":"prefix glued to 0x91430cad2d6170971b5ba9a8e5f0a00000000000"}',
+        b'{"userWallet":"0X91430CAD2D6170971B5BA9A8E5F0A00000000000"}',
+        b'{"contact":"+1 (555) 123-4567"}',
+        b'{"note":"call 555-123-4567 now"}',
+        b'{"intl":"+44 20 1234 5678"}',
+        b'{"local":"1234-5678"}',
+        b'{"eu":"+49-30-1234-5678"}',
+    ):
+        rejection = policy.evaluate_raw_response(_raw(sample), source_definition=_source())
+        assert rejection is not None
+        assert rejection.reason == "sensitive_data_detected"

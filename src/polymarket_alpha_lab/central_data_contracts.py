@@ -26,7 +26,7 @@ _SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
 _MIME_RE = re.compile(r"[a-z0-9!#$&^_.+-]+/[a-z0-9!#$&^_.+-]+\Z")
 _DNS_LABEL_RE = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\Z")
 _PARAM_NAME_RE = re.compile(r"[a-z0-9_]{1,32}\Z")
-_PARAM_VALUE_RE = re.compile(r"[A-Za-z0-9._~-]{1,64}\Z")
+_PARAM_VALUE_RE = re.compile(r"[A-Za-z0-9._~-]{1,128}\Z")
 _PARAM_KINDS = frozenset({"pattern", "int_range", "enum"})
 # These names would make a composed URL trip the persistence policy's
 # sensitive query regex; rejecting them here fails at registration time.

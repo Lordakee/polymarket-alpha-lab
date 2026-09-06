@@ -123,7 +123,11 @@ def parse_gamma_markets(
             "end_date_iso": item.get("endDate") if type(item.get("endDate")) is str else None,
         }
         reason_codes: list[str] = []
-        for embedded_name, key in (("outcomePrices", "outcome_prices"), ("outcomes", "outcomes")):
+        for embedded_name, key in (
+            ("outcomePrices", "outcome_prices"),
+            ("outcomes", "outcomes"),
+            ("clobTokenIds", "clob_token_ids"),
+        ):
             encoded = item.get(embedded_name)
             decoded: Any = None
             if type(encoded) is str:
@@ -193,7 +197,11 @@ def parse_clob_book(
     observation_time = raw.retrieval_time
     timestamp = document.get("timestamp")
     if type(timestamp) is str and timestamp.isdigit():
-        observation_time = datetime.fromtimestamp(int(timestamp), tz=UTC)
+        epoch = int(timestamp)
+        # CLOB reports milliseconds; normalize deterministically.
+        if epoch > 10**12:
+            epoch //= 1000
+        observation_time = datetime.fromtimestamp(epoch, tz=UTC)
     elif timestamp is not None:
         reason_codes.append("invalid_content_timestamp")
     value = {

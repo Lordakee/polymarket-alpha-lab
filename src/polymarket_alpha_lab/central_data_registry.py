@@ -118,7 +118,7 @@ DEFAULT_SOURCE_DEFINITIONS = (
         is_official=True,
         query_params=(
             RequestParamSpec("condition_id", "pattern", pattern=r"[0-9a-fA-Fx]{1,66}"),
-            RequestParamSpec("slug", "pattern", pattern=r"[a-z0-9-]{1,80}"),
+            RequestParamSpec("slug", "pattern", pattern=r"[a-z0-9-]{1,128}"),
             RequestParamSpec("limit", "int_range", min_value=1, max_value=100),
             RequestParamSpec("offset", "int_range", min_value=0, max_value=100000),
         ),
@@ -131,7 +131,7 @@ DEFAULT_SOURCE_DEFINITIONS = (
         freshness_policy_seconds=30,
         is_official=True,
         query_params=(
-            RequestParamSpec("token_id", "pattern", pattern=r"[0-9]{1,19}"),
+            RequestParamSpec("token_id", "pattern", pattern=r"[0-9]{1,96}"),
         ),
     ),
     SourceDefinition(

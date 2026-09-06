@@ -25,8 +25,35 @@ _BODY_SENSITIVE_RE = re.compile(
     r"account|username|user_id|account_id|wallet_id)\"?\s*[:=])"
 )
 _EMAIL_RE = re.compile(r"(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b")
-_PHONE_RE = re.compile(r"(?<!\d)(?:\+?\d[\d ()-]{9,}\d)(?!\d)")
-_WALLET_RE = re.compile(r"(?i)\b0x[a-f0-9]{40}\b")
+# A digit run only counts as a phone number when it carries real phone
+# punctuation (leading +, spaces, parentheses, or dashes) in a 3-4
+# grouping.  Bare digit runs are numeric identifiers and dashed digit
+# groups like ISO dates are public metadata, not personal data.
+_PHONE_CANDIDATE_RE = re.compile(r"(?<![\dA-Fa-f])\+?\d[\d ()\-]{6,}\d(?![\dA-Fa-f])")
+_DATE_SHAPE_RE = re.compile(r"\d{4}-\d{1,2}-\d{1,2}\Z")
+_DATE_SHAPE_RE_ALT = re.compile(r"\d{1,2}-\d{1,2}-\d{2,4}\Z")
+_WALLET_RE = re.compile(r"(?i)(?:0x|0X)[0-9a-fA-F]{40}(?![0-9a-fA-F])")
+# Wallet-shaped strings inside JSON bodies are refused unless they are the
+# string value of a key in this explicit public-market-metadata allowlist.
+# An allowlist (not an account-key denylist) is fail-closed: abbreviated,
+# homoglyph, or non-English spellings of account-ish keys fall through to
+# refusal instead of receiving the exemption.
+_JSON_WALLET_KV_RE = re.compile(r'"((?:[^"\\]|\\.)+)"\s*:\s*"((?:0x|0X)[0-9a-fA-F]{40})\b')
+_PUBLIC_METADATA_ADDRESS_KEYS = frozenset(
+    {
+        "assetaddress",
+        "submitted_by",
+        "submittedby",
+        "resolvedby",
+        "negriskaddress",
+        "collateral",
+        "conditionid",
+        "questionid",
+        "clobtokenids",
+        "positionids",
+        "negriskrequestid",
+    }
+)
 _MIME_RE = re.compile(r"[a-z0-9!#$&^_.+-]+/[a-z0-9!#$&^_.+-]+\Z")
 _HEADER_NAME_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,127}\Z")
 _SAFE_HEADER_ALLOWLIST = frozenset(
@@ -71,14 +98,64 @@ def _reject(reason: str) -> PolicyRejection:
     return PolicyRejection(reason, reason)
 
 
+def _looks_like_phone(candidate: str) -> bool:
+    stripped = candidate.strip()
+    if _DATE_SHAPE_RE.fullmatch(stripped) or _DATE_SHAPE_RE_ALT.fullmatch(stripped):
+        return False
+    if stripped.startswith("+"):
+        return True
+    separators = sum(stripped.count(char) for char in " ()-")
+    digits = sum(char.isdigit() for char in stripped)
+    if digits < 8:
+        return False
+    if separators >= 2:
+        return True
+    if separators == 1:
+        # Only the classic XXX(X)-XXXX local grouping reads as a phone;
+        # long id-like runs split by one dash stay public metadata.
+        groups = [group for group in stripped.replace("(", " ").replace(")", " ").replace("-", " ").split() if group]
+        return (
+            len(groups) == 2
+            and 3 <= len(groups[0]) <= 4
+            and len(groups[1]) == 4
+        )
+    return False
+
+
 def _contains_sensitive(value: str) -> bool:
-    return bool(
+    if (
         _URL_SENSITIVE_RE.search(value)
         or _BODY_SENSITIVE_RE.search(value)
         or _EMAIL_RE.search(value)
-        or _PHONE_RE.search(value)
-        or _WALLET_RE.search(value)
+    ):
+        return True
+    return any(
+        _looks_like_phone(match.group(0)) for match in _PHONE_CANDIDATE_RE.finditer(value)
     )
+
+
+def _json_wallet_violation(text: str) -> bool:
+    allowed_spans = [
+        (match.start(2), match.end(2))
+        for match in _JSON_WALLET_KV_RE.finditer(text)
+        if match.group(1).strip().lower() in _PUBLIC_METADATA_ADDRESS_KEYS
+    ]
+    for match in _WALLET_RE.finditer(text):
+        if not any(
+            start <= match.start() and match.end() <= end for start, end in allowed_spans
+        ):
+            return True
+    return False
+
+
+def _body_contains_sensitive(text: str, media_type: str) -> bool:
+    if _BODY_SENSITIVE_RE.search(text) or _EMAIL_RE.search(text):
+        return True
+    if any(_looks_like_phone(match.group(0)) for match in _PHONE_CANDIDATE_RE.finditer(text)):
+        return True
+    if media_type == "application/json":
+        return _json_wallet_violation(text)
+    return _WALLET_RE.search(text) is not None
 
 
 def _validate_concrete_url(value: object) -> bool:
@@ -179,7 +256,7 @@ class CentralDataPersistencePolicy:
             body_text = body.decode("utf-8")
         except UnicodeDecodeError:
             return _reject("invalid_utf8")
-        if _contains_sensitive(body_text):
+        if _body_contains_sensitive(body_text, normalized_type):
             return _reject("sensitive_data_detected")
         for value in (request_url, final_url):
             if isinstance(value, str) and _contains_sensitive(value):
