@@ -3059,6 +3059,16 @@ def main(
         help="Market slug or 0x condition id from Gamma.",
     )
 
+    settlement = subparsers.add_parser(
+        "settlement-evaluation",
+        help="Evaluate settled forecast samples against the market baseline (M6).",
+    )
+    settlement.add_argument(
+        "--samples",
+        required=True,
+        help="Path to a JSON sample export (schema in settlement_evaluation.py).",
+    )
+
     crypto_cycle = subparsers.add_parser(
         "crypto-research-cycle",
         help="Run one bounded crypto-team market research cycle (M5).",
@@ -4511,6 +4521,20 @@ def main(
         )
 
         return run_btc_research_cycle_command(market=args.market)
+
+    if args.command == "settlement-evaluation":
+        from pathlib import Path as _Path
+
+        from polymarket_alpha_lab.settlement_evaluation import (
+            evaluate_settlement_samples,
+            load_samples_document,
+        )
+
+        document = _Path(args.samples).read_text(encoding="utf-8")
+        rows, config = load_samples_document(document)
+        report = evaluate_settlement_samples(rows, config)
+        print(report.render())
+        return 0
 
     if args.command == "crypto-research-cycle":
         from polymarket_alpha_lab.crypto_research_cycle_cli import (

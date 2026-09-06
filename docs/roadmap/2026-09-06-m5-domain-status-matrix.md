@@ -39,3 +39,14 @@ Later waves follow the delivery plan: macro once a source qualifies,
 then remaining domains in small reviewed batches; each wave gets its own
 stage plan and the same review loop. Ten-team completion means ten
 verified workflows, not ten registered builders.
+
+## Settlement Export Protocol (added by M6)
+
+Settled samples for evaluation are produced by joining persisted team
+forecast rows to resolved outcomes (event identity, actual outcome,
+settled timestamp) and exporting the JSON document consumed by
+`settlement-evaluation --samples`. The first real evaluation becomes
+possible only after markets from the 2026-09-05+ cycles settle; until
+then every evaluation run reports `insufficient_sample` with the counts.
+The cost-adjustment arm activates at settled N >= 30; the memory-benefit
+arm activates when memory-gated handoffs have settled outcomes.
