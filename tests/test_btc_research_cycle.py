@@ -17,7 +17,7 @@ from polymarket_alpha_lab.central_evidence_dispatch import (
     BTC_ITEM_REQUIREMENTS,
     build_evidence_bundle,
 )
-from polymarket_alpha_lab.cli import _run_btc_research_cycle_command
+from polymarket_alpha_lab.btc_research_cycle_cli import run_btc_research_cycle_command
 from polymarket_alpha_lab.crypto_btc_team import CryptoBtcTeamConfig
 
 
@@ -288,7 +288,7 @@ def observation_with_time(moment: datetime) -> NormalizedObservationRow:
 
 
 def test_cli_command_validates_market_argument(capsys) -> None:
-    assert _run_btc_research_cycle_command(market=" ") == 2
+    assert run_btc_research_cycle_command(market=" ") == 2
     captured = capsys.readouterr()
     assert "nonblank" in captured.err
 

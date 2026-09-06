@@ -252,6 +252,8 @@ class PaperStrategyCycleReport:
     cost_aware_reports: tuple[PaperCostAwareEventStrategyReport, ...] = ()
     paper_only: bool = True
     report_only: bool = True
+    paper_execution_failure_types: tuple[str, ...] = ()
+    market_failure_types: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "generated_at", _as_utc(self.generated_at))
@@ -280,6 +282,14 @@ class PaperStrategyCycleReport:
             raise ValueError(
                 "screening_report must be a PaperProjectScreeningReport or None",
             )
+        for field_name in ("paper_execution_failure_types", "market_failure_types"):
+            values = getattr(self, field_name)
+            if not isinstance(values, tuple) or any(
+                type(value) is not str or not value or value.strip() != value
+                for value in values
+            ):
+                raise ValueError(f"{field_name} must be a tuple of canonical strings")
+            object.__setattr__(self, field_name, tuple(values))
         # Count invariants (spec Validation rules).
         if self.snapshot_ready_count > self.considered_count:
             raise ValueError(
@@ -458,14 +468,20 @@ def run_strategy_cycle(
     # Only populated when paper execution is enabled (default-off). Keyed by
     # market_slug with first-occurrence wins (mirrors the screening dedupe).
     paper_pass_enabled = cycle_config.paper_execution_config is not None
+    paper_execution_failure_types: list[str] = []
     paper_trade_context: dict[str, tuple[Any, ...]] = {}
+    market_failure_types: list[str] = []
     for nm in retained:
+        if len(nm.tokens) != 2:
+            # Non-binary: record a cycle-layer status. Do NOT call the
+            # builder with fabricated books.
+            statuses.append("blocked_non_binary_market")
+            continue
+        # Stage guards preserve the previous skip-to-next-market semantics
+        # exactly: any stage failure skips context population and dedupe
+        # first-occurrence behavior, but the failure is now attributed to
+        # the failing stage instead of one generic fetch error.
         try:
-            if len(nm.tokens) != 2:
-                # Non-binary: record a cycle-layer status. Do NOT call the
-                # builder with fabricated books.
-                statuses.append("blocked_non_binary_market")
-                continue
             # Mirror cost_aware_snapshot_builder's YES/NO resolution verbatim.
             yes_token_id, no_token_id = _resolve_token_ids(nm)
             yes_book_raw = client.get_order_book(token_id=yes_token_id)
@@ -483,8 +499,18 @@ def run_strategy_cycle(
                 payload=no_book_raw,
                 captured_at=timestamp,
             )
+        except Exception as exc:
+            market_failure_types.append(type(exc).__name__)
+            statuses.append("blocked_fetch_error")
+            continue
+        try:
             yes_book = normalize_order_book(yes_book_raw, captured_at=timestamp)
             no_book = normalize_order_book(no_book_raw, captured_at=timestamp)
+        except Exception as exc:
+            market_failure_types.append(type(exc).__name__)
+            statuses.append("blocked_normalization_error")
+            continue
+        try:
             # cost_aware_snapshot_builder enforces isinstance(forecast, PaperForecast),
             # so a book_imbalance forecast is rejected downstream until that leaf
             # accepts both forecast types.
@@ -573,6 +599,11 @@ def run_strategy_cycle(
                         config=bi_config,
                         generated_at=timestamp,
                     )
+        except Exception as exc:
+            market_failure_types.append(type(exc).__name__)
+            statuses.append("blocked_forecast_error")
+            continue
+        try:
             attempt = build_paper_cost_aware_event_market_snapshot(
                 nm,
                 yes_book,
@@ -581,7 +612,12 @@ def run_strategy_cycle(
                 config=cycle_config.snapshot_config,
                 generated_at=timestamp,
             )
-            if attempt.status == "snapshot_ready":
+        except Exception as exc:
+            market_failure_types.append(type(exc).__name__)
+            statuses.append("blocked_cost_snapshot_error")
+            continue
+        if attempt.status == "snapshot_ready":
+            try:
                 snapshot = attempt.snapshot
                 # Builder contract: snapshot_ready implies snapshot is not None.
                 # Guard for type safety; reaching here is a builder violation.
@@ -611,11 +647,12 @@ def run_strategy_cycle(
                         ),
                     )
                 statuses.append("snapshot_ready")
-            else:
-                statuses.append(attempt.status)
-        except Exception:
-            statuses.append("blocked_fetch_error")
-            continue
+            except Exception as exc:
+                market_failure_types.append(type(exc).__name__)
+                statuses.append("blocked_report_assembly_error")
+                continue
+        else:
+            statuses.append(attempt.status)
 
     snapshot_ready_count = statuses.count("snapshot_ready")
 
@@ -675,7 +712,8 @@ def run_strategy_cycle(
                     config=paper_pass_config,
                     generated_at=timestamp,
                 )
-            except Exception:
+            except Exception as exc:
+                paper_execution_failure_types.append(type(exc).__name__)
                 continue
             if paper_result.record is not None:
                 paper_trade_record_sink(paper_result.record)
@@ -691,6 +729,8 @@ def run_strategy_cycle(
         blocked_counts=_deterministic_blocked_counts(statuses),
         screening_report=screening,
         cost_aware_reports=tuple(collected_reports),
+        paper_execution_failure_types=tuple(paper_execution_failure_types),
+        market_failure_types=tuple(market_failure_types),
     )
 
 

@@ -266,6 +266,9 @@ def public_export_fragment_matches(name):
 ALLOWED_REQUIRED_DOMAIN_NAMES = {
     "PaperExecutionConfig",
     "paper_execution_config",
+    # M4: paper-execution failure visibility uses the same carved-out
+    # paper-execution vocabulary (failure type names only; no live surface).
+    "paper_execution_failure_types",
     # Stage 8: the LLM forecast provider injects a GLMChatTransport and the LLM
     # forecast config. ``llm_transport`` and ``GLMChatTransport`` carry the
     # otherwise-forbidden "transport" fragment; this carve-out authorizes them
