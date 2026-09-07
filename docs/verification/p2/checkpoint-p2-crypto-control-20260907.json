@@ -1,0 +1,183 @@
+{
+  "as_of_evaluation_cutoff": "2026-09-07T00:22:35.802567+00:00",
+  "cohort_horizon": "2026-10-07T00:00:00+00:00",
+  "cohort_id": "p2-crypto-control-20260907",
+  "collection_artifact": "collection-p2-crypto-control-20260907.json",
+  "collection_sha256": "dea9b60765f228e7fda3b1d0f5907c1e1ede472757346b94fd72b23cd5843397",
+  "flags": {
+    "paper_only": true,
+    "readonly": true,
+    "report_only": true
+  },
+  "forecast_selection_rule": "earliest eligible forecast per (condition_id, team_id, config_version) generated before the forecast cutoff",
+  "gamma_query": {
+    "closed": false,
+    "limit": 100,
+    "offset": 0
+  },
+  "generated_at": "2026-09-07T00:22:35.802567+00:00",
+  "hypothesis_label": "zero_impact_market_control",
+  "independent_hypothesis_status": "not_implemented",
+  "inventory_artifact": "inventory-p2-crypto-control-20260907.json",
+  "inventory_sha256": "b0d29387adf9816bb70137fc48c75777dfa2f24c5f3c0cfc40331e6031eafab4",
+  "market_selector": {
+    "active": true,
+    "binary": true,
+    "closed": false,
+    "team_keyword_required": true
+  },
+  "minimum_lead_seconds": 1800,
+  "outcome_refresh": "not_performed",
+  "reassessment_at": "2026-10-07T00:00:00+00:00",
+  "schema_version": "p2-settlement-checkpoint-v1",
+  "selected_cohorts": [
+    "crypto_btc:p1-crypto_btc-v1",
+    "crypto_eth:p1-crypto_eth-v1"
+  ],
+  "selected_event_ids": [
+    "881583",
+    "881736",
+    "939690",
+    "942643"
+  ],
+  "selected_forecast_event_ids": [
+    "942643",
+    "942643",
+    "942643",
+    "881736",
+    "939690",
+    "942643",
+    "881583"
+  ],
+  "selected_forecast_ids": [
+    "0x0213816eee5880d29cc1bd9259d61b90e56c0f2473e93f488b972955c5c78310:crypto_eth",
+    "0x2ae99c11faf758ba97414ff10450b9f66281a6c1224c177384b1f51b4e38e161:crypto_eth",
+    "0x39e249908db6471fb0b1728fba135fdd4e607e03fabb02c0f8d2758fc0df64c0:crypto_eth",
+    "0x3c16fd3f5a3e73deb74dd910e4d1240b2022c6a88a29358ea2f656b4e986ab2d:crypto_eth",
+    "0x50a3b9cc3922a6717dfa5a9c3af99cf1cb7906ed9045d4575456a0919a2fda7f:crypto_eth",
+    "0x7df506f0effb8146c9dbf987a751afabe83890d887dc9838e9dc6f0b13d814d0:crypto_eth",
+    "0xccb8e90599bb683621459d301d8bbfa215c1b77f18c4210bcfcb43e1237ed8aa:crypto_btc"
+  ],
+  "selected_forecast_payload_sha256": [
+    "633aa4dc78139a0f599a1210f570503c236742a189041124d945e836c67b7fb1",
+    "aee7c24ca9f56609a343e1d16018afda49d2425fed8834bfa9f06a9969d1cd9f",
+    "c4fce4678fb76e1d8a81cc58d41b932320c6fae85efde597902fa2d7037d0a36",
+    "70fbb5d3f10061d576799de47b4b7417c39c17ded1733ad208b5d9aed5a7191c",
+    "59de59f0d5692085f4648c1f70e203df78f9e92ff5c3eae89be7de094ad4630f",
+    "eeddaa2227f201c49aae28c58216a523cd129a8ae0dbb48727f15fd81e3c3ae2",
+    "48acea7a547bfdf1c69d08fe9372e5a71f813ac375294a7f51c6deb2038323cf"
+  ],
+  "selected_forecasts": [
+    {
+      "condition_id": "0x0213816eee5880d29cc1bd9259d61b90e56c0f2473e93f488b972955c5c78310",
+      "config_version": "p1-crypto_eth-v1",
+      "event_id": "942643",
+      "event_slug": "ethereum-price-on-september-7-2026",
+      "forecast_id": "0x0213816eee5880d29cc1bd9259d61b90e56c0f2473e93f488b972955c5c78310:crypto_eth",
+      "forecast_payload_sha256": "633aa4dc78139a0f599a1210f570503c236742a189041124d945e836c67b7fb1",
+      "generated_at": "2026-09-06T23:57:41.317423+00:00",
+      "lead_seconds": 57738,
+      "market_end_at": "2026-09-07T16:00:00+00:00",
+      "metadata_observed_at": "2026-09-06T23:57:40.795527+00:00",
+      "metadata_payload_sha256": "e019c91f6726164affe5c98f9dee796956965861249b8657e2121946be955948",
+      "team_id": "crypto_eth"
+    },
+    {
+      "condition_id": "0x2ae99c11faf758ba97414ff10450b9f66281a6c1224c177384b1f51b4e38e161",
+      "config_version": "p1-crypto_eth-v1",
+      "event_id": "942643",
+      "event_slug": "ethereum-price-on-september-7-2026",
+      "forecast_id": "0x2ae99c11faf758ba97414ff10450b9f66281a6c1224c177384b1f51b4e38e161:crypto_eth",
+      "forecast_payload_sha256": "aee7c24ca9f56609a343e1d16018afda49d2425fed8834bfa9f06a9969d1cd9f",
+      "generated_at": "2026-09-06T23:57:44.183872+00:00",
+      "lead_seconds": 57735,
+      "market_end_at": "2026-09-07T16:00:00+00:00",
+      "metadata_observed_at": "2026-09-06T23:57:43.657457+00:00",
+      "metadata_payload_sha256": "3d2ea0b22155e990db4e6af98304d9758a2eb02f604658b7f84dfb7de146328e",
+      "team_id": "crypto_eth"
+    },
+    {
+      "condition_id": "0x39e249908db6471fb0b1728fba135fdd4e607e03fabb02c0f8d2758fc0df64c0",
+      "config_version": "p1-crypto_eth-v1",
+      "event_id": "942643",
+      "event_slug": "ethereum-price-on-september-7-2026",
+      "forecast_id": "0x39e249908db6471fb0b1728fba135fdd4e607e03fabb02c0f8d2758fc0df64c0:crypto_eth",
+      "forecast_payload_sha256": "c4fce4678fb76e1d8a81cc58d41b932320c6fae85efde597902fa2d7037d0a36",
+      "generated_at": "2026-09-06T23:57:43.239248+00:00",
+      "lead_seconds": 57736,
+      "market_end_at": "2026-09-07T16:00:00+00:00",
+      "metadata_observed_at": "2026-09-06T23:57:42.680592+00:00",
+      "metadata_payload_sha256": "acf3e19306d7ae4550f40e42f4a93a919b16cb4f29a9ab8491d265c14245a563",
+      "team_id": "crypto_eth"
+    },
+    {
+      "condition_id": "0x3c16fd3f5a3e73deb74dd910e4d1240b2022c6a88a29358ea2f656b4e986ab2d",
+      "config_version": "p1-crypto_eth-v1",
+      "event_id": "881736",
+      "event_slug": "when-will-ethereum-hit-3k",
+      "forecast_id": "0x3c16fd3f5a3e73deb74dd910e4d1240b2022c6a88a29358ea2f656b4e986ab2d:crypto_eth",
+      "forecast_payload_sha256": "70fbb5d3f10061d576799de47b4b7417c39c17ded1733ad208b5d9aed5a7191c",
+      "generated_at": "2026-09-06T23:57:37.571101+00:00",
+      "lead_seconds": 2088142,
+      "market_end_at": "2026-10-01T04:00:00+00:00",
+      "metadata_observed_at": "2026-09-06T23:57:37.011640+00:00",
+      "metadata_payload_sha256": "e009b5ac36b1c55225f09d0fff6415eab9ffa143a90706e8256468906ecf94c1",
+      "team_id": "crypto_eth"
+    },
+    {
+      "condition_id": "0x50a3b9cc3922a6717dfa5a9c3af99cf1cb7906ed9045d4575456a0919a2fda7f",
+      "config_version": "p1-crypto_eth-v1",
+      "event_id": "939690",
+      "event_slug": "what-price-will-ethereum-hit-august-31-september-6-2026",
+      "forecast_id": "0x50a3b9cc3922a6717dfa5a9c3af99cf1cb7906ed9045d4575456a0919a2fda7f:crypto_eth",
+      "forecast_payload_sha256": "59de59f0d5692085f4648c1f70e203df78f9e92ff5c3eae89be7de094ad4630f",
+      "generated_at": "2026-09-06T23:57:38.509463+00:00",
+      "lead_seconds": 14541,
+      "market_end_at": "2026-09-07T04:00:00+00:00",
+      "metadata_observed_at": "2026-09-06T23:57:37.993403+00:00",
+      "metadata_payload_sha256": "7d5b1dfdd3d5eff6f81f954189b9c95d7a6d00cdd7919dbb66b81aff0a601b45",
+      "team_id": "crypto_eth"
+    },
+    {
+      "condition_id": "0x7df506f0effb8146c9dbf987a751afabe83890d887dc9838e9dc6f0b13d814d0",
+      "config_version": "p1-crypto_eth-v1",
+      "event_id": "942643",
+      "event_slug": "ethereum-price-on-september-7-2026",
+      "forecast_id": "0x7df506f0effb8146c9dbf987a751afabe83890d887dc9838e9dc6f0b13d814d0:crypto_eth",
+      "forecast_payload_sha256": "eeddaa2227f201c49aae28c58216a523cd129a8ae0dbb48727f15fd81e3c3ae2",
+      "generated_at": "2026-09-06T23:57:42.226094+00:00",
+      "lead_seconds": 57737,
+      "market_end_at": "2026-09-07T16:00:00+00:00",
+      "metadata_observed_at": "2026-09-06T23:57:41.720030+00:00",
+      "metadata_payload_sha256": "44671f1cc17de5f9f1d9bd8c5ae66a6f7937fb120ac40ac5d0272617f0dab4b8",
+      "team_id": "crypto_eth"
+    },
+    {
+      "condition_id": "0xccb8e90599bb683621459d301d8bbfa215c1b77f18c4210bcfcb43e1237ed8aa",
+      "config_version": "p1-crypto_btc-v1",
+      "event_id": "881583",
+      "event_slug": "when-will-bitcoin-hit-100k",
+      "forecast_id": "0xccb8e90599bb683621459d301d8bbfa215c1b77f18c4210bcfcb43e1237ed8aa:crypto_btc",
+      "forecast_payload_sha256": "48acea7a547bfdf1c69d08fe9372e5a71f813ac375294a7f51c6deb2038323cf",
+      "generated_at": "2026-09-06T23:57:22.125567+00:00",
+      "lead_seconds": 2088157,
+      "market_end_at": "2026-10-01T04:00:00+00:00",
+      "metadata_observed_at": "2026-09-06T23:57:21.562314+00:00",
+      "metadata_payload_sha256": "161ed313106aee716d5725e4ce00dcb1bc2b5031005559bb904e5dd71a3388e4",
+      "team_id": "crypto_btc"
+    }
+  ],
+  "teams": [
+    {
+      "config_version": "p1-crypto_btc-v1",
+      "tag_id": "235",
+      "team_id": "crypto_btc"
+    },
+    {
+      "config_version": "p1-crypto_eth-v1",
+      "tag_id": "39",
+      "team_id": "crypto_eth"
+    }
+  ],
+  "unknown_event_lineage_count": 0
+}

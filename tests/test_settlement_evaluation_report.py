@@ -257,6 +257,100 @@ def test_command_rejects_exact_byte_hash_change(tmp_path) -> None:
     assert not (tmp_path / "report.json").exists()
 
 
+def test_p2_strict_checkpoint_reports_and_rejects_artifact_tampering(tmp_path) -> None:
+    result = _export()
+    manifest = json.loads(result.manifest)
+    samples = json.loads(result.document)
+    records = []
+    for row in samples["samples"]:
+        generated_at = datetime.fromisoformat(row["generated_at"])
+        market_end_at = generated_at + timedelta(days=2)
+        records.append(
+            {
+                "forecast_id": row["forecast_id"],
+                "forecast_payload_sha256": row["forecast_payload_sha256"],
+                "condition_id": row["condition_id"],
+                "team_id": row["team_id"],
+                "config_version": row["config_version"],
+                "event_id": row["event_id"],
+                "event_slug": "event-slug",
+                "generated_at": row["generated_at"],
+                "market_end_at": market_end_at.isoformat(),
+                "lead_seconds": int((market_end_at - generated_at).total_seconds()),
+                "metadata_observed_at": row["generated_at"],
+                "metadata_payload_sha256": "f" * 64,
+            }
+        )
+    (tmp_path / "inventory-test.json").write_bytes(b"inventory")
+    (tmp_path / "collection-test.json").write_bytes(b"collection")
+    checkpoint = {
+        "schema_version": "p2-settlement-checkpoint-v1",
+        "cohort_id": "p2-crypto-control-test",
+        "hypothesis_label": "zero_impact_market_control",
+        "independent_hypothesis_status": "not_implemented",
+        "teams": [
+            {"team_id": "crypto_btc", "config_version": "p1-crypto_btc-v1", "tag_id": "235"},
+            {"team_id": "crypto_eth", "config_version": "p1-crypto_eth-v1", "tag_id": "39"},
+        ],
+        "gamma_query": {"closed": False, "limit": 100, "offset": 0},
+        "market_selector": {
+            "active": True,
+            "binary": True,
+            "closed": False,
+            "team_keyword_required": True,
+        },
+        "forecast_selection_rule": manifest["selection_rule"],
+        "minimum_lead_seconds": 1800,
+        "cohort_horizon": "2026-10-07T00:00:00+00:00",
+        "as_of_evaluation_cutoff": manifest["forecast_cutoff"],
+        "selected_forecast_ids": manifest["selected_forecast_ids"],
+        "selected_forecast_payload_sha256": manifest["selected_forecast_payload_sha256"],
+        "selected_forecast_event_ids": manifest["selected_forecast_event_ids"],
+        "selected_event_ids": manifest["selected_event_ids"],
+        "unknown_event_lineage_count": manifest["unknown_event_lineage_count"],
+        "selected_cohorts": manifest["selected_cohorts"],
+        "selected_forecasts": records,
+        "inventory_artifact": "inventory-test.json",
+        "inventory_sha256": hashlib.sha256(b"inventory").hexdigest(),
+        "collection_artifact": "collection-test.json",
+        "collection_sha256": hashlib.sha256(b"collection").hexdigest(),
+        "generated_at": GENERATED_AT.isoformat(),
+        "reassessment_at": REASSESSMENT_AT.isoformat(),
+        "outcome_refresh": "not_performed",
+        "flags": {"paper_only": True, "report_only": True, "readonly": True},
+    }
+    checkpoint_path = tmp_path / "checkpoint-p2.json"
+    checkpoint_path.write_text(json.dumps(checkpoint, sort_keys=True), encoding="utf-8")
+    samples_path = tmp_path / "samples.json"
+    samples_path.write_text(result.document, encoding="utf-8")
+    manifest_path = tmp_path / "samples.manifest.json"
+    manifest_path.write_text(result.manifest, encoding="utf-8")
+    prefix = tmp_path / "report-p2"
+
+    assert main(
+        [
+            "evaluate-settlement-cohort",
+            "--samples", str(samples_path),
+            "--manifest", str(manifest_path),
+            "--checkpoint", str(checkpoint_path),
+            "--out", str(prefix),
+        ]
+    ) == 0
+    assert json.loads(prefix.with_suffix(".json").read_text())["verdict"] == "insufficient_sample"
+
+    (tmp_path / "inventory-test.json").write_bytes(b"tampered")
+    assert main(
+        [
+            "evaluate-settlement-cohort",
+            "--samples", str(samples_path),
+            "--manifest", str(manifest_path),
+            "--checkpoint", str(checkpoint_path),
+            "--out", str(tmp_path / "report-p2-tampered"),
+        ]
+    ) == 2
+    assert not (tmp_path / "report-p2-tampered.json").exists()
+
+
 def test_multi_file_publish_restores_previous_bundle_on_failure(
     monkeypatch, tmp_path
 ) -> None:

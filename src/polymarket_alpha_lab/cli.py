@@ -3086,6 +3086,7 @@ def main(
     )
     export_samples.add_argument("--cutoff", required=True)
     export_samples.add_argument("--outcome-cutoff", required=True)
+    export_samples.add_argument("--checkpoint", required=True)
     export_samples.add_argument("--prior-export-id")
     export_samples.add_argument("--out", required=True)
 
@@ -4594,6 +4595,7 @@ def main(
         return run_export_settlement_samples_command(
             cutoff=args.cutoff,
             outcome_cutoff=args.outcome_cutoff,
+            checkpoint_path=args.checkpoint,
             prior_export_id=args.prior_export_id,
             out_path=args.out,
         )

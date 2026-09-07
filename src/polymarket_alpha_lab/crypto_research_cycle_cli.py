@@ -10,7 +10,7 @@ overlap.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 import fcntl
@@ -703,14 +703,23 @@ def run_export_settlement_samples_command(
     cutoff: str,
     outcome_cutoff: str,
     out_path: str,
+    checkpoint_path: str,
     prior_export_id: str | None = None,
 ) -> int:
     from datetime import datetime as _datetime
 
+    from polymarket_alpha_lab.settlement_checkpoint import (
+        P2CheckpointError,
+        load_p2_checkpoint,
+    )
     from polymarket_alpha_lab.settlement_export import (
         ForecastRowView,
         SettledOutcomeView,
         build_settlement_export,
+    )
+    from polymarket_alpha_lab.team_forecast_db_row import (
+        TeamForecastDbRow,
+        team_forecast_from_db_row,
     )
 
     store, central_config, forecast_config = _resolve_persistence()
@@ -727,87 +736,139 @@ def run_export_settlement_samples_command(
         )
         return 2
 
+    try:
+        checkpoint, checkpoint_records = load_p2_checkpoint(
+            checkpoint_path,
+            verify_artifacts=True,
+        )
+        if checkpoint["as_of_evaluation_cutoff"] != cutoff:
+            raise P2CheckpointError("checkpoint cutoff must match --cutoff")
+    except (OSError, P2CheckpointError):
+        print(
+            "export-settlement-samples failed: invalid checkpoint",
+            file=sys.stderr,
+        )
+        return 2
+
     import psycopg
 
+    selected_hashes = sorted(checkpoint_records)
+    cohort_conditions = sorted(
+        {record["condition_id"] for record in checkpoint_records.values()}
+    )
     forecast_rows: list[ForecastRowView] = []
-    invalid_forecast_rows = 0
     with psycopg.connect(forecast_config.dsn) as connection:
         with connection.cursor() as cursor:
             cursor.execute(
-                "SELECT payload_sha256, forecast_id, condition_id, team_id, "
-                "config_version, forecast_probability, generated_at, payload_json "
-                f"FROM {forecast_config.team_forecast_table_name}"
+                "SELECT payload_sha256, generated_at, forecast_id, condition_id, "
+                "team_id, market_slug, config_version, selected_side, "
+                "forecast_probability, confidence, payload_json, paper_only, "
+                "report_only, readonly "
+                f"FROM {forecast_config.team_forecast_table_name} "
+                "WHERE payload_sha256 = ANY(%s)",
+                (selected_hashes,),
             )
             for record in cursor.fetchall():
                 try:
-                    payload = record[7] or {}
-                    observed = payload.get("market_implied_probability_observed")
+                    row = TeamForecastDbRow(
+                        payload_sha256=record[0],
+                        generated_at=record[1],
+                        forecast_id=record[2],
+                        condition_id=record[3],
+                        team_id=record[4],
+                        market_slug=record[5],
+                        config_version=record[6],
+                        selected_side=record[7],
+                        forecast_probability=record[8],
+                        confidence=record[9],
+                        payload_json=record[10],
+                        paper_only=record[11],
+                        report_only=record[12],
+                        readonly=record[13],
+                    )
+                    packet = team_forecast_from_db_row(row)
+                    checkpoint_record = checkpoint_records[row.payload_sha256]
+                    if (
+                        row.forecast_id != checkpoint_record["forecast_id"]
+                        or row.condition_id != checkpoint_record["condition_id"]
+                        or row.team_id != checkpoint_record["team_id"]
+                        or row.config_version != checkpoint_record["config_version"]
+                        or row.generated_at != checkpoint_record["generated_at"]
+                    ):
+                        raise ValueError("checkpoint forecast identity mismatch")
                     forecast_rows.append(
                         ForecastRowView(
-                            payload_sha256=record[0],
-                            forecast_id=record[1],
-                            condition_id=record[2],
-                            team_id=record[3],
-                            config_version=record[4],
-                            forecast_p_yes=Decimal(str(record[5])),
-                            market_implied_p_yes=Decimal(str(observed)),
-                            generated_at=record[6],
+                            payload_sha256=row.payload_sha256,
+                            forecast_id=row.forecast_id,
+                            condition_id=row.condition_id,
+                            team_id=row.team_id,
+                            config_version=row.config_version,
+                            forecast_p_yes=row.forecast_probability,
+                            market_implied_p_yes=packet.market_implied_probability_observed,
+                            generated_at=row.generated_at,
                         )
                     )
-                except (ValueError, ArithmeticError, TypeError):
-                    invalid_forecast_rows += 1
+                except (ValueError, ArithmeticError, TypeError, AttributeError, IndexError, KeyError):
+                    continue
+    if {row.payload_sha256 for row in forecast_rows} != set(checkpoint_records):
+        print(
+            "export-settlement-samples failed: checkpoint forecast readback mismatch",
+            file=sys.stderr,
+        )
+        return 2
+
     outcome_rows: list[SettledOutcomeView] = []
     invalid_outcome_rows = 0
     with psycopg.connect(central_config.dsn) as connection:
         with connection.cursor() as cursor:
             cursor.execute(
-                "SELECT forecast_payload_sha256, event_id "
-                "FROM research_settlement.research_forecast_lineage"
+                "SELECT forecast_payload_sha256, event_id, event_lineage_state "
+                "FROM research_settlement.research_forecast_lineage "
+                "WHERE forecast_payload_sha256 = ANY(%s)",
+                (selected_hashes,),
             )
-            lineage_by_forecast_hash: dict[str, str | None] = {}
-            invalid_lineage_forecast_hashes: set[str] = set()
+            lineage_event_ids: dict[str, object] = {}
             for record in cursor.fetchall():
-                try:
-                    forecast_hash, event_id = record
-                except (TypeError, ValueError):
+                if not isinstance(record, tuple) or len(record) != 3:
                     continue
-                if (
-                    type(forecast_hash) is not str
-                    or len(forecast_hash) != 64
-                    or any(char not in "0123456789abcdef" for char in forecast_hash)
-                ):
-                    continue
-                if event_id is not None and (
-                    type(event_id) is not str
-                    or not event_id
-                    or event_id.strip() != event_id
-                ):
-                    invalid_lineage_forecast_hashes.add(forecast_hash)
-                    continue
-                if forecast_hash in lineage_by_forecast_hash:
-                    invalid_lineage_forecast_hashes.add(forecast_hash)
-                else:
-                    lineage_by_forecast_hash[forecast_hash] = event_id
-            if invalid_lineage_forecast_hashes:
-                forecast_rows = [
-                    row
-                    for row in forecast_rows
-                    if row.payload_sha256 not in invalid_lineage_forecast_hashes
-                ]
-                invalid_forecast_rows += len(invalid_lineage_forecast_hashes)
+                forecast_hash, event_id, _lineage_state = record
+                if type(forecast_hash) is str and forecast_hash in checkpoint_records:
+                    lineage_event_ids[forecast_hash] = event_id
+            lineage_mismatch = any(
+                lineage_event_ids.get(record["forecast_payload_sha256"])
+                != record["event_id"]
+                for record in checkpoint_records.values()
+            )
+            if len(lineage_event_ids) != len(checkpoint_records) or lineage_mismatch:
+                print(
+                    "export-settlement-samples failed: checkpoint lineage mismatch",
+                    file=sys.stderr,
+                )
+                return 2
             forecast_rows = [
-                replace(
-                    row,
-                    event_id=lineage_by_forecast_hash.get(row.payload_sha256),
+                ForecastRowView(
+                    payload_sha256=row.payload_sha256,
+                    forecast_id=row.forecast_id,
+                    condition_id=row.condition_id,
+                    team_id=row.team_id,
+                    config_version=row.config_version,
+                    forecast_p_yes=row.forecast_p_yes,
+                    market_implied_p_yes=row.market_implied_p_yes,
+                    generated_at=row.generated_at,
+                    event_id=lineage_event_ids[row.payload_sha256],
                 )
                 for row in forecast_rows
             ]
             cursor.execute(
                 "SELECT condition_id, outcome, observed_at, dispute_flag, payload_sha256 "
-                "FROM research_settlement.research_settled_outcomes"
+                "FROM research_settlement.research_settled_outcomes "
+                "WHERE condition_id = ANY(%s)",
+                (cohort_conditions,),
             )
             for record in cursor.fetchall():
                 try:
+                    if not isinstance(record, tuple) or len(record) != 5:
+                        raise IndexError("outcome record shape")
                     outcome_rows.append(
                         SettledOutcomeView(
                             condition_id=record[0],
@@ -817,7 +878,7 @@ def run_export_settlement_samples_command(
                             payload_sha256=record[4],
                         )
                     )
-                except (ValueError, ArithmeticError, TypeError):
+                except (ValueError, ArithmeticError, TypeError, AttributeError, IndexError):
                     invalid_outcome_rows += 1
 
     try:
@@ -828,7 +889,6 @@ def run_export_settlement_samples_command(
             outcome_rows,
             as_of_evaluation_cutoff=parsed_cutoff,
             as_of_outcome_cutoff=parsed_outcome_cutoff,
-            invalid_forecast_row_count=invalid_forecast_rows,
             invalid_outcome_row_count=invalid_outcome_rows,
             prior_export_id=prior_export_id,
         )

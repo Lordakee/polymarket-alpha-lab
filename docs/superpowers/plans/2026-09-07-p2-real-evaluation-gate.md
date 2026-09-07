@@ -2,9 +2,37 @@
 
 Date: 2026-09-07
 Stage: P2a and P2 of the [Project Completion Plan](../../roadmap/2026-09-07-project-completion-plan.md)
-Status: P2a implementation accepted; Claude hard review and follow-up PASS
+Status: CLOSED (constrained). P2a accepted; P2 closed 2026-09-07 under the
+completion plan's constrained-closure clause with N=0 — no predictive
+verdict established. See `docs/verification/p2/constrained-closure-20260907.md`
+and `docs/verification/p2/acceptance-20260907.md`. P3+ unstarted.
 Depends on: accepted and pushed P1 commit `030491bc` (P1 only; it does not
 contain any P2a work described below)
+
+## P2 Progress Record (2026-09-07, pre-outcome)
+
+- The pinned first-page inventory was repeated without outcome inspection and
+  frozen at `docs/verification/p2/inventory-p2-crypto-control-20260907.json`
+  (SHA-256 `b0d29387adf9816bb70137fc48c75777dfa2f24c5f3c0cfc40331e6031eafab4`):
+  34 eligible candidates (BTC 2, ETH 32), all verified lineage, 8 event groups.
+- All 34 candidates were attempted once through the single-market pipeline;
+  `docs/verification/p2/collection-p2-crypto-control-20260907.json`
+  (SHA-256 `dea9b60765f228e7fda3b1d0f5907c1e1ede472757346b94fd72b23cd5843397`)
+  records 7 ready forecasts (BTC 1, ETH 6) with lineage persisted, 16
+  evidence-blocked and 11 metadata-unavailable attempts. No retries were used
+  to enlarge the cohort.
+- An initial freeze of the seven identities was written as a schema-light
+  checkpoint (SHA-256 `bece6e11d3a3f5a2b444ab31dee9becfc89d0efe80e1a2b9c268eafbc67c6a58`).
+  An implementation review found that minimal checkpoint documents could select
+  arbitrary rows, so the checkpoint contract was hardened to strict
+  `p2-settlement-checkpoint-v1` (frozen constants, per-forecast lineage detail,
+  and exact-byte sibling artifact hashes). The strict checkpoint was
+  regenerated at `2026-09-07T00:22:35Z` (SHA-256
+  `a7111d0546468f8b568d5a58ff180752c4eac556cff8a4f94c30705b8a403c8d`) while
+  the database still held zero settled outcomes and before any outcome
+  refresh, with identical forecast payload identities; the earlier partial
+  freeze is superseded and recorded here for audit. Export and report
+  verification now require this strict schema.
 
 ## Parent-Plan Traceability
 

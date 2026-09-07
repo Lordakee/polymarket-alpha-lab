@@ -1,7 +1,7 @@
 # Research-Cycle Operations Runbook
 
 Date: 2026-09-07
-Scope: M0-P2a research-cycle collection, lineage, settlement export, and offline evaluation
+Scope: M0-P2 prospective research-cycle collection, lineage, settlement export, and offline evaluation
 Status: current operator entry point
 
 ## Setup
@@ -82,10 +82,13 @@ reassessment time, generated time, and the three hard flags. It deliberately
 does not contain outcome IDs or an outcome cutoff because those do not exist at
 prospective freeze time.
 
-Refresh outcomes after the checkpoint and after known market resolution windows:
+Refresh outcomes after the checkpoint and after known market resolution windows.
+For a prospective cohort, pass only condition IDs frozen in that checkpoint; a
+repository-wide refresh is not a cohort selector:
 
 ```bash
-PYTHONPATH=src python -m polymarket_alpha_lab import-settled-outcomes
+PYTHONPATH=src python -m polymarket_alpha_lab import-settled-outcomes \
+  --condition-id <checkpoint-condition-id> [--condition-id <checkpoint-condition-id> ...]
 ```
 
 Only `closed=true` markets with an explicit YES label and final prices exactly
@@ -103,6 +106,7 @@ offline report:
 PYTHONPATH=src python -m polymarket_alpha_lab export-settlement-samples \
   --cutoff <forecast-ISO8601-timezone-aware-timestamp> \
   --outcome-cutoff <outcome-ISO8601-timezone-aware-timestamp> \
+  --checkpoint /path/to/checkpoint.json \
   --out /tmp/settlement-samples.json
 PYTHONPATH=src python -m polymarket_alpha_lab evaluate-settlement-cohort \
   --samples /tmp/settlement-samples.json \
@@ -111,7 +115,15 @@ PYTHONPATH=src python -m polymarket_alpha_lab evaluate-settlement-cohort \
   --out /tmp/settlement-report
 ```
 
-For a correction export, add `--prior-export-id <64-lowercase-hex-export-id>`.
+For P2 exports, `--checkpoint` is required. The checkpoint must be a strict
+`p2-settlement-checkpoint-v1` document: it binds the frozen cohort constants,
+the exact forecast payload hashes with lineage, and the exact-byte SHA-256 of
+the sibling inventory and collection artifacts, all re-verified before any
+database read. Forecast rows are reconstructed through the validated
+`TeamForecastDbRow` contract (payload hash and column agreement), lineage and
+outcome queries are scoped to the checkpoint cohort, and any missing,
+mismatched, or tampered identity fails closed without publishing files. For a
+correction export, add `--prior-export-id <64-lowercase-hex-export-id>`.
 The adjacent sample manifest records both cutoffs, input/included/pending/
 disputed counts, every exclusion, forecast/outcome payload identities, frozen
 cohorts and event lineage, plus the SHA-256 of the exact sample bytes. Outcome

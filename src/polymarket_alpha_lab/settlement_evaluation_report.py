@@ -11,6 +11,12 @@ from pathlib import Path
 import tempfile
 from typing import Any, Mapping
 
+from .settlement_checkpoint import (
+    P2_CHECKPOINT_SCHEMA_VERSION,
+    P2CheckpointError,
+    verify_p2_checkpoint_artifacts,
+    validate_p2_checkpoint_document,
+)
 from .settlement_evaluation import (
     SettlementEvaluationReport,
     SettlementVerdict,
@@ -104,7 +110,14 @@ def _validate_flags(name: str, value: object) -> None:
 
 
 def _validate_checkpoint(checkpoint: dict[str, Any]) -> None:
-    _require_equal("checkpoint.schema_version", checkpoint.get("schema_version"), CHECKPOINT_SCHEMA_VERSION)
+    schema_version = checkpoint.get("schema_version")
+    if schema_version == P2_CHECKPOINT_SCHEMA_VERSION:
+        try:
+            validate_p2_checkpoint_document(checkpoint)
+        except P2CheckpointError as exc:
+            raise SettlementReportVerificationError(str(exc)) from exc
+        return
+    _require_equal("checkpoint.schema_version", schema_version, CHECKPOINT_SCHEMA_VERSION)
     _canonical_string("checkpoint.cohort_id", checkpoint.get("cohort_id"))
     _require_equal("checkpoint.hypothesis_label", checkpoint.get("hypothesis_label"), HYPOTHESIS_LABEL)
     _require_equal(
@@ -247,7 +260,7 @@ def _verify_inputs(
     manifest_cohorts = _list("manifest.selected_cohorts", manifest.get("selected_cohorts"))
     if not set(manifest_cohorts).issubset(EXPECTED_COHORTS):
         raise SettlementReportVerificationError(
-            "manifest.selected_cohorts must be a nonempty subset of the frozen cohorts"
+            "manifest.selected_cohorts must be a subset of the frozen cohorts"
         )
     _require_equal(
         "manifest.config_versions",
@@ -548,6 +561,11 @@ def run_evaluate_settlement_cohort_command(
     manifest = _load_json("manifest", manifest_bytes)
     checkpoint = _load_json("checkpoint", checkpoint_bytes)
     _verify_inputs(samples_bytes, samples, manifest, checkpoint)
+    if checkpoint.get("schema_version") == P2_CHECKPOINT_SCHEMA_VERSION:
+        try:
+            verify_p2_checkpoint_artifacts(checkpoint, Path(checkpoint_path).parent)
+        except P2CheckpointError as exc:
+            raise SettlementReportVerificationError(str(exc)) from exc
 
     rows, config = load_samples_document(samples_bytes.decode("utf-8"))
     report = evaluate_settlement_samples(rows, config)
