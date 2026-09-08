@@ -147,12 +147,18 @@ that is not evidence that the original `.codegraph/` index was synchronized.
 ## Database Work Is Separate
 
 Offline tests, fake database adapters, and an installed psycopg driver do not
-prove real local Supabase/Postgres integration. At the reference workstation's
-bootstrap, there were no listeners on ports 5432, 54321, or 54322. Docker and
-Supabase CLI were absent from `PATH`; `psql` was present. The initial checkout
-contained 59 files under [`supabase/migrations`](../../supabase/migrations/),
-but no Supabase `config.toml` or Compose setup. This is a workstation snapshot,
-not an instruction to create or start services or apply migrations.
+prove real local Supabase/Postgres integration. Workstation snapshot, corrected
+after a later re-check: the Windows service `postgresql-x64-18` (PostgreSQL
+18.4) runs automatically and listens on loopback only — `127.0.0.1:5432` and
+`[::1]:5432`; an earlier bootstrap probe that reported no listener on 5432 was
+wrong. Every `pg_hba.conf` rule requires `scram-sha-256` password
+authentication and no password file is configured, so connecting requires
+credentials supplied by the operator for a specific authorized task. Docker and
+the Supabase CLI are absent from `PATH`, so this is plain PostgreSQL, not a
+Supabase toolchain. The checkout contains 59 files under
+[`supabase/migrations`](../../supabase/migrations/), but no Supabase
+`config.toml` or Compose setup. This snapshot is not an instruction to connect,
+create services, or apply migrations.
 
 [`.env.example`](../../.env.example) is a variable reference, not a configuration
 file to import automatically. Do not copy or import it wholesale for onboarding.
