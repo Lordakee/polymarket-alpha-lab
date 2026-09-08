@@ -4,6 +4,8 @@ import ast
 import re
 from pathlib import Path
 
+import pytest
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = REPO_ROOT / "src" / "polymarket_alpha_lab"
@@ -336,7 +338,7 @@ def test_supabase_migrations_with_payloads_keep_phase_one_hard_flags() -> None:
             "readonly boolean",
         ):
             if required not in sql:
-                violations.append(f"{path.relative_to(REPO_ROOT)} missing {required}")
+                violations.append(f"{path.relative_to(REPO_ROOT).as_posix()} missing {required}")
 
     unexpected = tuple(
         violation
@@ -344,6 +346,25 @@ def test_supabase_migrations_with_payloads_keep_phase_one_hard_flags() -> None:
         if violation not in LEGACY_PHASE_FLAG_MIGRATION_ALLOWLIST
     )
     assert unexpected == ()
+
+
+def test_phase_flag_migration_allowlist_rejects_unknown_paths(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    migrations_root = tmp_path / "supabase" / "migrations"
+    migrations_root.mkdir(parents=True)
+    monkeypatch.setitem(globals(), "REPO_ROOT", tmp_path)
+    monkeypatch.setitem(globals(), "MIGRATIONS_ROOT", migrations_root)
+    sql = "create table reports (payload jsonb, paper_only boolean);"
+    legacy_path = migrations_root / "20260619010100_paper_nav_snapshots.sql"
+    legacy_path.write_text(sql, encoding="utf-8")
+
+    test_supabase_migrations_with_payloads_keep_phase_one_hard_flags()
+
+    (migrations_root / "new_reports.sql").write_text(sql, encoding="utf-8")
+    with pytest.raises(AssertionError):
+        test_supabase_migrations_with_payloads_keep_phase_one_hard_flags()
 
 
 def test_supabase_migration_sequence_backfills_legacy_phase_one_hard_flags() -> None:

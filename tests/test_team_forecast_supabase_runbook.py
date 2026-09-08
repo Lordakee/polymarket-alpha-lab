@@ -51,7 +51,7 @@ def test_team_forecast_runbook_documents_local_apply_and_operator_commands() -> 
         "sudo -n docker exec supabase-db psql",
         "psql -v ON_ERROR_STOP=1",
         "/home/ubuntu/supabase/node_modules/.bin/supabase",
-        str(MIGRATION_PATH),
+        MIGRATION_PATH.as_posix(),
         "local Supabase/Postgres",
         "Phase 1 paper-only/report-only/readonly",
     )
@@ -142,8 +142,8 @@ def test_team_forecast_runbook_documents_comment_migration_and_readonly_verifica
     lower_text = text.lower()
 
     expected_order = (
-        f"1. `{MIGRATION_PATH}`\n"
-        f"2. `{PROBABILITY_YES_CONTRACT_MIGRATION_PATH}`"
+        f"1. `{MIGRATION_PATH.as_posix()}`\n"
+        f"2. `{PROBABILITY_YES_CONTRACT_MIGRATION_PATH.as_posix()}`"
     )
     assert expected_order in text
     assert "migrations are operator prerequisites" in lower_text

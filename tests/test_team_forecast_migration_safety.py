@@ -30,7 +30,7 @@ def test_migration_safety_documents_append_only_local_phase_1_policy() -> None:
     lower_text = text.lower()
 
     required_fragments = (
-        str(MIGRATION_PATH),
+        MIGRATION_PATH.as_posix(),
         "applied migrations are append-only",
         "local supabase/postgres only",
         "no hosted db assumptions",
@@ -68,7 +68,7 @@ def test_migration_safety_doc_omits_connection_secrets_and_hosted_examples() -> 
 def test_migration_safety_doc_points_operators_to_runbook_without_replacing_it() -> None:
     text = _safety_text()
 
-    assert str(RUNBOOK_PATH) in text
+    assert RUNBOOK_PATH.as_posix() in text
     assert "sudo -n docker exec supabase-db psql" not in text
     assert "psql -v ON_ERROR_STOP=1" not in text
 
@@ -77,8 +77,8 @@ def test_migration_safety_inventories_probability_yes_comment_contract() -> None
     text = _safety_text()
     lower_text = text.lower()
 
-    baseline_index = text.index(str(MIGRATION_PATH))
-    contract_index = text.index(str(PROBABILITY_YES_CONTRACT_MIGRATION_PATH))
+    baseline_index = text.index(MIGRATION_PATH.as_posix())
+    contract_index = text.index(PROBABILITY_YES_CONTRACT_MIGRATION_PATH.as_posix())
     assert baseline_index < contract_index
     assert "column comments only" in lower_text
     assert "no table rewrite, dml, or row rewrite" in lower_text

@@ -154,7 +154,7 @@ class StaticViolation:
     name: str
 
     def render(self) -> str:
-        relative_path = self.path.relative_to(REPO_ROOT)
+        relative_path = self.path.relative_to(REPO_ROOT).as_posix()
         return f"{relative_path}:{self.line_number}: {self.kind} {self.name}"
 
 
@@ -664,6 +664,14 @@ def persist_artifact(artifacts_dir, raw_dir):
         "write_text",
         "write_bytes",
     ]
+    assert violations[0].render() == (
+        "src/polymarket_alpha_lab/fixture.py:3: "
+        "durable file-backed append method PaperThingLog.append"
+    )
+    assert all(
+        violation.render() not in LEGACY_DURABLE_FILE_PERSISTENCE_ALLOWLIST
+        for violation in violations
+    )
 
 
 def test_durable_file_persistence_guard_ignores_non_src_support_files() -> None:
