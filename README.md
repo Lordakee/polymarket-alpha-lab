@@ -2,6 +2,8 @@
 
 Polymarket Alpha Lab is a research-first project for finding, scoring, and validating Polymarket markets before any capital is committed.
 
+For local development on Windows, start with the [Windows local setup guide](docs/development/windows-local-setup.md) for locked installation, PowerShell/Git Bash commands, and offline verification.
+
 The long-term research direction is a system that can screen markets, research candidates, and prepare proposals while treating execution as a later, separately validated phase. The first version is intentionally not a trading bot. It is a planning and research workspace for:
 
 - market discovery and metadata normalization
@@ -210,14 +212,17 @@ The strongest first product is a market-quality and edge-scanning system:
 
 ## Level 0 Usage
 
-Run the current read-only scanner with:
+Start with the [Windows local setup guide](docs/development/windows-local-setup.md) to install from `uv.lock` and verify the editable package, CLI entrypoints, tests, and compilation. Onboarding uses only CLI help and `report-discovery`; it does not require market-data access or a database.
+
+### Legacy Scanner Example
+
+The existing scanner example below is outside the offline onboarding flow:
 
 ```bash
-.venv/bin/python -m pip install -e '.[dev]'
 .venv/bin/polymarket-alpha-lab scan --limit 25 --output artifacts/market-scores.json
 ```
 
-The scan uses public Polymarket market-data endpoints only. It does not authenticate, handle private keys, place orders, or trade. Raw API payloads are archived under `data/raw/`, and ranked candidate output is written to `artifacts/market-scores.json`; both directories are ignored by git.
+The scan uses public Polymarket market-data endpoints only. It does not authenticate, handle private keys, place orders, or trade. Raw API payloads are archived under `data/raw/`, and ranked candidate output is written to `artifacts/market-scores.json`; both directories are ignored by git. These file outputs are legacy surfaces and must not be extended as durable persistence substitutes.
 
 ## Level 1A Status
 
@@ -1600,11 +1605,21 @@ See:
 
 ## Useful Commands
 
+For PowerShell commands and setup details, see the [Windows local setup guide](docs/development/windows-local-setup.md). From the repository root in Git Bash:
+
 ```bash
-python3 -m venv .venv
-.venv/bin/python -m pip install -e '.[dev]'
-.venv/bin/python -m pytest
-.venv/bin/polymarket-alpha-lab scan --limit 25
+uv sync --locked --extra dev --extra postgres --python 3.12
+uv pip check --python .venv/Scripts/python.exe
+.venv/Scripts/python.exe -I -m polymarket_alpha_lab --help
+.venv/Scripts/polymarket-alpha-lab.exe report-discovery --category readiness
+.venv/Scripts/python.exe scripts/verify_local.py --quick
+```
+
+Use `--full` instead of `--quick` for the complete offline pytest suite. The `postgres` extra is optional for offline setup; the reference environment includes it. Real database smoke stays disabled during verification.
+
+Where the CodeGraph CLI is installed:
+
+```bash
 codegraph status .
 codegraph files
 ```
