@@ -104,6 +104,11 @@ from polymarket_alpha_lab.crypto_btc_team import (
     CryptoBtcTeamConfig,
     build_crypto_btc_team_forecast,
 )
+from polymarket_alpha_lab.crypto_btc_forecast_service import (
+    CryptoBtcForecastServiceInput,
+    CryptoBtcForecastServiceResult,
+    evaluate_and_persist_crypto_btc_forecast,
+)
 from polymarket_alpha_lab.crypto_eth_team import (
     CryptoEthEvidenceInput,
     CryptoEthTeamConfig,
@@ -2216,3 +2221,34 @@ def test_public_api_does_not_export_private_or_boundary_constants():
         assert not hasattr(lab, boundary_constant)
     assert not any(name.startswith("_") for name in lab.__all__)
     assert not any("BOUNDARY" in name for name in lab.__all__)
+
+
+def test_crypto_btc_forecast_service_public_api_exports():
+    expected_exports = {
+        "CryptoBtcForecastServiceInput",
+        "CryptoBtcForecastServiceResult",
+        "evaluate_and_persist_crypto_btc_forecast",
+    }
+    forbidden_exports = {
+        "CryptoBtcEvidenceEvaluation",
+        "evaluate_crypto_btc_evidence",
+        "TeamEvidenceAggregationResult",
+        "build_team_evidence_aggregation_result",
+        "validate_team_evidence_aggregation_result",
+        "TeamForecastBuildEnvelope",
+        "build_team_forecast_build_envelope",
+        "validate_team_forecast_build_envelope",
+        "insert_team_evaluation_attempts_with_psycopg",
+        "persist_team_evaluation_attempts_with_psycopg",
+    }
+
+    assert expected_exports <= set(lab.__all__)
+    assert not (forbidden_exports & set(lab.__all__))
+    assert lab.CryptoBtcForecastServiceInput is CryptoBtcForecastServiceInput
+    assert lab.CryptoBtcForecastServiceResult is CryptoBtcForecastServiceResult
+    assert (
+        lab.evaluate_and_persist_crypto_btc_forecast
+        is evaluate_and_persist_crypto_btc_forecast
+    )
+    for name in forbidden_exports:
+        assert not hasattr(lab, name)

@@ -1438,6 +1438,21 @@ The registry does not fetch, does not read JSONL, does not load, does not replay
 
 Use `list_proposal_evidence_comparison_artifacts()` to inspect the static tuple and `get_proposal_evidence_comparison_artifact(artifact_id)` to look up one registry row by canonical artifact ID.
 
+## Crypto BTC Forecast Service Node 7 Status
+
+Crypto BTC Forecast Service Node 7 adds a paper-only, report-only, and readonly BTC forecast service. It evaluates Node 6 BTC policy evidence, reduces it through the Node 2C team evidence aggregation, applies the combined BTC-policy and aggregation readiness publication gate, builds the Node 3 team forecast build envelope, and persists every representable validated attempt through Node 5's sole atomic local Supabase/Postgres writer into `team_evaluation_attempts`. The service-level `publication_status` is `blocked` when either the policy or the aggregation status is blocked, `watch` when neither is blocked and either is watch, and `ready` only when both are ready; `reason_codes` is the sorted, duplicate-free union of the Node 6 policy and Node 2 aggregation reason codes. The persisted Node 5 row keeps exposing the canonical Node 2 aggregation status; the service-level combined status is returned separately.
+
+The service is orchestration only: no SQL, no direct database adapter, no environment reads, no loaders, and no alternate persistence path. Persistence is local paper-attempt evidence storage only: the service requires a supplied `SupabaseTeamEvidenceAggregationConfig` with `enabled=True` and a DSN, forwards only that DSN, a one-envelope tuple, and the table name to `insert_team_evaluation_attempts_with_psycopg`, and never authorizes execution. It does not fetch market data, read accounts, authenticate, handle wallets or private keys, place, sign, submit, cancel, or replace orders, open user WebSockets, or mutate exchange state; `paper_only=True`, `report_only=True`, and `readonly=True` are hard-enforced on the input and result. There is no CLI command for this service in Node 7. Strategy-cycle consumption of persisted attempts, latest-attempt reading, and central cost-engine side selection remain separately reviewed future work; this section is not execution authorization, remote publication, or full program release closure.
+
+## Crypto BTC Forecast Service Node 7 Python API
+
+The service is exposed through Python APIs:
+
+- Build one service input with `CryptoBtcForecastServiceInput(...)` covering the market identifiers, the Node 6 resolution contract and incident gates, evidence inputs, evaluation scope, run metadata, evaluator receipts, legacy packet templates, and the `SupabaseTeamEvidenceAggregationConfig` persistence config.
+- Evaluate, gate, envelope, and persist exactly one paper attempt with `evaluate_and_persist_crypto_btc_forecast(service_input)`, which returns `CryptoBtcForecastServiceResult`.
+- Inspect the combined gate with the result's `publication_status` and `reason_codes`, alongside the preserved Node 6 `policy_evaluation`, Node 2 `aggregation_result`, Node 3 `envelope`, and Node 5 `write_results`.
+- Tests may inject deterministic `evaluator` and `writer` callables; injection never creates an alternate production persistence path.
+
 ## Automation Roadmap
 
 The recommended staged path is:

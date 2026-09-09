@@ -153,6 +153,7 @@ allocation evidence, outcomes, and comparable reporting.
 | `src/polymarket_alpha_lab/domain_team_memory_scorecard.py` | `tests/test_domain_team_memory_scorecard.py` | Scores team memory quality as research context. |
 | `src/polymarket_alpha_lab/category_playbook_category_threshold_domain_policy_readiness.py` | `tests/test_category_playbook_category_threshold_domain_policy_readiness.py` | Checks category thresholds and domain-policy readiness for specialist routing. |
 | `src/polymarket_alpha_lab/specialist_team_routing_taxonomy_readiness_report.py` | `tests/test_specialist_team_routing_taxonomy_readiness_report.py` | Reports taxonomy readiness for specialist-team routing. |
+| `src/polymarket_alpha_lab/crypto_btc_forecast_service.py` | `tests/test_crypto_btc_forecast_service.py` | Orchestrates the paper-only crypto BTC forecast service: policy evaluation, combined publication gate, and local Supabase/Postgres paper-attempt persistence. |
 
 ## Manual Go/No-Go
 

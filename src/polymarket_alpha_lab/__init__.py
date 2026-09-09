@@ -111,6 +111,11 @@ from polymarket_alpha_lab.crypto_btc_team import (
     CryptoBtcTeamConfig,
     build_crypto_btc_team_forecast,
 )
+from polymarket_alpha_lab.crypto_btc_forecast_service import (
+    CryptoBtcForecastServiceInput,
+    CryptoBtcForecastServiceResult,
+    evaluate_and_persist_crypto_btc_forecast,
+)
 from polymarket_alpha_lab.crypto_eth_team import (
     CryptoEthEvidenceInput,
     CryptoEthTeamConfig,
@@ -591,6 +596,9 @@ __all__ = [
     "CommoditiesOilTeamConfig",
     "CryptoBtcEvidenceInput",
     "CryptoBtcTeamConfig",
+    "CryptoBtcForecastServiceInput",
+    "CryptoBtcForecastServiceResult",
+    "evaluate_and_persist_crypto_btc_forecast",
     "CryptoEthEvidenceInput",
     "CryptoEthTeamConfig",
     "EquityIndicesEvidenceInput",

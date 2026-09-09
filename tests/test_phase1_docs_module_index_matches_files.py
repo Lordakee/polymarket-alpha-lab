@@ -9,6 +9,7 @@ PHASE1_MODULE_INDEX_PATH = REPO_ROOT / "docs/index/phase1-module-index.md"
 EXPECTED_CHANGED_MODULE_TEST_PAIRS = (
     ("category_playbook_category_threshold_domain_policy_readiness", "test_category_playbook_category_threshold_domain_policy_readiness"),
     ("cli", "test_cli_report_discovery"),
+    ("crypto_btc_forecast_service", "test_crypto_btc_forecast_service"),
     ("forecast_context_readiness_report", "test_forecast_context_readiness_report"),
     ("information_freshness_refresh_sla_readiness_report", "test_information_freshness_refresh_sla_readiness_report"),
     ("input_failure_degradation_readiness_report", "test_input_failure_degradation_readiness_report"),
@@ -71,7 +72,7 @@ def test_phase1_module_index_lists_existing_modules_and_tests() -> None:
 
 
 def test_phase1_module_index_covers_every_changed_module_and_direct_test() -> None:
-    assert len(EXPECTED_CHANGED_MODULE_TEST_PATHS) == 19
+    assert len(EXPECTED_CHANGED_MODULE_TEST_PATHS) == 20
     listed_pairs = frozenset(
         _listed_module_and_test_paths(PHASE1_MODULE_INDEX_PATH.read_text(encoding="utf-8")),
     )
