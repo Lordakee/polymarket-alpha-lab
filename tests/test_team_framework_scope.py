@@ -15,6 +15,7 @@ PSYCOPG_MODULE_NAMES = frozenset(
         "team_diagnostics_snapshot_psycopg.py",
         "team_memory_readiness_digest_psycopg.py",
         "team_research_assignment_psycopg.py",
+        "team_evidence_aggregation_attempt_psycopg.py",
     ),
 )
 PAPER_GUARD_MODULE_NAME = "team_paper_guard.py"

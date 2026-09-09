@@ -126,6 +126,40 @@ these docs only. Node 5 owns:
 
 No update, delete, or replacement path is planned for these rows in Phase 1.
 
+## Node 5 Writer Safety Rules
+
+Node 5 adds the sole V1 write path; these rules bind every later change:
+
+- Sole atomic write path: `insert_team_evaluation_attempts_with_psycopg`
+  validates batch shape, envelope type, orphan run binding, Node 4 row
+  conversion, and the table identifier before DSN validation and before any
+  connection, then executes the whole batch on one owned connection and one
+  transaction with `ON CONFLICT (tea_id) DO NOTHING`, commits exactly once,
+  rolls back on every failure, and returns one immutable write result per
+  input in input order (`inserted=True` for a fresh row, `inserted=False`
+  for a duplicate).
+- V1 rejection fence: the legacy surfaces `insert_team_evaluation_attempt`
+  and `insert_team_evaluation_attempt_with_psycopg` reject every `tea:v1:`,
+  `tfr:v1:`, or `tfe:v1:` identifier before any cursor or connection
+  activity and never call the private atomic writer. No other function may
+  insert V1 rows.
+- Retry contract: retrying the same envelope returns `inserted=False`
+  without changing the stored row or the row count; stored attempts stay
+  immutable, with no update, delete, or upsert path.
+- Orphan contract: an envelope whose `tea_id` is not exactly
+  `team_evidence_aggregation_id(evaluation_scope_payload)`, whose
+  `run_metadata` is absent or malformed, or whose `tfr_id` is not exactly
+  `team_forecast_run_id(tea_id, run_metadata)` is rejected before DSN
+  validation, psycopg import, connection construction, or SQL.
+- Rollback contract: any failure while inserting a batch rolls back the
+  whole batch; zero partial rows remain.
+- Dedicated-database cleanup rules: the gated disposable proof runs only
+  against `polymarket_alpha_lab_node5_disposable`; the proof test deletes
+  only the rows it inserted, by `tea_id`, and never creates or drops a
+  database; the operator procedure drops the dedicated database with
+  `(force)` in `finally`, refuses to reuse an existing database of that
+  name, and touches no shared database.
+
 ## Disallowed Changes
 
 Do not:
