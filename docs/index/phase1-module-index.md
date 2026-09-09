@@ -154,6 +154,7 @@ allocation evidence, outcomes, and comparable reporting.
 | `src/polymarket_alpha_lab/category_playbook_category_threshold_domain_policy_readiness.py` | `tests/test_category_playbook_category_threshold_domain_policy_readiness.py` | Checks category thresholds and domain-policy readiness for specialist routing. |
 | `src/polymarket_alpha_lab/specialist_team_routing_taxonomy_readiness_report.py` | `tests/test_specialist_team_routing_taxonomy_readiness_report.py` | Reports taxonomy readiness for specialist-team routing. |
 | `src/polymarket_alpha_lab/crypto_btc_forecast_service.py` | `tests/test_crypto_btc_forecast_service.py` | Orchestrates the paper-only crypto BTC forecast service: policy evaluation, combined publication gate, and local Supabase/Postgres paper-attempt persistence. |
+| `src/polymarket_alpha_lab/team_evaluation_attempt_latest_read.py` | `tests/test_team_evaluation_attempt_latest_read.py` | Reports the latest persisted team-evaluation attempt with no-fallback latest-row ordering, publication-gate evidence, and audit-only packet projection. |
 
 ## Manual Go/No-Go
 

@@ -27,6 +27,7 @@ EXPECTED_CHANGED_MODULE_TEST_PAIRS = (
     ("specialist_team_routing_taxonomy_readiness_report", "test_specialist_team_routing_taxonomy_readiness_report"),
     ("strategy_phase1_readiness_aggregator", "test_strategy_phase1_readiness_aggregator"),
     ("supabase_local_dsn", "test_supabase_local_dsn"),
+    ("team_evaluation_attempt_latest_read", "test_team_evaluation_attempt_latest_read"),
 )
 EXPECTED_CHANGED_MODULE_TEST_PATHS = frozenset(
     (
@@ -72,7 +73,7 @@ def test_phase1_module_index_lists_existing_modules_and_tests() -> None:
 
 
 def test_phase1_module_index_covers_every_changed_module_and_direct_test() -> None:
-    assert len(EXPECTED_CHANGED_MODULE_TEST_PATHS) == 20
+    assert len(EXPECTED_CHANGED_MODULE_TEST_PATHS) == 21
     listed_pairs = frozenset(
         _listed_module_and_test_paths(PHASE1_MODULE_INDEX_PATH.read_text(encoding="utf-8")),
     )
