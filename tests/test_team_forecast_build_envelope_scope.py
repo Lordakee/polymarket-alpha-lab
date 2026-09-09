@@ -3,8 +3,9 @@
 Enforces the single new production module ``team_forecast_build_envelope.py``: an exact import allowlist (standard library plus
 exactly the fixed Node 2 modules and the pure ``team_forecast_packet`` predecessor), both import forms with alias/member handling,
 forbidden identifiers and calls, floats, ambient clock, randomness, ``hash()``, no V1 keys in legacy payload construction, the exact
-ordered 12-name ``__all__`` tuple with anywhere-binding rebinding protection, frozen/slotted/final hard-flagged public dataclasses,
-no package-root exports, and the Node 3 ceilings.
+ordered 13-name ``__all__`` tuple with anywhere-binding rebinding protection, frozen/slotted/final hard-flagged public dataclasses,
+the trailing keyword-only ``policy_publication_gate`` parameter on both public callables (whose serialized JSON key
+``external_publication_gate`` is a string literal and never an identifier), no package-root exports, and the Node 3 ceilings.
 """
 from __future__ import annotations
 
@@ -21,9 +22,9 @@ PRODUCTION_DIR = REPO_ROOT / "src" / "polymarket_alpha_lab"
 TEST_DIR = REPO_ROOT / "tests"
 PRODUCTION_FILE = "team_forecast_build_envelope.py"
 PRODUCTION_MODULE = "polymarket_alpha_lab.team_forecast_build_envelope"
-PRODUCTION_LINE_LIMIT = 900
-TEST_LINE_LIMITS = {"test_team_forecast_build_envelope.py": 1100, "test_team_forecast_build_envelope_scope.py": 500}
-NODE_3_TEST_TOTAL_LINE_LIMIT = 1_600
+PRODUCTION_LINE_LIMIT = 980
+TEST_LINE_LIMITS = {"test_team_forecast_build_envelope.py": 1250, "test_team_forecast_build_envelope_scope.py": 550}
+NODE_3_TEST_TOTAL_LINE_LIMIT = 1_800
 IMPORT_ALLOWLIST = frozenset((
     "__future__", "collections", "dataclasses", "datetime", "decimal", "hashlib", "json", "re", "typing",
     "polymarket_alpha_lab.team_evidence_aggregation", "polymarket_alpha_lab.team_evidence_aggregation_types",
@@ -34,9 +35,12 @@ NODE_3_PUBLIC_EXPORTS = (
     "TeamForecastEvidenceReplayRecord", "TeamForecastBuildEnvelope", "build_team_forecast_build_envelope",
     "validate_team_forecast_build_envelope", "team_forecast_evaluation_scope_payload",
     "team_evidence_aggregation_id", "team_forecast_run_id", "team_forecast_evidence_id",
-    "team_forecast_legacy_payload_sha256",
+    "team_forecast_legacy_payload_sha256", "TeamForecastPolicyPublicationGate",
 )
-NODE_3_CLASS_EXPORTS = frozenset(NODE_3_PUBLIC_EXPORTS[:5])
+NODE_3_CLASS_EXPORTS = frozenset((
+    "TeamForecastEvaluationScope", "TeamForecastRunMetadata", "TeamForecastEvaluatorReceipt",
+    "TeamForecastEvidenceReplayRecord", "TeamForecastBuildEnvelope", "TeamForecastPolicyPublicationGate",
+))
 HARD_FLAG_NAMES = ("paper_only", "report_only", "readonly")
 FORBIDDEN_COMPONENTS = frozenset((
     "account", "accounts", "aiohttp", "api", "argparse", "argv", "auth", "authenticate", "authentication", "browser",
@@ -233,6 +237,21 @@ def _module_violations(source: str, *, exports: bool, expected: tuple[str, ...] 
     return violations + (_export_violations(tree, expected) if exports else [])
 
 
+def _callable_parameter_problems(node: ast.FunctionDef, expected: tuple[str, ...]) -> list[str]:
+    """Require the exact amended parameters ending in the keyword-only gate."""
+    arguments = node.args
+    actual = tuple(item.arg for item in arguments.posonlyargs + arguments.args + arguments.kwonlyargs)
+    if actual != expected:
+        return [f"{node.name} must declare exactly the amended parameters ending in policy_publication_gate; got {actual!r}"]
+    gate, default = arguments.kwonlyargs[-1], arguments.kw_defaults[-1]
+    problems: list[str] = []
+    if gate.annotation is None or ast.unparse(gate.annotation) != "TeamForecastPolicyPublicationGate | None":
+        problems.append(f"{node.name}.policy_publication_gate must be annotated 'TeamForecastPolicyPublicationGate | None'")
+    if not (isinstance(default, ast.Constant) and default.value is None):
+        problems.append(f"{node.name}.policy_publication_gate must default to None")
+    return problems
+
+
 BENIGN_IMPORTS = (
     "from __future__ import annotations\nimport dataclasses\nfrom dataclasses import dataclass\n"
     "from datetime import UTC, datetime\nfrom decimal import ROUND_HALF_EVEN, Context, Decimal\nimport hashlib\n"
@@ -246,6 +265,8 @@ BENIGN_VARIANTS = (
     "from decimal import _local_context\nfrom decimal import Decimal as value_type\nimport json as canonical_codec\n"
     'v1_preimage = {"tea_id": tea_id, "receipt": receipt_payload, "legacy_payload_sha256": legacy_sha256}\n'
     'run_preimage = {"tea_id": tea_id, "run_metadata": run_metadata_payload}\n'
+    'gate_payload = {"status": "watch", "reason_codes": ["policy_watch"], "paper_only": True, "report_only": True, "readonly": True}\n'
+    'run_metadata_payload = {"run_label": run_label, "external_publication_gate": gate_payload}\n'
 )
 IMPORT_FAIL_CASES = (
     ("unknown_project_module", "from polymarket_alpha_lab.team_evidence_aggregation_unknown import helper\n"),
@@ -266,6 +287,7 @@ REJECT_SNIPPETS = (
     ("identifier_except_name", "try:\n    pass\nexcept ValueError as token_store:\n    pass\n"),
     ("identifier_import_asname", "import datetime as subprocess\n"), ("identifier_importfrom_member", "from datetime import credential_token\n"),
     ("identifier_environ", "value = os.environ\n"), ("identifier_persistence", "def persist_result():\n    return None\n"),
+    ("identifier_external_gate_parameter", "def build(envelope, *, external_publication_gate=None):\n    return None\n"),
     ("call_open", 'descriptor = open("state.jsonl")\n'), ("call_print", 'print("message")\n'), ("call_input", "value = input()\n"),
     ("call_eval", 'value = eval("expression")\n'), ("call_exec", 'exec("statement")\n'), ("call_compile", 'value = compile("source", "source", "exec")\n'),
     ("call_dynamic_import", 'module = __import__("os")\n'), ("call_hash", "value = hash(record)\n"), ("call_random", "value = random()\n"),
@@ -328,7 +350,8 @@ _BUILDER_SIGNATURE = (
     "scope: TeamForecastEvaluationScope, run_metadata: TeamForecastRunMetadata, "
     "evaluator_receipts: tuple[TeamForecastEvaluatorReceipt, ...], "
     "legacy_forecast_packet: TeamForecastPacket | None, "
-    "legacy_evidence_packets: tuple[TeamForecastEvidencePacket, ...]) -> TeamForecastBuildEnvelope:\n"
+    "legacy_evidence_packets: tuple[TeamForecastEvidencePacket, ...], "
+    "policy_publication_gate: TeamForecastPolicyPublicationGate | None = None) -> TeamForecastBuildEnvelope:\n"
     "    return None\n"
 )
 _VALIDATOR_SIGNATURE = (
@@ -338,7 +361,8 @@ _VALIDATOR_SIGNATURE = (
     "run_metadata: TeamForecastRunMetadata, "
     "evaluator_receipts: tuple[TeamForecastEvaluatorReceipt, ...], "
     "legacy_forecast_packet: TeamForecastPacket | None, "
-    "legacy_evidence_packets: tuple[TeamForecastEvidencePacket, ...]) -> None:\n"
+    "legacy_evidence_packets: tuple[TeamForecastEvidencePacket, ...], "
+    "policy_publication_gate: TeamForecastPolicyPublicationGate | None = None) -> None:\n"
     "    return None\n"
 )
 _FUNCTION_SIGNATURES = {
@@ -347,6 +371,10 @@ _FUNCTION_SIGNATURES = {
     "team_forecast_run_id": "(tea_id: str, run_metadata: TeamForecastRunMetadata) -> str",
     "team_forecast_evidence_id": "(tea_id: str, receipt: TeamForecastEvaluatorReceipt, legacy_payload_sha256: str) -> str",
     "team_forecast_legacy_payload_sha256": "(legacy_payload: dict[str, object]) -> str",
+}
+_EXPECTED_CALLABLE_PARAMETERS = {
+    "build_team_forecast_build_envelope": ("result", "aggregation_input", "config", "scope", "run_metadata", "evaluator_receipts", "legacy_forecast_packet", "legacy_evidence_packets", "policy_publication_gate"),
+    "validate_team_forecast_build_envelope": ("envelope", "result", "aggregation_input", "config", "scope", "run_metadata", "evaluator_receipts", "legacy_forecast_packet", "legacy_evidence_packets", "policy_publication_gate"),
 }
 
 
@@ -423,6 +451,10 @@ def test_node_3_ast_import_export_forbidden_surface_and_line_size_gate() -> None
         if found: failures.append(f"benign {label} were rejected: {found}")
     found = _module_violations(_conforming_module(), exports=True)
     if found: failures.append(f"conforming synthetic module was rejected: {found}")
+    for signature in (_BUILDER_SIGNATURE, _VALIDATOR_SIGNATURE):
+        function_node = next(n for n in ast.parse(FUTURE_IMPORT + signature).body if isinstance(n, ast.FunctionDef))
+        found = _callable_parameter_problems(function_node, _EXPECTED_CALLABLE_PARAMETERS[function_node.name])
+        if found: failures.append(f"synthetic {function_node.name} signature was rejected: {found}")
     for case, snippet in IMPORT_FAIL_CASES:
         if not _module_violations(snippet, exports=False): failures.append(f"import case '{case}' was not rejected")
     for case, snippet in REJECT_SNIPPETS:
@@ -440,6 +472,13 @@ def test_node_3_ast_import_export_forbidden_surface_and_line_size_gate() -> None
         count = len(source.splitlines())
         if count > PRODUCTION_LINE_LIMIT: violations.append(f"{PRODUCTION_FILE}: {count} physical lines exceed ceiling {PRODUCTION_LINE_LIMIT}")
         violations.extend(f"{PRODUCTION_FILE}: {item}" for item in _module_violations(source, exports=True))
+        functions = {n.name: n for n in ast.parse(source).body if isinstance(n, ast.FunctionDef)}
+        for name, expected in _EXPECTED_CALLABLE_PARAMETERS.items():
+            function_node = functions.get(name)
+            if function_node is None:
+                violations.append(f"{PRODUCTION_FILE}: {name} must be a direct function definition")
+            else:
+                violations.extend(f"{PRODUCTION_FILE}: {item}" for item in _callable_parameter_problems(function_node, expected))
     test_counts: dict[str, int] = {}
     for name, ceiling in TEST_LINE_LIMITS.items():
         path = TEST_DIR / name

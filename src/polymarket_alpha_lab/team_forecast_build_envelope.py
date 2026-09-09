@@ -9,7 +9,11 @@ computed from complete canonical preimages, never from the Node 2
 ``core_digest``. Ready results additionally project onto the existing
 legacy forecast and forecast-evidence packets through their public
 constructors and payload projection; watch and blocked results produce no
-packets and no replay records. The module performs no persistence,
+packets and no replay records. An optional immutable
+``TeamForecastPolicyPublicationGate`` applies the same packet suppression for
+a non-ready policy status, serializing only as the reserved nested
+``run_metadata`` ``external_publication_gate`` entry that joins the complete
+identifier preimages. The module performs no persistence,
 filesystem, network, environment, process, logging, clock, or randomness
 operation, and every hard flag is a literal ``True``.
 """
@@ -57,7 +61,10 @@ _PUBLIC_CLASS_NAMES: Final = frozenset((
     "TeamForecastEvaluatorReceipt",
     "TeamForecastEvidenceReplayRecord",
     "TeamForecastBuildEnvelope",
+    "TeamForecastPolicyPublicationGate",
 ))
+_GATE_STATUS_VALUES: Final = frozenset(("ready", "watch", "blocked"))
+_GATE_PAYLOAD_KEY: Final = "external_publication_gate"
 _ZERO_OFFSET: Final = timedelta(0)
 _AGGREGATION_DOMAIN: Final = b"tea:v1\x00"
 _RUN_DOMAIN: Final = b"tfr:v1\x00"
@@ -417,6 +424,47 @@ class TeamForecastEvidenceReplayRecord(_SealedNode3Dataclass):
 
 @final
 @dataclass(frozen=True, slots=True)
+class TeamForecastPolicyPublicationGate(_SealedNode3Dataclass):
+    """Immutable policy gate over legacy packet projection."""
+
+    status: str
+    reason_codes: tuple[str, ...]
+    paper_only: bool = True
+    report_only: bool = True
+    readonly: bool = True
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.status) is not str
+            or self.status not in _GATE_STATUS_VALUES
+        ):
+            raise ValueError(
+                "publication_gate.status must be ready, watch, or blocked"
+            )
+        codes = self.reason_codes
+        if type(codes) is not tuple:
+            raise ValueError(
+                "publication_gate.reason_codes must be an exact tuple"
+            )
+        object.__setattr__(
+            self,
+            "reason_codes",
+            tuple(
+                sorted(
+                    {
+                        _identifier(
+                            f"publication_gate.reason_codes[{index}]", item
+                        )
+                        for index, item in enumerate(codes)
+                    }
+                )
+            ),
+        )
+        _hard_flags("publication_gate", self)
+
+
+@final
+@dataclass(frozen=True, slots=True)
 class TeamForecastBuildEnvelope(_SealedNode3Dataclass):
     tea_id: str
     tfr_id: str
@@ -574,9 +622,10 @@ def _receipt_entry(
 
 def _run_metadata_entry(
     run_metadata: TeamForecastRunMetadata,
+    policy_publication_gate: TeamForecastPolicyPublicationGate | None,
 ) -> dict[str, object]:
     completed_at = run_metadata.completed_at
-    return {
+    entry: dict[str, object] = {
         "run_label": run_metadata.run_label,
         "generator_version": run_metadata.generator_version,
         "prompt_version": run_metadata.prompt_version,
@@ -587,6 +636,36 @@ def _run_metadata_entry(
         "paper_only": run_metadata.paper_only,
         "report_only": run_metadata.report_only,
         "readonly": run_metadata.readonly,
+    }
+    if policy_publication_gate is not None:
+        entry[_GATE_PAYLOAD_KEY] = _publication_gate_entry(
+            policy_publication_gate
+        )
+    return entry
+
+
+def _publication_gate_entry(
+    policy_publication_gate: TeamForecastPolicyPublicationGate,
+) -> dict[str, object]:
+    """Rebuild the gate fail-closed, then project its direct field map."""
+    rebuilt = TeamForecastPolicyPublicationGate(
+        status=policy_publication_gate.status,
+        reason_codes=policy_publication_gate.reason_codes,
+        paper_only=policy_publication_gate.paper_only,
+        report_only=policy_publication_gate.report_only,
+        readonly=policy_publication_gate.readonly,
+    )
+    if rebuilt != policy_publication_gate:
+        raise ValueError(
+            "publication_gate must already carry canonical status, reason "
+            "codes, and hard flags"
+        )
+    return {
+        "status": rebuilt.status,
+        "reason_codes": [code for code in rebuilt.reason_codes],
+        "paper_only": rebuilt.paper_only,
+        "report_only": rebuilt.report_only,
+        "readonly": rebuilt.readonly,
     }
 
 
@@ -655,6 +734,7 @@ def _materialize_envelope(
     evaluator_receipts: tuple[TeamForecastEvaluatorReceipt, ...],
     legacy_forecast_packet: TeamForecastPacket | None,
     legacy_evidence_packets: tuple[TeamForecastEvidencePacket, ...],
+    policy_publication_gate: TeamForecastPolicyPublicationGate | None = None,
 ) -> TeamForecastBuildEnvelope:
     """Validate first, then bind fragments, receipts, IDs, and packets."""
     validate_team_evidence_aggregation_result(
@@ -672,6 +752,13 @@ def _materialize_envelope(
     if type(run_metadata) is not TeamForecastRunMetadata:
         raise ValueError(
             "run_metadata must be exactly TeamForecastRunMetadata"
+        )
+    if policy_publication_gate is not None and (
+        type(policy_publication_gate) is not TeamForecastPolicyPublicationGate
+    ):
+        raise ValueError(
+            "policy_publication_gate must be exactly "
+            "TeamForecastPolicyPublicationGate"
         )
     if type(evaluator_receipts) is not tuple:
         raise ValueError("evaluator_receipts must be an exact tuple")
@@ -706,7 +793,9 @@ def _materialize_envelope(
         canonical_receipts, aggregation_input=aggregation_input
     )
     receipt_entries = [_receipt_entry(receipt) for receipt in canonical_receipts]
-    run_metadata_payload = _run_metadata_entry(run_metadata)
+    run_metadata_payload = _run_metadata_entry(
+        run_metadata, policy_publication_gate
+    )
     evaluation_scope_payload: dict[str, object] = {
         "scope_version": scope.scope_version,
         "domain_context": {key: item for key, item in scope.domain_context},
@@ -719,14 +808,20 @@ def _materialize_envelope(
     }
     tea_id = team_evidence_aggregation_id(evaluation_scope_payload)
     tfr_id = team_forecast_run_id(tea_id, run_metadata_payload)
-    if result.status != "ready":
+    effective_ready = result.status == "ready" and (
+        policy_publication_gate is None
+        or policy_publication_gate.status == "ready"
+    )
+    if not effective_ready:
         if legacy_forecast_packet is not None:
             raise ValueError(
-                "non-ready result must not receive legacy_forecast_packet"
+                "an effectively non-ready build must not receive "
+                "legacy_forecast_packet"
             )
         if legacy_evidence_packets:
             raise ValueError(
-                "non-ready result must not receive legacy_evidence_packets"
+                "an effectively non-ready build must not receive "
+                "legacy_evidence_packets"
             )
         return TeamForecastBuildEnvelope(
             tea_id=tea_id,
@@ -800,6 +895,7 @@ def build_team_forecast_build_envelope(
     evaluator_receipts: tuple[TeamForecastEvaluatorReceipt, ...],
     legacy_forecast_packet: TeamForecastPacket | None,
     legacy_evidence_packets: tuple[TeamForecastEvidencePacket, ...],
+    policy_publication_gate: TeamForecastPolicyPublicationGate | None = None,
 ) -> TeamForecastBuildEnvelope:
     """Build the one canonical envelope from exact validated inputs."""
     return _materialize_envelope(
@@ -811,6 +907,7 @@ def build_team_forecast_build_envelope(
         evaluator_receipts=evaluator_receipts,
         legacy_forecast_packet=legacy_forecast_packet,
         legacy_evidence_packets=legacy_evidence_packets,
+        policy_publication_gate=policy_publication_gate,
     )
 
 
@@ -825,6 +922,7 @@ def validate_team_forecast_build_envelope(
     evaluator_receipts: tuple[TeamForecastEvaluatorReceipt, ...],
     legacy_forecast_packet: TeamForecastPacket | None,
     legacy_evidence_packets: tuple[TeamForecastEvidencePacket, ...],
+    policy_publication_gate: TeamForecastPolicyPublicationGate | None = None,
 ) -> None:
     """Validate by rematerializing from the same exact inputs."""
     if type(envelope) is not TeamForecastBuildEnvelope:
@@ -838,6 +936,7 @@ def validate_team_forecast_build_envelope(
         evaluator_receipts=evaluator_receipts,
         legacy_forecast_packet=legacy_forecast_packet,
         legacy_evidence_packets=legacy_evidence_packets,
+        policy_publication_gate=policy_publication_gate,
     )
     if envelope != expected:
         raise ValueError("envelope must equal the rematerialized envelope")
@@ -857,4 +956,5 @@ __all__ = (
     "team_forecast_run_id",
     "team_forecast_evidence_id",
     "team_forecast_legacy_payload_sha256",
+    "TeamForecastPolicyPublicationGate",
 )

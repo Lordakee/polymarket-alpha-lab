@@ -43,6 +43,14 @@ green this batch in one pass (field names follow the plan's own wording):
   replaced by its ``tfe:v1`` ID, in canonical accepted-receipt order. Replay
   legacy payloads and hashes are the existing payload projection of the
   supplied template packets, since the ``tfe:v1`` ID is derived from that hash.
+
+Amendment (2026-09-09 external-gate contract): the locked public surface is
+the ordered 13-name export tuple ending in ``TeamForecastPolicyPublicationGate``;
+both public callables accept one trailing keyword-only ``policy_publication_gate``
+defaulting to ``None``. The gate is never an envelope field: it serializes only
+as the nested ``run_metadata["external_publication_gate"]`` direct field map,
+joins the scope preimage so every supplied gate changes every ID, and a
+non-ready effective status suppresses packets while ``None`` stays legacy.
 """
 
 from __future__ import annotations
@@ -62,6 +70,7 @@ import polymarket_alpha_lab.team_forecast_build_envelope as tfe_envelope
 from polymarket_alpha_lab.team_forecast_build_envelope import (
     TeamForecastEvaluationScope,
     TeamForecastEvaluatorReceipt,
+    TeamForecastPolicyPublicationGate,
     TeamForecastRunMetadata,
     build_team_forecast_build_envelope,
     team_evidence_aggregation_id,
@@ -461,6 +470,20 @@ def validator_kwargs(case: EnvelopeCase) -> dict[str, object]:
     )
 
 
+# Node 3 amendment fixtures: the policy publication gate.
+GATE_PAYLOAD_KEY = "external_publication_gate"
+
+
+def make_gate(status: str, codes: tuple[str, ...]) -> TeamForecastPolicyPublicationGate:
+    return TeamForecastPolicyPublicationGate(status=status, reason_codes=codes)
+
+
+def validate_case(envelope: object, case: EnvelopeCase, **overrides: object) -> None:
+    kwargs = validator_kwargs(case)
+    kwargs.update(overrides)
+    validate(envelope, result=case.result, **kwargs)  # type: ignore[arg-type]
+
+
 def accepted_receipts_of(case: EnvelopeCase) -> list[TeamForecastEvaluatorReceipt]:
     return sorted(
         (receipt for receipt in case.receipts if receipt.classification == "accepted"),
@@ -506,10 +529,12 @@ LOCKED_ALL = (
     "team_forecast_run_id",
     "team_forecast_evidence_id",
     "team_forecast_legacy_payload_sha256",
+    "TeamForecastPolicyPublicationGate",
 )
 LOCKED_BUILDER_PARAMETERS = [
     "result", "aggregation_input", "config", "scope", "run_metadata",
     "evaluator_receipts", "legacy_forecast_packet", "legacy_evidence_packets",
+    "policy_publication_gate",
 ]
 
 
@@ -1073,3 +1098,152 @@ def test_validator_rejects_envelope_and_input_tampering() -> None:
             envelope, result=case.result,
             **{**kwargs, "scope": make_scope(
                 domain_context=(("team_id", "crypto_btc"),))})  # type: ignore[arg-type]
+
+
+# Node 3 amendment: the policy publication gate type, matrix, and tampering.
+def test_publication_gate_type_canonicalizes_and_fails_closed() -> None:
+    # reason codes canonicalize to a sorted, duplicate-free tuple; empty is valid
+    assert make_gate("watch", ("z_policy", "a_policy", "z_policy")).reason_codes == (
+        "a_policy", "z_policy")
+    assert make_gate("ready", ()).reason_codes == ()
+    # invalid status values and wrong exact types fail closed
+    for status in ("paused", "READY", "", " ready", 1, None, b"ready"):
+        with pytest.raises(ValueError):
+            make_gate(status, ())  # type: ignore[arg-type]
+    # malformed reason codes fail closed
+    for codes in (["policy_list"], "policy_string", ("Not Canonical",), ("p " * 90,)):
+        with pytest.raises(ValueError):
+            make_gate("watch", codes)  # type: ignore[arg-type]
+    # false hard flags fail closed on the gate type
+    for flag in ("paper_only", "report_only", "readonly"):
+        with pytest.raises(ValueError):
+            TeamForecastPolicyPublicationGate(
+                status="ready", reason_codes=(), **{flag: False})  # type: ignore[arg-type]
+    # constructor-bypassed noncanonical values and non-gate objects fail closed
+    case = ready_case()
+    for changes in ({"reason_codes": ("z_policy", "a_policy")},
+        {"reason_codes": ("a_policy", "a_policy")}, {"status": "paused"},
+        {"paper_only": False}, {"report_only": False}, {"readonly": False}):
+        with pytest.raises(ValueError):
+            build_case(case, legacy_forecast_packet=None, legacy_evidence_packets=(),
+                policy_publication_gate=forge(make_gate("watch", ("a_policy",)), changes))
+    with pytest.raises(ValueError):
+        build_case(case, policy_publication_gate=object())  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("status", ("watch", "blocked"))
+def test_non_ready_gate_builds_and_validates_packetless_envelopes(status: str) -> None:
+    case = ready_case()
+    policy_gate = make_gate(status, (f"policy_{status}",))
+    envelope = build_case(case, policy_publication_gate=policy_gate,
+        legacy_forecast_packet=None, legacy_evidence_packets=())
+    assert envelope.legacy_forecast_packet is None
+    assert envelope.legacy_evidence_packets == () == envelope.evidence_replay_records
+    assert set(envelope.evaluation_scope_payload) == SCOPE_PAYLOAD_KEYS
+    assert envelope.evaluation_scope_payload["run_metadata"][GATE_PAYLOAD_KEY] == {
+        "status": status, "reason_codes": [f"policy_{status}"],
+        "paper_only": True, "report_only": True, "readonly": True}
+    validate_case(envelope, case, policy_publication_gate=policy_gate,
+        legacy_forecast_packet=None, legacy_evidence_packets=())
+    # nonempty packet templates fail closed in the same effective state
+    with pytest.raises(ValueError):
+        build_case(case, policy_publication_gate=policy_gate)
+    with pytest.raises(ValueError):
+        build_case(case, policy_publication_gate=policy_gate, legacy_evidence_packets=())
+    with pytest.raises(ValueError):
+        build_case(case, policy_publication_gate=policy_gate,
+            legacy_forecast_packet=None,
+            legacy_evidence_packets=(evidence_template(case.records[0]),))
+
+
+def test_ready_gate_projects_packets_changes_ids_and_spares_fragments() -> None:
+    case = ready_case(second_record=True)
+    legacy = build_case(case)
+    explicit = build_case(case, policy_publication_gate=None)
+    gated = build_case(case, policy_publication_gate=make_gate("ready", ()))
+    # an explicit None gate is byte-for-byte the omitted gate, IDs included
+    assert canonical_json_bytes(explicit.evaluation_scope_payload) == (
+        canonical_json_bytes(legacy.evaluation_scope_payload))
+    assert explicit == legacy
+    assert (explicit.tea_id, explicit.tfr_id) == (legacy.tea_id, legacy.tfr_id)
+    assert GATE_PAYLOAD_KEY not in legacy.evaluation_scope_payload["run_metadata"]
+    # the ready projection is unchanged, only bound to the gated identities
+    assert gated.legacy_forecast_packet == replace(
+        legacy.legacy_forecast_packet, forecast_id=gated.tfr_id)
+    for gated_packet, legacy_packet, gated_replay, legacy_replay in zip(
+        gated.legacy_evidence_packets, legacy.legacy_evidence_packets,
+        gated.evidence_replay_records, legacy.evidence_replay_records, strict=True):
+        assert gated_packet == replace(legacy_packet, evidence_id=gated_packet.evidence_id)
+        assert gated_replay.legacy_payload == legacy_replay.legacy_payload
+        assert gated_replay.legacy_payload_sha256 == legacy_replay.legacy_payload_sha256
+    # the nested entry is present; the Node 2 fragments stay byte-identical
+    legacy_run = legacy.evaluation_scope_payload["run_metadata"]
+    gated_run = gated.evaluation_scope_payload["run_metadata"]
+    assert set(gated_run) - set(legacy_run) == {GATE_PAYLOAD_KEY}
+    assert gated_run[GATE_PAYLOAD_KEY] == {"status": "ready", "reason_codes": [],
+        "paper_only": True, "report_only": True, "readonly": True}
+    fragments = ("node2_config", "node2_input", "node2_result")
+    assert [gated.evaluation_scope_payload[name] for name in fragments] == [
+        legacy.evaluation_scope_payload[name] for name in fragments]
+    # every supplied gate, even ready, changes every domain-separated ID
+    assert (gated.tea_id, gated.tfr_id) != (legacy.tea_id, legacy.tfr_id)
+    assert [r.evidence_id for r in gated.evidence_replay_records] != [
+        r.evidence_id for r in legacy.evidence_replay_records]
+    assert gated.tea_id == "tea:v1:" + sha256(
+        b"tea:v1\x00" + canonical_json_bytes(gated.evaluation_scope_payload),
+    ).hexdigest()
+    validate_case(gated, case, policy_publication_gate=make_gate("ready", ()))
+
+
+@pytest.mark.parametrize("mode", ("watch", "blocked"))
+def test_non_ready_aggregation_stays_packetless_with_any_gate(mode: str) -> None:
+    case = non_ready_case(mode)
+    assert case.forecast_packet is None and case.evidence_packets == ()
+    for policy_gate in (None, make_gate("ready", ()), make_gate("watch", ()),
+                        make_gate("blocked", ())):
+        envelope = build_case(case, policy_publication_gate=policy_gate)
+        assert envelope.legacy_forecast_packet is None
+        assert envelope.legacy_evidence_packets == () == envelope.evidence_replay_records
+        validate_case(envelope, case, policy_publication_gate=policy_gate)
+
+
+def test_validator_rejects_gate_payload_argument_and_leakage_tampering() -> None:
+    case = ready_case()
+    policy_gate = make_gate("watch", ("policy_watch",))
+    envelope = build_case(case, policy_publication_gate=policy_gate,
+        legacy_forecast_packet=None, legacy_evidence_packets=())
+    quiet = {"legacy_forecast_packet": None, "legacy_evidence_packets": ()}
+    validate_case(envelope, case, policy_publication_gate=policy_gate, **quiet)
+    # mismatched gate arguments fail closed, in both directions
+    for mismatched in (make_gate("ready", ()), make_gate("watch", ("other_policy",)), None):
+        with pytest.raises(ValueError):
+            validate_case(envelope, case, policy_publication_gate=mismatched, **quiet)
+    legacy = build_case(case)
+    with pytest.raises(ValueError):
+        validate_case(legacy, case, policy_publication_gate=make_gate("ready", ()))
+    # tampered nested gate payloads fail closed through rematerialization
+    for key, value in (
+        ("status", "blocked"), ("reason_codes", ["forged_policy"]),
+        ("paper_only", False), ("report_only", False), ("readonly", False),
+    ):
+        scope_payload = tfe_envelope.team_forecast_evaluation_scope_payload(envelope)
+        scope_payload["run_metadata"][GATE_PAYLOAD_KEY][key] = value
+        with pytest.raises(ValueError):
+            validate_case(forge(envelope, {"evaluation_scope_payload": scope_payload}),
+                case, policy_publication_gate=policy_gate, **quiet)
+    # packet and replay leakage into a packetless gated envelope fails closed
+    with pytest.raises(ValueError):
+        validate_case(forge(envelope, {"legacy_forecast_packet":
+            forecast_template()}), case, policy_publication_gate=policy_gate, **quiet)
+    with pytest.raises(ValueError):
+        validate_case(forge(envelope, {"legacy_evidence_packets": (
+            evidence_template(case.records[0]),)}),
+            case, policy_publication_gate=policy_gate, **quiet)
+    gated_ready = build_case(case, policy_publication_gate=make_gate("ready", ()))
+    with pytest.raises(ValueError):
+        validate_case(forge(envelope, {"evidence_replay_records":
+            gated_ready.evidence_replay_records}), case, policy_publication_gate=policy_gate, **quiet)
+    # a hard-flag-tampered gate argument fails closed inside rematerialization
+    with pytest.raises(ValueError):
+        validate_case(envelope, case,
+            policy_publication_gate=forge(policy_gate, {"readonly": False}), **quiet)
