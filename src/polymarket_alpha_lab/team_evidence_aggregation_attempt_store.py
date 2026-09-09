@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, NoReturn
 
 from polymarket_alpha_lab.team_evidence_aggregation_db_row import (
@@ -335,9 +336,12 @@ def _attempt_row_from_record(record: Any) -> TeamEvaluationAttemptDbRow:
         values = tuple(record)
     if len(values) != len(TEAM_EVALUATION_ATTEMPT_COLUMNS):
         raise ValueError("DB record must contain the selected attempt columns")
-    return TeamEvaluationAttemptDbRow(
-        **dict(zip(TEAM_EVALUATION_ATTEMPT_COLUMNS, values, strict=True))
-    )
+    fields = dict(zip(TEAM_EVALUATION_ATTEMPT_COLUMNS, values, strict=True))
+    attempted_at = fields.get("attempted_at")
+    if isinstance(attempted_at, datetime) and attempted_at.tzinfo is not None:
+        # DB drivers return timestamptz in the session timezone; normalize to UTC.
+        fields["attempted_at"] = attempted_at.astimezone(timezone.utc)
+    return TeamEvaluationAttemptDbRow(**fields)
 
 
 def _execute_load(

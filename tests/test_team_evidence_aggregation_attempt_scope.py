@@ -22,7 +22,7 @@ TEST_LINE_LIMITS = {"test_team_evidence_aggregation_attempt_disposable.py": 460,
                     "test_team_evidence_aggregation_attempt_scope.py": 320, "test_team_evidence_aggregation_attempt_store.py": 620}
 NODE_5_TEST_TOTAL_LINE_LIMIT = 2_000
 IMPORT_ALLOWLISTS = {
-    STORE: frozenset(("__future__", "dataclasses", "re", "typing", "polymarket_alpha_lab.team_evidence_aggregation_db_row")),
+    STORE: frozenset(("__future__", "dataclasses", "datetime", "re", "typing", "polymarket_alpha_lab.team_evidence_aggregation_db_row")),
     PSYCOPG: frozenset(("__future__", "typing", "psycopg", "psycopg.types.json", "polymarket_alpha_lab.supabase_local_dsn",
                         "polymarket_alpha_lab.team_evidence_aggregation_attempt_store", "polymarket_alpha_lab.team_forecast_build_envelope",
                         "polymarket_alpha_lab.team_evidence_aggregation_db_row"))}
