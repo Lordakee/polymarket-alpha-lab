@@ -1438,6 +1438,14 @@ The registry does not fetch, does not read JSONL, does not load, does not replay
 
 Use `list_proposal_evidence_comparison_artifacts()` to inspect the static tuple and `get_proposal_evidence_comparison_artifact(artifact_id)` to look up one registry row by canonical artifact ID.
 
+## Team Evaluation Attempt Latest Read Node 8 Status
+
+Node 8 delivers the freeze-compliant first slice of strategy-cycle consumption: a pure read-only report over the latest persisted team-evaluation attempt. `read_latest_team_evaluation_attempt_report` and `read_latest_team_evaluation_attempt_with_psycopg` delegate to the Node 5 latest-attempt loaders, which order strictly by `attempted_at DESC, tea_id DESC` and never fall back through a newer `watch`/`blocked` attempt. `TeamEvaluationAttemptLatestReadReport` surfaces identity, status, hard-flag, publication-gate evidence, and audit-only packet projection: the row schema never persists packets, `packet_presence` is a contract-derived `projected`/`suppressed`/`None` state, `audit_packet_selected_side` is always `None`, and `audit_packet_forecast_probability_yes` exposes the Node 2 publishable probability only when projected and is never a side recommendation. Strategy-cycle provider wiring and central cost-engine side selection remain post-freeze future work.
+
+## Priority 1 DSN-Hardening Finish Audit Status
+
+The DSN-hardening finish audit closes the local-Supabase/Postgres DSN validation enforcement debt: every direct `psycopg.connect` operand across the 35 CLI connection sites is validated in-function through `validate_local_postgres_dsn` before connection setup, the three intermediary store/loader modules validate before sink construction and callback dispatch, and the repo-wide static gate pins that DSN environment reads occur only inside `supabase_*config.py` modules, that every discovered config module validates its DSN, and that connector references are confined to a frozen literal 60-path allowlist. The per-function AST gate enforces exact-operand, path-dominating validation across the CLI and intermediary boundaries, including definition-time regions, alias fixpoint propagation, capture timing, indirect write detection (setattr/dunder/update/IIFE/expression-callee forms), and loop-carry checks. The final external closure review for this node was blocked by reviewer-provider session failures after 30+ incremental review rounds; all coordinator-side verifications and every reviewer-supplied probe reproduction pass. See the handoff record for the exact gate status.
+
 ## Crypto BTC Forecast Service Node 7 Status
 
 Crypto BTC Forecast Service Node 7 adds a paper-only, report-only, and readonly BTC forecast service. It evaluates Node 6 BTC policy evidence, reduces it through the Node 2C team evidence aggregation, applies the combined BTC-policy and aggregation readiness publication gate, builds the Node 3 team forecast build envelope, and persists every representable validated attempt through Node 5's sole atomic local Supabase/Postgres writer into `team_evaluation_attempts`. The service-level `publication_status` is `blocked` when either the policy or the aggregation status is blocked, `watch` when neither is blocked and either is watch, and `ready` only when both are ready; `reason_codes` is the sorted, duplicate-free union of the Node 6 policy and Node 2 aggregation reason codes. The persisted Node 5 row keeps exposing the canonical Node 2 aggregation status; the service-level combined status is returned separately.
@@ -1467,6 +1475,7 @@ See:
 
 - `docs/superpowers/specs/2026-06-13-automated-investment-roadmap.md`
 - `docs/research/validation-gates.md`
+- `docs/handoff-2026-09-11.md` for the current delivered-node inventory, verification evidence, and recorded gate blockers.
 
 ## Repository Layout
 
