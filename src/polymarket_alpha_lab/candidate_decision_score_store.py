@@ -8,6 +8,11 @@ from decimal import Decimal, InvalidOperation
 import re
 from typing import Any
 
+from polymarket_alpha_lab.supabase_candidate_decision_score_config import (
+    CANDIDATE_DECISION_SCORE_DB_DSN_ENV_VAR,
+)
+from polymarket_alpha_lab.supabase_local_dsn import validate_local_postgres_dsn
+
 
 DEFAULT_CANDIDATE_DECISION_SCORE_REPORT_TABLE = "candidate_decision_score_reports"
 
@@ -215,6 +220,10 @@ def candidate_decision_score_report_sink_from_config(
             "connection_factory is required when candidate decision score DB is enabled",
         )
     table_name = _validate_table_name(getattr(config, "table", None))
+    validate_local_postgres_dsn(
+        dsn,
+        env_var_name=CANDIDATE_DECISION_SCORE_DB_DSN_ENV_VAR,
+    )
     return _CandidateDecisionScoreReportSink(
         dsn=dsn,
         table_name=table_name,
@@ -229,6 +238,10 @@ class _CandidateDecisionScoreReportSink:
     connection_factory: Callable[[str], Any]
 
     def __call__(self, report: Any) -> Any:
+        validate_local_postgres_dsn(
+            self.dsn,
+            env_var_name=CANDIDATE_DECISION_SCORE_DB_DSN_ENV_VAR,
+        )
         try:
             connection = self.connection_factory(self.dsn)
             return insert_candidate_decision_score_report(

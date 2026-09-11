@@ -200,51 +200,64 @@ from polymarket_alpha_lab.supabase_cycle_snapshot_config import (
     from_cycle_snapshot_db_env,
 )
 from polymarket_alpha_lab.supabase_outcome_tracking_config import (
+    OUTCOME_TRACKING_DB_DSN_ENV_VAR,
     from_outcome_tracking_db_env,
 )
 from polymarket_alpha_lab.supabase_paper_nav_snapshot_config import (
+    PAPER_NAV_SNAPSHOT_DB_DSN_ENV_VAR,
     from_paper_nav_snapshot_db_env,
 )
 from polymarket_alpha_lab.supabase_paper_autonomous_screening_decision_support_gate_config import (
+    PAPER_AUTONOMOUS_SCREENING_DECISION_SUPPORT_GATE_DB_DSN_ENV_VAR,
     from_paper_autonomous_screening_decision_support_gate_db_env,
 )
 from polymarket_alpha_lab.supabase_paper_execution_pipeline_config import (
+    PAPER_EXECUTION_PIPELINE_DB_DSN_ENV_VAR,
     from_paper_execution_pipeline_db_env,
 )
 from polymarket_alpha_lab.supabase_paper_broker_config import (
     from_paper_broker_db_env,
 )
 from polymarket_alpha_lab.supabase_paper_autonomous_investment_ledger_config import (
+    PAPER_AUTONOMOUS_INVESTMENT_LEDGER_DB_DSN_ENV_VAR,
     from_paper_autonomous_investment_ledger_db_env,
 )
 from polymarket_alpha_lab.supabase_paper_autonomous_investment_ledger_db_history_health_config import (
+    PAPER_AUTONOMOUS_INVESTMENT_LEDGER_DB_HISTORY_HEALTH_DB_DSN_ENV_VAR,
     from_paper_autonomous_investment_ledger_db_history_health_db_env,
 )
 from polymarket_alpha_lab.supabase_paper_autonomous_readiness_gate_config import (
+    PAPER_AUTONOMOUS_READINESS_GATE_DB_DSN_ENV_VAR,
     from_paper_autonomous_readiness_gate_db_env,
 )
 from polymarket_alpha_lab.supabase_paper_autonomous_readiness_digest_config import (
     from_paper_autonomous_readiness_digest_db_env,
 )
 from polymarket_alpha_lab.supabase_paper_autonomous_allocation_proposal_config import (
+    PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_DSN_ENV_VAR,
     from_paper_autonomous_allocation_proposal_db_env,
 )
 from polymarket_alpha_lab.supabase_paper_autonomous_allocation_proposal_db_history_health_config import (
+    PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_HISTORY_HEALTH_DB_DSN_ENV_VAR,
     from_paper_autonomous_allocation_proposal_db_history_health_db_env,
 )
 from polymarket_alpha_lab.supabase_paper_research_packet_config import (
+    PAPER_RESEARCH_PACKET_DB_DSN_ENV_VAR,
     from_paper_research_packet_db_env,
 )
 from polymarket_alpha_lab.supabase_paper_research_packet_quality_config import (
+    PAPER_RESEARCH_PACKET_QUALITY_DB_DSN_ENV_VAR,
     from_paper_research_packet_quality_db_env,
 )
 from polymarket_alpha_lab.supabase_paper_research_packet_operator_flow_config import (
+    PAPER_RESEARCH_PACKET_OPERATOR_FLOW_DB_DSN_ENV_VAR,
     from_paper_research_packet_operator_flow_db_env,
 )
 from polymarket_alpha_lab.supabase_paper_project_screening_rank_stability_config import (
     from_paper_project_screening_rank_stability_db_env,
 )
 from polymarket_alpha_lab.supabase_paper_trade_cost_audit_config import (
+    PAPER_TRADE_COST_AUDIT_DB_DSN_ENV_VAR,
     from_paper_trade_cost_audit_db_env,
 )
 from polymarket_alpha_lab.supabase_paper_trade_journal_config import (
@@ -281,6 +294,7 @@ from polymarket_alpha_lab.supabase_strategy_candidate_research_queue_history_con
     from_strategy_candidate_research_queue_history_db_env,
 )
 from polymarket_alpha_lab.supabase_strategy_risk_audit_config import (
+    STRATEGY_RISK_AUDIT_DB_DSN_ENV_VAR,
     from_strategy_risk_audit_db_env,
 )
 from polymarket_alpha_lab.supabase_team_forecast_config import (
@@ -8433,6 +8447,10 @@ def _run_nav_snapshot_db_trend(
         load_paper_nav_snapshot_db_trend_report,
     )
 
+    validate_local_postgres_dsn(
+        dsn,
+        env_var_name=PAPER_NAV_SNAPSHOT_DB_DSN_ENV_VAR,
+    )
     try:
         import psycopg
     except ModuleNotFoundError as exc:
@@ -8951,6 +8969,10 @@ def _run_paper_probability_selection_summary_history(
         load_paper_probability_selection_summary_reports,
     )
 
+    validate_local_postgres_dsn(
+        dsn,
+        env_var_name=PAPER_PROBABILITY_SELECTION_SUMMARY_DB_DSN_ENV_VAR,
+    )
     try:
         import psycopg
     except ModuleNotFoundError as exc:
@@ -9018,6 +9040,10 @@ def _run_paper_probability_selection_summary_history_trend(
         load_paper_probability_selection_summary_history_reports,
     )
 
+    validate_local_postgres_dsn(
+        dsn,
+        env_var_name=PAPER_PROBABILITY_SELECTION_SUMMARY_HISTORY_DB_DSN_ENV_VAR,
+    )
     try:
         import psycopg
     except ModuleNotFoundError as exc:
@@ -9097,6 +9123,10 @@ def _run_paper_probability_selection_summary_history_trend_gate(
         load_paper_probability_selection_summary_history_reports,
     )
 
+    validate_local_postgres_dsn(
+        dsn,
+        env_var_name=PAPER_PROBABILITY_SELECTION_SUMMARY_HISTORY_DB_DSN_ENV_VAR,
+    )
     try:
         import psycopg
     except ModuleNotFoundError as exc:
@@ -9173,6 +9203,10 @@ def _run_autonomous_market_scorer_history(
         load_autonomous_market_scorer_reports,
     )
 
+    validate_local_postgres_dsn(
+        dsn,
+        env_var_name=AUTONOMOUS_MARKET_SCORER_DB_DSN_ENV_VAR,
+    )
     try:
         import psycopg
     except ModuleNotFoundError as exc:
@@ -9248,6 +9282,14 @@ def _run_probability_selection_scorer_agreement(
 
     from polymarket_alpha_lab.probability_selection_scorer_agreement_load import (
         load_probability_selection_scorer_agreement_report,
+    )
+    validate_local_postgres_dsn(
+        selection_summary_dsn,
+        env_var_name=PAPER_PROBABILITY_SELECTION_SUMMARY_DB_DSN_ENV_VAR,
+    )
+    validate_local_postgres_dsn(
+        scorer_dsn,
+        env_var_name=AUTONOMOUS_MARKET_SCORER_DB_DSN_ENV_VAR,
     )
     try:
         import psycopg
@@ -9346,6 +9388,10 @@ def _run_probability_selection_scorer_agreement_trend(
         load_probability_selection_scorer_agreement_reports,
     )
 
+    validate_local_postgres_dsn(
+        dsn,
+        env_var_name=PROBABILITY_SELECTION_SCORER_AGREEMENT_DB_DSN_ENV_VAR,
+    )
     try:
         import psycopg
     except ModuleNotFoundError as exc:
@@ -9430,6 +9476,10 @@ def _run_probability_selection_scorer_agreement_trend_gate(
         load_probability_selection_scorer_agreement_reports,
     )
 
+    validate_local_postgres_dsn(
+        dsn,
+        env_var_name=PROBABILITY_SELECTION_SCORER_AGREEMENT_DB_DSN_ENV_VAR,
+    )
     try:
         import psycopg
     except ModuleNotFoundError as exc:
@@ -9553,6 +9603,10 @@ def _run_paper_autonomous_readiness_digest(
         config_version="probability-selection-scorer-agreement-trend-gate-v0",
     )
 
+    validate_local_postgres_dsn(
+        dsn,
+        env_var_name=PAPER_AUTONOMOUS_READINESS_GATE_DB_DSN_ENV_VAR,
+    )
     try:
         import psycopg
     except ModuleNotFoundError as exc:
@@ -9804,6 +9858,10 @@ def _run_paper_research_packet_db_history(
         load_paper_research_packet_db_history_report,
     )
 
+    validate_local_postgres_dsn(
+        dsn,
+        env_var_name=PAPER_RESEARCH_PACKET_DB_DSN_ENV_VAR,
+    )
     try:
         import psycopg
     except ModuleNotFoundError as exc:
@@ -10787,6 +10845,10 @@ def _run_strategy_audit_db_history(
         load_strategy_audit_db_history_report,
     )
 
+    validate_local_postgres_dsn(
+        dsn,
+        env_var_name=STRATEGY_RISK_AUDIT_DB_DSN_ENV_VAR,
+    )
     try:
         import psycopg
     except ModuleNotFoundError as exc:
@@ -10988,6 +11050,10 @@ def _run_cost_audit_db_trend(
         load_paper_trade_cost_audit_db_history_report,
     )
 
+    validate_local_postgres_dsn(
+        dsn,
+        env_var_name=PAPER_TRADE_COST_AUDIT_DB_DSN_ENV_VAR,
+    )
     try:
         import psycopg
     except ModuleNotFoundError as exc:
@@ -11090,6 +11156,10 @@ def _run_paper_research_packet_quality(
             load_paper_research_packet_reports,
         )
 
+        validate_local_postgres_dsn(
+            dsn,
+            env_var_name=PAPER_RESEARCH_PACKET_DB_DSN_ENV_VAR,
+        )
         try:
             import psycopg
         except ModuleNotFoundError as exc:
@@ -11133,6 +11203,10 @@ def _run_paper_research_packet_quality(
         insert_paper_research_packet_quality_report,
     )
 
+    validate_local_postgres_dsn(
+        quality_dsn,
+        env_var_name=PAPER_RESEARCH_PACKET_QUALITY_DB_DSN_ENV_VAR,
+    )
     try:
         import psycopg
     except ModuleNotFoundError as exc:
@@ -11202,6 +11276,10 @@ def _run_paper_research_packet_quality_db_history(
         load_paper_research_packet_quality_history_report,
     )
 
+    validate_local_postgres_dsn(
+        dsn,
+        env_var_name=PAPER_RESEARCH_PACKET_QUALITY_DB_DSN_ENV_VAR,
+    )
     try:
         import psycopg
     except ModuleNotFoundError as exc:
@@ -11276,6 +11354,10 @@ def _run_paper_research_packet_operator_flow_db_history(
         load_paper_research_packet_operator_flow_db_history_report,
     )
 
+    validate_local_postgres_dsn(
+        dsn,
+        env_var_name=PAPER_RESEARCH_PACKET_OPERATOR_FLOW_DB_DSN_ENV_VAR,
+    )
     try:
         import psycopg
     except ModuleNotFoundError as exc:
@@ -11349,6 +11431,10 @@ def _run_paper_autonomous_allocation_proposal_db_history(
         load_paper_autonomous_allocation_proposal_db_history_report,
     )
 
+    validate_local_postgres_dsn(
+        dsn,
+        env_var_name=PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_DSN_ENV_VAR,
+    )
     try:
         import psycopg
     except ModuleNotFoundError as exc:
@@ -11427,6 +11513,10 @@ def _run_paper_autonomous_allocation_proposal_db_history_gate(
         load_paper_autonomous_allocation_proposal_db_history_gate_report,
     )
 
+    validate_local_postgres_dsn(
+        dsn,
+        env_var_name=PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_DSN_ENV_VAR,
+    )
     try:
         import psycopg
     except ModuleNotFoundError as exc:
@@ -11501,6 +11591,10 @@ def _run_paper_autonomous_allocation_proposal_db_history_metrics_evaluation(
         load_paper_autonomous_allocation_proposal_db_history_metrics_evaluation_report,
     )
 
+    validate_local_postgres_dsn(
+        dsn,
+        env_var_name=PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_DSN_ENV_VAR,
+    )
     try:
         import psycopg
     except ModuleNotFoundError as exc:
@@ -11576,6 +11670,10 @@ def _run_paper_autonomous_allocation_proposal_db_history_metrics(
         load_paper_autonomous_allocation_proposal_db_history_metrics_report,
     )
 
+    validate_local_postgres_dsn(
+        dsn,
+        env_var_name=PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_DSN_ENV_VAR,
+    )
     try:
         import psycopg
     except ModuleNotFoundError as exc:
@@ -11656,6 +11754,10 @@ def _run_paper_autonomous_allocation_proposal_db_history_health(
         load_paper_autonomous_allocation_proposal_db_history_health_report,
     )
 
+    validate_local_postgres_dsn(
+        dsn,
+        env_var_name=PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_DSN_ENV_VAR,
+    )
     try:
         import psycopg
     except ModuleNotFoundError as exc:
@@ -11735,6 +11837,12 @@ def _run_paper_autonomous_allocation_proposal_db_history_health_trend(
         load_paper_autonomous_allocation_proposal_db_history_health_trend_report,
     )
 
+    validate_local_postgres_dsn(
+        dsn,
+        env_var_name=(
+            PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_HISTORY_HEALTH_DB_DSN_ENV_VAR
+        ),
+    )
     try:
         import psycopg
     except ModuleNotFoundError as exc:
@@ -11823,6 +11931,12 @@ def _run_paper_autonomous_allocation_proposal_db_history_health_trend_gate(
         load_paper_autonomous_allocation_proposal_db_history_health_trend_gate_report,
     )
 
+    validate_local_postgres_dsn(
+        dsn,
+        env_var_name=(
+            PAPER_AUTONOMOUS_ALLOCATION_PROPOSAL_DB_HISTORY_HEALTH_DB_DSN_ENV_VAR
+        ),
+    )
     try:
         import psycopg
     except ModuleNotFoundError as exc:
@@ -11904,6 +12018,10 @@ def _run_paper_research_packet_operator_flow_db_history_gate(
         load_paper_research_packet_operator_flow_db_history_gate_report,
     )
 
+    validate_local_postgres_dsn(
+        dsn,
+        env_var_name=PAPER_RESEARCH_PACKET_OPERATOR_FLOW_DB_DSN_ENV_VAR,
+    )
     try:
         import psycopg
     except ModuleNotFoundError as exc:
@@ -12003,6 +12121,10 @@ def _run_paper_autonomous_screening_decision_support_gate(
         load_paper_autonomous_screening_decision_support_gate_report,
     )
 
+    validate_local_postgres_dsn(
+        operator_flow_dsn,
+        env_var_name=PAPER_RESEARCH_PACKET_OPERATOR_FLOW_DB_DSN_ENV_VAR,
+    )
     try:
         import psycopg
     except ModuleNotFoundError as exc:
@@ -12131,6 +12253,12 @@ def _run_paper_autonomous_allocation_proposal(
             "upstream DB DSNs to match",
         )
 
+    validate_local_postgres_dsn(
+        screening_gate_dsn,
+        env_var_name=(
+            PAPER_AUTONOMOUS_SCREENING_DECISION_SUPPORT_GATE_DB_DSN_ENV_VAR
+        ),
+    )
     try:
         import psycopg
     except ModuleNotFoundError as exc:
@@ -12219,6 +12347,10 @@ def _run_outcome_tracking_db_history(
         load_outcome_tracking_db_history_report,
     )
 
+    validate_local_postgres_dsn(
+        dsn,
+        env_var_name=OUTCOME_TRACKING_DB_DSN_ENV_VAR,
+    )
     try:
         import psycopg
     except ModuleNotFoundError as exc:
@@ -13954,6 +14086,12 @@ def _run_paper_execution_pipeline(
         load_paper_autonomous_screening_decision_support_gate_reports,
     )
 
+    validate_local_postgres_dsn(
+        screening_gate_dsn,
+        env_var_name=(
+            PAPER_AUTONOMOUS_SCREENING_DECISION_SUPPORT_GATE_DB_DSN_ENV_VAR
+        ),
+    )
     with psycopg.connect(screening_gate_dsn, autocommit=True) as conn:
         gate_reports = load_paper_autonomous_screening_decision_support_gate_reports(
             conn,
@@ -14057,6 +14195,10 @@ def _load_paper_execution_pipeline_db_history(
         load_paper_order_lifecycle_records,
     )
 
+    validate_local_postgres_dsn(
+        dsn,
+        env_var_name=PAPER_EXECUTION_PIPELINE_DB_DSN_ENV_VAR,
+    )
     with psycopg.connect(dsn, autocommit=True) as conn:
         records = load_paper_order_lifecycle_records(
             conn,
@@ -14222,6 +14364,10 @@ def _run_paper_autonomous_investment_ledger_db_history_health(
         load_paper_autonomous_investment_ledger_db_history_health_report,
     )
 
+    validate_local_postgres_dsn(
+        dsn,
+        env_var_name=PAPER_AUTONOMOUS_INVESTMENT_LEDGER_DB_DSN_ENV_VAR,
+    )
     try:
         import psycopg
     except ModuleNotFoundError as exc:
@@ -14302,6 +14448,12 @@ def _run_paper_autonomous_investment_ledger_db_history_health_trend(
         load_paper_autonomous_investment_ledger_db_history_health_trend_report,
     )
 
+    validate_local_postgres_dsn(
+        dsn,
+        env_var_name=(
+            PAPER_AUTONOMOUS_INVESTMENT_LEDGER_DB_HISTORY_HEALTH_DB_DSN_ENV_VAR
+        ),
+    )
     try:
         import psycopg
     except ModuleNotFoundError as exc:
@@ -14389,6 +14541,12 @@ def _run_paper_autonomous_investment_ledger_db_history_health_trend_gate(
         load_paper_autonomous_investment_ledger_db_history_health_trend_gate_report,
     )
 
+    validate_local_postgres_dsn(
+        dsn,
+        env_var_name=(
+            PAPER_AUTONOMOUS_INVESTMENT_LEDGER_DB_HISTORY_HEALTH_DB_DSN_ENV_VAR
+        ),
+    )
     try:
         import psycopg
     except ModuleNotFoundError as exc:

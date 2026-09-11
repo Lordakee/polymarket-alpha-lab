@@ -10,7 +10,9 @@ from polymarket_alpha_lab.strategy_candidate_research_queue_db_row import (
     paper_strategy_candidate_research_queue_report_from_db_row,
     paper_strategy_candidate_research_queue_report_to_db_row,
 )
+from polymarket_alpha_lab.supabase_local_dsn import validate_local_postgres_dsn
 from polymarket_alpha_lab.supabase_strategy_candidate_research_queue_config import (
+    STRATEGY_CANDIDATE_RESEARCH_QUEUE_DB_DSN_ENV_VAR,
     SupabaseStrategyCandidateResearchQueueConfig,
 )
 
@@ -212,6 +214,10 @@ class _StrategyCandidateResearchQueueReportSink:
         self._report_sink = report_sink
 
     def __call__(self, report: Any) -> object:
+        validate_local_postgres_dsn(
+            self._dsn,
+            env_var_name=STRATEGY_CANDIDATE_RESEARCH_QUEUE_DB_DSN_ENV_VAR,
+        )
         try:
             return self._report_sink(
                 dsn=self._dsn,
@@ -243,6 +249,10 @@ def paper_strategy_candidate_research_queue_report_sink_from_config(
         return None
     if config.dsn is None:
         raise ValueError("enabled config must include a DSN")
+    validate_local_postgres_dsn(
+        config.dsn,
+        env_var_name=STRATEGY_CANDIDATE_RESEARCH_QUEUE_DB_DSN_ENV_VAR,
+    )
     return _StrategyCandidateResearchQueueReportSink(
         dsn=config.dsn,
         table_name=config.table_name,

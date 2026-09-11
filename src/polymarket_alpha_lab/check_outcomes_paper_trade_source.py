@@ -6,7 +6,9 @@ from pathlib import Path
 from typing import Protocol
 
 from polymarket_alpha_lab.journal import PaperTradeJournal, PaperTradeRecord
+from polymarket_alpha_lab.supabase_local_dsn import validate_local_postgres_dsn
 from polymarket_alpha_lab.supabase_paper_trade_journal_config import (
+    PAPER_TRADE_JOURNAL_DB_DSN_ENV_VAR,
     SupabasePaperTradeJournalConfig,
 )
 
@@ -43,6 +45,10 @@ def load_check_outcomes_paper_trade_records(
             raise ValueError(
                 "db_loader is required when paper trade DB source is enabled",
             )
+        validate_local_postgres_dsn(
+            db_config.dsn,
+            env_var_name=PAPER_TRADE_JOURNAL_DB_DSN_ENV_VAR,
+        )
         records = _normalize_paper_trade_records(
             db_loader(dsn=db_config.dsn, table_name=db_config.table_name),
             source_name="paper trade DB source",
