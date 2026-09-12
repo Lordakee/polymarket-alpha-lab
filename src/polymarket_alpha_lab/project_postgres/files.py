@@ -61,38 +61,51 @@ def _windows_acl(path: Path, *, create: bool) -> None:
     exe = Path(os.environ.get('SystemRoot', r'C:\Windows')) / 'System32/WindowsPowerShell/v1.0/powershell.exe'
     script = r'''
 $ErrorActionPreference='Stop'
-$p=$env:PAL_PRIVATE_DIRECTORY
-$sid=[System.Security.Principal.WindowsIdentity]::GetCurrent().User
-if ($env:PAL_CREATE_ACL -eq '1') {
-  $a=New-Object System.Security.AccessControl.DirectorySecurity
-  $a.SetOwner($sid)
-  $a.SetAccessRuleProtection($true,$false)
-  foreach ($s in @($sid.Value,'S-1-5-18')) {
-    $id=New-Object System.Security.Principal.SecurityIdentifier($s)
-    $r=New-Object System.Security.AccessControl.FileSystemAccessRule($id,'FullControl','ContainerInherit,ObjectInherit','None','Allow')
-    $a.AddAccessRule($r)
+$stage=10
+try {
+  $p=$env:PAL_PRIVATE_DIRECTORY
+  $sid=[System.Security.Principal.WindowsIdentity]::GetCurrent().User
+  if ($env:PAL_CREATE_ACL -eq '1') {
+    $stage=11
+    $a=[System.Security.AccessControl.DirectorySecurity]::new()
+    $a.SetOwner($sid)
+    $a.SetAccessRuleProtection($true,$false)
+    $inherit=[System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [System.Security.AccessControl.InheritanceFlags]::ObjectInherit
+    foreach ($value in @($sid.Value,'S-1-5-18')) {
+      $id=[System.Security.Principal.SecurityIdentifier]::new($value)
+      $r=[System.Security.AccessControl.FileSystemAccessRule]::new($id,[System.Security.AccessControl.FileSystemRights]::FullControl,$inherit,[System.Security.AccessControl.PropagationFlags]::None,[System.Security.AccessControl.AccessControlType]::Allow)
+      $a.AddAccessRule($r)
+    }
+    $stage=12
+    [System.IO.Directory]::SetAccessControl($p,$a)
   }
-  Set-Acl -LiteralPath $p -AclObject $a
-}
-$a=Get-Acl -LiteralPath $p
-if (-not $a.AreAccessRulesProtected) {exit 3}
-if ($a.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -ne $sid.Value) {exit 4}
-$allowed=@($sid.Value,'S-1-5-18')
-$ownerAllowed=$false
-foreach ($r in $a.GetAccessRules($true,$true,[System.Security.Principal.SecurityIdentifier])) {
-  if ($r.AccessControlType -eq 'Allow') {
-    if ($allowed -notcontains $r.IdentityReference.Value) {exit 5}
-    if ($r.IdentityReference.Value -eq $sid.Value) {$ownerAllowed=$true}
+  $stage=13
+  $a=[System.IO.Directory]::GetAccessControl($p,[System.Security.AccessControl.AccessControlSections]::Access -bor [System.Security.AccessControl.AccessControlSections]::Owner)
+  if (-not $a.AreAccessRulesProtected) {exit 14}
+  if ($a.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -ne $sid.Value) {exit 15}
+  $allowed=@($sid.Value,'S-1-5-18')
+  $ownerAllowed=$false
+  foreach ($r in $a.GetAccessRules($true,$true,[System.Security.Principal.SecurityIdentifier])) {
+    if ($r.AccessControlType -eq [System.Security.AccessControl.AccessControlType]::Allow) {
+      if ($allowed -notcontains $r.IdentityReference.Value) {exit 16}
+      if ($r.IdentityReference.Value -eq $sid.Value -and ($r.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::FullControl) -eq [System.Security.AccessControl.FileSystemRights]::FullControl) {$ownerAllowed=$true}
+    }
   }
-}
-if (-not $ownerAllowed) {exit 6}
+  if (-not $ownerAllowed) {exit 17}
+  exit 0
+} catch {exit $stage}
 '''
     env = clean_environment()
     env.update(PAL_PRIVATE_DIRECTORY=str(path), PAL_CREATE_ACL='1' if create else '0')
     try:
-        command([str(exe), '-NoProfile', '-NonInteractive', '-Command', script], env=env)
+        result = command([str(exe), '-NoProfile', '-NonInteractive', '-Command', script],
+                         env=env, accepted=(0, *range(10, 18)))
     except ProjectDatabaseError:
         fail('project_postgres_private_permissions_required')
+    if result.returncode:
+        # Fixed stage codes distinguish construction/application/verification
+        # failures without publishing paths, ACL principals or child stderr.
+        fail('project_postgres_private_permissions_required_' + str(result.returncode))
 
 
 def private_directory(path: Path, *, create: bool = False) -> None:
@@ -146,10 +159,10 @@ class Layout:
 
     def __post_init__(self):
         root = Path(self.root).absolute()
+        if any(ord(c) < 32 or c in "\"'&|<>^%" for c in str(root)):
+            fail('project_postgres_unsupported_project_path')
         no_links(root)
         root = root.resolve()
-        if any(c in str(root) for c in "\x00\r\n\"'&|<>^%"):
-            fail('project_postgres_unsupported_project_path')
         try:
             with (root / 'pyproject.toml').open('rb') as stream:
                 name = tomllib.load(stream)['project']['name']

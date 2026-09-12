@@ -1,0 +1,40 @@
+"""Regression contracts for the first actual Windows acceptance findings."""
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+from polymarket_alpha_lab.project_postgres import files
+
+
+def test_invalid_project_path_is_rejected_before_filesystem_lookup(tmp_path, monkeypatch):
+    monkeypatch.setattr(files, 'no_links', lambda _: pytest.fail('invalid path reached the filesystem'))
+    with pytest.raises(files.ProjectDatabaseError, match='unsupported_project_path'):
+        files.Layout(tmp_path / 'invalid\nroot')
+
+
+def test_windows_acl_uses_typed_constructors_and_only_fixed_diagnostics(tmp_path, monkeypatch):
+    observed = []
+    def fake(args, **kwargs):
+        observed.append((args, kwargs))
+        return SimpleNamespace(returncode=0, stdout='', stderr='')
+    monkeypatch.setattr(files, 'command', fake)
+    files._windows_acl(tmp_path, create=True)
+    args, kwargs = observed[0]
+    assert '[System.IO.Directory]::SetAccessControl' in args[-1]
+    assert '[System.Security.AccessControl.FileSystemAccessRule]::new' in args[-1]
+    assert 'SetAccessRuleProtection($true,$false)' in args[-1]
+    assert 'exit 0' in args[-1]
+    assert kwargs['env']['PAL_PRIVATE_DIRECTORY'] == str(tmp_path)
+    assert kwargs['env']['PAL_CREATE_ACL'] == '1'
+    assert kwargs['accepted'] == (0, *range(10, 18))
+
+
+@pytest.mark.parametrize('code', range(10, 18))
+def test_windows_acl_failure_stages_do_not_leak_child_diagnostics(tmp_path, monkeypatch, code):
+    monkeypatch.setattr(files, 'command', lambda *a, **kw: SimpleNamespace(
+        returncode=code, stdout='synthetic-private-detail', stderr='synthetic-private-detail'))
+    with pytest.raises(files.ProjectDatabaseError) as error:
+        files._windows_acl(tmp_path, create=False)
+    assert str(error.value) == 'project_postgres_private_permissions_required_' + str(code)
+    assert 'synthetic-private-detail' not in repr(error.value)

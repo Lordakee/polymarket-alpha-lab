@@ -238,7 +238,12 @@ def test_wrong_archive_checksum_fails_before_any_process_or_state(root,tmp_path,
 def archive_with(names):
     bio=BytesIO()
     with zipfile.ZipFile(bio,'w') as z:
-        for name in names: z.writestr(name,b'fixture')
+        for name in names:
+            # Preserve malformed wire names: ZipInfo(name) normalizes Windows
+            # backslashes before serialization, masking the negative fixture.
+            item = zipfile.ZipInfo('placeholder')
+            item.filename = item.orig_filename = name
+            z.writestr(item, b'fixture')
     bio.seek(0)
     return zipfile.ZipFile(bio)
 
