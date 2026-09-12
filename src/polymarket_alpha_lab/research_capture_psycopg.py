@@ -204,13 +204,18 @@ def capture_research_outcome_with_psycopg(
 def load_research_evaluation_with_psycopg(
     dsn: str, *, generated_at: datetime | None = None, max_records: int = MAX_RECORDS,
     bucket_count: int = 10, min_sample_count: int = 30, min_bin_count: int = 5,
+    require_execution_complete: bool = False,
 ) -> ResearchEvaluationReport:
     """Read one consistent DB snapshot; never silently score a truncated cohort.
 
     No success-only/recent-history filter. Limits apply to ALL visible attempts
     and outcomes; exceeding either or 32 MiB of payloads raises, before loading
     bodies. A historical cutoff is permitted; a future report time is rejected.
+    With require_execution_complete=True, outstanding runner claims block scoring
+    in this SAME read snapshot (requires the execution-claim migration).
     """
+    if type(require_execution_complete) is not bool:
+        raise ValueError("require_execution_complete must be exact bool")
     at = None if generated_at is None else _utc("generated_at", generated_at)
     integer("max_records", max_records, 1, MAX_RECORDS)
     ResearchProbabilityDiagnostics((), bucket_count, min_sample_count, min_bin_count)
@@ -221,6 +226,12 @@ def load_research_evaluation_with_psycopg(
         if at is not None and at > server_now:
             raise ResearchCaptureConflict("research_evaluation_from_future")
         cutoff = server_now if at is None else at
+        if require_execution_complete:
+            cursor.execute("SELECT count(*) FROM research_capture.execution_claims c "
+                           "LEFT JOIN research_capture.attempts a ON a.record_id=c.record_id "
+                           "WHERE c.claimed_at<=%s AND (a.record_id IS NULL OR a.recorded_at>%s)", (cutoff, cutoff))
+            if cursor.fetchone()[0]:
+                raise ResearchCaptureConflict("research_execution_history_incomplete")
         cursor.execute("SELECT count(*),coalesce(sum(octet_length(payload)),0) FROM research_capture.attempts WHERE recorded_at<=%s", (cutoff,))
         count, size = cursor.fetchone()
         cursor.execute("SELECT count(*) FROM research_capture.outcomes WHERE recorded_at<=%s", (cutoff,))
