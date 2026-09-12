@@ -190,7 +190,7 @@ def _market_context(snapshot: GammaMarketSnapshot, condition_id: str,
         raise _ContextRejected("market_context_stale")
     try:
         payload = strict_json(snapshot.raw_json.decode("utf-8"))
-    except (ValueError, UnicodeError, RecursionError):
+    except (ValueError, UnicodeError, ArithmeticError, RecursionError):
         raise _ContextRejected("invalid_market_payload") from None
     if type(payload) is not dict:
         raise _ContextRejected("invalid_market_payload")
@@ -207,7 +207,7 @@ def _market_context(snapshot: GammaMarketSnapshot, condition_id: str,
                 or any(type(item) is not str for item in outcomes)
                 or {item.casefold() for item in outcomes} != {"yes", "no"}):
             raise ValueError("not canonical binary outcomes")
-    except (ValueError, RecursionError):
+    except (ValueError, ArithmeticError, RecursionError):
         raise _ContextRejected("unsupported_market_outcomes") from None
     try:
         question = payload.get("question")
