@@ -27,7 +27,7 @@ FORMAT = 'project-native-distribution-v1'
 MANIFEST = 'PROJECT-BUNDLE.json'
 ENGINE = 'database/postgres-runtime.zip'
 TOP = 'polymarket-alpha-lab'
-FIXED = ('pyproject.toml', 'uv.lock', 'database/README.md',
+FIXED = ('pyproject.toml', 'uv.lock', '.gitignore', '.gitattributes', 'database/README.md',
          'database/quickstart.md', 'database/migrations.lock.json',
          'scripts/project_database.py', 'scripts/start_project.py')
 SOURCE_ROOTS = ('src/polymarket_alpha_lab', 'supabase/migrations')
@@ -84,7 +84,8 @@ def committed_sources(root: Path) -> tuple[dict[str, bytes], str, str]:
     tree = _git(root, 'rev-parse', '--verify', 'HEAD^{tree}').decode().strip()
     if not all(re.fullmatch('[0-9a-f]{40}', value) for value in (commit, tree)):
         fail('project_bundle_source_failed')
-    if _git(root, 'status', '--porcelain', '--untracked-files=no'):
+    staged = _git(root, 'diff', '--cached', '--name-only', '-z', 'HEAD').decode('utf-8').split('\0')
+    if any(selected_source(name) for name in staged):
         fail('project_bundle_dirty_source')
     indexed, total = {}, 0
     for entry in _git(root, 'ls-tree', '-rlz', '--full-tree', 'HEAD').split(b'\0'):
@@ -121,6 +122,17 @@ def committed_sources(root: Path) -> tuple[dict[str, bytes], str, str]:
             blob = sha1(b'blob ' + str(len(raw)).encode() + b'\0' + raw).hexdigest()
             if blob != indexed[item.name]:
                 fail('project_bundle_source_changed')
+            target = root / item.name
+            no_links(target)
+            if not target.is_file():
+                fail('project_bundle_dirty_source')
+            with target.open('rb') as worktree:
+                observed = worktree.read(len(raw) * 2 + 1)
+            # HEAD remains the exact artifact source. Accept ordinary LF->CRLF
+            # text checkout conversion without trusting global Git filters; do
+            # not accept content edits, staged additions or linked source files.
+            if observed != raw and observed.replace(b'\r\n', b'\n') != raw:
+                fail('project_bundle_dirty_source')
             sources[item.name] = raw
     if sources.keys() != indexed.keys() or _git(root, 'rev-parse', 'HEAD').decode().strip() != commit:
         fail('project_bundle_source_changed')

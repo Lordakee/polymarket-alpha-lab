@@ -36,7 +36,10 @@ def checkout(tmp_path):
         file = root / name
         file.parent.mkdir(parents=True, exist_ok=True)
         file.write_text('synthetic private excluded\n' if not mod.selected_source(name) else '# synthetic code\n', encoding='utf-8')
+    (root / '.gitignore').write_text('.local/\nruntime/\n.env\n', encoding='utf-8')
+    (root / '.gitattributes').write_text('*.sql text eol=lf\n', encoding='utf-8')
     git(root, 'add', '-A')
+    git(root, 'add', '-f', '.env', '.local/postgres/app.pgpass')
     git(root, 'commit', '-qm', 'synthetic baseline')
     return root
 
@@ -238,3 +241,25 @@ def test_export_ignore_cannot_silently_drop_code(checkout):
     (checkout / '.gitattributes').write_text('src/polymarket_alpha_lab/module.py export-ignore\n')
     git(checkout, 'add', '.gitattributes'); git(checkout, 'commit', '-qm', 'attribute fixture')
     with pytest.raises(ProjectDatabaseError, match='source_changed'): mod.committed_sources(checkout)
+
+
+def test_distribution_retains_git_credential_exclusions(checkout, native, tmp_path):
+    _, installed, _ = kit(checkout, native, tmp_path)
+    manifest = mod.verify_distribution(installed)
+    assert '.gitignore' in manifest['files']
+    assert '.gitattributes' in manifest['files']
+    assert '.local/' in (installed / '.gitignore').read_text()
+
+
+def test_crlf_checkout_ships_exact_committed_bytes(checkout, native, tmp_path):
+    name = 'src/polymarket_alpha_lab/module.py'
+    committed = git(checkout, 'show', 'HEAD:' + name)
+    assert b'\r\n' not in committed or os.name == 'nt'
+    # A raw CRLF checkout is normal on Windows; the artifact still uses HEAD.
+    source = checkout / name
+    canonical = committed.replace(b'\r\n', b'\n')
+    source.write_bytes(canonical.replace(b'\n', b'\r\n'))
+    archive = tmp_path / 'kit.zip'
+    mod.build_distribution(checkout, native, archive)
+    with zipfile.ZipFile(archive) as z:
+        assert z.read(mod.TOP + '/' + name) == committed

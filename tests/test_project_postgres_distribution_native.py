@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 import socket
+import shutil
 import subprocess
 import sys
 import uuid
@@ -46,8 +47,22 @@ def extract(archive, parent):
     return parent / distribution.TOP
 
 
+def install_environment(root):
+    uv = shutil.which('uv')
+    assert uv is not None
+    # All required packages were cached by the workflow's locked setup. Prove
+    # that the extracted metadata can create its OWN venv, without network.
+    result = subprocess.run([uv, 'sync', '--locked', '--offline', '--extra', 'postgres',
+        '--python', sys.executable], cwd=root, env=clean_environment(),
+        stdin=subprocess.DEVNULL, capture_output=True, timeout=120, text=True,
+        encoding='utf-8', check=False, shell=False)
+    if result.returncode:
+        pytest.fail('extracted dependency installation failed: ' + result.stderr[-3000:])
+    assert (root / '.venv/Scripts/python.exe').is_file()
+
+
 def start(root, *args, expected=0):
-    result = subprocess.run([sys.executable, '-I', str(root / 'scripts/start_project.py'), *args],
+    result = subprocess.run([str(root / '.venv/Scripts/python.exe'), '-I', str(root / 'scripts/start_project.py'), *args],
         env=clean_environment(), stdin=subprocess.DEVNULL, capture_output=True,
         timeout=240, text=True, encoding='utf-8', check=False, shell=False)
     # Production startup emits only fixed public codes, never child stderr/DSNs.
@@ -99,6 +114,7 @@ def test_build_and_run_actual_relocatable_kit(monkeypatch):
         distribution.verify_distribution(root)
         assert not (root / '.local').exists() and not (root / 'runtime').exists()
         assert not (root / '.env').exists() and not (root / '.git').exists()
+        install_environment(root)
     with zipfile.ZipFile(first / distribution.ENGINE) as seed:
         assert all(not name.lower().endswith(distribution.FONT_SUFFIXES) for name in seed.namelist())
         assert not any(name.startswith('pgsql/data/') for name in seed.namelist())
