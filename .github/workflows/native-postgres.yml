@@ -1,0 +1,57 @@
+name: Native project PostgreSQL
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/polymarket_alpha_lab/project_postgres/**'
+      - 'src/polymarket_alpha_lab/research_capture_psycopg.py'
+      - 'src/polymarket_alpha_lab/local_postgres_dsn.py'
+      - 'tests/test_project_postgres*'
+      - 'database/**'
+      - 'supabase/migrations/**'
+      - '.github/workflows/native-postgres.yml'
+permissions:
+  contents: read
+concurrency:
+  group: native-project-postgres-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  windows-native:
+    runs-on: windows-2025
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e
+        with:
+          version: '0.10.0'
+          enable-cache: false
+      - name: Install locked Python environment
+        run: uv sync --locked --extra dev --extra postgres --python 3.12
+      - name: Prove private native Windows lifecycle without a service or Docker
+        shell: pwsh
+        run: |
+          # This path supplies binaries ONLY. No installed data/role/password is used.
+          $env:POLYMARKET_ALPHA_LAB_NATIVE_PG_PREFIX = 'C:\Program Files\PostgreSQL\17'
+          $env:POLYMARKET_ALPHA_LAB_RUN_NATIVE_PROJECT_POSTGRES = '1'
+          $env:PYTEST_DISABLE_PLUGIN_AUTOLOAD = '1'
+          $env:PYTHONUTF8 = '1'
+          Get-ChildItem Env: | Where-Object { $_.Name -like 'PG*' } | ForEach-Object { Remove-Item ('Env:' + $_.Name) }
+          .\.venv\Scripts\python.exe -m pytest -q -s tests/test_project_postgres.py tests/test_project_postgres_native.py --junitxml="$env:RUNNER_TEMP/native-proof.xml" *> "$env:RUNNER_TEMP/native-proof.log"
+          $code = $LASTEXITCODE
+          Get-Content "$env:RUNNER_TEMP/native-proof.log"
+          exit $code
+      - name: Verify tracked source unchanged
+        run: |
+          git diff --check
+          git diff --exit-code
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: native-postgres-proof-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/native-proof.log
+            ${{ runner.temp }}/native-proof.xml
+          retention-days: 7
+          if-no-files-found: ignore
