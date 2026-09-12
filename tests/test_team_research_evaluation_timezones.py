@@ -1,5 +1,5 @@
 """Repeated local hours must never alter evaluation time eligibility or selection."""
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, tzinfo
 from decimal import Decimal
 
 import pytest
@@ -34,9 +34,22 @@ def reasons(report):
     return {row.record_id: row.reason_code for row in report.decisions}
 
 
+class _RepeatedHour(tzinfo):
+    """Synthetic fallback transition; no OS/IANA timezone database required."""
+
+    def utcoffset(self, value):
+        after = value.hour >= 2 or (value.hour == 1 and value.fold == 1)
+        return timedelta(hours=-5 if after else -4)
+
+    def dst(self, value):
+        return self.utcoffset(value) + timedelta(hours=5)
+
+
+_FOLD_ZONE = _RepeatedHour()
+
+
 def fold_time(hour, minute, fold=0):
-    from zoneinfo import ZoneInfo
-    return datetime(2026, 11, 1, hour, minute, tzinfo=ZoneInfo("America/New_York"), fold=fold)
+    return datetime(2026, 11, 1, hour, minute, tzinfo=_FOLD_ZONE, fold=fold)
 
 
 def test_repeated_local_hour_contains_distinct_attempt_instants():
