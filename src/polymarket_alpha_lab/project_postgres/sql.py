@@ -97,6 +97,30 @@ GRANT USAGE ON SCHEMA public, research_capture TO {APPLICATION};
 GRANT SELECT, INSERT ON ALL TABLES IN SCHEMA public, research_capture TO {APPLICATION};
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public, research_capture TO {APPLICATION};
 GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA research_capture TO {APPLICATION};
+-- Preserve the original table's RLS instead of giving the app BYPASSRLS.
+DO $policy$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public'
+      AND tablename='team_research_assignment_reports' AND policyname='pal_project_read') THEN
+    CREATE POLICY pal_project_read ON public.team_research_assignment_reports
+      FOR SELECT TO {APPLICATION} USING (true);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public'
+      AND tablename='team_research_assignment_reports' AND policyname='pal_project_insert') THEN
+    CREATE POLICY pal_project_insert ON public.team_research_assignment_reports
+      FOR INSERT TO {APPLICATION} WITH CHECK (true);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public'
+      AND tablename='team_research_assignment_reports' AND policyname='pal_project_read'
+      AND roles=ARRAY['{APPLICATION}']::name[] AND cmd='SELECT' AND permissive='PERMISSIVE'
+      AND qual='true' AND with_check IS NULL)
+     OR NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public'
+      AND tablename='team_research_assignment_reports' AND policyname='pal_project_insert'
+      AND roles=ARRAY['{APPLICATION}']::name[] AND cmd='INSERT' AND permissive='PERMISSIVE'
+      AND qual IS NULL AND with_check='true') THEN
+    RAISE EXCEPTION 'project_postgres_policy_conflict';
+  END IF;
+END $policy$;
 COMMIT;
 """
 

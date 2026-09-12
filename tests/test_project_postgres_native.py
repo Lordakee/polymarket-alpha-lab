@@ -10,6 +10,7 @@ import re
 from pathlib import Path
 import shutil
 import socket
+import uuid
 
 import pytest
 
@@ -55,7 +56,16 @@ def test_native_project_lifecycle_all_migrations_and_real_research(tmp_path,monk
     assert prefix.is_absolute() and (prefix/'bin').is_dir()
     for k in tuple(os.environ):
         if k.upper().startswith('PG'): monkeypatch.delenv(k)
-    root=tmp_path/'Project With Spaces'
+    from polymarket_alpha_lab.project_postgres import files
+    if os.name == 'nt':
+        # Pytest's admin-owned 0700 basetemp can exclude PostgreSQL's safely
+        # restricted child token. Create our OWN private test root outside it;
+        # never alter an existing parent's ACL or disable PG privilege dropping.
+        proof_base = Path(os.environ['RUNNER_TEMP']) / ('pal-native-' + uuid.uuid4().hex)
+        files.private_directory(proof_base, create=True)
+    else:
+        proof_base = tmp_path
+    root=proof_base/'Project With Spaces'
     root.mkdir()
     (root/'pyproject.toml').write_text('[project]\nname="polymarket-alpha-lab"\n')
     shutil.copytree(ROOT/'database',root/'database')
@@ -68,11 +78,11 @@ def test_native_project_lifecycle_all_migrations_and_real_research(tmp_path,monk
     original_run = files.subprocess.run
     def diagnostic_run(args, **kwargs):
         result = original_run(args, **kwargs)
-        if Path(args[0]).stem == 'initdb' and result.returncode:
+        if Path(args[0]).stem in ('initdb', 'pg_ctl', 'psql') and result.returncode:
             def safe(value):
                 value = re.sub(r'[a-fA-F0-9]{64}', '<redacted>', value)
-                return value.replace(str(root), '<temporary-project>')[-4000:]
-            print(json.dumps({'native_init_exit': result.returncode,
+                return value.replace(str(root), '<temporary-project>').replace(root.as_posix(), '<temporary-project>')[-4000:]
+            print(json.dumps({'native_program': Path(args[0]).stem, 'exit_code': result.returncode,
                 'stdout': safe(result.stdout), 'stderr': safe(result.stderr)}))
         return result
     monkeypatch.setattr(files.subprocess, 'run', diagnostic_run)
@@ -103,6 +113,21 @@ def test_native_project_lifecycle_all_migrations_and_real_research(tmp_path,monk
             role=json.loads(db._psql(info,"SELECT json_build_array(rolsuper,rolcreatedb,rolcreaterole,rolreplication,rolbypassrls) "
                 "FROM pg_roles WHERE rolname=current_user;",owner=False))
             assert role==[False]*5
+            # This legacy table has RLS enabled. App INSERT and SELECT must both
+            # work via explicit app-only policies, without giving it BYPASSRLS.
+            from polymarket_alpha_lab.project_postgres.sql import literal
+            fixture = dict(generated_at='2026-01-01T00:00:00+00:00', config_version='native',
+                source_queue_config_version='native', source_route_config_version='native',
+                source_memory_config_version='native', assignment_status='blocked',
+                assignment_count=0, assigned_count=0, watch_count=0, blocked_count=0,
+                reason_codes=[], paper_only=True, report_only=True, readonly=True)
+            db._psql(info, "INSERT INTO public.team_research_assignment_reports "
+                "(report_sha256,generated_at,config_version,source_queue_config_version,"
+                "source_route_config_version,source_memory_config_version,assignment_status,"
+                "assignment_count,assigned_count,watch_count,blocked_count,payload_json) VALUES ("
+                "repeat('a',64),'2026-01-01T00:00:00+00:00','native','native','native','native',"
+                "'blocked',0,0,0,0," + literal(json.dumps(fixture)) + "::jsonb);", owner=False)
+            assert db._psql(info, 'SELECT count(*) FROM public.team_research_assignment_reports;', owner=False)=='1'
             for denied in ('CREATE DATABASE unwanted;',
                 "UPDATE project_private.instance SET root_sha256='wrong';",
                 'DELETE FROM research_capture.attempts;', 'SELECT * FROM pg_authid;'):

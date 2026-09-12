@@ -48,3 +48,13 @@ def test_archive_rejects_filename_normalization_before_extraction():
     archive = SimpleNamespace(infolist=lambda: [info])
     with pytest.raises(files.ProjectDatabaseError, match='invalid_runtime_archive'):
         zip_members(archive)
+
+
+def test_app_policies_preserve_legacy_row_level_security_without_bypass():
+    from polymarket_alpha_lab.project_postgres.sql import GRANTS
+    assert 'FOR SELECT TO pal_app USING (true)' in GRANTS
+    assert 'FOR INSERT TO pal_app WITH CHECK (true)' in GRANTS
+    assert "roles=ARRAY['pal_app']::name[]" in GRANTS
+    assert 'DISABLE ROW LEVEL SECURITY' not in GRANTS
+    assert 'ALTER ROLE' not in GRANTS
+    assert 'project_postgres_policy_conflict' in GRANTS
