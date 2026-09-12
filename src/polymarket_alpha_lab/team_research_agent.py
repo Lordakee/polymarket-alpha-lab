@@ -141,6 +141,8 @@ def _run(task: TeamResearchTask, model: ResearchModel, limits: ResearchAgentLimi
         })},
     ]
     for _ in range(limits.max_model_calls):
+        if tool_calls >= limits.max_tool_calls:
+            return result("blocked", "tool_call_limit")
         transcript = _dump(messages)
         if len(transcript) > limits.max_context_chars:
             return result("blocked", "context_limit")
