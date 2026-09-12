@@ -6,6 +6,11 @@ The project starts its own native PostgreSQL processes, owns a separate cluster,
 and supplies generated project-only credentials. A PostgreSQL process is still
 required; this is application-managed server software, not an in-process engine.
 
+
+A clean Windows source + PostgreSQL distribution and automatic first-start check
+are now available. See **[quickstart.md](quickstart.md)** for the two-command
+setup, kit checksums, and the boundary that Python/dependencies remain required.
+
 ## Layout and one-time setup
 
 ```text
