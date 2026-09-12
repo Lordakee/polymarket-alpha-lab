@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal
-import shlex
 from urllib.parse import parse_qs, urlsplit
 
 
 _ALLOWED_LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1")
 _LOCAL_HOSTS = frozenset(_ALLOWED_LOCAL_HOSTS)
 _POSTGRES_URI_SCHEMES = frozenset(("postgresql", "postgres"))
+_KEYWORD_DSN_WHITESPACE = " \t\r\n\v\f"
 _READINESS_COUNT = Decimal("4.000000")
 _ZERO_COUNT = Decimal("0.000000")
 _READY_REASON_CODE = "local_supabase_postgres_dsn_ready"
@@ -143,7 +143,7 @@ def validate_local_postgres_dsn(value: str, *, env_var_name: str) -> None:
         f"{env_var_name} must point to local Postgres/Supabase on localhost, "
         "127.0.0.1, ::1, or an explicit Unix socket path"
     )
-    if not value:
+    if type(value) is not str or not value or "\x00" in value:
         raise ValueError(error_message)
     if _is_postgres_uri(value):
         if _is_local_postgres_uri(value):
@@ -186,6 +186,8 @@ def local_postgres_dsn_readiness(
 
 
 def _readiness_reason_codes(value: str) -> tuple[str, ...]:
+    if type(value) is not str or not value or "\x00" in value:
+        return ("local_supabase_postgres_dsn_invalid_blocker",)
     if _is_jsonl_file_dsn(value):
         return (
             "jsonl_file_dsn_rejected_blocker",
@@ -227,14 +229,10 @@ def _is_hosted_database_dsn(value: str) -> bool:
         return bool(parsed.hostname and not _is_local_host(parsed.hostname))
     if not _is_simple_keyword_dsn(value):
         return False
-    try:
-        tokens = shlex.split(value)
-    except ValueError:
+    fields = _parse_keyword_dsn(value)
+    if fields is None:
         return False
-    for token in tokens:
-        if "=" not in token:
-            return False
-        key, field_value = token.split("=", 1)
+    for key, field_value in fields:
         if key.lower() == "host":
             return not _is_local_socket_or_host(field_value)
     return False
@@ -245,6 +243,11 @@ def _is_postgres_uri(value: str) -> bool:
 
 
 def _is_local_postgres_uri(value: str) -> bool:
+    # libpq does not discard URI fragments the way urlsplit does. A raw '#'
+    # can hide a host/hostaddr/service query override from this validator.
+    # Literal hashes in URI components must be percent-encoded as %23.
+    if "#" in value:
+        return False
     try:
         parsed = urlsplit(value)
         port = parsed.port
@@ -275,17 +278,11 @@ def _is_simple_keyword_dsn(value: str) -> bool:
 
 
 def _is_local_keyword_dsn(value: str) -> bool:
-    try:
-        tokens = shlex.split(value)
-    except ValueError:
+    fields = _parse_keyword_dsn(value)
+    if fields is None:
         return False
     params: dict[str, str] = {}
-    for token in tokens:
-        if "=" not in token:
-            return False
-        key, field_value = token.split("=", 1)
-        if not key:
-            return False
+    for key, field_value in fields:
         normalized_key = key.lower()
         if normalized_key in params:
             return False
@@ -299,6 +296,69 @@ def _is_local_keyword_dsn(value: str) -> bool:
     if port is not None and (not port.isdecimal() or not _is_valid_port(int(port))):
         return False
     return _is_local_socket_or_host(host)
+
+
+def _parse_keyword_dsn(value: str) -> tuple[tuple[str, str], ...] | None:
+    """Read libpq keyword/value syntax, not shell quoting or concatenation.
+
+    Only single quotes delimit quoted values; backslashes escape the next
+    character both inside and outside them. Double quotes are ordinary data.
+    Keep duplicate keys visible so the local-only policy can reject them.
+    Malformed or ambiguous input returns None without exposing DSN contents.
+    """
+
+    fields: list[tuple[str, str]] = []
+    position = 0
+    size = len(value)
+    while True:
+        while position < size and value[position] in _KEYWORD_DSN_WHITESPACE:
+            position += 1
+        if position == size:
+            return tuple(fields)
+
+        start = position
+        while (
+            position < size
+            and value[position] not in _KEYWORD_DSN_WHITESPACE
+            and value[position] != "="
+        ):
+            position += 1
+        key = value[start:position]
+        while position < size and value[position] in _KEYWORD_DSN_WHITESPACE:
+            position += 1
+        if not key or position == size or value[position] != "=":
+            return None
+        position += 1
+        while position < size and value[position] in _KEYWORD_DSN_WHITESPACE:
+            position += 1
+
+        characters: list[str] = []
+        quoted = position < size and value[position] == "'"
+        if quoted:
+            position += 1
+        while position < size:
+            character = value[position]
+            if character == "\\":
+                position += 1
+                if position == size:
+                    return None
+                characters.append(value[position])
+                position += 1
+            elif quoted and character == "'":
+                position += 1
+                break
+            elif not quoted and character in _KEYWORD_DSN_WHITESPACE:
+                break
+            else:
+                characters.append(character)
+                position += 1
+        else:
+            if quoted:
+                return None
+        # Do not reinterpret adjacent shell-style quoted/unquoted segments.
+        if quoted and position < size and value[position] not in _KEYWORD_DSN_WHITESPACE:
+            return None
+        fields.append((key, "".join(characters)))
 
 
 def _is_local_socket_or_host(value: str) -> bool:
