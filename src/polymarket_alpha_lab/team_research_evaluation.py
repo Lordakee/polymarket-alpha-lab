@@ -78,9 +78,11 @@ class ResearchEvaluationRecord:
         text("model_id", self.model_id, 128)
         identifier("protocol_version", self.protocol_version)
         aware("recorded_at", self.recorded_at)
+        # Normalize before comparisons: same-zone datetime ordering ignores fold.
+        object.__setattr__(self, "recorded_at", self.recorded_at.astimezone(UTC))
         hard_flags(self)
         object.__setattr__(self, "run", _copy_run(self.run))
-        if self.recorded_at < self.run.intake.as_of:
+        if self.recorded_at < self.run.intake.as_of.astimezone(UTC):
             raise ValueError("recorded_at must not precede the research data cutoff")
 
     @property
@@ -111,6 +113,7 @@ class ResearchEvaluationOutcome:
         require_market_slug(self.market_slug)
         for name in ("forecast_cutoff_at", "resolved_at", "recorded_at"):
             aware(name, getattr(self, name))
+            object.__setattr__(self, name, getattr(self, name).astimezone(UTC))
         if not self.forecast_cutoff_at <= self.resolved_at <= self.recorded_at:
             raise ValueError("outcome timestamps must be chronological")
         if type(self.actual_yes) is not bool:
@@ -252,6 +255,7 @@ class ResearchEvaluationReport:
     def __post_init__(self) -> None:
         hard_flags(self)
         aware("generated_at", self.generated_at)
+        object.__setattr__(self, "generated_at", self.generated_at.astimezone(UTC))
         # Validate scoring config even for empty inputs.
         ResearchProbabilityDiagnostics((), self.bucket_count, self.min_sample_count, self.min_bin_count)
         records, outcomes = _inputs(self.records, self.outcomes)

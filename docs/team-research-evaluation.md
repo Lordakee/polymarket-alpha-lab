@@ -52,6 +52,10 @@ condition and market slug, a source reference and raw source SHA256, plus:
 
 The timestamps must satisfy `forecast_cutoff_at <= resolved_at <= recorded_at`.
 Scored forecast records must be **strictly before** `forecast_cutoff_at`.
+All evaluation capture, cutoff, resolution, and report timestamps are normalized
+to UTC before validation, selection, or comparisons. Repeated local hours at
+a daylight-saving transition represent different instants, not duplicate attempts;
+wall-clock order must never make a late prediction eligible.
 Outcome capture must be at or before the report's `generated_at`. A known later
 resolution may be supplied for replay, but remains unavailable at an earlier
 report time. A forecast captured after `generated_at` is excluded from that
