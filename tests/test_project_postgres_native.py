@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import socket
@@ -61,6 +62,20 @@ def test_native_project_lifecycle_all_migrations_and_real_research(tmp_path,monk
     shutil.copytree(ROOT/'supabase/migrations',root/'supabase/migrations')
     with socket.socket() as s:
         s.bind(('127.0.0.1',0));port=s.getsockname()[1]
+    # Test-only diagnostics for the fresh synthetic cluster. Never log argv,
+    # stdin, passwords, existing system databases or the production error path.
+    from polymarket_alpha_lab.project_postgres import files
+    original_run = files.subprocess.run
+    def diagnostic_run(args, **kwargs):
+        result = original_run(args, **kwargs)
+        if Path(args[0]).stem == 'initdb' and result.returncode:
+            def safe(value):
+                value = re.sub(r'[a-fA-F0-9]{64}', '<redacted>', value)
+                return value.replace(str(root), '<temporary-project>')[-4000:]
+            print(json.dumps({'native_init_exit': result.returncode,
+                'stdout': safe(result.stdout), 'stderr': safe(result.stderr)}))
+        return result
+    monkeypatch.setattr(files.subprocess, 'run', diagnostic_run)
     print('native proof: copy binaries only, never reuse installed data')
     version=import_runtime_directory(root,prefix)
     db=ProjectPostgres(root)

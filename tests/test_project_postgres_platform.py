@@ -38,3 +38,13 @@ def test_windows_acl_failure_stages_do_not_leak_child_diagnostics(tmp_path, monk
         files._windows_acl(tmp_path, create=False)
     assert str(error.value) == 'project_postgres_private_permissions_required_' + str(code)
     assert 'synthetic-private-detail' not in repr(error.value)
+
+
+def test_archive_rejects_filename_normalization_before_extraction():
+    from polymarket_alpha_lab.project_postgres.runtime import zip_members
+    import zipfile
+    info = zipfile.ZipInfo('pgsql/bin/exe')
+    info.orig_filename = 'pgsql\\bin\\exe'
+    archive = SimpleNamespace(infolist=lambda: [info])
+    with pytest.raises(files.ProjectDatabaseError, match='invalid_runtime_archive'):
+        zip_members(archive)

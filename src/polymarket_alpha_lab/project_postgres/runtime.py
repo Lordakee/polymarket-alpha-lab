@@ -123,6 +123,10 @@ def zip_members(archive: zipfile.ZipFile) -> tuple[tuple[zipfile.ZipInfo, PurePo
     if len(archive.infolist()) > 50000:
         fail('project_postgres_invalid_runtime_archive')
     for item in archive.infolist():
+        # ZipInfo retains the wire name separately before NUL truncation and
+        # Windows separator normalization. Reject, never trust the rewritten name.
+        if item.orig_filename != item.filename:
+            fail('project_postgres_invalid_runtime_archive')
         path = PurePosixPath(item.filename)
         if ('\\' in item.filename or path.is_absolute() or '..' in path.parts
                 or any(':' in p or p.endswith((' ', '.')) for p in path.parts)
