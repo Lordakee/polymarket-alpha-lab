@@ -1,5 +1,30 @@
 # Project Instructions
 
+## Current owner override: native project-private PostgreSQL (2026-09-12)
+
+The owner explicitly replaced the Supabase requirement: use only native
+PostgreSQL owned and managed by this project, without Docker, Supabase services,
+or automatic adoption of an external/shared database. Runtime binaries live in
+`runtime/postgres`; the private cluster and OS-protected configuration/credentials
+live in `.local/postgres`. These native-engine/configuration files are not a
+file-backed substitute for business records: project evidence remains PostgreSQL
+only. Do not commit runtime binaries, database clusters or generated credentials.
+
+Use `project_postgres` for new managed application sessions. Preserve the single
+audited `validate_local_postgres_dsn` implementation; `local_postgres_dsn` is its
+canonical import and the historical `supabase_local_dsn` name remains compatible.
+The `supabase/migrations` pathname and old serialized labels are historical API
+compatibility, not a requirement to install Supabase. Do not silently move, alter
+or replay existing migrations. Native migrations have a checked-in hash manifest
+and a transactional PostgreSQL ledger. Existing external/local installations are
+not automatically imported, migrated, modified or deleted.
+
+The owner has also authorized self-review, commits and merges without external
+Claude Code review or CodeGraph synchronization; do not claim those checks ran.
+The remaining research, credential, persistence and Phase 1 safety boundaries
+continue to apply. Earlier conflicting Supabase/review wording below is retained
+as historical context and is superseded by this section.
+
 ## Scope
 
 This repository is for Polymarket market research, data engineering, strategy validation, paper trading, risk analysis, and staged automation toward user-authorized execution.
@@ -220,7 +245,7 @@ Two gates were mandatory during that historical workflow:
    - Submit the stage plan plus the resulting code/diffs to the configured reviewer.
    - The next stage may begin ONLY after the reviewer approves. If the reviewer requests changes, fix them and re-review until approved.
 
-Stage boundary definition: a stage is any meaningful unit of work that has its own plan and deliverable (typically one Node in the existing plan/spec cadence, or a Sisyphus todowrite milestone). Do not collapse multiple stages into one review.
+Stage boundary definition: a stage is any meaningful unit of work that has its own plan and deliverable (typically one Node in the existing plan/spec cadence). Do not collapse multiple stages into one review.
 
 ### Workflow summary per stage
 

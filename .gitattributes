@@ -1,0 +1,3 @@
+# Migration hashes bind exact reviewed bytes on every checkout platform.
+/supabase/migrations/*.sql text eol=lf
+/database/migrations.lock.json text eol=lf

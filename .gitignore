@@ -17,3 +17,8 @@ artifacts/
 tmp/
 .omo/
 .superpowers/
+
+# Project-owned native PostgreSQL: never commit engines, clusters or credentials.
+.local/
+runtime/postgres/
+runtime/postgres.installing/

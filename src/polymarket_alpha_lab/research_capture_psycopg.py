@@ -63,6 +63,8 @@ def _identity(condition_id, market_slug):
 
 def _local_transaction(dsn, operation, *, readonly=False):
     validate_local_postgres_dsn(dsn, env_var_name="POLYMARKET_ALPHA_LAB_RESEARCH_CAPTURE_DB_DSN")
+    from polymarket_alpha_lab.project_postgres.binding import check_environment, verify_connection
+    check_environment()
     try:
         import psycopg
         # kwargs also prevent an unbounded connect_timeout in a supplied DSN.
@@ -73,6 +75,7 @@ def _local_transaction(dsn, operation, *, readonly=False):
                 cursor.execute("SET LOCAL statement_timeout = '15s'")
                 cursor.execute("SET LOCAL lock_timeout = '5s'")
                 cursor.execute("SET LOCAL TIME ZONE 'UTC'")
+                verify_connection(cursor)
                 result = operation(cursor)
         # Do not return success until commit and context cleanup have completed.
         return result
