@@ -80,7 +80,7 @@ def test_native_project_lifecycle_all_migrations_and_real_research(tmp_path,monk
         result = original_run(args, **kwargs)
         if Path(args[0]).stem in ('initdb', 'pg_ctl', 'psql') and result.returncode:
             def safe(value):
-                value = re.sub(r'[a-fA-F0-9]{64}', '<redacted>', value)
+                value = re.sub(r'[a-fA-F0-9]{64}', '<redacted>', value or '')
                 return value.replace(str(root), '<temporary-project>').replace(root.as_posix(), '<temporary-project>')[-4000:]
             print(json.dumps({'native_program': Path(args[0]).stem, 'exit_code': result.returncode,
                 'stdout': safe(result.stdout), 'stderr': safe(result.stderr)}))

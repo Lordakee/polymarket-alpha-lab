@@ -58,3 +58,38 @@ def test_app_policies_preserve_legacy_row_level_security_without_bypass():
     assert 'DISABLE ROW LEVEL SECURITY' not in GRANTS
     assert 'ALTER ROLE' not in GRANTS
     assert 'project_postgres_policy_conflict' in GRANTS
+
+
+def test_launcher_commands_do_not_leave_inherited_capture_pipes(monkeypatch):
+    calls = []
+    monkeypatch.setattr(files.subprocess, 'run', lambda args, **kwargs:
+        calls.append(kwargs) or SimpleNamespace(returncode=0, stdout=None, stderr=None))
+    files.command(['explicit-native-launcher'], capture_output=False)
+    assert calls[0]['stdout'] == files.subprocess.DEVNULL
+    assert calls[0]['stderr'] == files.subprocess.DEVNULL
+    assert calls[0]['stdin'] == files.subprocess.DEVNULL
+    assert not calls[0].get('capture_output')
+    assert calls[0]['shell'] is False
+
+
+def test_sql_commands_retain_captured_output_and_stdin_protocol(monkeypatch):
+    calls = []
+    monkeypatch.setattr(files.subprocess, 'run', lambda args, **kwargs:
+        calls.append(kwargs) or SimpleNamespace(returncode=0, stdout='1', stderr=''))
+    assert files.command(['explicit-psql'], stdin='SELECT 1;').stdout == '1'
+    assert calls[0]['input'] == 'SELECT 1;'
+    assert 'stdin' not in calls[0]
+    assert calls[0]['capture_output'] is True
+
+
+def test_pg_ctl_lifecycle_uses_uncaptured_output(monkeypatch):
+    from polymarket_alpha_lab.project_postgres import server
+    calls = []
+    db = server.ProjectPostgres.__new__(server.ProjectPostgres)
+    db.layout = SimpleNamespace(cluster=Path('private-data'))
+    monkeypatch.setattr(db, '_program', lambda name: 'project-runtime/' + name)
+    monkeypatch.setattr(server, 'command', lambda args, **kwargs:
+        calls.append((args, kwargs)) or SimpleNamespace(returncode=0))
+    db._control('start', '-w', '-t', '60')
+    assert calls[0][1]['capture_output'] is False
+    assert calls[0][0][0] == 'project-runtime/pg_ctl'

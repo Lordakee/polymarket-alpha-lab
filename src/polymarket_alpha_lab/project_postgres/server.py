@@ -37,7 +37,7 @@ class ProjectPostgres:
 
     def _control(self, action, *options, accepted=(0,)):
         return command([self._program('pg_ctl'), action, '-D', str(self.layout.cluster), *options],
-                       accepted=accepted, timeout=75)
+                       accepted=accepted, timeout=75, capture_output=False)
 
     def _disk_identifier(self):
         text = command([self._program('pg_controldata'), str(self.layout.cluster)], timeout=10).stdout

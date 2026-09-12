@@ -64,7 +64,10 @@ not an upgrade procedure. Keep a supported patched release and perform planned
 backup/restore or pg_upgrade outside this initial lifecycle implementation.
 The underlying platform's C/C++ runtime dependencies still apply.
 
-Paths containing spaces are supported and included in the native proof. Shell
+Paths containing spaces are included in the native proof. Windows ancestors
+must be accessible to the owning non-elevated account: PostgreSQL deliberately
+drops administrator privileges. The manager does not alter ancestor ACLs or
+disable that restriction; use a project directory owned by your ordinary account. Shell
 metacharacters and quotes in the project path are rejected. The project path is
 bound to its instance: copying/moving an initialized project is not an automatic
 migration procedure. Existing external/Supabase data is NEVER adopted or copied.
@@ -106,7 +109,9 @@ those old APIs directly does not establish project-instance binding.
 
 The manager performs administration through the project's absolute `psql` path,
 with `-X`, no prompts, sanitized PostgreSQL environment, short timeouts and SQL
-on stdin. Child output is suppressed on errors. Passwords travel through private
+on stdin. Child output is suppressed on errors. The pg_ctl launcher uses DEVNULL instead
+of inherited PIPE handles, avoiding waits for its long-lived Windows descendants.
+Passwords travel through private
 passfiles, not command-line arguments or PGPASSWORD. Public command output contains
 status/port/version/instance ID only, never a password or DSN.
 
@@ -124,6 +129,8 @@ connect to the administration database. Other database/user/address combinations
 are rejected. The application role is not superuser and cannot create databases,
 roles or schemas, read password catalogs, or mutate instance/migration metadata.
 It receives SELECT/INSERT on project evidence tables, not UPDATE/DELETE/TRUNCATE.
+The existing RLS-enabled assignment table keeps RLS, with exact application-only
+SELECT/INSERT policies instead of BYPASSRLS. Conflicting policy definitions block.
 
 Both disk and live server identities are checked (data directory, native cluster
 system ID, project-path hash, random project instance ID and database identity).
@@ -167,8 +174,9 @@ PostgreSQL backup/recovery procedure before real long-term data collection.
 .\.venv\Scripts\python.exe scripts/verify_local.py --full
 ```
 
-The native integration test is separately opt-in and writes only to a new pytest
-temp project. Its explicit prefix is a trusted binary source, not the database
+The native integration test is separately opt-in and writes only to a new
+temporary project (an explicitly protected unique RUNNER_TEMP child on Windows,
+not pytest's potentially administrator-only ancestor). Its explicit prefix is a trusted binary source, not the database
 being tested. It exercises initialization of all migrations, private authentication,
 limited privileges, concurrent research capture, persisted readback after restart,
 instance mismatch rejection, port conflicts, config tampering and DDL rollback.
