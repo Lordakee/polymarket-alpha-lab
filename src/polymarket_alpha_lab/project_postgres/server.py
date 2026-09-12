@@ -15,9 +15,9 @@ import socket
 
 from polymarket_alpha_lab.local_postgres_dsn import validate_local_postgres_dsn
 from . import sql
-from .files import (Layout, ProjectDatabaseError, clean_environment, command, fail,
+from .files import (Layout, ProjectDatabaseError, clean_environment, fail,
                     no_links, private_directory, read_private, write_private)
-from .runtime import executable, verify_runtime
+from .runtime import executable, verify_runtime, native_command as command
 
 
 def _quote(value: str) -> str:

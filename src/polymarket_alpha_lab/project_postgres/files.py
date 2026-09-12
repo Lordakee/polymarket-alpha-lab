@@ -44,7 +44,7 @@ def clean_environment() -> dict[str, str]:
 
 def command(args: list[str], *, env=None, stdin: str | None = None,
             timeout: int = 60, accepted: tuple[int, ...] = (0,),
-            capture_output: bool = True) -> subprocess.CompletedProcess:
+            capture_output: bool = True, cwd: str | None = None) -> subprocess.CompletedProcess:
     # Server launchers may leave descendants alive after they exit. Inherited
     # PIPE handles can prevent Windows communicate() (including its timeout
     # cleanup) from returning. Such commands need DEVNULL, not captured pipes.
@@ -55,7 +55,7 @@ def command(args: list[str], *, env=None, stdin: str | None = None,
     try:
         result = subprocess.run(args, input=stdin, env=clean_environment() if env is None else env,
             **streams, text=True, encoding='utf-8', errors='strict',
-            timeout=timeout, check=False, shell=False)
+            timeout=timeout, check=False, shell=False, cwd=cwd)
     except (OSError, subprocess.SubprocessError, UnicodeError):
         fail('project_postgres_command_failed')
     if result.returncode not in accepted:
