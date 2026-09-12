@@ -61,8 +61,32 @@ def install_environment(root):
     assert (root / '.venv/Scripts/python.exe').is_file()
 
 
+_DIAGNOSTIC_START = r'''
+import json, pathlib, re, runpy, sys
+root = pathlib.Path(sys.argv[1])
+sys.path.insert(0, str(root / 'src'))
+from polymarket_alpha_lab.project_postgres import files
+original = files.subprocess.run
+
+def safe(value):
+    return re.sub(r'[a-fA-F0-9]{64}', '<redacted>', value or '').replace(str(root), '<project>').replace(root.as_posix(), '<project>')[-2500:]
+
+def probe(args, **kwargs):
+    result = original(args, **kwargs)
+    name = pathlib.Path(args[0]).stem
+    if result.returncode not in (0, 3) and name in ('postgres', 'initdb', 'pg_ctl', 'psql', 'pg_controldata'):
+        print(json.dumps({'program': name, 'exit': result.returncode, 'stdout': safe(result.stdout), 'stderr': safe(result.stderr)}), file=sys.stderr)
+    return result
+files.subprocess.run = probe
+sys.argv = [str(root / 'scripts/start_project.py'), *sys.argv[2:]]
+runpy.run_path(sys.argv[0], run_name='__main__')
+'''
+
+
 def start(root, *args, expected=0):
-    result = subprocess.run([str(root / '.venv/Scripts/python.exe'), '-I', str(root / 'scripts/start_project.py'), *args],
+    # The wrapper only diagnoses failed child commands in this synthetic project;
+    # it runs the packaged entry point unchanged and never prints SQL/stdin/argv.
+    result = subprocess.run([str(root / '.venv/Scripts/python.exe'), '-I', '-c', _DIAGNOSTIC_START, str(root), *args],
         env=clean_environment(), stdin=subprocess.DEVNULL, capture_output=True,
         timeout=240, text=True, encoding='utf-8', check=False, shell=False)
     # Production startup emits only fixed public codes, never child stderr/DSNs.
