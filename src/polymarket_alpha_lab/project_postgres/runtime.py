@@ -195,7 +195,12 @@ def import_runtime_archive(root: Path, archive_path: Path, *, expected_sha256: s
         target = _staging(layout)
         for item, relative in selected:
             dest = target.joinpath(*relative.parts)
-            dest.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            # The staging root already has an explicit current-user/SYSTEM ACL.
+            # On Windows, mkdir(0700) installs an OWNER RIGHTS/admin ACL instead
+            # of inheriting it. An elevated owner can then be Administrators,
+            # which PostgreSQL deliberately removes from its child token.
+            # Non-0700 mode is ignored by Windows: inherit our private ACL.
+            dest.parent.mkdir(parents=True, exist_ok=True, mode=0o777 if os.name == 'nt' else 0o700)
             with archive.open(item) as source, dest.open('xb') as output:
                 shutil.copyfileobj(source, output)
             if os.name != 'nt':
