@@ -367,9 +367,11 @@ def test_connect_failure_raises_clean_error_without_dsn(
 
     _install_fake_psycopg(monkeypatch, connect=fail_connect)
 
+    # Keep fixture literals out of Python 3.13 multiline traceback source.
+    dsn = "postgresql://postgres:postgres@localhost:54322/postgres"
     with pytest.raises(RuntimeError) as exc_info:
         adapter_module.load_paper_recommendation_quality_history_reports_with_psycopg(
-            "postgresql://postgres:postgres@localhost:54322/postgres",
+            dsn,
         )
 
     assert "failed to connect" in str(exc_info.value)
