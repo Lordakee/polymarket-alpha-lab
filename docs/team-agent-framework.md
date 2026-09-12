@@ -1,5 +1,14 @@
 # Team Agent Framework
 
+> **Current implementation note (2026-09-12):** The sections below preserve
+> the historical first implementation slice, not the current team inventory.
+> The source now exports minimal supplied-input forecast builders for all ten
+> teams. See [Supplied-input team forecast batches](team-forecast-batch.md)
+> for the current inventory, bounded parallel API, and runnable example.
+> These builders are not autonomous research agents. BTC's separate advanced
+> evidence-policy/aggregation/persistence service remains a distinct capability;
+> building a batch packet is not publication or execution approval.
+
 This document defines the Phase 1 team-agent framework slice for Polymarket Alpha Lab. Phase 1 is paper-only, report-only, and readonly. The framework adds domain teams that can produce forecasts and evidence, while the existing central pipeline remains responsible for Polymarket market context, costs, recommendations, risk, paper allocation, and outcome measurement.
 
 forecast_probability always denotes canonical Decimal P(YES), regardless of selected_side; selected_side identifies the paper-review side being evaluated and never reorients forecast_probability; P(NO) is 1 - P(YES).
