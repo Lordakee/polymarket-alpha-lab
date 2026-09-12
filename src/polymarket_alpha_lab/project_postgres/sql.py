@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 
 from .files import Layout, fail, no_links
+from .migration_compat import native_migration_bytes
 
 DATABASE = 'polymarket_alpha_lab'
 ADMIN = 'pal_owner'
@@ -154,6 +155,8 @@ def migration_catalog(layout: Layout) -> tuple[tuple[str, str, str], ...]:
             raw = source.read_bytes()
             if sha256(raw).hexdigest() != digest:
                 fail('project_postgres_migration_changed')
+            raw = native_migration_bytes(name, raw)
+            digest = sha256(raw).hexdigest()  # Ledger binds the effective native SQL.
             body = raw.decode('utf-8')
             if item['transaction_wrapper']:
                 body, start_count = re.subn(r'\A(?:\s|--[^\n]*\n)*begin;', '', body, count=1, flags=re.I)

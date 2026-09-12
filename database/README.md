@@ -146,6 +146,15 @@ administrator. Stronger isolation needs a separate OS account/sandbox.
 The 62 existing SQLs are retained byte-for-byte under their historical pathname;
 none uses Supabase auth/storage/REST services. A checked-in manifest binds the
 entire ordered set and records the two existing outer transaction wrappers.
+A closed native bootstrap compatibility repair fixes the invalid historical
+`type(@.reason_codes)` JSONPath syntax in migration 20260622000007 to the
+PostgreSQL item method `@.reason_codes.type()`. Both the exact original and
+effective SQL hashes are pinned in `project_postgres/migration_compat.py`; the
+original file stays unchanged. The database ledger records the EFFECTIVE native
+SQL hash, not a false claim that the unmodified invalid expression was executed.
+Missing-field and non-array rejection remain, with real-engine negative probes.
+No other migration receives a rewrite.
+
 Initialization strips only those explicitly declared, hash-checked wrappers,
 then applies each migration and its PostgreSQL ledger receipt in ONE transaction.
 Applied history must be an exact unchanged prefix; unknown, reordered, missing,

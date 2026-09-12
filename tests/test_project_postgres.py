@@ -81,7 +81,9 @@ def test_all_62_unmodified_migrations_have_checked_in_receipts():
     rows = sql.migration_catalog(files.Layout(ROOT))
     assert len(rows) == 62
     for name, digest, body in rows:
-        assert digest == sha256((ROOT/'supabase/migrations'/name).read_bytes()).hexdigest()
+        from polymarket_alpha_lab.project_postgres.migration_compat import native_migration_bytes
+        original = (ROOT/'supabase/migrations'/name).read_bytes()
+        assert digest == sha256(native_migration_bytes(name, original)).hexdigest()
         script = sql.migration_sql(name, digest, body)
         assert script.startswith('BEGIN;') and script.endswith('COMMIT;\n')
         assert f"VALUES('{name}','{digest}')" in script
@@ -385,7 +387,7 @@ def test_private_state_never_adopts_other_cluster_or_project(root,monkeypatch,fi
 @pytest.mark.parametrize('filename,extra',[('postgresql.conf',"listen_addresses='*'\n"),
     ('pg_hba.conf','host all all 0.0.0.0/0 trust\n'),('postgresql.auto.conf',"port='5432'\n")])
 def test_native_config_override_never_silently_repaired(root,monkeypatch,filename,extra):
-    db,_=instance_fixture(root,monkeypatch)
+    db,info=instance_fixture(root,monkeypatch)
     p=db.layout.cluster/filename;p.write_text(p.read_text()+extra)
     with pytest.raises(files.ProjectDatabaseError,match='configuration_changed'):db._state()
     assert extra in p.read_text()

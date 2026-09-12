@@ -110,6 +110,19 @@ def test_native_project_lifecycle_all_migrations_and_real_research(tmp_path,monk
             assert repeat.record==captured.record and len(created)==1
             report=session.evaluate()
             assert len(report.records)==1 and report.groups[0].outcome_pending_count==1
+            # Exercise the repaired constraint expression on the real engine,
+            # including absent and incorrectly typed reason_codes values.
+            from polymarket_alpha_lab.project_postgres.migration_compat import NATIVE_SHA256
+            assert db._psql(info, "SELECT sha256 FROM project_private.migrations WHERE "
+                "name='20260622000007_paper_project_screening_rank_stability_reports.sql';") == NATIVE_SHA256
+            path = '$[*] ? (!exists(@.reason_codes) || @.reason_codes.type() != "array")'
+            from polymarket_alpha_lab.project_postgres.sql import literal
+            for data, expected in (([], 't'), ([{'reason_codes': []}], 't'),
+                    ([{'reason_codes': ['x']}], 't'), ([{}], 'f'),
+                    ([{'reason_codes': 'x'}], 'f'), ([{'reason_codes': None}], 'f'),
+                    ([{'reason_codes': []}, {}], 'f')):
+                assert db._psql(info, 'SELECT NOT jsonb_path_exists(' + literal(json.dumps(data)) +
+                    '::jsonb,' + literal(path) + ');') == expected
             role=json.loads(db._psql(info,"SELECT json_build_array(rolsuper,rolcreatedb,rolcreaterole,rolreplication,rolbypassrls) "
                 "FROM pg_roles WHERE rolname=current_user;",owner=False))
             assert role==[False]*5
