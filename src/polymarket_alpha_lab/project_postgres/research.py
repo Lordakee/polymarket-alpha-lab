@@ -65,6 +65,14 @@ class ProjectResearchSession:
         from polymarket_alpha_lab.research_resolution_store import load_resolution_review_with_psycopg
         return self._call(load_resolution_review_with_psycopg, review_id=review_id)
 
+    def resolution_worklist(self, **configuration):
+        from polymarket_alpha_lab.research_resolution_queue_store import load_resolution_worklist_with_psycopg
+        return self._call(load_resolution_worklist_with_psycopg, **configuration)
+
+    def collect_resolution_candidates(self, **configuration):
+        from polymarket_alpha_lab.research_resolution_poll import collect_resolution_candidates_with_psycopg
+        return self._call(collect_resolution_candidates_with_psycopg, **configuration)
+
     def evaluate(self, **configuration):
         from polymarket_alpha_lab.research_execution_psycopg import load_captured_research_evaluation_with_psycopg
         return self._call(load_captured_research_evaluation_with_psycopg, **configuration)

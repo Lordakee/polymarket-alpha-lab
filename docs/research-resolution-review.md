@@ -125,11 +125,18 @@ public diagnostic export. Normal evaluator output does not expose those raw text
 Hashes bind content; they are not signatures, encryption or proof of source truth.
 Supply public/redacted evidence only. No hidden model reasoning is stored.
 
+## Worklist and candidate collection
+
+The project-private worklist and explicit one-shot batch collector are documented
+in [research-resolution-queue.md](research-resolution-queue.md). They retain
+unconfirmed checks using this store; they cannot supply independent attestation
+or create outcomes. Recurring scheduling and automatic finality remain absent.
+
 ## Limits and acceptance
 
 This node does not implement automated oracle/chain finality, correction or dispute
-handling for an already stored immutable outcome, settlement polling, cross-event
-batch jobs, fitted calibration, forecast publication or live execution. The source
+handling for an already stored immutable outcome, recurring settlement polling,
+fitted calibration, forecast publication or live execution. The source
 reference is not followed, including redirects. A reviewer ID and boolean are
 operator assertions, not independently authenticated user identities.
 
