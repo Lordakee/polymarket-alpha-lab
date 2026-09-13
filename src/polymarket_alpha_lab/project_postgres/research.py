@@ -42,6 +42,10 @@ class ProjectResearchSession:
         from polymarket_alpha_lab.research_execution_psycopg import run_captured_research_with_psycopg
         return self._call(run_captured_research_with_psycopg, request=request, model_factory=model_factory)
 
+    def launch_crypto_research(self, **configuration):
+        from polymarket_alpha_lab.research_crypto_launch_service import launch_crypto_research_with_psycopg
+        return self._call(launch_crypto_research_with_psycopg, **configuration)
+
     def inspect(self, *, record_id):
         from polymarket_alpha_lab.research_execution_psycopg import inspect_captured_research_with_psycopg
         return self._call(inspect_captured_research_with_psycopg, record_id=record_id)
