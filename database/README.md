@@ -176,9 +176,9 @@ Review migration changes first. Adding a migration requires updating the manifes
 A failed migration rolls back its own DDL and ledger insertion; earlier committed
 migrations and project records are retained. Native instance initialization that
 fails leaves its private directory for diagnosis. There is no destructive retry.
-Do not delete a cluster to make a check green. Backup/restore commands, automatic
-major upgrades, existing-instance import, OS services and cloud targets are NOT
-implemented. A local data directory is not a backup; retain a separately verified
+Do not delete a cluster to make a check green. Automatic major upgrades, existing-instance import, OS services and cloud targets
+are NOT implemented. The explicit cold backup/recovery commands below do not
+provide any of those capabilities. A local data directory is not a backup; retain a separately verified
 PostgreSQL backup/recovery procedure before real long-term data collection.
 
 ## Verification
@@ -204,3 +204,91 @@ Official deployment references:
 - https://www.postgresql.org/docs/16/app-pg-ctl.html
 - https://www.postgresql.org/docs/16/auth-pg-hba-conf.html
 - https://www.postgresql.org/docs/16/libpq-pgpass.html
+
+## Private cold backups and absent-target recovery
+
+The project now has `backup`, `verify-backup` and `restore` commands. These are
+**whole PostgreSQL filesystem backups**, not SQL exports, alternate business
+stores, distribution kits, migration tools, or cloud services. They retain
+original server receipt timestamps, immutable claims, failed attempts, outcomes,
+roles and migration history without replaying INSERTs or changing trigger rules.
+
+Stop research sessions and explicitly stop the database first. The backup
+command itself NEVER shuts down or interrupts a running server. Choose a NEW
+backup directory OUTSIDE the project, under an already existing parent:
+
+```powershell
+.\.venv\Scripts\python.exe scripts/project_database.py down
+.\.venv\Scripts\python.exe scripts/project_database.py backup --destination "D:\Backups\Polymarket-20260913"
+```
+
+The new directory is restricted to its owning account (and SYSTEM on Windows).
+It holds `snapshot.palpg.zip` and `snapshot.palpg.sha256`. Save the returned SHA256
+independently. **The ZIP is NOT encrypted and contains the generated database
+passwords as well as all project records.** Never attach it to an issue, commit it,
+put it in a public/shared folder, or confuse it with the public application kit.
+The ignore rules prevent accidental staging of these default filenames; they
+are not a data-loss-prevention system. Protect any copied/off-machine backup
+with private permissions and encrypted storage; source code/runtime copies must
+be retained separately. A second folder on the same failing disk is not disaster
+recovery. No scheduled backup, media transfer or retention deletion is enabled.
+
+Verification streams the entire archive and checks its inventory, hashes,
+format, original project-path identity, current platform, exact engine file
+inventory/version, and the effective migration inventory. It does not start a
+server. Both verification and restore require explicit trust and a separately
+retained checksum; hashes alone cannot authenticate a malicious replacement.
+Restore only a backup of your OWN trusted database. Its catalogs/configuration
+can affect native server behavior on a later explicit start.
+
+```powershell
+.\.venv\Scripts\python.exe scripts/project_database.py verify-backup --archive "D:\Backups\Polymarket-20260913\snapshot.palpg.zip" --sha256 YOUR_RETAINED_SHA256 --trusted-backup
+```
+
+Recovery is intentionally limited to the SAME project location with identical
+native runtime and migration inventory, and an ABSENT `.local/postgres` directory.
+It is NOT an in-place rollback or a way to copy/move a working project. The manager
+will not rename, delete or overwrite existing data, even an empty/partial target.
+Keep an existing damaged/original directory safely preserved through a separately
+reviewed operator recovery procedure; do not delete it to make this command pass.
+
+```powershell
+# Disaster recovery only, after original files are safely preserved and the target is absent.
+.\.venv\Scripts\python.exe scripts/project_database.py restore --archive "D:\Backups\Polymarket-20260913\snapshot.palpg.zip" --sha256 YOUR_RETAINED_SHA256 --trusted-backup
+.\.venv\Scripts\python.exe scripts/start_project.py
+```
+
+Restore validates all archive content before creating its private staging tree,
+rechecks extracted bytes and native clean-shutdown/configuration/identity, then
+publishes the complete directory once. A successful restore leaves the DB stopped;
+normal startup performs live identity/role/history checks. Incomplete research
+claims remain incomplete and can STILL block strict evaluation. Backup is not
+model replay, failed-job recovery or evidence of good forecasting performance.
+Only data included in the snapshot can be recovered; later changes are not in it.
+
+Both operations hold the existing OS lifecycle lock. A live PID, unclean control
+state, recovery markers, tablespaces, symlinks/reparse points, hard-linked files,
+path collisions, occupied port, changed runtime/migrations or existing restore
+staging block. Current bounds: 50,000 filesystem entries and 8 GiB uncompressed
+content, with bounded reads; this is a compact single-cluster first version, not
+large-database streaming replication or point-in-time recovery. Failed backups
+or restores retain PRIVATE partial files for diagnosis, never trigger reset.
+Checks assume the owning OS user/admin and approved source runtime are trusted;
+manual out-of-band native commands bypass application lifecycle coordination.
+
+An interrupted operation may leave `snapshot.partial` in the newly created
+backup directory or `.local/postgres.restoring` during recovery. Neither is a
+successful backup/restore receipt. Inspect and preserve these through an explicit
+operator procedure; automatic cleanup/retry/force recovery is not provided.
+There is no promise of atomic multi-device durability against disk/power failure.
+
+Native acceptance runs only on an isolated temporary project. It verifies
+original record/outcome timestamps and fixed-time evaluation equality after real
+recovery, unchanged credentials/identity, limited-role enforcement, no model
+restart for duplicate tasks, and retention of incomplete claims. Only test logs
+and JUnit are uploaded, NEVER a database backup. Default offline CI skips this
+native proof; its separate successful CI is required before release.
+
+Official physical-backup requirements:
+https://www.postgresql.org/docs/17/backup-file.html
+https://www.postgresql.org/docs/17/app-pgcontroldata.html
