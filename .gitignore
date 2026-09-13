@@ -22,3 +22,4 @@ tmp/
 .local/
 runtime/postgres/
 runtime/postgres.installing/
+database/postgres-runtime.zip
