@@ -1,5 +1,56 @@
 # Project Instructions
 
+## Current owner instruction: complete GitHub-first handoffs (2026-09-14)
+
+This is a project rule for every coordinator, subagent and future local-agent
+handoff unless the owner explicitly changes it. It extends the previously
+archived handoff preference; it does not change model, credential, database or
+execution authorization.
+
+1. **Deliver a complete, directly forwardable prompt in the response.** Include
+   the objective, already-completed work not to repeat, exact source and delivery
+   revisions, allowed and forbidden operations, working-directory/environment
+   setup, download and integrity checks, exact usage/application commands,
+   acceptance criteria, failure handling and required return evidence. Do not
+   replace essential instructions with "see above", a link alone, scattered
+   fragments or an offer to provide the remainder later.
+2. **Publish every required handoff file to this GitHub repository first.**
+   Patches, helper scripts, manifests, checksums and companion instructions must
+   be actual files at a reachable immutable commit before delivery. Use a
+   retained handoff branch when delivery files must not change the implementation
+   baseline. Chat/sandbox attachments and expiring Actions artifacts may be
+   supplementary, never the only source for files a local agent needs.
+3. **Pin and verify the complete delivery.** State repository, retained ref,
+   full delivery commit, exact paths and fixed download URLs/commands. Supply
+   SHA256 and byte sizes (or an independently pinned manifest covering them),
+   source/base commit and expected result tree where applicable. Read uploaded
+   files back and verify bytes before claiming success. Do not invent URLs,
+   checksums, upload results or completed tests. Failed publication is a real
+   blocker, not permission to bypass safeguards.
+4. **Explain downloading AND using the files.** Show preflight checks and exact
+   commands in order, with exit-code checks and clear stop conditions. Before
+   applying a patch, re-read implementation/PR state: merged work is an archive,
+   not pending work. Historical replay needs a fresh checkout of the exact base,
+   git apply --check --index, then application and result-tree verification.
+   Do not force/partially apply, overwrite data, or repeat merged PRs/releases.
+5. **Use the target environment's safe format.** Windows PowerShell 5.1
+   executable bootstrap/helper text should be ASCII, or explicitly verified
+   UTF-8 with BOM when non-ASCII is necessary; UTF-8 Markdown is documentation,
+   not an executable script. Keep downloads separate from reviewed execution;
+   no implicit script execution or execution-policy/ACL relaxation.
+6. **Complete available repository-side work first.** Delegate only genuinely
+   local or otherwise unavailable operations. Preserve first failures, internal
+   retries, reruns, skipped and unexecuted steps separately. Do not reassign
+   completed checks or send agents to rediscover known missing user approvals.
+   Never include credentials, .local, database clusters, backups or unrelated
+   private logs in a GitHub handoff.
+
+A complete worked prompt is retained in
+`docs/handoffs/pr17-network-check-full.md`. Its pinned implementation and delivery
+are historical task-specific values, not defaults to reuse for new tasks. This
+rule applies to this repository; do not claim it changes ChatGPT account settings
+or other repositories automatically.
+
 ## Current owner override: native project-private PostgreSQL (2026-09-12)
 
 The owner explicitly replaced the Supabase requirement: use only native
