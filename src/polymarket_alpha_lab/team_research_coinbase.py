@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from urllib.error import HTTPError
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
+from polymarket_alpha_lab.public_http import read_public_body
 from polymarket_alpha_lab.team_research_agent_types import integer
 from polymarket_alpha_lab.team_research_crypto_candles import (
     MAX_CANDLE_BYTES, CoinbaseCandleSnapshot, CryptoCandleWindow,
@@ -54,7 +55,7 @@ class CoinbaseCandleReader:
                     raise ValueError("expected JSON response")
                 if response.headers.get("Content-Encoding", "identity").lower() != "identity":
                     raise ValueError("encoded response is not supported")
-                raw = response.read(MAX_CANDLE_BYTES + 1)
+                raw = read_public_body(response, MAX_CANDLE_BYTES)
             return CoinbaseCandleSnapshot(window, datetime.now(UTC), raw)
         except HTTPError as error:
             error.close()

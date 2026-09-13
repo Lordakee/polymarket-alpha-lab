@@ -263,3 +263,17 @@ def test_crlf_checkout_ships_exact_committed_bytes(checkout, native, tmp_path):
     mod.build_distribution(checkout, native, archive)
     with zipfile.ZipFile(archive) as z:
         assert z.read(mod.TOP + '/' + name) == committed
+
+
+def test_reviewed_optional_public_tools_are_shipped_without_requiring_them_in_old_kits(checkout, native, tmp_path):
+    for name in mod.PUBLIC_ENTRYPOINTS:
+        path = checkout / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b'# reviewed public entrypoint\n')
+    git(checkout, 'add', '-A')
+    git(checkout, 'commit', '-qm', 'optional public tools')
+    _, installed, _ = kit(checkout, native, tmp_path)
+    for name in mod.PUBLIC_ENTRYPOINTS:
+        assert (installed / name).read_bytes() == b'# reviewed public entrypoint\n'
+    assert not mod.selected_source('scripts/unreviewed-tool.ps1')
+    mod.verify_distribution(installed)

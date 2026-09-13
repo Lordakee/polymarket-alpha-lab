@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from urllib.error import HTTPError
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
+from polymarket_alpha_lab.public_http import read_public_body
 from polymarket_alpha_lab.team_research_agent_types import integer
 from polymarket_alpha_lab.team_research_intake import (
     GAMMA_MARKET_PREFIX, MAX_GAMMA_RESPONSE_BYTES, GammaMarketSnapshot, require_market_slug,
@@ -48,7 +49,7 @@ class GammaResearchReader:
                     raise ValueError("unexpected response origin or status")
                 if response.headers.get_content_type() != "application/json":
                     raise ValueError("expected JSON content")
-                raw = response.read(MAX_GAMMA_RESPONSE_BYTES + 1)
+                raw = read_public_body(response, MAX_GAMMA_RESPONSE_BYTES)
             return GammaMarketSnapshot(market_slug, datetime.now(UTC), raw)
         except HTTPError as error:
             error.close()

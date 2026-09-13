@@ -30,6 +30,10 @@ TOP = 'polymarket-alpha-lab'
 FIXED = ('pyproject.toml', 'uv.lock', '.gitignore', '.gitattributes', 'database/README.md',
          'database/quickstart.md', 'database/migrations.lock.json',
          'scripts/project_database.py', 'scripts/start_project.py')
+# Optional reviewed entrypoints: old kits without them remain verifiable.
+PUBLIC_ENTRYPOINTS = ('scripts/review_resolution_queue.py', 'scripts/preview_crypto_research.py',
+    'scripts/discover_crypto_research.py', 'scripts/download_handoff.ps1',
+    'docs/research-resolution-queue.md', 'docs/research-crypto-launch.md', 'docs/research-crypto-discovery.md')
 SOURCE_ROOTS = ('src/polymarket_alpha_lab', 'supabase/migrations')
 MAX_SOURCE_BYTES = 134217728
 MAX_FILES = 20000
@@ -51,7 +55,7 @@ def safe_name(name: str) -> str:
 
 
 def selected_source(name: str) -> bool:
-    if name in FIXED:
+    if name in FIXED or name in PUBLIC_ENTRYPOINTS:
         return True
     if name.startswith('src/polymarket_alpha_lab/') and name.endswith('.py'):
         return not any(part.startswith('.') or part == '__pycache__' for part in name.split('/'))
@@ -107,7 +111,8 @@ def committed_sources(root: Path) -> tuple[dict[str, bytes], str, str]:
         fail('project_bundle_required_source_missing')
     if len({name.casefold() for name in indexed}) != len(indexed):
         fail('project_bundle_path_collision')
-    archive = _git(root, 'archive', '--format=tar', 'HEAD', '--', *FIXED, *SOURCE_ROOTS)
+    archive = _git(root, 'archive', '--format=tar', 'HEAD', '--', *FIXED, *SOURCE_ROOTS,
+                   *(name for name in PUBLIC_ENTRYPOINTS if name in indexed))
     if len(archive) > MAX_SOURCE_BYTES + MAX_FILES * 2048:
         fail('project_bundle_source_limit')
     sources = {}
@@ -298,6 +303,11 @@ def verify_distribution(root: Path) -> dict:
                 raise ValueError
         # Do not let an extra Python module or unlisted migration change startup.
         actual = set(FIXED)
+        for name in PUBLIC_ENTRYPOINTS:
+            target = layout.root / name
+            no_links(target)
+            if target.exists():
+                actual.add(name)
         for name in SOURCE_ROOTS:
             for target in (layout.root / name).rglob('*'):
                 no_links(target)
