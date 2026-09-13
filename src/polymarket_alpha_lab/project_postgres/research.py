@@ -57,6 +57,14 @@ class ProjectResearchSession:
             market_slug=market_slug, resolved_at=resolved_at, actual_yes=actual_yes,
             source_reference=source_reference, source_content_sha256=source_content_sha256)
 
+    def record_resolution(self, *, submission):
+        from polymarket_alpha_lab.research_resolution_store import record_resolution_review_with_psycopg
+        return self._call(record_resolution_review_with_psycopg, submission=submission)
+
+    def inspect_resolution(self, *, review_id):
+        from polymarket_alpha_lab.research_resolution_store import load_resolution_review_with_psycopg
+        return self._call(load_resolution_review_with_psycopg, review_id=review_id)
+
     def evaluate(self, **configuration):
         from polymarket_alpha_lab.research_execution_psycopg import load_captured_research_evaluation_with_psycopg
         return self._call(load_captured_research_evaluation_with_psycopg, **configuration)

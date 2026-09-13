@@ -62,6 +62,7 @@
     {"name":"20260713000000_team_forecast_probability_yes_contract.sql","sha256":"316fee9d285bf818577ee5bf5d4dd26cf7c0b49e276e2e7537c38aeb7b5e84b2","transaction_wrapper":false},
     {"name":"20260714000000_team_evidence_aggregation_tables.sql","sha256":"79614c52d4fc39ba3e32478ecae84d98f45a156f35340e96235693d68f72ecc8","transaction_wrapper":false},
     {"name":"20260912000000_research_evaluation_capture.sql","sha256":"9970257cdd0743718e8e1527e23153584f28e0bc6c7c4f3dfbec7099cb0a0581","transaction_wrapper":true},
-    {"name":"20260912010000_research_execution_claims.sql","sha256":"d4e3da28f5a7ad688c00b7e30a9a44fd94ac77242f9b2c343b0055d4174bf611","transaction_wrapper":true}
+    {"name":"20260912010000_research_execution_claims.sql","sha256":"d4e3da28f5a7ad688c00b7e30a9a44fd94ac77242f9b2c343b0055d4174bf611","transaction_wrapper":true},
+    {"name":"20260913000000_research_resolution_reviews.sql","sha256":"54e5175ccc56bc4eb9dbff8b80cb83d9ec842dfbc93bb548f7d7bed1a87706f7","transaction_wrapper":false}
   ]
 }

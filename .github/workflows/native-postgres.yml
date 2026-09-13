@@ -6,6 +6,8 @@ on:
       - 'src/polymarket_alpha_lab/project_postgres/**'
       - 'src/polymarket_alpha_lab/research_capture_psycopg.py'
       - 'src/polymarket_alpha_lab/local_postgres_dsn.py'
+      - 'src/polymarket_alpha_lab/research_resolution*.py'
+      - 'tests/test_research_resolution*'
       - 'tests/test_project_postgres*'
       - 'database/**'
       - 'supabase/migrations/**'
@@ -39,7 +41,7 @@ jobs:
           $env:PYTEST_DISABLE_PLUGIN_AUTOLOAD = '1'
           $env:PYTHONUTF8 = '1'
           Get-ChildItem Env: | Where-Object { $_.Name -like 'PG*' } | ForEach-Object { Remove-Item ('Env:' + $_.Name) }
-          .\.venv\Scripts\python.exe -u -m pytest -q -s -o faulthandler_timeout=120 tests/test_project_postgres.py tests/test_project_postgres_platform.py tests/test_project_postgres_migration_compat.py tests/test_project_postgres_native.py tests/test_project_postgres_backup.py tests/test_project_postgres_backup_zip.py tests/test_project_postgres_backup_native.py --junitxml="$env:RUNNER_TEMP/native-proof.xml" 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP/native-proof.log"
+          .\.venv\Scripts\python.exe -u -m pytest -q -s -o faulthandler_timeout=120 tests/test_project_postgres.py tests/test_project_postgres_platform.py tests/test_project_postgres_migration_compat.py tests/test_project_postgres_native.py tests/test_project_postgres_backup.py tests/test_project_postgres_backup_zip.py tests/test_project_postgres_backup_native.py tests/test_project_postgres_resolution_native.py tests/test_research_resolution.py tests/test_research_resolution_store.py tests/test_research_resolution_cli.py --junitxml="$env:RUNNER_TEMP/native-proof.xml" 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP/native-proof.log"
           $code = $LASTEXITCODE
           exit $code
       - name: Verify tracked source unchanged
