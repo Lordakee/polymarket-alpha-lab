@@ -89,9 +89,9 @@ def test_native_project_lifecycle_all_migrations_and_real_research(tmp_path,monk
     print('native proof: copy binaries only, never reuse installed data')
     version=import_runtime_directory(root,prefix)
     db=ProjectPostgres(root)
-    print('native proof: initialize private cluster and all 62 migrations')
+    print('native proof: initialize private cluster and all 63 migrations')
     result=db.initialize(port=port)
-    assert result==dict(status='initialized',version=version,migrations_applied=62)
+    assert result==dict(status='initialized',version=version,migrations_applied=63)
     assert db.status()['status']=='stopped'
     with pytest.raises(ProjectDatabaseError,match='existing_data'):db.initialize(port=port)
     assert not (db.layout.home/'initial-password').exists()
@@ -188,7 +188,7 @@ def test_native_project_lifecycle_all_migrations_and_real_research(tmp_path,monk
             assert db.up()['status']=='migrations_pending'
             with pytest.raises(ProjectDatabaseError):db.migrate()
             assert db._psql(info,"SELECT to_regclass('public.must_rollback') IS NULL;")=='t'
-            assert db._psql(info,'SELECT count(*) FROM project_private.migrations;')=='62'
+            assert db._psql(info,'SELECT count(*) FROM project_private.migrations;')=='63'
         finally:path.unlink();manifest.write_bytes(old)
         with db.session() as session:assert len(session.evaluate().records)==5
     finally:db.down()
