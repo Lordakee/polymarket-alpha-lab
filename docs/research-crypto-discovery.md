@@ -77,6 +77,11 @@ Existing public-reader errors remain redacted and existing no-retry behavior rem
 `scripts/download_handoff.ps1` is pure ASCII, avoiding Windows PowerShell 5.1's
 ANSI interpretation of non-BOM script text. It does not modify global encoding or
 execution policy. A pinned, reviewed loader can be reused for later handoffs.
+Hash verification uses .NET SHA256 streams directly, not Get-FileHash cmdlet
+autoloading. A PS5.1 subprocess may inherit a module search path from PS7; no
+profile/module-path changes or module installation are needed for this hash step.
+Files and streams are closed even on failure. The actual shell tests include
+non-ASCII directory names and an unavailable Get-FileHash cmdlet.
 
 ```powershell
 # Supply the actual immutable delivery commit and manifest SHA256 in the handoff.

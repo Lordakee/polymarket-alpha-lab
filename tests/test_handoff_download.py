@@ -48,11 +48,13 @@ def test_real_powershell_download_publication(tmp_path, shell, case):
     (fixtures/'LOCAL_AGENT_PROMPT.md').write_bytes(payload if case!='file_hash' else b'x'*len(payload))
     harness = f'''
 $ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
 function Decode([string]$x) {{ [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($x)) }}
 . (Decode '{encoded(SCRIPT)}')
 $Global:Source = Decode '{encoded(fixtures)}'
 $Global:Case = '{case}'
 $Global:Calls = 0
+function Get-FileHash {{ throw 'Get-FileHash must not be required' }}
 function Receive-HandoffFile {{
     param([string]$Uri, [string]$Destination, [long]$Limit)
     $Global:Calls++
@@ -78,8 +80,9 @@ $Result = Invoke-HandoffDownload 'wmqfl861/polymarket-alpha-lab' ('a'*40) 'hando
     published=list(parent.glob('pal-handoff-*'))
     staging=list(parent.glob('.pal-handoff-*.downloading'))
     if case=='success':
-        assert result['result']['status']=='verified' and result['calls']==2
+        assert result['result']['status']=='verified' and result['calls']==2, result
         assert len(published)==1 and not staging
+        assert Path(result['result']['directory']) == published[0]
         assert (published[0]/'LOCAL_AGENT_PROMPT.md').read_bytes()==payload
         assert (published[0]/'manifest.json').read_bytes()==mbytes
     else:
@@ -88,3 +91,32 @@ $Result = Invoke-HandoffDownload 'wmqfl861/polymarket-alpha-lab' ('a'*40) 'hando
         assert not (tmp_path/'escape.ps1').exists()
         if case=='partial':
             assert (staging[0]/'LOCAL_AGENT_PROMPT.md.part').read_bytes()==payload[:4]
+
+
+@pytest.mark.parametrize('shell', ['powershell.exe', 'pwsh'])
+def test_dotnet_hash_is_exact_unicode_safe_and_releases_file(tmp_path, shell):
+    program = shutil.which(shell)
+    if not program or os.name != 'nt':
+        pytest.skip('real Windows PowerShell 5.1 / PowerShell 7 integration')
+    payload = b'\x00\xff\x80' + 'fixture \u6d4b\u8bd5'.encode('utf-8')
+    item = tmp_path / 'hash \u6d4b\u8bd5.bin'
+    item.write_bytes(payload)
+    ps = tmp_path / 'hash.ps1'
+    ps.write_text(f"""
+$ErrorActionPreference = 'Stop'
+function Decode([string]$x) {{ [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($x)) }}
+. (Decode '{encoded(SCRIPT)}')
+function Get-FileHash {{ throw 'Get-FileHash must not be required' }}
+$Path = Decode '{encoded(item)}'
+$Hash = Get-HandoffSha256 $Path
+$Check = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+$Check.Dispose()
+[pscustomobject]@{{sha256=$Hash; major=$PSVersionTable.PSVersion.Major}} | ConvertTo-Json -Compress
+""", encoding='ascii')
+    run = subprocess.run([program, '-NoProfile', '-NonInteractive', '-File', str(ps)],
+                         capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=30)
+    assert run.returncode == 0, run.stdout + run.stderr
+    value = json.loads(run.stdout)
+    assert value['sha256'] == sha256(payload).hexdigest()
+    assert value['major'] == (5 if shell == 'powershell.exe' else 7)
+    assert item.read_bytes() == payload

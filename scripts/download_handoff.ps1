@@ -8,6 +8,22 @@ param(
     [string]$OutputParent
 )
 
+function Get-HandoffSha256 {
+    param([string]$LiteralPath)
+    # Use .NET directly: PS5.1 can inherit a PS7-only module search path.
+    # Do not require Get-FileHash autoloading or alter PSModulePath/profiles.
+    $Stream = $null
+    $Hasher = $null
+    try {
+        $Stream = [IO.File]::OpenRead($LiteralPath)
+        $Hasher = [Security.Cryptography.SHA256]::Create()
+        return [BitConverter]::ToString($Hasher.ComputeHash($Stream)).Replace('-', '').ToLowerInvariant()
+    } finally {
+        if ($null -ne $Hasher) { $Hasher.Dispose() }
+        if ($null -ne $Stream) { $Stream.Dispose() }
+    }
+}
+
 function Receive-HandoffFile {
     param([string]$Uri, [string]$Destination, [long]$Limit)
     $Request = [System.Net.HttpWebRequest]::Create($Uri)
@@ -74,7 +90,7 @@ function Invoke-HandoffDownload {
         $ManifestPart = Join-Path $Staging 'manifest.json.part'
         Receive-HandoffFile "$Base/manifest.json" $ManifestPart 65536
         $Stage = 'manifest_verification'
-        if ((Get-FileHash -LiteralPath $ManifestPart -Algorithm SHA256).Hash.ToLowerInvariant() -ne $ExpectedManifestSha256) {
+        if ((Get-HandoffSha256 $ManifestPart) -ne $ExpectedManifestSha256) {
             throw 'manifest_hash_mismatch'
         }
         $Utf8 = New-Object System.Text.UTF8Encoding($false, $true)
@@ -104,7 +120,7 @@ function Invoke-HandoffDownload {
             Receive-HandoffFile "$Base/$($Entry.name)" $Part $Entry.bytes
             $Stage = 'file_verification'
             if ((Get-Item -LiteralPath $Part).Length -ne $Entry.bytes -or
-                (Get-FileHash -LiteralPath $Part -Algorithm SHA256).Hash.ToLowerInvariant() -ne $Entry.sha256) {
+                (Get-HandoffSha256 $Part) -ne $Entry.sha256) {
                 throw 'file_integrity_failed'
             }
             [IO.File]::Move($Part, (Join-Path $Staging $Entry.name))
