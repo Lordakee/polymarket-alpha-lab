@@ -24,11 +24,27 @@ def main(argv: list[str] | None = None) -> int:
     init.add_argument('--port', type=int, default=55432)
     for name in ('up', 'down', 'status', 'migrate'):
         sub.add_parser(name)
+    backup = sub.add_parser('backup', help='cold whole-cluster backup, includes private credentials')
+    backup.add_argument('--destination', type=Path, required=True, help='NEW directory outside this project')
+    for name in ('verify-backup', 'restore'):
+        recovery = sub.add_parser(name, help='verify trusted backup; restore refuses any existing database')
+        recovery.add_argument('--archive', type=Path, required=True)
+        recovery.add_argument('--sha256', required=True, help='independently retained backup checksum')
+        recovery.add_argument('--trusted-backup', action='store_true', required=True,
+                              help='approve a private backup from your own trusted database')
     args = parser.parse_args(argv)
     if args.action == 'install-runtime' and bool(args.archive) != bool(args.sha256):
         parser.error('--sha256 is required only with --archive')
     try:
-        if args.action == 'install-runtime':
+        if args.action == 'backup':
+            from .backup import create_cold_backup
+            result = create_cold_backup(args.root, destination=args.destination)
+        elif args.action in ('verify-backup', 'restore'):
+            from .backup import verify_cold_backup, restore_cold_backup
+            operation = verify_cold_backup if args.action == 'verify-backup' else restore_cold_backup
+            result = operation(args.root, archive=args.archive, expected_sha256=args.sha256,
+                               trusted_backup=args.trusted_backup)
+        elif args.action == 'install-runtime':
             if args.archive:
                 version = import_runtime_archive(args.root, args.archive, expected_sha256=args.sha256)
             else:

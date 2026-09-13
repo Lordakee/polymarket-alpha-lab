@@ -23,3 +23,7 @@ tmp/
 runtime/postgres/
 runtime/postgres.installing/
 database/postgres-runtime.zip
+
+# Private native database backups contain records AND credentials.
+*.palpg.zip
+*.palpg.sha256
