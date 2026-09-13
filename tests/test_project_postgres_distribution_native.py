@@ -139,6 +139,14 @@ def test_build_and_run_actual_relocatable_kit(monkeypatch):
         assert not (root / '.local').exists() and not (root / 'runtime').exists()
         assert not (root / '.env').exists() and not (root / '.git').exists()
         install_environment(root)
+        # The shipped operator CLI is inert without public opt-in and needs no DB.
+        cli = root / 'scripts/discover_crypto_research.py'
+        assert cli.is_file() and (root / 'scripts/download_handoff.ps1').is_file()
+        disabled = subprocess.run([str(root / '.venv/Scripts/python.exe'), '-I', str(cli),
+            '--team', 'crypto_btc', '--preview'], capture_output=True, text=True,
+            encoding='utf-8', timeout=30, check=True, env=clean_environment())
+        assert json.loads(disabled.stdout)['status'] == 'disabled'
+        assert not (root / '.local').exists()
     with zipfile.ZipFile(first / distribution.ENGINE) as seed:
         assert all(not name.lower().endswith(distribution.FONT_SUFFIXES) for name in seed.namelist())
         assert not any(name.startswith('pgsql/data/') for name in seed.namelist())
