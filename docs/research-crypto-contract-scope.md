@@ -36,7 +36,9 @@ and a compatible comparator. Explicit dollar thresholds in that clause cannot
 contradict the title. Fullwidth presentation/curly quotes and whitespace normalize;
 words, HTML and negations are not removed to manufacture a match. Path markers in
 EITHER the question or the full rules take precedence. Unsupported or conflicting
-forms fail closed. Some valid real contracts will therefore be rejected.
+forms fail closed. Some valid real contracts will therefore be rejected. For an
+unclassified contract, `complete_contract_history_required` is `null` (unknown),
+not `false`; a missing classification cannot certify that history is unnecessary.
 
 This is a **rule-shape filter, not a general natural-language contract parser**.
 It can produce conservative false positives and may miss semantics that its

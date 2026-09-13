@@ -75,7 +75,8 @@ class CryptoContractScope:
 
     def to_dict(self) -> dict:
         self.__post_init__()
-        history = self.kind in ('path_dependent', 'aggregate_price')
+        history = (None if self.kind == 'unclassified'
+                   else self.kind in ('path_dependent', 'aggregate_price'))
         return dict(version=VERSION, kind=self.kind, reason_code=self.reason_code,
             new_launch_policy_eligible=self.new_launch_policy_eligible,
             operator_terms_approval_required=True, classification_is_semantic_proof=False,

@@ -205,3 +205,10 @@ def test_documented_noon_candle_wording_is_a_hint_not_a_resolved_time():
     result = assess(rules=rules)
     assert result.kind == 'terminal_price_hint'
     assert result.to_dict()['observation_time_verified'] is False
+
+
+def test_unclassified_history_requirement_is_unknown_not_false():
+    result = assess(question='Unclassified event?').to_dict()
+    assert result['kind'] == 'unclassified'
+    assert result['complete_contract_history_required'] is None
+    assert result['new_launch_policy_eligible'] is False
