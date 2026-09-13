@@ -54,7 +54,7 @@ cluster, service configuration, account or credential.
 .\.venv\Scripts\python.exe scripts/project_database.py down
 ```
 
-`init` creates a new cluster, installs all 62 locked historical migrations, then
+`init` creates a new cluster, installs all manifest-locked migrations, then
 stops the server. Default port is 55432; choose `init --port N` once if necessary.
 A busy port blocks; the project will not connect to whatever occupies that port.
 A repeated init refuses an existing directory rather than resetting its data.
@@ -76,6 +76,29 @@ disable that restriction; use a project directory owned by your ordinary account
 metacharacters and quotes in the project path are rejected. The project path is
 bound to its instance: copying/moving an initialized project is not an automatic
 migration procedure. Existing external/Supabase data is NEVER adopted or copied.
+
+## Windows runtime publication contention
+
+Only the final `postgres.installing` -> `postgres` rename may be retried after a
+Windows access/share/lock error (codes 5, 32 or 33). There are at most seven
+attempts, with delays of 0.1, 0.2, 0.4, 0.8, 1.6 and 2.0 seconds. This caps the
+requested sleeps at 5.1 seconds, not total filesystem/validation elapsed time.
+The importer holds the same lifecycle lease throughout; it never repeats the
+copy, native version probes, database initialization or a research/model call.
+
+Before each attempt it checks directory identity, private permissions, absence
+of a destination, engine hashes, import receipt and retained notices. It checks
+again after publication. Changed content/identity, invalid permissions, a new
+destination or unrelated errors stop immediately. A persistent eligible denial
+returns `project_postgres_runtime_publish_blocked`; other publication I/O errors
+return `project_postgres_runtime_publish_failed`, without exposing raw paths.
+
+Access denied does not prove antivirus interference: genuine permission errors
+can produce the same code. No antivirus exclusion, ACL relaxation, administrator
+execution, process kill, overwrite, copy/move fallback or auto-cleanup is used.
+An exhausted/failed import keeps its private staging for diagnosis. A subsequent
+install refuses that incomplete state; do not delete it to make a test pass.
+No automatic recovery/resume command is provided in this change.
 
 ## Application integration (no caller DSN)
 
@@ -148,9 +171,10 @@ administrator. Stronger isolation needs a separate OS account/sandbox.
 
 ## Migrations and failure handling
 
-The 62 existing SQLs are retained byte-for-byte under their historical pathname;
-none uses Supabase auth/storage/REST services. A checked-in manifest binds the
-entire ordered set and records the two existing outer transaction wrappers.
+Migration SQLs are retained byte-for-byte under their historical pathname;
+none uses Supabase auth/storage/REST services. The current inventory is defined by
+`database/migrations.lock.json`, not a duplicated count in this runbook. A
+checked-in manifest binds the entire ordered set and records the two existing outer transaction wrappers.
 A closed native bootstrap compatibility repair fixes the invalid historical
 `type(@.reason_codes)` JSONPath syntax in migration 20260622000007 to the
 PostgreSQL item method `@.reason_codes.type()`. Both the exact original and

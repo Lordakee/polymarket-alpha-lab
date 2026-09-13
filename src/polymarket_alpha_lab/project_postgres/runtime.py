@@ -15,6 +15,10 @@ import zipfile
 
 from .files import Layout, clean_environment, command, digest_file, fail, no_links, private_directory, read_private, write_private
 
+from .runtime_publish import publish_runtime
+
+_WINDOWS_PUBLICATION = os.name == 'nt'
+
 PROGRAMS = ('postgres', 'initdb', 'pg_ctl', 'psql', 'pg_controldata')
 SUPPORTED_MAJORS = (16, 17, 18)
 MAX_RUNTIME_BYTES = 1073741824
@@ -104,9 +108,23 @@ def _finish_import(layout: Layout, target: Path) -> str:
     # Version probes execute ONLY after explicit directory trust or archive hash
     # verification. No command from a model/provider payload reaches this path.
     version = runtime_version(target)
-    write_private(target / 'runtime.json', json.dumps({
-        'format': 'native-postgres-v1', 'version': version, 'files': inventory(target)}, sort_keys=True))
-    target.rename(layout.runtime)
+    expected_files = inventory(target)
+    record = json.dumps({'format': 'native-postgres-v1', 'version': version,
+                         'files': expected_files}, sort_keys=True)
+    notices = {name: digest_file(target / name) for name in
+               ('COPYRIGHT', 'LICENSE', 'LICENSE.txt', 'THIRDPARTYLICENSE.txt')
+               if (target / name).is_file()}
+    write_private(target / 'runtime.json', record)
+
+    def validate(prefix: Path) -> None:
+        if (read_private(prefix / 'runtime.json', limit=4000000) != record
+                or inventory(prefix) != expected_files):
+            fail('project_postgres_runtime_changed')
+        for name, digest in notices.items():
+            if digest_file(prefix / name) != digest:
+                fail('project_postgres_runtime_changed')
+
+    publish_runtime(layout, target, validate=validate, windows=_WINDOWS_PUBLICATION)
     return version
 
 
