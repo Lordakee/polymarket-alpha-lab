@@ -13,11 +13,39 @@ import shutil
 import stat
 import zipfile
 
-from .files import Layout, command, digest_file, fail, no_links, private_directory, read_private, write_private
+from .files import Layout, clean_environment, command, digest_file, fail, no_links, private_directory, read_private, write_private
 
 PROGRAMS = ('postgres', 'initdb', 'pg_ctl', 'psql', 'pg_controldata')
 SUPPORTED_MAJORS = (16, 17, 18)
 MAX_RUNTIME_BYTES = 1073741824
+
+
+
+def native_spawn_settings(program: str, env: dict[str, str], *, windows: bool) -> dict:
+    """Scope Windows descendants to native/system DLLs and a trusted cwd.
+
+    initdb re-executes with a restricted token, and pg_ctl starts descendants.
+    Both must resolve the same project runtime after the initial Python spawn.
+    Never change the parent's cwd/PATH or disable native privilege dropping.
+    """
+    if not windows:
+        return {'env': env}
+    exe = Path(program)
+    if exe.name not in tuple(name + '.exe' for name in PROGRAMS):
+        fail('project_postgres_program_not_allowed')
+    system = next((value for key, value in env.items() if key.upper() == 'SYSTEMROOT'), '')
+    root = Path(system)
+    if not exe.is_absolute() or exe.parent.name != 'bin' or not system or not root.is_absolute():
+        fail('project_postgres_invalid_native_environment')
+    child = {key: value for key, value in env.items() if key.upper() not in ('PATH', 'COMSPEC')}
+    child['PATH'] = ';'.join(map(str, (exe.parent, exe.parent.parent / 'lib', root / 'System32', root)))
+    child['COMSPEC'] = str(root / 'System32/cmd.exe')
+    return {'env': child, 'cwd': str(exe.parent)}
+
+
+def native_command(args: list[str], *, env=None, **options):
+    environment = clean_environment() if env is None else env
+    return command(args, **native_spawn_settings(args[0], environment, windows=os.name == 'nt'), **options)
 
 
 def executable(prefix: Path, name: str) -> Path:
@@ -33,7 +61,7 @@ def executable(prefix: Path, name: str) -> Path:
 def runtime_version(prefix: Path) -> str:
     versions = []
     for name in PROGRAMS:
-        value = command([str(executable(prefix, name)), '--version'], timeout=10).stdout.strip()
+        value = native_command([str(executable(prefix, name)), '--version'], timeout=10).stdout.strip()
         match = re.fullmatch(r'\S+ \(PostgreSQL\) (\d+\.\d+)(?: \([^\r\n]*\))?', value)
         if not match or int(match[1].split('.')[0]) not in SUPPORTED_MAJORS:
             fail('project_postgres_unsupported_runtime')
@@ -167,7 +195,12 @@ def import_runtime_archive(root: Path, archive_path: Path, *, expected_sha256: s
         target = _staging(layout)
         for item, relative in selected:
             dest = target.joinpath(*relative.parts)
-            dest.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            # The staging root already has an explicit current-user/SYSTEM ACL.
+            # On Windows, mkdir(0700) installs an OWNER RIGHTS/admin ACL instead
+            # of inheriting it. An elevated owner can then be Administrators,
+            # which PostgreSQL deliberately removes from its child token.
+            # Non-0700 mode is ignored by Windows: inherit our private ACL.
+            dest.parent.mkdir(parents=True, exist_ok=True, mode=0o777 if os.name == 'nt' else 0o700)
             with archive.open(item) as source, dest.open('xb') as output:
                 shutil.copyfileobj(source, output)
             if os.name != 'nt':
