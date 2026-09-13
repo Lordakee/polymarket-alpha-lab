@@ -17,6 +17,10 @@ def setup(tmp_path, monkeypatch):
     events = []
     monkeypatch.setattr(mod, 'require_windows', lambda: None)
     monkeypatch.setattr(mod.importlib.util, 'find_spec', lambda _: object())
+    def no_connection(*args, **kwargs):
+        pytest.fail('driver preflight must not open a database connection')
+    monkeypatch.setattr(mod.importlib, 'import_module',
+                        lambda _: SimpleNamespace(connect=no_connection))
     monkeypatch.setattr(mod, 'verify_runtime', lambda _: dict(version='17.11'))
     monkeypatch.setattr(mod, 'verify_distribution', lambda _: dict(
         files={mod.ENGINE: 'f' * 64}, postgres_version='17.11', source_commit='a' * 40))
@@ -139,3 +143,61 @@ def test_windows_kit_cannot_initialize_on_wrong_platform(setup, monkeypatch):
     monkeypatch.setattr(mod, 'require_windows', wrong)
     with pytest.raises(ProjectDatabaseError, match='windows_x64_required'): mod.prepare_project(root)
     assert events == []
+
+
+@pytest.mark.parametrize('error_type', (ImportError, OSError, RuntimeError))
+@pytest.mark.parametrize('existing', (False, True))
+def test_broken_installed_driver_blocks_before_infrastructure(setup, monkeypatch, error_type, existing):
+    """A discoverable package may still fail to load its native libpq module."""
+    root, events, _ = setup
+    seed(root)
+    if existing:
+        (root / 'runtime/postgres').mkdir(parents=True)
+        (root / '.local/postgres').mkdir(parents=True)
+    imports = []
+    def broken(name):
+        imports.append(name)
+        raise error_type('synthetic-private-driver-diagnostic')
+    monkeypatch.setattr(mod.importlib, 'import_module', broken)
+    with pytest.raises(ProjectDatabaseError, match='postgres_extra_required') as caught:
+        mod.prepare_project(root)
+    assert str(caught.value) == 'project_start_postgres_extra_required'
+    assert imports == ['psycopg']
+    assert events == []
+
+
+@pytest.mark.parametrize('driver', (object(), SimpleNamespace(connect=None), SimpleNamespace(connect=1)))
+def test_broken_driver_interface_blocks_before_infrastructure(setup, monkeypatch, driver):
+    root, events, _ = setup
+    seed(root)
+    monkeypatch.setattr(mod.importlib, 'import_module', lambda _: driver)
+    with pytest.raises(ProjectDatabaseError, match='postgres_extra_required'):
+        mod.prepare_project(root)
+    assert events == []
+
+
+def test_driver_discovery_exception_has_fixed_public_error(setup, monkeypatch):
+    root, events, _ = setup
+    seed(root)
+    def broken(_):
+        raise ValueError('synthetic-private-import-state')
+    monkeypatch.setattr(mod.importlib.util, 'find_spec', broken)
+    with pytest.raises(ProjectDatabaseError, match='postgres_extra_required'):
+        mod.prepare_project(root)
+    assert events == []
+
+
+def test_driver_preflight_imports_without_opening_connection(setup, monkeypatch):
+    root, events, _ = setup
+    seed(root)
+    imports = []
+    def no_connection(*args, **kwargs):
+        pytest.fail('preflight opened a connection')
+    def loaded(name):
+        imports.append(name)
+        return SimpleNamespace(connect=no_connection)
+    monkeypatch.setattr(mod.importlib, 'import_module', loaded)
+    result = mod.prepare_project(root)
+    assert imports == ['psycopg']
+    assert result['status'] == 'ready'
+    assert events[0] == ('import', 'f' * 64)

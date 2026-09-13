@@ -15,6 +15,12 @@ uv sync --locked --extra postgres
 .\.venv\Scripts\python.exe scripts/start_project.py
 ```
 
+Startup imports the installed PostgreSQL driver before touching native runtime or
+database state. A missing package or a native-library loading error returns
+`project_start_postgres_extra_required` without initializing a database. Reinstall
+the locked `postgres` extra in this project's environment; do not delete database
+data to repair a Python dependency failure.
+
 The dependency installation may download Python packages. Database preparation
 itself makes no public network request and invokes no model. The startup command
 checks the kit's code/engine checksums, imports the engine, creates a **new**

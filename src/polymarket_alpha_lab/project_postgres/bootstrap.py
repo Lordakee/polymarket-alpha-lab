@@ -1,6 +1,7 @@
 """Explicit first launch for a trusted native kit. No network, models or reset."""
 from __future__ import annotations
 
+import importlib
 import importlib.util
 from pathlib import Path
 
@@ -9,6 +10,22 @@ from .files import Layout, fail, no_links
 from .runtime import import_runtime_archive, verify_runtime
 from .server import ProjectPostgres
 from .sql import server_configuration
+
+
+def _require_postgres_driver() -> None:
+    """Load the installed driver without opening a connection.
+
+    find_spec alone succeeds for an unusable binary installation. Fail before
+    engine import or cluster creation, and never expose loader diagnostics.
+    """
+    try:
+        if importlib.util.find_spec('psycopg') is None:
+            raise ImportError
+        driver = importlib.import_module('psycopg')
+        if not callable(getattr(driver, 'connect', None)):
+            raise ImportError
+    except Exception:
+        fail('project_start_postgres_extra_required')
 
 
 def prepare_project(root: Path, *, port: int | None = None) -> dict:
@@ -29,9 +46,8 @@ def prepare_project(root: Path, *, port: int | None = None) -> dict:
     if manifest_path.exists() or seed.exists():
         manifest = verify_distribution(layout.root)
         require_windows()
-    # Fail before creating a cluster when the Python DB driver is unavailable.
-    if importlib.util.find_spec('psycopg') is None:
-        fail('project_start_postgres_extra_required')
+    # Validate actual import/native-library loading, not just package discovery.
+    _require_postgres_driver()
     no_links(layout.runtime)
     if not layout.runtime.exists():
         if layout.home.exists():
