@@ -21,6 +21,7 @@ from . import backup_format as fmt, sql
 from .files import Layout, ProjectDatabaseError, fail, no_links, private_directory, write_private
 from .runtime import native_command, verify_runtime
 from .server import ProjectPostgres
+from .backup_zip import validate_zip_layout
 
 
 def _migrations(layout: Layout) -> str:
@@ -68,6 +69,7 @@ def _approved_archive(path: Path, expected_sha256: str, trusted_backup: bool):
         if file_digest(raw, 'sha256').hexdigest() != expected_sha256:
             fail('project_postgres_backup_checksum_mismatch')
         raw.seek(0)
+        validate_zip_layout(raw)
         with zipfile.ZipFile(raw) as archive:
             data = fmt.inspect_archive(archive)
             yield archive, data
@@ -136,9 +138,11 @@ def create_cold_backup(root: Path, *, destination: Path) -> dict:
         if fmt.inventory(layout.home) != data['entries'] or db._state() != info:
             fail('project_postgres_backup_source_changed')
         # Read/decompress our output too, detecting truncation before publication.
-        with zipfile.ZipFile(partial) as archive:
-            if fmt.inspect_archive(archive) != data:
-                fmt.invalid()
+        with partial.open('rb') as checked:
+            validate_zip_layout(checked)
+            with zipfile.ZipFile(checked) as archive:
+                if fmt.inspect_archive(archive) != data:
+                    fmt.invalid()
         with partial.open('rb') as stream:
             digest = file_digest(stream, 'sha256').hexdigest()
         partial.rename(target / 'snapshot.palpg.zip')
