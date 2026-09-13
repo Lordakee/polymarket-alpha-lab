@@ -33,7 +33,8 @@ FIXED = ('pyproject.toml', 'uv.lock', '.gitignore', '.gitattributes', 'database/
 # Optional reviewed entrypoints: old kits without them remain verifiable.
 PUBLIC_ENTRYPOINTS = ('scripts/review_resolution_queue.py', 'scripts/preview_crypto_research.py',
     'scripts/discover_crypto_research.py', 'scripts/download_handoff.ps1',
-    'docs/research-resolution-queue.md', 'docs/research-crypto-launch.md', 'docs/research-crypto-discovery.md')
+    'docs/research-resolution-queue.md', 'docs/research-crypto-launch.md', 'docs/research-crypto-discovery.md',
+    'docs/research-crypto-contract-scope.md')
 SOURCE_ROOTS = ('src/polymarket_alpha_lab', 'supabase/migrations')
 MAX_SOURCE_BYTES = 134217728
 MAX_FILES = 20000
