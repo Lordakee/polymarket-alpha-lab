@@ -11,6 +11,7 @@ from hashlib import sha256
 import json
 
 from polymarket_alpha_lab.research_execution import CapturedResearchRequest
+from polymarket_alpha_lab.research_crypto_contract_scope import assess_crypto_contract_scope
 from polymarket_alpha_lab.research_resolution import condition, utc
 from polymarket_alpha_lab.team_research_agent_types import ResearchAgentLimits, hard_flags, identifier, integer, strict_json, text
 from polymarket_alpha_lab.team_research_crypto_candles import CoinbaseCandleSnapshot, CryptoCandleWindow, PRODUCTS
@@ -174,6 +175,9 @@ class CryptoResearchPreview:
         _digest(approved_terms_sha256)
         if approved_terms_sha256 != terms['terms_sha256']:
             raise CryptoLaunchBlocked('crypto_launch_terms_approval_mismatch')
+        scope = assess_crypto_contract_scope(self.spec.team_id, terms['question'], terms['resolution_criteria'])
+        if not scope.new_launch_policy_eligible:
+            raise CryptoLaunchBlocked(scope.reason_code)
         return CapturedResearchRequest(self.spec.record_id, self.spec.model_id,
             self.spec.protocol(), self.spec.forecast_cutoff_at, intake,
             limits=self.spec.limits, required_source_ids=tuple(r.source_id for r in check.source_receipts))
@@ -181,7 +185,11 @@ class CryptoResearchPreview:
     def to_dict(self) -> dict:
         self.__post_init__()
         terms, check, _ = self._prepared()
-        return dict(status='prepared', readiness_only=True, record_id=self.spec.record_id,
+        scope = assess_crypto_contract_scope(self.spec.team_id, terms['question'], terms['resolution_criteria'])
+        return dict(contract_scope=scope.to_dict(),
+            forecast_start_status=('requires_operator_approval' if scope.new_launch_policy_eligible
+                                   else 'blocked_by_contract_scope'),
+            status='prepared', readiness_only=True, record_id=self.spec.record_id,
             model_id=self.spec.model_id, selected_at=self.selected_at.isoformat(), as_of=self.as_of.isoformat(),
             **terms, window_start=check.window.start.isoformat(), window_end=check.window.end.isoformat(),
             compared_candles=len(check.close_divergences_bps),

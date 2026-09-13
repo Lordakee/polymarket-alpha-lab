@@ -30,8 +30,12 @@ def spec(**changes):
 
 def snapshots(s=None, at=NOW, **market_changes):
     s = s or spec()
-    raw = dict(slug=s.market_slug, conditionId=s.condition_id, question='Synthetic YES/NO event?',
-               description='Synthetic criterion. NOT a real market.', active=True, closed=False,
+    asset, ticker = ('Bitcoin', 'BTC') if s.team_id == 'crypto_btc' else ('Ethereum', 'ETH')
+    raw = dict(slug=s.market_slug, conditionId=s.condition_id,
+               question=f'Will the price of {asset} be above $2,000 on September 13?',
+               description=(f'This market will resolve to \"Yes\" if the Close price of the Binance {ticker}/USDT '
+                            '1-minute candle at 12:00 PM ET on the date in the title is above $2,000. '
+                            'Otherwise it will resolve to \"No\". Synthetic fixture only.'), active=True, closed=False,
                outcomes='["Yes","No"]', endDate=(at+timedelta(days=1)).isoformat())
     raw.update(market_changes)
     window = core.candle_window(s, at)

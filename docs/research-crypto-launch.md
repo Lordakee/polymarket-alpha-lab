@@ -54,6 +54,17 @@ and independently revalidated to remain after the explicit cutoff on each new
 preparation. End date is not a verified resolution timestamp. Approval is a caller
 assertion, not an authenticated identity, signature or truth check.
 
+## Contract shape before a new research request
+
+A prepared input now includes `contract_scope` and `forecast_start_status`.
+Whole-window touch/Low/High and aggregate-price shapes cannot start a new research
+run from recent hourly reference bars; unknown forms also block. Narrow terminal
+hints can reach the existing operator terms-approval gate, not bypass it. Read
+[the contract-scope runbook](research-crypto-contract-scope.md) for exact support,
+false-positive/semantic limits, unchanged legacy replay and source distinctions.
+Neither `prepared` nor a matching terms hash alone now guarantees a new request
+can be constructed. The actual observation instant still requires operator review.
+
 ## Explicit captured execution (Python API)
 
 This node deliberately adds no CLI key prompt, environment token discovery or paid

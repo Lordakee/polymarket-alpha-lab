@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 import os
+import json
 from pathlib import Path
 import shutil
 import socket
@@ -19,7 +20,7 @@ from polymarket_alpha_lab.research_capture_psycopg import ResearchCaptureConflic
 from polymarket_alpha_lab.project_postgres import files
 from polymarket_alpha_lab.project_postgres.runtime import import_runtime_directory
 from polymarket_alpha_lab.project_postgres.server import ProjectPostgres
-from polymarket_alpha_lab.research_crypto_launch import CryptoResearchPreview, CryptoResearchSpec
+from polymarket_alpha_lab.research_crypto_launch import CryptoLaunchBlocked, CryptoResearchPreview, CryptoResearchSpec
 from tests.test_research_crypto_launch import snapshots
 from tests.test_team_research_cross_source import Model
 
@@ -55,6 +56,24 @@ def test_native_empty_database_to_captured_research_and_worklist(tmp_path, monke
             m,cb,kr=snapshots(spec,at)
             p=CryptoResearchPreview(spec,at,at,m,cb,kr)
             digest=p.to_dict()['terms_sha256']
+            # Recent reference bars cannot authorize a whole-window touch event.
+            # Exercise the production session before ANY market/claim is recorded.
+            path_spec=replace(spec,record_id='blocked-path')
+            path_body=json.loads(m.raw_json)
+            path_body['question']='Will Ethereum touch $2,000 in September?'
+            path_body['description']=('This market resolves Yes if any Binance ETH/USDT '
+                '1-minute candle has Low <= $2,000 during September. Synthetic rules.')
+            path_preview=replace(p,spec=path_spec,market=replace(m,raw_json=json.dumps(path_body).encode()))
+            assert path_preview.to_dict()['forecast_start_status']=='blocked_by_contract_scope'
+            with pytest.raises(CryptoLaunchBlocked,match='path_history_required'):
+                session.launch_crypto_research(spec=path_spec,preview=path_preview,
+                    approved_terms_sha256=path_preview.to_dict()['terms_sha256'],model_factory=forbidden,
+                    allow_public_fetch=True,allow_model_calls=True)
+            assert session.resolution_worklist().to_dict()['registered_market_count']==0
+            info=db._state()
+            assert db._psql(info,'SELECT count(*) FROM research_capture.execution_claims;',owner=False)=='0'
+            assert db._psql(info,'SELECT count(*) FROM research_capture.attempts;',owner=False)=='0'
+            assert count==[] and fetches==[]
             monkeypatch.setattr(launch,'fetch_crypto_research_preview',lambda *a,**k:fetches.append(1) or p)
             # Normal launch, not a test-only direct markets INSERT.
             result=session.launch_crypto_research(spec=spec,approved_terms_sha256=digest,model_factory=factory,

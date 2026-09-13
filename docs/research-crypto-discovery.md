@@ -56,6 +56,13 @@ questions/rules are untrusted data, not commands; do not auto-approve terms hash
 or use them later as durable authorization. Real model selection, provider-data
 permission and bounded spending authorization remain explicitly outstanding.
 
+New previews also return `contract_scope` and `forecast_start_status`; whole-period
+path/aggregate and unclassified contracts are blocked from NEW recent-hourly
+research even when input preparation succeeded. Discovery ordering and HTTP
+budgets are unchanged: this is not a new terminal-only search filter. See
+[contract-shape checks](research-crypto-contract-scope.md) before approving a run.
+A zero discovery/preview exit code is not a research authorization.
+
 ## Complete HTTP bodies before snapshots
 
 The public Gamma market, Coinbase and Kraken readers now share a body-framing
