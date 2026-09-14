@@ -200,6 +200,11 @@ def test_build_and_run_actual_relocatable_kit(monkeypatch):
         inventory_help = subprocess.run([str(root / '.venv/Scripts/python.exe'), '-I', str(inventory_cli), '--help'],
             capture_output=True, text=True, encoding='utf-8', timeout=30, check=True, env=clean_environment())
         assert '--max-records' in inventory_help.stdout
+        resolution_cli = root / 'scripts/inspect_project_resolution.py'
+        assert resolution_cli.is_file() and (root / 'docs/research-resolution-inspection.md').is_file()
+        resolution_help = subprocess.run([str(root / '.venv/Scripts/python.exe'), '-I', str(resolution_cli), '--help'],
+            capture_output=True, text=True, encoding='utf-8', timeout=30, check=True, env=clean_environment())
+        assert '--review-id' in resolution_help.stdout and '--confirm' not in resolution_help.stdout
 
         # The extracted package owns its timezone dependency; this must work on
         # Windows with no system IANA data and no source-worktree import fallback.
@@ -267,6 +272,16 @@ def test_build_and_run_actual_relocatable_kit(monkeypatch):
         assert listing['executions'][0]['recorded_at'] == captured.record.recorded_at.isoformat()
         assert 'Synthetic distribution acceptance only.' not in inventory_read.stdout
         assert db.status()['status'] == 'stopped'
+        resolution_read = subprocess.run([str(first / '.venv/Scripts/python.exe'), '-I',
+            str(first / 'scripts/inspect_project_resolution.py'), '--review-id', 'not-recorded'],
+            capture_output=True, text=True, encoding='utf-8', timeout=120, check=False, env=clean_environment())
+        assert resolution_read.returncode == 3, (resolution_read.stdout, resolution_read.stderr)
+        assert resolution_read.stderr == ''
+        resolution_view = json.loads(resolution_read.stdout)
+        assert resolution_view['status'] == 'review_not_found' and resolution_view['inspection'] is None
+        assert resolution_view['public_network_called'] is resolution_view['live_model_called'] is False
+        assert resolution_view['business_writes_performed'] is resolution_view['outcome_confirmation_performed'] is False
+        assert db.status()['status'] == 'stopped' and db.status()['instance_id'] == created['instance_id']
         print('native distribution: same kit yields independent project database', flush=True)
         other = start(second, '--port', str(port()))
         assert other['recorded_attempts'] == 0 and other['instance_id'] != created['instance_id']

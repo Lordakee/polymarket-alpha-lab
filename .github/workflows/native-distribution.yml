@@ -3,6 +3,10 @@ on:
   pull_request:
     branches: [main]
     paths:
+      - 'src/polymarket_alpha_lab/research_resolution_inspection_cli.py'
+      - 'scripts/inspect_project_resolution.py'
+      - 'tests/test_research_resolution_inspection_cli.py'
+      - 'docs/research-resolution-inspection.md'
       - 'src/polymarket_alpha_lab/project_postgres/**'
       - 'src/polymarket_alpha_lab/research_execution_inventory.py'
       - 'src/polymarket_alpha_lab/research_inventory_cli.py'
