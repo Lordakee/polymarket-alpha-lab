@@ -140,12 +140,23 @@ def run_research_batch_with_psycopg(dsn: str, *, batch_id: str, model_factory,
         raise ValueError('research_dispatch_snapshot_invalid')
     snapshot = replace(snapshot)
     pending = [i for i, state in enumerate(snapshot.states()) if state == 'pending'][:max_tasks]
+    attempts = _drain_requests(dsn, snapshot.stored.batch.requests, pending,
+                               model_factory, max_workers, stop)
+    return ResearchDispatchReport(snapshot, attempts, max_tasks, max_workers, stop.is_stopped())
+
+
+def _drain_requests(dsn, requests, pending, model_factory, max_workers, stop):
+    """Shared bounded execution mechanics; callers supply a validated selection.
+
+    Preserve selection order, including a cyclic order chosen by durable rotation.
+    The original per-request claim remains the only authority to start a loop.
+    """
     results = {}
 
     def invoke(position):
         if not stop._admit():
             return DispatchAttempt(position, 'stopped_before_start')
-        request = snapshot.stored.batch.requests[position]
+        request = requests[position]
         try:
             receipt = run_captured_research_with_psycopg(dsn, request=request, model_factory=model_factory)
             if type(receipt) is not CapturedResearchExecution or receipt.request.payload != request.payload:
@@ -180,8 +191,7 @@ def run_research_batch_with_psycopg(dsn: str, *, batch_id: str, model_factory,
                 # Context manager drains admitted workers before propagation.
                 # No force-kill or assumption that a quiet provider has died.
                 raise
-    return ResearchDispatchReport(snapshot, tuple(results[i] for i in sorted(results)),
-                                  max_tasks, max_workers, stop.is_stopped())
+    return tuple(results[i] for i in pending if i in results)
 
 
 __all__ = ('ResearchDispatchStop', 'ResearchDispatchReport', 'run_research_batch_with_psycopg')

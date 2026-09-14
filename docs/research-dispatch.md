@@ -9,8 +9,9 @@ PostgreSQL, instance binding, execution claim and capture-only recovery paths.
 There is no file-backed queue, broker, alternate driver or implicit model choice.
 
 **This is WP-03 partial integration, not G3/V1 completion.** There is no calendar
-service, automatic fresh-market collection, cross-batch fairness/rotation, global
-provider budget, administrative cancellation or repair of lost model outputs.
+service, automatic fresh-market collection, global provider budget, administrative
+cancellation or repair of lost model outputs. The explicit multi-batch rotation
+below adds a durable cursor; it is not a recurring or fleet-wide scheduler.
 WP-02 model/data/cost decisions remain required before real provider use. A run
 starts only with an explicit factory and `allow_model_calls=True`; no model or
 credential is discovered. This delivery is tested with synthetic models only.
@@ -112,8 +113,9 @@ A pre-claim database/identity failure returns `operation_failed`, not a stored
 research failure and not proof that no transaction committed. Snapshot again before
 another run. A persistent failure at the head can consume later run limits; this
 slice does not implement durable error rotation, backoff or cross-batch fairness.
-Such operational controls and full WP-02 integration remain G3 gaps, not silently
-claimed successes. Actual model/factory failures use the original captured result
+The explicit rotation below prevents this repeated head-of-line monopolization
+within its fixed roster; the single-batch API deliberately retains its old FIFO
+semantics. Unified operation and full WP-02 integration remain G3 gaps. Actual model/factory failures use the original captured result
 and are skipped subsequently, not retried.
 
 `capture_failed` retains the exact `execution.pending_run` only in memory for the
@@ -125,8 +127,9 @@ as a complete final snapshot. Interrupts propagate after admitted workers drain.
 
 ## Migration and operating boundaries
 
-New tail: `20260914000000_research_dispatch_batches.sql`, listed in the native
-manifest; there are now 64 migrations. The original 63 SQL files are unchanged.
+Original batch tail: `20260914000000_research_dispatch_batches.sql` brought the
+catalog to 64 migrations. The current catalog also includes the rotation tail
+described below. The original 63 SQL files are unchanged.
 The new append-only table holds public/redacted request evidence; no passwords,
 model clients or credentials. It rejects UPDATE/DELETE/TRUNCATE and uses the
 existing restricted app role/grant procedure. SQL independently checks batch
@@ -168,3 +171,97 @@ PR and DELIVERY_PLAN.md; synthetic results are not approved live provider tests.
 Primary transaction/context references reviewed 2026-09-14:
 https://www.postgresql.org/docs/current/transaction-iso.html
 https://docs.python.org/3/library/contextvars.html
+
+
+## Fair multi-batch turns with a durable cursor (WP-03)
+
+The application can group 1..10 existing batches into a fixed rotation, with at
+most100 requests and8MiB of combined canonical batch input. Batch membership and
+order are immutable under `rotation_id`. Unequal lengths are interleaved by
+position: A0,B0,C0,A1,B1,... . This is finite slot fairness inside this explicit
+roster, not weighted team fairness or automatic discovery of all queued batches.
+
+```python
+with ProjectPostgres(Path(actual_project_root)).session() as research:
+    report = research.run_research_rotation(
+        rotation_id='approved-roster-1', turn_id='operator-turn-1',
+        batch_ids_to_run=('approved-btc-batch', 'approved-eth-batch'),
+        model_factory=approved_model_factory, allow_model_calls=True,
+        max_tasks=2, max_workers=2,
+    )
+    original_turn = research.inspect_research_turn(
+        rotation_id='approved-roster-1', turn_id='operator-turn-1',
+    )
+```
+
+These names are placeholders for already admitted, independently approved inputs
+and a separately authorized client, not a runnable provider configuration. No
+client/credential is loaded by name, and no model call is authorized by this doc.
+There is still no operator CLI that silently imports an arbitrary factory.
+
+Each NEW turn reads bounded per-batch snapshots, then under a per-rotation DB lock
+records its selection and next cursor in one append-only transaction. Only after
+COMMIT and cleanup succeed may it enter the existing bounded executor. The cursor
+moves past every considered slot, including a pending request whose later claim
+operation fails. A later explicit turn continues after that slot instead of
+repeatedly spending its entire limit on the same failing head. It scans at most
+one circuit, never immediately retries inside a turn, and never refreshes inputs.
+Captured/incomplete/expired slots are skipped according to their selection hints;
+the original per-request claim transaction rechecks actual state and DB time.
+
+The snapshots are SEPARATE consistent per-batch reads, not one atomic whole-roster
+snapshot or a promise that pending remains pending. Claims created in the meantime
+still prevent a duplicate loop. Aggregate input/result limits are checked as each
+batch arrives; malformed/missing/oversized batches abort the entire turn, without
+reserving a partial roster. Read failures that prevent validating the roster do
+not advance the cursor and require operator investigation; they are not skipped.
+
+### Replay, failure and stop are different operations
+
+- The same `rotation_id` + `turn_id` returns its ORIGINAL reservation and starts
+  nothing, even after crash, expiry, unknown COMMIT acknowledgement or stop.
+  Changing its batch IDs or task/worker limits is a conflict. Replay is not a
+  rescan of the prior turn's execution outcomes.
+- A NEW turn ID explicitly requests the next bounded slice. A fixed roster may
+  change per-turn limits but not its batch identities/content/request bindings.
+  Creating another rotation starts a different cursor, not a global fairness
+  guarantee or a way to bypass the original immutable execution claim.
+- A process can die after reserving but before claiming. Those inputs remain
+  unclaimed in the original batch; they can be considered when a future explicit
+  circuit reaches them. If it dies AFTER claiming, the request remains incomplete
+  and is NEVER reclaimed. No lost result is reconstructed or relabeled failed.
+- Stop requested before reservation returns `stopped_before_reservation` with no
+  cursor row. A concurrent stop may arrive after the last check: that turn can
+  commit a cursor yet start no worker. Its selected but unclaimed jobs remain
+  stored; later turns eventually revisit them. The prior cooperative admission,
+  drain and bounded-client-I/O rules apply unchanged.
+- `operation_failed` still does not prove absence of a committed claim. Only the
+  original claim/capture tables determine execution. The turn stores selection
+  metadata, NOT worker heartbeats, actual model-call counts or final outcomes.
+  Inspect original batch/task records when investigating an interrupted turn.
+
+The report retains cyclic selection order (e.g.3,0,1), rather than sorting it into
+an incorrect numeric order. Returned execution IDs/hashes must match the selected
+original request keys. Successful reports omit source bodies and provider error
+text. IDs/hashes remain business metadata and are not automatically public data.
+A committed reservation is not a forecast, operator authorization or paid-call
+receipt. Monetary enforcement remains WP-02; all task/worker caps are per call.
+
+### Migration and evidence
+
+`20260915000000_research_dispatch_turns.sql` is the new65th migration; all original
+64SQL files are unchanged. The table independently enforces ordered predecessor
+and cursor transitions, binds roster hashes and interleaved request IDs/hashes to
+the existing immutable batches, and refuses mutation/truncation. The application
+also uses a closed canonical codec. Selection states are historical hints, not an
+independent authentication of the source or proof the result remains current.
+
+Only the normal explicit migration operation may install it. The real integration
+proof upgrades a disposable64-schema source instance, preserves an existing batch
+and captured record, exercises failed-head rotation, same-turn concurrent replay,
+restart and post-claim process loss. The earlier63-to64 test retains its original
+catalog target, so its old upgrade assertions are not silently replaced. User
+instances and old immutable kits are not upgraded or overlaid by this change.
+Final fixed-revision evidence is recorded in the implementation PR; G3 remains
+PARTIAL until the unified operating path and approved provider budget integration
+are complete. No synthetic test can close the real-model gates.
