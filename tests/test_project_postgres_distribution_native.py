@@ -185,6 +185,11 @@ def test_build_and_run_actual_relocatable_kit(monkeypatch):
             '--team', 'crypto_btc', '--preview'], capture_output=True, text=True,
             encoding='utf-8', timeout=30, check=True, env=clean_environment())
         assert json.loads(disabled.stdout)['status'] == 'disabled'
+        evaluation_cli = root / 'scripts/evaluate_project_research.py'
+        assert evaluation_cli.is_file() and (root / 'docs/research-evaluation-console.md').is_file()
+        help_result = subprocess.run([str(root / '.venv/Scripts/python.exe'), '-I', str(evaluation_cli), '--help'],
+            capture_output=True, text=True, encoding='utf-8', timeout=30, check=True, env=clean_environment())
+        assert '--include-decisions' in help_result.stdout
         # The extracted package owns its timezone dependency; this must work on
         # Windows with no system IANA data and no source-worktree import fallback.
         probe = subprocess.run([str(root / '.venv/Scripts/python.exe'), '-I', '-c',
@@ -218,6 +223,15 @@ def test_build_and_run_actual_relocatable_kit(monkeypatch):
         assert repeated['initialized_here'] is False
         assert repeated['instance_id'] == created['instance_id'] and repeated['recorded_attempts'] == 1
         assert sha256((db.layout.home / 'app.pgpass').read_bytes()).hexdigest() == credentials
+        assert db.status()['status'] == 'stopped'
+        evaluation = subprocess.run([str(first / '.venv/Scripts/python.exe'), '-I',
+            str(first / 'scripts/evaluate_project_research.py')], capture_output=True, text=True,
+            encoding='utf-8', timeout=120, check=True, env=clean_environment())
+        value = json.loads(evaluation.stdout)
+        assert value['status'] == 'evaluated' and value['live_model_called'] is False
+        assert value['evaluation']['evaluation_status'] == 'no_scored_forecasts'
+        assert value['evaluation']['visible_attempt_count'] == 1
+        assert value['evaluation']['decision_counts']['outcome_pending'] == 1
         assert db.status()['status'] == 'stopped'
         print('native distribution: same kit yields independent project database', flush=True)
         other = start(second, '--port', str(port()))
