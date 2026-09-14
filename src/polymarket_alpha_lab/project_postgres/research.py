@@ -46,6 +46,18 @@ class ProjectResearchSession:
         from polymarket_alpha_lab.research_crypto_launch_service import launch_crypto_research_with_psycopg
         return self._call(launch_crypto_research_with_psycopg, **configuration)
 
+    def enqueue_research_batch(self, *, batch, allow_queue_write=False):
+        from polymarket_alpha_lab.research_dispatch_store import enqueue_research_batch_with_psycopg
+        return self._call(enqueue_research_batch_with_psycopg, batch=batch, allow_queue_write=allow_queue_write)
+
+    def inspect_research_batch(self, *, batch_id):
+        from polymarket_alpha_lab.research_dispatch_store import load_research_batch_with_psycopg
+        return self._call(load_research_batch_with_psycopg, batch_id=batch_id)
+
+    def run_research_batch(self, **configuration):
+        from polymarket_alpha_lab.research_dispatch_runner import run_research_batch_with_psycopg
+        return self._call(run_research_batch_with_psycopg, **configuration)
+
     def inspect(self, *, record_id):
         from polymarket_alpha_lab.research_execution_psycopg import inspect_captured_research_with_psycopg
         return self._call(inspect_captured_research_with_psycopg, record_id=record_id)

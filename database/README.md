@@ -316,3 +316,11 @@ native proof; its separate successful CI is required before release.
 Official physical-backup requirements:
 https://www.postgresql.org/docs/17/backup-file.html
 https://www.postgresql.org/docs/17/app-pgcontroldata.html
+
+## Durable dispatch schema
+
+The native catalog now includes the append-only research dispatch batch tail
+`20260914000000_research_dispatch_batches.sql`. Original migration bytes are
+unchanged. Batch admission/run requires this schema; it never migrates implicitly.
+See [batch operation and safe upgrade limits](../docs/research-dispatch.md).
+Do not overlay or edit an old immutable kit to obtain this table.
