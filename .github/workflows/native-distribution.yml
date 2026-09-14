@@ -4,6 +4,8 @@ on:
     branches: [main]
     paths:
       - 'src/polymarket_alpha_lab/project_postgres/**'
+      - 'src/polymarket_alpha_lab/team_research_intake.py'
+      - 'src/polymarket_alpha_lab/team_research_agent.py'
       - 'scripts/start_project.py'
       - 'scripts/build_project_bundle.py'
       - 'tests/test_project_postgres*'

@@ -11,7 +11,7 @@ import re
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
-from datetime import timedelta
+from datetime import UTC, timedelta
 from decimal import Decimal
 from typing import Protocol
 
@@ -127,9 +127,11 @@ def _run(task: TeamResearchTask, model: ResearchModel, limits: ResearchAgentLimi
             tool_trace=tuple(trace), **values,
         )
 
-    # Freshness is computed from trusted task time, never a model-supplied age.
+    # Use elapsed UTC instants: subtraction in one DST zone otherwise ignores
+    # offset changes/fold. Direct agent callers must get the same gate as intake.
+    as_of_utc = task.as_of.astimezone(UTC)
     catalog = {item.source_id: item for item in task.evidence
-               if timedelta(0) <= task.as_of - item.observed_at
+               if timedelta(0) <= as_of_utc - item.observed_at.astimezone(UTC)
                <= timedelta(seconds=limits.max_evidence_age_seconds)}
     if not catalog:
         return result("blocked", "no_eligible_evidence")
