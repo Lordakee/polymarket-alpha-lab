@@ -75,6 +75,11 @@ def test_durable_batches_upgrade_stop_restart_and_crash_without_model_replay(tmp
     # A disposable SOURCE instance at the original 63-migration schema. Never an
     # overlay on a user's kit. The explicit migration must preserve old history.
     manifest = json.loads((root/'database/migrations.lock.json').read_text())
+    # Preserve this earlier acceptance at its original 64-migration target.
+    # Later migrations have separate upgrade proofs; never mutate old SQL.
+    for later in manifest['migrations'][64:]:
+        (root/'supabase/migrations'/later['name']).unlink()
+    manifest['migrations'] = manifest['migrations'][:64]
     assert manifest['migrations'][-1]['name'] == TAIL
     (root/'database/migrations.lock.json').write_text(json.dumps(dict(manifest,
         migrations=manifest['migrations'][:-1])))
@@ -91,7 +96,7 @@ def test_durable_batches_upgrade_stop_restart_and_crash_without_model_replay(tmp
             info=db._state()
         # Apply only the new tail by the production explicit migrator.
         shutil.copyfile(ROOT/'supabase/migrations'/TAIL,root/'supabase/migrations'/TAIL)
-        shutil.copyfile(ROOT/'database/migrations.lock.json',root/'database/migrations.lock.json')
+        (root/'database/migrations.lock.json').write_text(json.dumps(manifest))
         assert db.migrate()==dict(status='migrated',migrations_applied=1)
         assert db.migrate()==dict(status='migrated',migrations_applied=0)
         assert db.status()['instance_id']==info['instance_id'] and db.status()['status']=='stopped'

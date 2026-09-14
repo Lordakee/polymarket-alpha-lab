@@ -58,6 +58,14 @@ class ProjectResearchSession:
         from polymarket_alpha_lab.research_dispatch_runner import run_research_batch_with_psycopg
         return self._call(run_research_batch_with_psycopg, **configuration)
 
+    def run_research_rotation(self, **configuration):
+        from polymarket_alpha_lab.research_dispatch_rotation_runner import run_research_rotation_with_psycopg
+        return self._call(run_research_rotation_with_psycopg, **configuration)
+
+    def inspect_research_turn(self, *, rotation_id, turn_id):
+        from polymarket_alpha_lab.research_dispatch_rotation_store import inspect_research_turn_with_psycopg
+        return self._call(inspect_research_turn_with_psycopg, rotation_id=rotation_id, turn_id=turn_id)
+
     def inspect(self, *, record_id):
         from polymarket_alpha_lab.research_execution_psycopg import inspect_captured_research_with_psycopg
         return self._call(inspect_captured_research_with_psycopg, record_id=record_id)
