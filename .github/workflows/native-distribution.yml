@@ -4,6 +4,10 @@ on:
     branches: [main]
     paths:
       - 'src/polymarket_alpha_lab/project_postgres/**'
+      - 'src/polymarket_alpha_lab/research_execution_cli.py'
+      - 'scripts/inspect_project_research.py'
+      - 'tests/test_research_execution_cli.py'
+      - 'docs/research-execution-inspection.md'
       - 'src/polymarket_alpha_lab/research_evaluation_cli.py'
       - 'scripts/evaluate_project_research.py'
       - 'tests/test_research_evaluation_cli.py'

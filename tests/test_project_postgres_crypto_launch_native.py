@@ -10,6 +10,8 @@ import json
 from pathlib import Path
 import shutil
 import socket
+import subprocess
+import sys
 import uuid
 
 import pytest
@@ -144,6 +146,44 @@ def test_native_empty_database_to_captured_research_and_worklist(tmp_path, monke
             after=session.resolution_worklist().to_dict()
             assert after['registered_market_count']==1 and after['incomplete_execution_count']==1
             assert session.inspect(record_id='launch-failed').record==failed.record
+        # Inspect real stored claims with the actual CLI in separate processes.
+        # An incomplete claim must remain inspectable even though evaluate blocks.
+        def inspect(record_id, expected_exit):
+            completed = subprocess.run([sys.executable, '-I', str(ROOT/'scripts/inspect_project_research.py'),
+                '--root', str(root), '--record-id', record_id], capture_output=True, text=True,
+                encoding='utf-8', timeout=120, env=files.clean_environment())
+            assert completed.returncode == expected_exit, completed.stdout + completed.stderr
+            payload = json.loads(completed.stdout)
+            assert completed.stderr == '' and payload['live_model_called'] is False
+            assert payload['business_writes_performed'] is payload['public_network_called'] is False
+            assert db.status()['status'] == 'stopped'
+            assert db.status()['instance_id'] == info['instance_id']
+            return payload
+        assert db.status()['status'] == 'stopped'
+        missing = inspect('not-a-claim', 3)
+        assert missing['status'] == 'claim_not_found' and missing['inspection'] is None
+        saved = inspect('launch-1', 0)['inspection']
+        assert saved['inspection_status'] == 'captured_completed'
+        assert saved['record_sha256'] == result.record.content_sha256
+        assert saved['recorded_at'] == result.record.recorded_at.isoformat()
+        failed_summary = inspect('launch-failed', 0)['inspection']
+        assert failed_summary['inspection_status'] == 'captured_failed'
+        assert failed_summary['stored_research']['reason_code'] == 'model_factory_failed'
+        pending_summary = inspect('launch-incomplete', 0)['inspection']
+        assert pending_summary['inspection_status'] == 'result_not_captured'
+        assert pending_summary['worker_liveness'] == 'unknown'
+        assert pending_summary['stored_research'] is None and pending_summary['recorded_at'] is None
+        assert pending_summary['automatic_retry_permitted'] is False
+        with db.session() as session:
+            assert session.inspect(record_id='launch-1').record == result.record
+            assert session.inspect(record_id='launch-failed').record == failed.record
+            assert session.inspect(record_id='launch-incomplete').status == 'incomplete'
+            assert db._psql(info, 'SELECT count(*) FROM research_capture.execution_claims;', owner=False) == '3'
+            assert db._psql(info, 'SELECT count(*) FROM research_capture.attempts;', owner=False) == '2'
+            assert db._psql(info, 'SELECT count(*) FROM research_capture.outcomes;', owner=False) == '0'
+            with pytest.raises(ResearchCaptureConflict, match='history_incomplete'): session.evaluate()
+        assert db.status()['status'] == 'stopped'
+        print('native execution inspection: PASS; missing/completed/failed/incomplete, original receipts and strict history retained')
         assert count==[1] and fetches==[1]
         print('native crypto launch: PASS; empty DB to prospective capture, exact replay, stable cohort, incomplete guard')
     finally:

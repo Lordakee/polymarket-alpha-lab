@@ -190,6 +190,11 @@ def test_build_and_run_actual_relocatable_kit(monkeypatch):
         help_result = subprocess.run([str(root / '.venv/Scripts/python.exe'), '-I', str(evaluation_cli), '--help'],
             capture_output=True, text=True, encoding='utf-8', timeout=30, check=True, env=clean_environment())
         assert '--include-decisions' in help_result.stdout
+        inspection_cli = root / 'scripts/inspect_project_research.py'
+        assert inspection_cli.is_file() and (root / 'docs/research-execution-inspection.md').is_file()
+        inspection_help = subprocess.run([str(root / '.venv/Scripts/python.exe'), '-I', str(inspection_cli), '--help'],
+            capture_output=True, text=True, encoding='utf-8', timeout=30, check=True, env=clean_environment())
+        assert '--record-id' in inspection_help.stdout
         # The extracted package owns its timezone dependency; this must work on
         # Windows with no system IANA data and no source-worktree import fallback.
         probe = subprocess.run([str(root / '.venv/Scripts/python.exe'), '-I', '-c',
@@ -232,6 +237,16 @@ def test_build_and_run_actual_relocatable_kit(monkeypatch):
         assert value['evaluation']['evaluation_status'] == 'no_scored_forecasts'
         assert value['evaluation']['visible_attempt_count'] == 1
         assert value['evaluation']['decision_counts']['outcome_pending'] == 1
+        assert db.status()['status'] == 'stopped'
+        inspection = subprocess.run([str(first / '.venv/Scripts/python.exe'), '-I',
+            str(first / 'scripts/inspect_project_research.py'), '--record-id', 'kit-record'],
+            capture_output=True, text=True, encoding='utf-8', timeout=120, check=True, env=clean_environment())
+        inspected = json.loads(inspection.stdout)
+        assert inspected['status'] == 'inspected' and inspected['live_model_called'] is False
+        assert inspected['inspection']['inspection_status'] == 'captured_completed'
+        assert inspected['inspection']['record_sha256'] == captured.record.content_sha256
+        assert inspected['inspection']['recorded_at'] == captured.record.recorded_at.isoformat()
+        assert 'Synthetic distribution acceptance only.' not in inspection.stdout
         assert db.status()['status'] == 'stopped'
         print('native distribution: same kit yields independent project database', flush=True)
         other = start(second, '--port', str(port()))
