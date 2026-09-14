@@ -31,12 +31,20 @@ def spec(**changes):
 def snapshots(s=None, at=NOW, **market_changes):
     s = s or spec()
     asset, ticker = ('Bitcoin', 'BTC') if s.team_id == 'crypto_btc' else ('Ethereum', 'ETH')
+    # An actual dated observation, not the machine's current year. Keep the
+    # native proof prospective even when it runs late in the UTC day.
+    observed_date = at.date() + timedelta(days=0 if at.hour < 14 else 1)
+    months = ('January','February','March','April','May','June','July','August',
+              'September','October','November','December')
+    title_date = f'{months[observed_date.month-1]} {observed_date.day}, {observed_date.year}'
+    latest_noon = datetime(observed_date.year, observed_date.month, observed_date.day, 19, tzinfo=UTC)
+    end = max(at + timedelta(days=1), latest_noon)
     raw = dict(slug=s.market_slug, conditionId=s.condition_id,
-               question=f'Will the price of {asset} be above $2,000 on September 13?',
+               question=f'Will the price of {asset} be above $2,000 on {title_date}?',
                description=(f'This market will resolve to \"Yes\" if the Close price of the Binance {ticker}/USDT '
                             '1-minute candle at 12:00 PM ET on the date in the title is above $2,000. '
                             'Otherwise it will resolve to \"No\". Synthetic fixture only.'), active=True, closed=False,
-               outcomes='["Yes","No"]', endDate=(at+timedelta(days=1)).isoformat())
+               outcomes='["Yes","No"]', endDate=end.isoformat())
     raw.update(market_changes)
     window = core.candle_window(s, at)
     cb, kr = fixtures(window)

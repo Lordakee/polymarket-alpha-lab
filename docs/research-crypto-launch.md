@@ -1,5 +1,14 @@
 # Prospective crypto research launch
 
+## Additional observation-time gate
+
+The high-level launcher now also computes supported explicit date/ET-or-UTC
+expressions and requires the forecast cutoff to precede candle open. Preview
+adds `observation_schedule` and may report `blocked_by_observation_time` even
+for a terminal shape. See [observation time checks](research-crypto-observation-time.md).
+Shape metadata alone still does not certify dates, source authority or semantics;
+existing captured replay is not retroactively revalidated.
+
 ## Why this entry exists
 
 An empty resolution worklist is normal for a new private database. Do not add
