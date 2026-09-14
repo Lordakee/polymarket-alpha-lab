@@ -155,14 +155,25 @@ class TeamResearchIntake:
         task = snapshot_task(self.task)
         if not task.evidence:
             raise ValueError("market context alone is not research evidence")
-        for name in ("task_id", "team_id", "condition_id", "market_slug", "as_of"):
+        for name in ("task_id", "team_id", "condition_id", "market_slug"):
             if getattr(task, name) != getattr(self, name):
                 raise ValueError("intake task scope mismatch")
+        # Equality has the same fold trap as age arithmetic: compare instants,
+        # not repeated local labels or tzinfo identity. Keep both inputs intact.
+        if task.as_of.astimezone(UTC) != self.as_of.astimezone(UTC):
+            raise ValueError("intake task scope mismatch")
         for receipt in self.source_receipts:
             if type(receipt) is not ResearchSourceReceipt:
                 raise ValueError("expected exact source receipt")
             receipt.__post_init__()
-        if self.source_receipts != tuple(_receipt(item) for item in task.evidence):
+        # Dataclass equality would silently ignore fold in observed_at. Only
+        # normalize temporary comparison copies; hashes and source fields stay
+        # authoritative, including order, count, reference and hard flags.
+        actual = tuple(replace(row, observed_at=row.observed_at.astimezone(UTC))
+                       for row in self.source_receipts)
+        expected = tuple(replace(_receipt(item), observed_at=item.observed_at.astimezone(UTC))
+                         for item in task.evidence)
+        if actual != expected:
             raise ValueError("source receipts must bind the prepared evidence")
         included = {item.source_id for item in task.evidence}
         if included.intersection((*self.stale_source_ids, *self.future_source_ids)):

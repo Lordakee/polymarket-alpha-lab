@@ -210,3 +210,34 @@ results must match byte-for-byte. The native lifecycle proof additionally create
 its first research request with a stream-loaded timezone, then uses the normal
 prospective claim, persistence, replay and restart path. No stored history is
 rewritten and no independent source-truth claim is added.
+
+
+## Instant-bound task, receipt and result identity
+
+Freshness filtering is separate from binding a returned record to its inputs.
+The intake/task `as_of`, receipt/evidence `observed_at`, and run/result `as_of`
+checks compare UTC instants, not dataclass equality of local wall-clock labels.
+A repeated clock label with a different fold is a different instant and cannot
+bind to the original. A UTC, fixed-offset, or separately loaded timezone view
+of the SAME instant is accepted at each boundary, even during a repeated hour.
+
+Temporary comparison copies do not rewrite the caller's task, source receipt,
+result timestamp, offset, fold, raw payload or source digest. Receipt order,
+cardinality, identifiers, reference, content hash and hard flags remain checked.
+There is no tolerance/rounding window: a one-microsecond mismatch is refused.
+The original UTC canonical capture/request/hash format is unchanged.
+
+These checks run again through existing request, capture and evaluator input
+validation. Inconsistent nested graphs are rejected rather than normalized into
+a different graph. The fix does not change the general Python equality behavior
+of exported dataclasses, authenticate a source, repair stored history, or assign
+a trust guarantee to caller-provided times. It does not add network requests,
+model calls, database schema or candidate-selection functionality.
+
+Regression tests cover both folds in one-hour and half-hour transitions, all
+three binding edges, mixed representations, mutated nested records, original
+hash compatibility and capture rejection before any database transaction.
+The native lifecycle proof also uses a stream-loaded original time with UTC task
+and fixed-offset receipt representations. Hosted results are recorded in the PR.
+Python reference (checked 2026-09-14):
+https://docs.python.org/3/library/datetime.html#datetime-objects

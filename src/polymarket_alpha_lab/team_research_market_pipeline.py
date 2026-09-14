@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, replace
-from datetime import datetime
+from datetime import UTC, datetime
 
 from polymarket_alpha_lab.team_research_agent import ResearchModel, run_team_research_agent
 from polymarket_alpha_lab.team_research_agent_types import (
@@ -34,9 +34,11 @@ class MarketTeamResearchRun:
         if type(self.research) is not TeamResearchResult:
             raise ValueError("prepared intake requires research outcome")
         self.research.__post_init__()
-        for name in ("task_id", "team_id", "condition_id", "market_slug", "as_of"):
+        for name in ("task_id", "team_id", "condition_id", "market_slug"):
             if getattr(self.research, name) != getattr(self.intake, name):
                 raise ValueError("research scope does not match intake")
+        if self.research.as_of.astimezone(UTC) != self.intake.as_of.astimezone(UTC):
+            raise ValueError("research scope does not match intake")
         if not set(self.research.source_ids).issubset(item.source_id for item in self.intake.source_receipts):
             raise ValueError("research citations do not match intake receipts")
 

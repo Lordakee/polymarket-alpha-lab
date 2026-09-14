@@ -2,7 +2,8 @@
 The explicit prefix supplies ONLY trusted binaries, never its data or credentials.
 """
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, datetime, timedelta
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta, timezone
 from hashlib import sha256
 import json
 import os
@@ -53,6 +54,12 @@ def request(index, *, stream_timezone=False):
     evidence=ResearchEvidence('s','crypto_eth',condition,'Synthetic source','Synthetic text','synthetic:native',now)
     intake=prepare_team_research_from_gamma(snapshot,task_id=f'task-{index}',team_id='crypto_eth',
         condition_id=condition,as_of=now,evidence=(evidence,))
+    if stream_timezone:
+        # Preserve raw evidence at the stream-loaded clock while the nested task
+        # and receipt use equivalent UTC/fixed-offset representations.
+        intake=replace(intake, task=replace(intake.task, as_of=now.astimezone(UTC)),
+            source_receipts=tuple(replace(row, observed_at=row.observed_at.astimezone(
+                timezone(timedelta(hours=8)))) for row in intake.source_receipts))
     return CapturedResearchRequest(f'record-{index}','synthetic-model','native-proof-v1',
         now+timedelta(hours=1),intake,required_source_ids=('s',))
 
