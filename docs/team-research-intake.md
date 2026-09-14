@@ -160,3 +160,53 @@ without external review/CodeGraph gates; no external PASS is implied.
 
 Official source contract:
 https://docs.polymarket.com/api-reference/markets/get-market-by-slug
+
+
+## Absolute-time freshness across timezone changes
+
+Market-snapshot age and evidence age are measured between UTC instants, not
+between local wall-clock labels. The direct team agent applies the same rule
+when building its evidence catalog; bypassing the intake helper does not bypass
+freshness filtering. At a fall-back transition, a later instant can have an
+earlier (or identical) local clock reading. At spring-forward, a two-minute
+observation can appear more than an hour old in local-clock subtraction.
+
+Future evidence is excluded. Exactly-at-the-age-limit evidence stays eligible;
+one microsecond older is excluded. If no usable evidence remains, intake does
+not construct the model factory, and the direct agent does not call its supplied
+model. No budget, tool, persistence or source-selection policy is changed.
+
+Conversions are calculation-only: the original source times, offsets, fold,
+raw payload, task/result timestamps and receipt fields remain unchanged. Evidence
+hashes retain the existing UTC canonical JSON format. UTC conversion happens
+before dataclass copying in the hash helper, so valid non-picklable timezone
+objects (including `ZoneInfo.from_file`) do not fail during deepcopy. This does
+not rewrite stored records or retroactively certify old results.
+
+Tests use synthetic UTC pairs across New York one-hour and Lord Howe half-hour
+transitions, UTC/mixed-zone representations, exact age boundaries and scripted
+models. The runtime `tzdata` dependency supplies test zones; no public provider,
+user database or paid model is needed. The staged, unpublished candidate-selector
+implementation is not part of this correction.
+
+Python behavior reference (checked 2026-09-14):
+https://docs.python.org/3/library/datetime.html#datetime-objects
+
+### Complete report serialization
+
+The capture codec, prospective request copier and evaluation-record fingerprint
+also project validated dataclass values without deep-copying timezone objects.
+Their existing canonical JSON/UTC field format and closed decoder schemas remain
+unchanged. A source run is not mutated: copied database request/record values
+normalize to UTC as before. The private value projection is not a database layer
+or payload decoder and never constructs a class selected by serialized input.
+Unsupported value types still fail closed; flags, receipt binding, canonical
+round-trip and size checks remain in the existing validation/codec boundaries.
+
+Regression checks compare identical original payloads represented using stream
+zones versus ordinary fixed offsets across both folds, through completed, failed
+and intake-blocked runs. Their capture payloads, request hashes and evaluation
+results must match byte-for-byte. The native lifecycle proof additionally creates
+its first research request with a stream-loaded timezone, then uses the normal
+prospective claim, persistence, replay and restart path. No stored history is
+rewritten and no independent source-truth claim is added.

@@ -16,6 +16,7 @@ from polymarket_alpha_lab.team_research_agent_types import (
     ResearchAgentLimits, aware, hard_flags, identifier, integer, strict_json, text,
 )
 from polymarket_alpha_lab.team_research_evaluation import ResearchEvaluationRecord
+from polymarket_alpha_lab.research_record_values import record_dict
 from polymarket_alpha_lab.team_research_intake import TeamResearchIntake
 from polymarket_alpha_lab.team_research_market_pipeline import MarketTeamResearchRun
 
@@ -49,7 +50,7 @@ class CapturedResearchRequest:
         self.intake.__post_init__()
         # Reuse the existing closed codec to copy nested sources and normalize
         # all clocks to UTC, including repeated local hours on DST transitions.
-        copied = _object(TeamResearchIntake, strict_json(_dump(asdict(self.intake))))
+        copied = _object(TeamResearchIntake, strict_json(_dump(record_dict(self.intake))))
         object.__setattr__(self, "intake", copied)
         object.__setattr__(self, "limits", replace(self.limits))
         if copied.as_of >= self.forecast_cutoff_at:

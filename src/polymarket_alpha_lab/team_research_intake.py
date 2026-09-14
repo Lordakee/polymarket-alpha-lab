@@ -69,8 +69,12 @@ def evidence_content_sha256(evidence: ResearchEvidence) -> str:
     if type(evidence) is not ResearchEvidence:
         raise ValueError("expected exact ResearchEvidence")
     evidence = replace(evidence)
-    payload = asdict(evidence)
-    payload["observed_at"] = evidence.observed_at.astimezone(UTC).isoformat()
+    # asdict deep-copies datetime/tzinfo; a valid ZoneInfo.from_file zone is
+    # not picklable. Canonicalize this one field BEFORE that copy. This keeps
+    # the hash's existing UTC representation without changing the source object.
+    observed_utc = evidence.observed_at.astimezone(UTC)
+    payload = asdict(replace(evidence, observed_at=observed_utc))
+    payload["observed_at"] = observed_utc.isoformat()
     encoded = json.dumps(payload, ensure_ascii=True, sort_keys=True,
                          separators=(",", ":"), allow_nan=False).encode("utf-8")
     return sha256(encoded).hexdigest()
@@ -184,9 +188,13 @@ def _timestamp(value: object) -> datetime:
 
 def _market_context(snapshot: GammaMarketSnapshot, condition_id: str,
                     as_of: datetime, max_age: int) -> tuple[str, str]:
-    if snapshot.fetched_at > as_of:
+    # Same-zone datetime arithmetic ignores DST offsets/fold. Compare actual
+    # instants, while preserving the caller's original timestamps and payload.
+    as_of_utc = as_of.astimezone(UTC)
+    fetched_utc = snapshot.fetched_at.astimezone(UTC)
+    if fetched_utc > as_of_utc:
         raise _ContextRejected("market_context_from_future")
-    if as_of - snapshot.fetched_at > timedelta(seconds=max_age):
+    if as_of_utc - fetched_utc > timedelta(seconds=max_age):
         raise _ContextRejected("market_context_stale")
     try:
         payload = strict_json(snapshot.raw_json.decode("utf-8"))
@@ -220,10 +228,10 @@ def _market_context(snapshot: GammaMarketSnapshot, condition_id: str,
     except ValueError:
         raise _ContextRejected("missing_resolution_criteria") from None
     end_at = _timestamp(payload.get("endDate"))
-    if end_at <= as_of:
+    if end_at <= as_of_utc:
         raise _ContextRejected("market_already_ended")
     updated_at = payload.get("updatedAt")
-    if updated_at is not None and _timestamp(updated_at) > snapshot.fetched_at:
+    if updated_at is not None and _timestamp(updated_at) > fetched_utc:
         raise _ContextRejected("invalid_market_time")
     # Do not use prices, nested event fields, or a URL from resolutionSource as evidence.
     return question, description
@@ -251,8 +259,9 @@ def prepare_team_research_from_gamma(
         "Intake preflight", as_of, evidence,
     ))
     stale, future, eligible = [], [], []
+    as_of_utc = as_of.astimezone(UTC)
     for item in request.evidence:
-        age = as_of - item.observed_at
+        age = as_of_utc - item.observed_at.astimezone(UTC)
         if age < timedelta(0):
             future.append(item.source_id)
         elif age > timedelta(seconds=limits.max_evidence_age_seconds):

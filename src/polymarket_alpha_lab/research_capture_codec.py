@@ -5,7 +5,7 @@ import payload-selected classes, coerce flags, or silently accept unknown fields
 """
 from __future__ import annotations
 
-from dataclasses import asdict, fields
+from dataclasses import fields
 from datetime import UTC, datetime
 from decimal import Decimal
 from hashlib import sha256
@@ -16,6 +16,7 @@ from polymarket_alpha_lab.team_research_agent_types import (
     ResearchEvidence, TeamResearchResult, TeamResearchTask, aware, identifier, strict_json, text,
 )
 from polymarket_alpha_lab.team_research_evaluation import ResearchEvaluationRecord
+from polymarket_alpha_lab.research_record_values import record_dict
 from polymarket_alpha_lab.team_research_intake import ResearchSourceReceipt, TeamResearchIntake
 from polymarket_alpha_lab.team_research_market_pipeline import MarketTeamResearchRun
 
@@ -107,7 +108,7 @@ def encode_research_capture(*, record_id: str, model_id: str, protocol_version: 
         record = ResearchEvaluationRecord(record_id, model_id, protocol_version, run.intake.as_of, run)
         payload = _dump(dict(schema_version=VERSION, record_id=record.record_id,
                             model_id=record.model_id, protocol_version=record.protocol_version,
-                            run=asdict(record.run)))
+                            run=record_dict(record.run)))
         # Round trip now rather than committing a payload we cannot read later.
         decode_research_capture(payload, recorded_at=record.recorded_at,
                                 expected_sha256=payload_sha256(payload))
@@ -134,7 +135,7 @@ def decode_research_capture(payload: str, *, recorded_at: datetime,
                                           value["protocol_version"], recorded_at, run)
         canonical = _dump(dict(schema_version=VERSION, record_id=result.record_id,
                               model_id=result.model_id, protocol_version=result.protocol_version,
-                              run=asdict(result.run)))
+                              run=record_dict(result.run)))
         if canonical != payload:
             raise ValueError("noncanonical capture payload")
         return result
