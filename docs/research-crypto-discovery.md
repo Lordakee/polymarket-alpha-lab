@@ -63,6 +63,77 @@ budgets are unchanged: this is not a new terminal-only search filter. See
 [contract-shape checks](research-crypto-contract-scope.md) before approving a run.
 A zero discovery/preview exit code is not a research authorization.
 
+## V1 WP-01: select a supported candidate before preview
+
+The existing `--preview` mode remains a first-hit diagnostic, NOT qualification.
+Use the mutually exclusive `--select-supported` mode for the V1 operator path:
+
+```powershell
+# Inert configuration check; no source request, model, or database.
+.\.venv\Scripts\python.exe scripts/discover_crypto_research.py --team crypto_btc --select-supported
+
+# One bounded page per team, up to five metadata checks and one full preview.
+.\.venv\Scripts\python.exe scripts/discover_crypto_research.py --team crypto_btc --team crypto_eth --select-supported --max-candidates 5 --attempts 3 --allow-public-fetch
+```
+
+The controller reuses the published discovery, latest Gamma market reader,
+contract-shape gate, actual observation-time gate and full dual-source preview.
+It preserves the existing search order; this is not a ranking or global scan.
+Only search has the explicit `--attempts` allowance (default one, maximum three).
+`--max-candidates` is 1..10 (default five). A failed detail read consumes its slot;
+it may advance to the NEXT candidate but never retries that read. Duplicate slugs
+with conflicting condition IDs block before any detail request. Unsupported scope
+or observation time is recorded before fetching Coinbase/Kraken.
+
+The first eligible detail check ends candidate selection: exactly one fresh full
+preview is attempted, including another Gamma read. Even if that preview fails,
+there is no fallback to later candidates. Changed rules/times are re-evaluated;
+a preliminary eligibility decision is never used as an approval. The final
+preview's rules, hashes and timestamps, not the search question, describe the
+selected input. `pending_spec` identifies this temporary task and rules hash with
+`operator_approved=false` and model label `operator-model-not-selected`.
+
+The temporary cutoff is fixed after discovery (default 30 minutes; explicit
+`--cutoff-lead-minutes` 1..60). Before each next stage the UTC clock must not move
+backward or reach that cutoff. Metadata already in flight may finish and be
+reported, but no next stage starts. The controller does not cancel sockets or
+recheck between every GET inside the reused three-source preview; the existing
+preview gates still validate their own final as_of. A late final preview cannot
+supply a pending specification. Time limits are not a promise of a wall-clock SLA.
+
+Each result preserves search attempts/recovery, detail decisions, failed checks,
+unexamined count and `eligibility_scan_complete`. Missing rules, malformed bodies,
+missing status flags, wrong scope and transport failures remain uncertainty, not
+proof no market qualifies. Fully checked and rejected pages report
+`no_eligible_in_search_page`; incomplete judgments report `candidate_checks_failed`;
+reaching the bound with unexamined candidates reports `candidate_check_limit_reached`.
+Empty search pages, conflicting discovery identity, clock/cutoff stops and failed
+or newly ineligible previews have separate statuses. Earlier failures remain visible
+even if a later candidate reaches `ready_for_operator_review`.
+
+The GET upper bound is actual search attempts + actual metadata invocations +
+three per attempted preview. A failed preview may have used fewer GETs. The configured
+ceiling per team is attempts + max_candidates + 3: defaults 9, maximum 16. Two teams
+with attempts=3/max_candidates=5 have ceiling 22, not the legacy --preview ceiling12.
+No extra page, hidden retry, model, source fallback, database or approval occurs.
+Unexpected internal/serialization failures emit a fixed failure with request count
+unknown (`null`), not a false zero. Interrupts propagate. CLI exit0 requires all
+selected teams to be `ready_for_operator_review`, not merely `prepared`.
+
+This is a display-only pending specification. JSON mutation cannot authorize a
+request; the existing launcher takes typed, freshly validated inputs, operator
+terms approval, and separately approved model configuration. Do not recycle this
+placeholder model, cutoff or hash for a later paid run. No raw snapshot persistence
+is introduced; source objects remain in memory. Public rule text is untrusted data,
+not instructions. Coinbase/Kraken USD hourly references remain distinct from any
+Binance USDT minute settlement source: manual source-suitability review is REQUIRED,
+not certified by selection. No trade, outcome, calibration or profitability follows.
+
+The source module and the existing CLI/runbook are included in the native package.
+The Windows proof exercises the new disabled mode in each extracted environment.
+Actual fixed-version evidence and remaining G1 acceptance belong to the root
+[DELIVERY_PLAN.md](../DELIVERY_PLAN.md) and its linked implementation PR.
+
 ## Complete HTTP bodies before snapshots
 
 The public Gamma market, Coinbase and Kraken readers now share a body-framing

@@ -3,6 +3,10 @@ on:
   pull_request:
     branches: [main]
     paths:
+      - 'src/polymarket_alpha_lab/research_crypto_selection.py'
+      - 'tests/test_crypto_supported_selection.py'
+      - 'scripts/discover_crypto_research.py'
+      - 'docs/research-crypto-discovery.md'
       - 'src/polymarket_alpha_lab/research_resolution_inspection_cli.py'
       - 'scripts/inspect_project_resolution.py'
       - 'tests/test_research_resolution_inspection_cli.py'
