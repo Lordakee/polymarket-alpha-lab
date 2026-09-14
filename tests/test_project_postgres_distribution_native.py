@@ -61,6 +61,45 @@ def install_environment(root):
     assert (root / '.venv/Scripts/python.exe').is_file()
 
 
+_SCOPE_BINDING_PROBE = r'''
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
+import json
+from polymarket_alpha_lab.research_crypto_observation import _new_york
+from polymarket_alpha_lab.team_research_agent_types import ResearchEvidence, TeamResearchResult
+from polymarket_alpha_lab.team_research_intake import GammaMarketSnapshot, prepare_team_research_from_gamma
+from polymarket_alpha_lab.team_research_market_pipeline import MarketTeamResearchRun
+from polymarket_alpha_lab.research_capture_codec import encode_research_capture
+z, _ = _new_york()
+at = datetime(2026, 11, 1, 5, 30, tzinfo=UTC).astimezone(z)
+raw = json.dumps(dict(slug='scope-fixture', conditionId='scope-fixture', question='Synthetic?',
+    description='Synthetic fixture only.', active=True, closed=False, outcomes=['Yes','No'],
+    endDate=(at.astimezone(UTC)+timedelta(days=1)).isoformat())).encode()
+ev = ResearchEvidence('s','crypto_eth','scope-fixture','Synthetic','Synthetic','synthetic:source',at)
+i = prepare_team_research_from_gamma(GammaMarketSnapshot('scope-fixture',at,raw),
+    task_id='scope-fixture',team_id='crypto_eth',condition_id='scope-fixture',as_of=at,evidence=(ev,))
+r = TeamResearchResult(i.task_id,i.team_id,i.condition_id,i.market_slug,at,'failed','model_failed')
+original = MarketTeamResearchRun(i,r)
+for target in ('task','receipt','result'):
+    def build(when):
+        if target == 'task':
+            return MarketTeamResearchRun(replace(i,task=replace(i.task,as_of=when)),r)
+        if target == 'receipt':
+            return MarketTeamResearchRun(replace(i,source_receipts=(replace(i.source_receipts[0],observed_at=when),)),r)
+        return MarketTeamResearchRun(i,replace(r,as_of=when))
+    valid = build(at.astimezone(UTC))
+    def wire(run):
+        return encode_research_capture(record_id='scope-fixture',model_id='not-called',protocol_version='fixture',run=run)
+    assert wire(valid) == wire(original)
+    try:
+        build(at.replace(fold=1))
+    except ValueError:
+        pass
+    else:
+        raise AssertionError('different instant accepted')
+print('packaged scope bindings: PASS; three edges, canonical wire retained, no model or DB')
+'''
+
 _DIAGNOSTIC_START = r'''
 import json, pathlib, re, runpy, sys
 root = pathlib.Path(sys.argv[1])
@@ -157,6 +196,10 @@ def test_build_and_run_actual_relocatable_kit(monkeypatch):
             'print("packaged timezone:", version)'], capture_output=True, text=True,
             encoding='utf-8', timeout=30, check=True, env=clean_environment())
         assert 'packaged timezone:' in probe.stdout
+        binding = subprocess.run([str(root / '.venv/Scripts/python.exe'), '-I', '-c',
+            _SCOPE_BINDING_PROBE], capture_output=True, text=True, encoding='utf-8',
+            timeout=30, check=True, env=clean_environment())
+        assert 'packaged scope bindings: PASS' in binding.stdout
         assert not (root / '.local').exists()
     with zipfile.ZipFile(first / distribution.ENGINE) as seed:
         assert all(not name.lower().endswith(distribution.FONT_SUFFIXES) for name in seed.namelist())
