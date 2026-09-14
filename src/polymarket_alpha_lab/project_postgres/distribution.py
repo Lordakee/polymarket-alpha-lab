@@ -31,7 +31,8 @@ FIXED = ('pyproject.toml', 'uv.lock', '.gitignore', '.gitattributes', 'database/
          'database/quickstart.md', 'database/migrations.lock.json',
          'scripts/project_database.py', 'scripts/start_project.py')
 # Optional reviewed entrypoints: old kits without them remain verifiable.
-PUBLIC_ENTRYPOINTS = ('scripts/evaluate_project_research.py', 'docs/research-evaluation-console.md',
+PUBLIC_ENTRYPOINTS = ('scripts/inspect_project_research.py', 'docs/research-execution-inspection.md',
+    'scripts/evaluate_project_research.py', 'docs/research-evaluation-console.md',
     'scripts/review_resolution_queue.py', 'scripts/preview_crypto_research.py',
     'scripts/discover_crypto_research.py', 'scripts/download_handoff.ps1',
     'docs/research-resolution-queue.md', 'docs/research-crypto-launch.md', 'docs/research-crypto-discovery.md',
