@@ -50,6 +50,10 @@ class ProjectResearchSession:
         from polymarket_alpha_lab.research_execution_psycopg import inspect_captured_research_with_psycopg
         return self._call(inspect_captured_research_with_psycopg, record_id=record_id)
 
+    def execution_inventory(self, **configuration):
+        from polymarket_alpha_lab.research_execution_inventory import load_execution_inventory_with_psycopg
+        return self._call(load_execution_inventory_with_psycopg, **configuration)
+
     def retry_capture(self, *, request, run):
         from polymarket_alpha_lab.research_execution_psycopg import retry_research_capture_with_psycopg
         return self._call(retry_research_capture_with_psycopg, request=request, run=run)

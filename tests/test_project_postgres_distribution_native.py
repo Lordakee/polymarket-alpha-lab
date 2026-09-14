@@ -195,6 +195,12 @@ def test_build_and_run_actual_relocatable_kit(monkeypatch):
         inspection_help = subprocess.run([str(root / '.venv/Scripts/python.exe'), '-I', str(inspection_cli), '--help'],
             capture_output=True, text=True, encoding='utf-8', timeout=30, check=True, env=clean_environment())
         assert '--record-id' in inspection_help.stdout
+        inventory_cli = root / 'scripts/list_project_research.py'
+        assert inventory_cli.is_file() and (root / 'docs/research-execution-inventory.md').is_file()
+        inventory_help = subprocess.run([str(root / '.venv/Scripts/python.exe'), '-I', str(inventory_cli), '--help'],
+            capture_output=True, text=True, encoding='utf-8', timeout=30, check=True, env=clean_environment())
+        assert '--max-records' in inventory_help.stdout
+
         # The extracted package owns its timezone dependency; this must work on
         # Windows with no system IANA data and no source-worktree import fallback.
         probe = subprocess.run([str(root / '.venv/Scripts/python.exe'), '-I', '-c',
@@ -247,6 +253,19 @@ def test_build_and_run_actual_relocatable_kit(monkeypatch):
         assert inspected['inspection']['record_sha256'] == captured.record.content_sha256
         assert inspected['inspection']['recorded_at'] == captured.record.recorded_at.isoformat()
         assert 'Synthetic distribution acceptance only.' not in inspection.stdout
+        assert db.status()['status'] == 'stopped'
+
+        inventory_read = subprocess.run([str(first / '.venv/Scripts/python.exe'), '-I',
+            str(first / 'scripts/list_project_research.py')], capture_output=True, text=True,
+            encoding='utf-8', timeout=120, check=True, env=clean_environment())
+        inventory_report = json.loads(inventory_read.stdout)
+        assert inventory_report['status'] == 'listed' and inventory_report['live_model_called'] is False
+        listing = inventory_report['inventory']
+        assert listing['claim_count'] == listing['captured_result_count'] == 1
+        assert listing['incomplete_claim_count'] == listing['unclaimed_attempt_count'] == 0
+        assert listing['executions'][0]['record_sha256'] == captured.record.content_sha256
+        assert listing['executions'][0]['recorded_at'] == captured.record.recorded_at.isoformat()
+        assert 'Synthetic distribution acceptance only.' not in inventory_read.stdout
         assert db.status()['status'] == 'stopped'
         print('native distribution: same kit yields independent project database', flush=True)
         other = start(second, '--port', str(port()))

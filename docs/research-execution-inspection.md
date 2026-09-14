@@ -98,3 +98,9 @@ row counts, original receipts, stopped state and the strict evaluation block.
 Each actual extracted kit tests help before initialization; one later inspects a
 synthetic recorded task using its own installed Python. None of this is user data,
 a real provider call, process-liveness detection or a general security guarantee.
+
+## Finding a record ID
+
+The read-only [execution inventory](research-execution-inventory.md) lists all
+visible claims under a strict count/payload cap. It includes incomplete tasks
+without requiring a record ID and does not retry or score them.
