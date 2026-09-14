@@ -185,6 +185,14 @@ def test_build_and_run_actual_relocatable_kit(monkeypatch):
             '--team', 'crypto_btc', '--preview'], capture_output=True, text=True,
             encoding='utf-8', timeout=30, check=True, env=clean_environment())
         assert json.loads(disabled.stdout)['status'] == 'disabled'
+        selected = subprocess.run([str(root / '.venv/Scripts/python.exe'), '-I', str(cli),
+            '--team', 'crypto_btc', '--select-supported', '--max-candidates', '2'],
+            capture_output=True, text=True, encoding='utf-8', timeout=30, check=True, env=clean_environment())
+        inert = json.loads(selected.stdout)
+        assert inert['status'] == 'disabled' and inert['public_gets_upper_bound'] == 0
+        assert inert['model_called'] is inert['database_written'] is False
+        assert (root / 'src/polymarket_alpha_lab/research_crypto_selection.py').is_file()
+        assert not (root / '.local').exists()
         evaluation_cli = root / 'scripts/evaluate_project_research.py'
         assert evaluation_cli.is_file() and (root / 'docs/research-evaluation-console.md').is_file()
         help_result = subprocess.run([str(root / '.venv/Scripts/python.exe'), '-I', str(evaluation_cli), '--help'],
