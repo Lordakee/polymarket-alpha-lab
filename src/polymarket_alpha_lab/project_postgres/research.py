@@ -66,6 +66,18 @@ class ProjectResearchSession:
         from polymarket_alpha_lab.research_dispatch_rotation_store import inspect_research_turn_with_psycopg
         return self._call(inspect_research_turn_with_psycopg, rotation_id=rotation_id, turn_id=turn_id)
 
+    def create_model_budget(self, *, policy, allow_budget_write=False):
+        from polymarket_alpha_lab.research_model_budget_store import create_model_budget_with_psycopg
+        return self._call(create_model_budget_with_psycopg, policy=policy, allow_budget_write=allow_budget_write)
+
+    def inspect_model_budget(self, *, budget_id):
+        from polymarket_alpha_lab.research_model_budget_store import load_model_budget_with_psycopg
+        return self._call(load_model_budget_with_psycopg, budget_id=budget_id)
+
+    def run_budgeted_research(self, **configuration):
+        from polymarket_alpha_lab.research_model_budget_runner import run_budgeted_research_with_psycopg
+        return self._call(run_budgeted_research_with_psycopg, **configuration)
+
     def inspect(self, *, record_id):
         from polymarket_alpha_lab.research_execution_psycopg import inspect_captured_research_with_psycopg
         return self._call(inspect_captured_research_with_psycopg, record_id=record_id)

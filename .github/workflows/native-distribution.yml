@@ -3,6 +3,10 @@ on:
   pull_request:
     branches: [main]
     paths:
+      - 'src/polymarket_alpha_lab/research_model_budget*.py'
+      - 'tests/test_research_model_budget.py'
+      - 'tests/test_project_postgres_budget_native.py'
+      - 'docs/research-model-budget.md'
       - 'src/polymarket_alpha_lab/research_dispatch*.py'
       - 'tests/test_research_dispatch_rotation.py'
       - 'docs/research-dispatch.md'

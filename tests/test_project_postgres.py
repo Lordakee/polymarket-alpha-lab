@@ -77,9 +77,9 @@ def test_canonical_validator_is_same_audited_function():
     assert new is old
 
 
-def test_all_65_migrations_have_checked_in_receipts():
+def test_all_66_migrations_have_checked_in_receipts():
     rows = sql.migration_catalog(files.Layout(ROOT))
-    assert len(rows) == 65
+    assert len(rows) == 66
     for name, digest, body in rows:
         from polymarket_alpha_lab.project_postgres.migration_compat import native_migration_bytes
         original = (ROOT/'supabase/migrations'/name).read_bytes()
@@ -278,7 +278,7 @@ def test_archive_symlink_rejected():
         z.writestr(item,'/elsewhere')
     bio.seek(0)
     with zipfile.ZipFile(bio) as z:
-        with pytest.raises(files.ProjectDatabaseError): runtime.zip_members(z)
+        with pytest.raises(files.ProjectDatabaseError):runtime.zip_members(z)
 
 
 def test_legacy_connections_unchanged_without_binding(monkeypatch):

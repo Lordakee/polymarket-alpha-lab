@@ -73,7 +73,7 @@ class ResearchRotationReport:
 
 
 def run_research_rotation_with_psycopg(dsn, *, rotation_id, turn_id, batch_ids_to_run,
-        model_factory, allow_model_calls=False, max_tasks=10, max_workers=2, stop=None):
+        model_factory, allow_model_calls=False, max_tasks=10, max_workers=2, stop=None, model_budget_id=None):
     """Persist a fair selection, then reuse the original bounded claim runner.
 
     The roster is fixed under rotation_id. Same turn_id replays only its original
@@ -83,6 +83,8 @@ def run_research_rotation_with_psycopg(dsn, *, rotation_id, turn_id, batch_ids_t
     after the ring reaches them, never immediately retried within this call.
     """
     identifier('rotation_id', rotation_id)
+    if model_budget_id is not None:
+        identifier('model_budget_id', model_budget_id)
     identifier('turn_id', turn_id)
     ids = batch_ids(batch_ids_to_run)
     integer('max_tasks', max_tasks, 1, 100)
@@ -120,5 +122,5 @@ def run_research_rotation_with_psycopg(dsn, *, rotation_id, turn_id, batch_ids_t
     # Reservation is now committed. If interrupted here, a new turn (not replay
     # of this one) rotates onwards. The original claim still governs loop start.
     attempts = drain._drain_requests(dsn, requests, stored.turn.chosen,
-                                     model_factory, max_workers, control)
+                                     model_factory, max_workers, control, model_budget_id=model_budget_id)
     return ResearchRotationReport('dispatched', stored, attempts, control.is_stopped())

@@ -65,6 +65,7 @@
     {"name":"20260912010000_research_execution_claims.sql","sha256":"d4e3da28f5a7ad688c00b7e30a9a44fd94ac77242f9b2c343b0055d4174bf611","transaction_wrapper":true},
     {"name":"20260913000000_research_resolution_reviews.sql","sha256":"54e5175ccc56bc4eb9dbff8b80cb83d9ec842dfbc93bb548f7d7bed1a87706f7","transaction_wrapper":false},
     {"name":"20260914000000_research_dispatch_batches.sql","sha256":"afd50399909967d6b22633ad763f9e96c10fd2c1d360001f38b8c90e6c6c9c67","transaction_wrapper":false},
-    {"name":"20260915000000_research_dispatch_turns.sql","sha256":"e2f377662c43f1894818d3064e91ff192966c3521d82bd305c8fd6fed117e5f0","transaction_wrapper":false}
+    {"name":"20260915000000_research_dispatch_turns.sql","sha256":"e2f377662c43f1894818d3064e91ff192966c3521d82bd305c8fd6fed117e5f0","transaction_wrapper":false},
+    {"name":"20260915010000_research_model_budgets.sql","sha256":"1413e9479daf69e53bcadaed336d8ee28ff9e486b7319c7ed53a0b63c14f467e","transaction_wrapper":false}
   ]
 }

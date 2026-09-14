@@ -58,6 +58,9 @@ def test_rotation_failure_fairness_upgrade_restart_and_no_reclaim(tmp_path, monk
     shutil.copytree(ROOT/'database',root/'database')
     shutil.copytree(ROOT/'supabase/migrations',root/'supabase/migrations')
     manifest=json.loads((root/'database/migrations.lock.json').read_text())
+    for later in manifest['migrations'][65:]:
+        (root/'supabase/migrations'/later['name']).unlink()
+    manifest['migrations'] = manifest['migrations'][:65]
     assert len(manifest['migrations'])==65 and manifest['migrations'][-1]['name']==TAIL
     (root/'supabase/migrations'/TAIL).unlink()
     (root/'database/migrations.lock.json').write_text(json.dumps(dict(manifest,migrations=manifest['migrations'][:-1])))
@@ -74,7 +77,7 @@ def test_rotation_failure_fairness_upgrade_restart_and_no_reclaim(tmp_path, monk
             old_record=old_run.attempts[0].execution.record
             assert old_record.run.research.status=='completed'
         shutil.copyfile(ROOT/'supabase/migrations'/TAIL,root/'supabase/migrations'/TAIL)
-        shutil.copyfile(ROOT/'database/migrations.lock.json',root/'database/migrations.lock.json')
+        (root/'database/migrations.lock.json').write_text(json.dumps(manifest))
         assert db.migrate()['migrations_applied']==1
         assert db.migrate()['migrations_applied']==0
         with db.session() as research:

@@ -265,3 +265,15 @@ instances and old immutable kits are not upgraded or overlaid by this change.
 Final fixed-revision evidence is recorded in the implementation PR; G3 remains
 PARTIAL until the unified operating path and approved provider budget integration
 are complete. No synthetic test can close the real-model gates.
+
+
+## Optional shared model-call reservations
+
+The batch and rotation methods accept `model_budget_id` to apply an explicitly
+created shared allowance to each original task's lazy model client. See
+[model-call budgets](research-model-budget.md) for exact enrollment, no-refund
+semantics and the distinction between reserved bounds and actual billing.
+Omitting the keyword preserves this API's prior unbudgeted behavior. No policies
+are auto-created and D1-D3 still gate real use; this is not verified provider
+pricing or a global monetary guarantee. Original task claims, turn replay and
+cooperative stop rules are unchanged. Unified operating entrypoints remain open.

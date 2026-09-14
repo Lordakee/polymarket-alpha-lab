@@ -65,6 +65,12 @@ _SCOPE_BINDING_PROBE = r'''
 from polymarket_alpha_lab.research_dispatch import ResearchBatch
 from polymarket_alpha_lab.research_dispatch_store import load_research_batch_with_psycopg
 from polymarket_alpha_lab.research_dispatch_runner import ResearchDispatchStop, run_research_batch_with_psycopg
+from polymarket_alpha_lab.research_model_budget import ModelCallBudget, decode_budget
+from polymarket_alpha_lab.research_model_budget_runner import run_budgeted_research_with_psycopg
+from datetime import UTC, datetime, timedelta
+budget = ModelCallBudget('packaged-budget','synthetic','not-a-selected-model','USD',100,10,10,
+    1000,32,datetime(2030,1,1,tzinfo=UTC),(('task','a'*64),),'b'*64,cost_bound_attested=True)
+assert decode_budget(budget.payload,budget.content_sha256) == budget
 from polymarket_alpha_lab.research_dispatch_rotation import selection
 from polymarket_alpha_lab.research_dispatch_rotation_runner import run_research_rotation_with_psycopg
 assert selection(('pending','pending','pending'), 2, 2) == ((2,0),1,2)
