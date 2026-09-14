@@ -1,5 +1,37 @@
 # Project Instructions
 
+## Current owner instruction: freeze V1 and close six work packages (2026-09-14)
+
+The owner accepted a BTC/ETH research-and-paper first release. Read the root
+`DELIVERY_PLAN.md` before selecting new work; it is the single current delivery
+status/acceptance plan, not an extra reporting subsystem. Historical broad
+roadmaps and team lists are long-term references, not evidence of completed V1.
+
+- Use the six fixed IDs WP-01 through WP-06. Every relevant implementation PR
+  must identify its package and acceptance gap, then update the plan's status,
+  remaining blockers and exact evidence in the same PR. Component test totals
+  or merged PR counts are not product completion percentages.
+- The next implementation slice is WP-01, connecting published discovery and
+  preview to the supported contract/observation gates. Do not assume unpublished
+  selector or model-preflight code is delivered or route around safety denials.
+- Reuse existing components. Do not add another diagnostic/report/gate layer,
+  new framework or UI merely because one can be built. Fix release-blocking
+  defects; defer nonessential enhancements. Do not expand supported contracts,
+  teams or acceptance criteria without renewed owner agreement.
+- V1 is limited to crypto_btc/crypto_eth, supported prospective terminal Yes/No
+  contracts, project-private native PostgreSQL and research/paper evidence.
+  Other eight teams remain a future objective, not deleted or silently certified.
+- Model/provider choice, permission to send research inputs, and enforceable
+  first-run budgets remain explicit owner decisions. Scope approval is NOT
+  credential, provider-call, user-database-write or live-execution authorization.
+  Continue safe offline integration while these decisions are pending; do not
+  send local agents to rediscover credentials or repeat completed acceptance.
+- Perform a separate self-review/test pass, accurately labeled as self-review.
+  Require relevant final-revision gates and no unresolved release-blocking finding
+  before merge. Claim V1 completion only when G1-G6 and required owner decisions
+  are evidenced. Software acceptance is not statistical strategy validation or
+  promotion to live execution; existing validation thresholds remain in force.
+
 ## Current owner instruction: complete GitHub-first handoffs (2026-09-14)
 
 This is a project rule for every coordinator, subagent and future local-agent
