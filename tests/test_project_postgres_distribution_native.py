@@ -62,6 +62,13 @@ def install_environment(root):
 
 
 _SCOPE_BINDING_PROBE = r'''
+from polymarket_alpha_lab.research_dispatch import ResearchBatch
+from polymarket_alpha_lab.research_dispatch_store import load_research_batch_with_psycopg
+from polymarket_alpha_lab.research_dispatch_runner import ResearchDispatchStop, run_research_batch_with_psycopg
+stop = ResearchDispatchStop()
+assert not stop.is_stopped()
+stop.request_stop()
+assert stop.is_stopped()
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 import json

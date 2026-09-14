@@ -11,9 +11,9 @@ roadmaps and team lists are long-term references, not evidence of completed V1.
   must identify its package and acceptance gap, then update the plan's status,
   remaining blockers and exact evidence in the same PR. Component test totals
   or merged PR counts are not product completion percentages.
-- The next implementation slice is WP-01, connecting published discovery and
-  preview to the supported contract/observation gates. Do not assume unpublished
-  selector or model-preflight code is delivered or route around safety denials.
+- WP-01/G1 is delivered. Select subsequent work from DELIVERY_PLAN.md: safe
+  WP-02 assembly and WP-03 task operation remain open. Do not assume earlier
+  unpublished candidates are delivered or route around safety denials.
 - Reuse existing components. Do not add another diagnostic/report/gate layer,
   new framework or UI merely because one can be built. Fix release-blocking
   defects; defer nonessential enhancements. Do not expand supported contracts,
