@@ -191,3 +191,22 @@ implementation is not part of this correction.
 
 Python behavior reference (checked 2026-09-14):
 https://docs.python.org/3/library/datetime.html#datetime-objects
+
+### Complete report serialization
+
+The capture codec, prospective request copier and evaluation-record fingerprint
+also project validated dataclass values without deep-copying timezone objects.
+Their existing canonical JSON/UTC field format and closed decoder schemas remain
+unchanged. A source run is not mutated: copied database request/record values
+normalize to UTC as before. The private value projection is not a database layer
+or payload decoder and never constructs a class selected by serialized input.
+Unsupported value types still fail closed; flags, receipt binding, canonical
+round-trip and size checks remain in the existing validation/codec boundaries.
+
+Regression checks compare identical original payloads represented using stream
+zones versus ordinary fixed offsets across both folds, through completed, failed
+and intake-blocked runs. Their capture payloads, request hashes and evaluation
+results must match byte-for-byte. The native lifecycle proof additionally creates
+its first research request with a stream-loaded timezone, then uses the normal
+prospective claim, persistence, replay and restart path. No stored history is
+rewritten and no independent source-truth claim is added.

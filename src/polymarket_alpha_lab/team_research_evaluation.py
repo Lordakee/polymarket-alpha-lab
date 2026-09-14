@@ -14,6 +14,7 @@ from hashlib import sha256
 import json
 import re
 
+from polymarket_alpha_lab.research_record_values import record_dict
 from polymarket_alpha_lab.research_probability_scores import (
     BinaryResearchObservation, ResearchProbabilityDiagnostics, probability,
 )
@@ -87,7 +88,7 @@ class ResearchEvaluationRecord:
 
     @property
     def content_sha256(self) -> str:
-        return _hash(asdict(self))
+        return _hash(record_dict(self))
 
     @property
     def group_key(self) -> tuple[str, str, str]:
@@ -126,7 +127,7 @@ class ResearchEvaluationOutcome:
 
     @property
     def content_sha256(self) -> str:
-        return _hash(asdict(self))
+        return _hash(record_dict(self))
 
 
 @dataclass(frozen=True, slots=True)

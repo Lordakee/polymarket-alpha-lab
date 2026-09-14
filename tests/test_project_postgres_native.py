@@ -37,8 +37,15 @@ class Model:
         return ResearchModelReply((ResearchToolCall(f'call-{self.calls}',name,json.dumps(args)),),1)
 
 
-def request(index):
+def request(index, *, stream_timezone=False):
     now=datetime.now(UTC)
+    if stream_timezone:
+        # Native acceptance of a real non-picklable tzinfo through the normal
+        # request/capture pipeline, not a test-only serialized input shortcut.
+        from importlib import resources
+        from zoneinfo import ZoneInfo
+        with resources.files('tzdata.zoneinfo.America').joinpath('New_York').open('rb') as source:
+            now=now.astimezone(ZoneInfo.from_file(source, key='America/New_York'))
     slug=f'native-fixture-{index}';condition=f'native-condition-{index}'
     snapshot=GammaMarketSnapshot(slug,now,json.dumps(dict(slug=slug,conditionId=condition,
         question='Synthetic?',description='Synthetic resolution criterion',outcomes=['Yes','No'],
@@ -97,7 +104,9 @@ def test_native_project_lifecycle_all_migrations_and_real_research(tmp_path,monk
     assert not (db.layout.home/'initial-password').exists()
     info=db._state()
     print('native proof: roles, isolation and persistent capture')
-    req=request(0);created=[]
+    req=request(0,stream_timezone=True);created=[]
+    assert req.intake.as_of.tzinfo is UTC
+    assert req.intake.task.evidence[0].observed_at.tzinfo is UTC
     def factory(_):
         model=Model();created.append(model);return model
     try:
