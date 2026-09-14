@@ -111,7 +111,8 @@ class ResearchDispatchReport:
 
 def run_research_batch_with_psycopg(dsn: str, *, batch_id: str, model_factory,
                                   allow_model_calls: bool = False, max_tasks: int = 10,
-                                  max_workers: int = 2, stop: ResearchDispatchStop | None = None) -> ResearchDispatchReport:
+                                  max_workers: int = 2, stop: ResearchDispatchStop | None = None,
+                                  model_budget_id: str | None = None) -> ResearchDispatchReport:
     """Run a bounded pending prefix; later explicit rounds skip existing claims.
 
     All batch inputs are persisted BEFORE this operation. Snapshot/transactions
@@ -126,6 +127,8 @@ def run_research_batch_with_psycopg(dsn: str, *, batch_id: str, model_factory,
     explicit capture-only recovery API. No automatic model or capture retries.
     """
     identifier('batch_id', batch_id)
+    if model_budget_id is not None:
+        identifier('model_budget_id', model_budget_id)
     integer('max_tasks', max_tasks, 1, 100)
     integer('max_workers', max_workers, 1, 8)
     if allow_model_calls is not True or not callable(model_factory):
@@ -141,11 +144,11 @@ def run_research_batch_with_psycopg(dsn: str, *, batch_id: str, model_factory,
     snapshot = replace(snapshot)
     pending = [i for i, state in enumerate(snapshot.states()) if state == 'pending'][:max_tasks]
     attempts = _drain_requests(dsn, snapshot.stored.batch.requests, pending,
-                               model_factory, max_workers, stop)
+                               model_factory, max_workers, stop, model_budget_id=model_budget_id)
     return ResearchDispatchReport(snapshot, attempts, max_tasks, max_workers, stop.is_stopped())
 
 
-def _drain_requests(dsn, requests, pending, model_factory, max_workers, stop):
+def _drain_requests(dsn, requests, pending, model_factory, max_workers, stop, *, model_budget_id=None):
     """Shared bounded execution mechanics; callers supply a validated selection.
 
     Preserve selection order, including a cyclic order chosen by durable rotation.
@@ -158,7 +161,12 @@ def _drain_requests(dsn, requests, pending, model_factory, max_workers, stop):
             return DispatchAttempt(position, 'stopped_before_start')
         request = requests[position]
         try:
-            receipt = run_captured_research_with_psycopg(dsn, request=request, model_factory=model_factory)
+            if model_budget_id is None:
+                receipt = run_captured_research_with_psycopg(dsn, request=request, model_factory=model_factory)
+            else:
+                from polymarket_alpha_lab.research_model_budget_runner import run_budgeted_research_with_psycopg
+                receipt = run_budgeted_research_with_psycopg(dsn, request=request, model_factory=model_factory,
+                    budget_id=model_budget_id, allow_model_calls=True)
             if type(receipt) is not CapturedResearchExecution or receipt.request.payload != request.payload:
                 raise ValueError('unexpected receipt')
             return DispatchAttempt(position, 'returned', receipt)
