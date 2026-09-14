@@ -74,6 +74,21 @@ def test_native_empty_database_to_captured_research_and_worklist(tmp_path, monke
             assert db._psql(info,'SELECT count(*) FROM research_capture.execution_claims;',owner=False)=='0'
             assert db._psql(info,'SELECT count(*) FROM research_capture.attempts;',owner=False)=='0'
             assert count==[] and fetches==[]
+            # A later listing end does not make a completed price observation
+            # prospective. Use the real managed path with no writes/factory work.
+            past_spec=replace(spec,record_id='blocked-observation-time')
+            past_body=json.loads(m.raw_json)
+            past_body['question']='Will Ethereum be above $2,000 on January 1, 2020?'
+            past_preview=replace(p,spec=past_spec,market=replace(m,raw_json=json.dumps(past_body).encode()))
+            assert past_preview.to_dict()['forecast_start_status']=='blocked_by_observation_time'
+            with pytest.raises(CryptoLaunchBlocked,match='observation_not_future'):
+                session.launch_crypto_research(spec=past_spec,preview=past_preview,
+                    approved_terms_sha256=past_preview.to_dict()['terms_sha256'],model_factory=forbidden,
+                    allow_public_fetch=True,allow_model_calls=True)
+            assert session.resolution_worklist().to_dict()['registered_market_count']==0
+            assert db._psql(info,'SELECT count(*) FROM research_capture.execution_claims;',owner=False)=='0'
+            assert db._psql(info,'SELECT count(*) FROM research_capture.attempts;',owner=False)=='0'
+            assert count==[] and fetches==[]
             monkeypatch.setattr(launch,'fetch_crypto_research_preview',lambda *a,**k:fetches.append(1) or p)
             # Normal launch, not a test-only direct markets INSERT.
             result=session.launch_crypto_research(spec=spec,approved_terms_sha256=digest,model_factory=factory,

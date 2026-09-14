@@ -146,6 +146,17 @@ def test_build_and_run_actual_relocatable_kit(monkeypatch):
             '--team', 'crypto_btc', '--preview'], capture_output=True, text=True,
             encoding='utf-8', timeout=30, check=True, env=clean_environment())
         assert json.loads(disabled.stdout)['status'] == 'disabled'
+        # The extracted package owns its timezone dependency; this must work on
+        # Windows with no system IANA data and no source-worktree import fallback.
+        probe = subprocess.run([str(root / '.venv/Scripts/python.exe'), '-I', '-c',
+            'from datetime import datetime; '
+            'from polymarket_alpha_lab.research_crypto_observation import _new_york; '
+            'z, version = _new_york(); '
+            'assert datetime(2026, 1, 15, 12, tzinfo=z).utcoffset().total_seconds() == -18000; '
+            'assert datetime(2026, 7, 15, 12, tzinfo=z).utcoffset().total_seconds() == -14400; '
+            'print("packaged timezone:", version)'], capture_output=True, text=True,
+            encoding='utf-8', timeout=30, check=True, env=clean_environment())
+        assert 'packaged timezone:' in probe.stdout
         assert not (root / '.local').exists()
     with zipfile.ZipFile(first / distribution.ENGINE) as seed:
         assert all(not name.lower().endswith(distribution.FONT_SUFFIXES) for name in seed.namelist())

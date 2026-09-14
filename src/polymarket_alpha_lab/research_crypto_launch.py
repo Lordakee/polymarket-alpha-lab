@@ -11,6 +11,7 @@ from hashlib import sha256
 import json
 
 from polymarket_alpha_lab.research_execution import CapturedResearchRequest
+from polymarket_alpha_lab.research_crypto_observation import assess_crypto_observation_time
 from polymarket_alpha_lab.research_crypto_contract_scope import assess_crypto_contract_scope
 from polymarket_alpha_lab.research_resolution import condition, utc
 from polymarket_alpha_lab.team_research_agent_types import ResearchAgentLimits, hard_flags, identifier, integer, strict_json, text
@@ -169,6 +170,12 @@ class CryptoResearchPreview:
             raise CryptoLaunchBlocked(intake.reason_code)
         return terms, check, intake
 
+    def _observation(self, terms: dict):
+        return assess_crypto_observation_time(team_id=self.spec.team_id, question=terms['question'],
+            resolution_criteria=terms['resolution_criteria'], market_slug=self.spec.market_slug,
+            as_of=self.as_of, forecast_cutoff_at=self.spec.forecast_cutoff_at,
+            scheduled_end_at=_timestamp(terms['scheduled_end_at']))
+
     def request(self, *, approved_terms_sha256: str) -> CapturedResearchRequest:
         self.__post_init__()
         terms, check, intake = self._prepared()
@@ -178,6 +185,9 @@ class CryptoResearchPreview:
         scope = assess_crypto_contract_scope(self.spec.team_id, terms['question'], terms['resolution_criteria'])
         if not scope.new_launch_policy_eligible:
             raise CryptoLaunchBlocked(scope.reason_code)
+        observation = self._observation(terms)
+        if not observation.new_launch_time_eligible:
+            raise CryptoLaunchBlocked(observation.reason_code)
         return CapturedResearchRequest(self.spec.record_id, self.spec.model_id,
             self.spec.protocol(), self.spec.forecast_cutoff_at, intake,
             limits=self.spec.limits, required_source_ids=tuple(r.source_id for r in check.source_receipts))
@@ -186,9 +196,11 @@ class CryptoResearchPreview:
         self.__post_init__()
         terms, check, _ = self._prepared()
         scope = assess_crypto_contract_scope(self.spec.team_id, terms['question'], terms['resolution_criteria'])
-        return dict(contract_scope=scope.to_dict(),
-            forecast_start_status=('requires_operator_approval' if scope.new_launch_policy_eligible
-                                   else 'blocked_by_contract_scope'),
+        observation = self._observation(terms)
+        return dict(contract_scope=scope.to_dict(), observation_schedule=observation.to_dict(),
+            forecast_start_status=('blocked_by_contract_scope' if not scope.new_launch_policy_eligible
+                else 'blocked_by_observation_time' if not observation.new_launch_time_eligible
+                else 'requires_operator_approval'),
             status='prepared', readiness_only=True, record_id=self.spec.record_id,
             model_id=self.spec.model_id, selected_at=self.selected_at.isoformat(), as_of=self.as_of.isoformat(),
             **terms, window_start=check.window.start.isoformat(), window_end=check.window.end.isoformat(),
