@@ -60,11 +60,27 @@ def test_native_resolution_review_promotes_atomically_and_preserves_evidence(tmp
         assert db.status()['status'] == 'stopped'
         assert db.status()['instance_id'] == original_identity
         return value
+    def inspect_review(review_id, *, expected=0):
+        result = subprocess.run([sys.executable, '-I', str(ROOT/'scripts/inspect_project_resolution.py'),
+            '--root', str(root), '--review-id', review_id], capture_output=True, text=True, encoding='utf-8',
+            env=files.clean_environment(), timeout=120, check=False)
+        assert result.returncode == expected, (result.stdout, result.stderr)
+        assert result.stderr == ''
+        output = json.loads(result.stdout)
+        assert output['public_network_called'] is output['live_model_called'] is False
+        assert output['business_writes_performed'] is output['outcome_confirmation_performed'] is False
+        for private in ('Synthetic result independently reviewed', 'synthetic-operator', 'example.invalid/official',
+                        'raw_base64', 'source_text', 'source_reference', 'reviewer_id'):
+            assert private not in result.stdout
+        assert db.status()['status'] == 'stopped' and db.status()['instance_id'] == original_identity
+        return output
     original_identity = db.status()['instance_id']
     try:
         empty = console()
         assert empty['evaluation']['evaluation_status'] == 'no_visible_attempts'
         assert empty['evaluation']['groups'] == []
+        missing = inspect_review('not-recorded', expected=3)
+        assert missing['status'] == 'review_not_found' and missing['inspection'] is None
         with db.session() as session:
             now=datetime.now(UTC);cutoff=now+timedelta(seconds=10)
             raw=json.dumps(dict(conditionId=cid,slug=slug,question='Synthetic?',
@@ -139,6 +155,21 @@ def test_native_resolution_review_promotes_atomically_and_preserves_evidence(tmp
             assert session.inspect_resolution(review_id='confirmed')==receipts[0]
             assert session.inspect_resolution(review_id='candidate')==saved
             assert session.evaluate(generated_at=scored.generated_at)==scored
+        # The older candidate remains unconfirmed even after the same market
+        # has a separate confirmed review/outcome. A read never upgrades it.
+        candidate_view = inspect_review('candidate')['inspection']
+        confirmed_view = inspect_review('confirmed')['inspection']
+        assert candidate_view['inspection_status'] == 'recorded_needs_confirmation'
+        assert candidate_view['linked_outcome'] is None and candidate_view['confirmation_provided'] is False
+        assert candidate_view['snapshot']['content_sha256'] == saved.submission.snapshot.content_sha256
+        assert candidate_view['recorded_at'] == saved.recorded_at.isoformat()
+        assert confirmed_view['inspection_status'] == 'recorded_operator_confirmed'
+        assert confirmed_view['linked_outcome']['actual_yes'] is True
+        assert confirmed_view['payload_sha256'] == receipts[0].outcome.source_content_sha256
+        assert confirmed_view['linked_outcome']['recorded_at'] == receipts[0].outcome.recorded_at.isoformat()
+        assert confirmed_view['submitted_confirmation']['source_content_sha256'] == proof.source_content_sha256
+        assert confirmed_view['independent_verification_performed'] is False
+        assert inspect_review('confirmed')['inspection'] == confirmed_view
         pending_console = console('--as-of', pending_at.isoformat())
         assert pending_console['evaluation']['evaluation_status'] == 'no_scored_forecasts'
         assert pending_console['evaluation']['decision_counts']['outcome_pending'] == 1
@@ -170,17 +201,22 @@ def test_native_resolution_review_promotes_atomically_and_preserves_evidence(tmp
         blocked = console(expected=1)
         assert blocked['reason_code'] == 'research_execution_history_incomplete'
         assert blocked['evaluation'] is None and blocked['history_gate'] == 'not_established'
+        assert inspect_review('confirmed')['inspection'] == confirmed_view
         historical = console('--as-of', scored.generated_at.isoformat())['evaluation']
         assert historical['input_sha256'] == scored.input_sha256
         with db.session() as session:
             assert session.inspect(record_id='record-1').record == captured.record
             assert session.inspect(record_id='pending-console').status == 'incomplete'
             info = db._state()
+            assert session.inspect_resolution(review_id='candidate') == saved
+            assert session.inspect_resolution(review_id='confirmed') == receipts[0]
+            assert db._psql(info,'SELECT count(*) FROM research_capture.resolution_reviews;',owner=False) == '2'
             assert db._psql(info,'SELECT count(*) FROM research_capture.attempts;',owner=False) == '1'
             assert db._psql(info,'SELECT count(*) FROM research_capture.outcomes;',owner=False) == '1'
             assert db._psql(info,'SELECT count(*) FROM research_capture.execution_claims;',owner=False) == '2'
         assert len(created)==1
         print('native console: PASS; empty, pending, scored, future and incomplete states; no writes')
+        print('native resolution inspection: PASS; exact stored candidate/confirmed metadata, no promotion or writes')
         print('native resolution: PASS; raw evidence and outcome atomic; no public/model calls')
     finally:
         if db.status()['status']!='stopped':db.down()
