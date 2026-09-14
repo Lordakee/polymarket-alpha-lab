@@ -149,8 +149,7 @@ def test_durable_batches_upgrade_stop_restart_and_crash_without_model_replay(tmp
             assert session.enqueue_research_batch(batch=expired,allow_queue_write=True)==expired_saved
             # Array tuple identity must not use order-insensitive JSON containment.
             a=replace(prepared(6),model_id='a',protocol_version='b')
-            c=replace(prepared(7),model_id='b',protocol_version='a',intake=replace(a.intake))
-            c=replace(c,record_id='queued-7')
+            c=replace(a,record_id='queued-7',model_id='b',protocol_version='a')
             pair=ResearchBatch('ordered-identities',(a,c))
             assert session.enqueue_research_batch(batch=pair,allow_queue_write=True).batch==pair
             # SQL constraints still protect raw app INSERT; no privileged bypass.
@@ -205,3 +204,17 @@ def test_durable_batches_upgrade_stop_restart_and_crash_without_model_replay(tmp
         print('native durable dispatch: PASS; explicit 63-to-64 upgrade, FIFO rounds, stop/restart, crash is incomplete, no replay')
     finally:
         if db.status()['status']!='stopped':db.down()
+
+
+def test_ordered_identity_fixture_retains_source_binding():
+    # This fixture check runs offline too, before relying on the SQL proof.
+    # Derive both identities from ONE request so required IDs still bind to
+    # its evidence; copying just another intake would invalidate that binding.
+    from polymarket_alpha_lab.research_dispatch import decode_batch
+    a=replace(prepared(6),model_id='a',protocol_version='b')
+    c=replace(a,record_id='queued-7',model_id='b',protocol_version='a')
+    pair=ResearchBatch('ordered-identities',(a,c))
+    assert a.intake.task_id==c.intake.task_id
+    assert a.required_source_ids==c.required_source_ids
+    assert (a.model_id,a.protocol_version)!=(c.model_id,c.protocol_version)
+    assert decode_batch(pair.payload,pair.content_sha256)==pair
