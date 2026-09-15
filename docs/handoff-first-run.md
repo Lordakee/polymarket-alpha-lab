@@ -29,6 +29,12 @@ TimeoutExpired, and never copies unknown stage names, other stderr text, stdout,
 command arguments, environment values or raw fixture bodies into that summary.
 Original pytest failure objects are retained; this is not a promise that arbitrary
 raw pytest output is private-data-safe. Only synthetic tests use this helper.
+Both native and first-invocation CI explicitly use pytest
+`junit_family=legacy`, whose per-case properties support this evidence. The
+initial candidate kept the native default xunit2 and emitted compatibility
+warnings; its XML was readable, but no strict-xunit2 schema conformity was
+claimed. The explicit format fixes that newly introduced warning without
+changing test selection, assertions, process limits or production code.
 
 TimeoutExpired, launch failure and interruption remain failures. Even a final
 serialization marker does not override a nonzero exit code or process timeout.
@@ -96,3 +102,6 @@ No provider, database, credentials, real market call or installed kit is touched
 
 Primary reference: https://docs.python.org/3/library/subprocess.html
 (`run`, `TimeoutExpired`, process-creation timeout caveat; checked 2026-09-16).
+
+JUnit property/family reference (checked 2026-09-16):
+https://docs.pytest.org/en/stable/_modules/_pytest/junitxml.html
