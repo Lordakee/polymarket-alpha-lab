@@ -121,3 +121,69 @@ empty/pending/scored/future/incomplete views and checks readback/row counts. The
 actual kit test checks help without a cluster and evaluates one pending record
 from the extracted kit's own Python environment. These use synthetic business
 inputs, not a user's database or paid model. Final revision/counts belong in the PR.
+
+
+## Reviewed settlement mode (WP-05 operator integration)
+
+The SAME command now exposes the existing one-snapshot settled-simulation API:
+
+```powershell
+.\.venv\Scripts\python.exe scripts/evaluate_project_research.py --settled-paper
+.\.venv\Scripts\python.exe scripts/evaluate_project_research.py --settled-paper --include-decisions
+.\.venv\Scripts\python.exe scripts/evaluate_project_research.py --settled-paper --as-of "2026-09-15T12:00:00+08:00"
+```
+
+The last timestamp is an example historical scope, not reusable authorization or
+an assertion that records exist at that time. `--root`, record bound and probability
+diagnostic settings retain their existing meanings. Without `--settled-paper`,
+the original probability-only path and interrupt behavior are unchanged. No new
+command, web view, file loader, scenario capture or business-write option is added.
+This entry requires an initialized project with its complete current migration
+catalog; it does not install/migrate/repair a database or update an old kit.
+
+`evaluation_kind=settled_paper` identifies the new envelope. Its `evaluation` is
+the existing `research-paper-settlement-v1` export. No money, grouping, source
+approval or first-attempt selection is recomputed by the console. All original
+status counts, cost-policy groups and limits remain. Only `attempts` and nested
+`history.decisions` are omitted by default; `decisions_included=false` explicitly
+marks this presentation choice, not missing source records. With
+`--include-decisions`, both original arrays are retained without filtering.
+The original input hash still binds the FULL evaluated source, not a hash of the
+shortened display. Group policy labels and hashes remain business metadata.
+
+Read the existing [settlement runbook](research-paper-settlement.md) in the source
+repository for the model and provenance contract. Empty, missing, rejected,
+failed and pending categories are preserved; no settled sample remains null, not
+zero PnL. Different cost/risk policies are not pooled. Amounts are the saved binary
+payout minus saved assumed-cost upper bounds. They are NOT actual account PnL,
+verified fees, portfolio returns or strategy approval. Source assertions and
+recorded-time historical views retain their original limitations. The console's
+shape, phase-flag, count and request-option checks do not replace the managed
+service's source/amount verification and do not authenticate a forged exporter.
+
+The new mode calls `evaluate_settled_paper_research` exactly once. An incompatible
+export, different requested historical cutoff or inconsistent diagnostic options
+fails without falling back to probability-only evaluation. Known history/future
+blocks and `research_paper_settlement_read_limit` exit 1 with `status=blocked` and
+`evaluation=null`. Other operation, serialization or session-cleanup failures,
+including `SystemExit(0)`, exit 1 with a fixed sanitized reason. Keyboard interrupt
+returns 130 and no success evaluation. Argument errors still exit 2 before project
+access. Success is fully serialized after cleanup, then written once; if stdout
+itself fails, output may be absent/partial and exit is nonzero without a retry or
+attempted second error write. Exit 0 means a successful read/presentation, not a
+profitable strategy, fully settled population or approval to trade.
+
+Unit and separate same-assistant adversarial tests cover both views, option
+binding, null/group preservation, malformed exports, cleanup, interruption and
+output errors. Existing native settlement proof now invokes the actual console
+outside the parent lifecycle lease, checks four payouts, historical and failed
+reads, unchanged table counts and incomplete-history refusal. Actual extracted-kit
+proof invokes the option in BOTH isolated environments using their own locked
+Python installations (one missing-paper record and one empty history). Those kit
+checks do not pretend to be the four-payout settlement proof. Inputs/models are
+synthetic; no user's database or real provider is involved. Final source/CI
+identities and preserved first failures are recorded in the implementation PR.
+
+WP-05 remains PARTIAL, G5 open and V1 1/6. Real approved forecasts, input/fee evidence,
+remaining operator configuration, D1-D3 and the existing PowerShell 5.1 reliability
+issue remain open. No user-machine step or new migration is required by this change.

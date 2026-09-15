@@ -8,6 +8,8 @@ import os
 from pathlib import Path
 import shutil
 import socket
+import subprocess
+import sys
 from threading import Event
 import time
 import uuid
@@ -155,7 +157,34 @@ def test_paper_settlement_snapshot_outcomes_denominators_restart_and_no_writes(t
                 assert s.inspect(record_id=req.record_id).record==e.record
             for rid,receipt in saved.items():assert s.inspect_paper_research(record_id=rid)==receipt
         db.down()
+        # Real operator children must run OUTSIDE the parent's lifecycle lease.
+        # Compare directly with the original API export, not the CLI presenter.
+        def console(*args, expected_code=0):
+            child=subprocess.run([sys.executable,'-I',str(ROOT/'scripts/evaluate_project_research.py'),
+                '--root',str(root),'--settled-paper',*args],cwd=parent,
+                capture_output=True,text=True,encoding='utf-8',env=files.clean_environment(),timeout=120)
+            assert child.returncode==expected_code,(child.stdout,child.stderr)
+            assert child.stderr=='' and 'Synthetic evidence only' not in child.stdout
+            assert 'data.binance.vision' not in child.stdout
+            return json.loads(child.stdout)
+        for detail in (False,True):
+            value=console('--as-of',after['history']['generated_at'],
+                          *(['--include-decisions'] if detail else []))
+            expected=json.loads(json.dumps(after))
+            if not detail:
+                expected.pop('attempts');expected['history'].pop('decisions')
+            expected['decisions_included']=detail
+            assert value['evaluation']==expected
+            assert value['evaluation_kind']=='settled_paper' and value['business_writes_performed'] is False
+        historical=console('--as-of',before_at.isoformat(),'--include-decisions')['evaluation']
+        assert historical==dict(before,decisions_included=True)
+        for args,reason in ((['--max-records','8'],'research_capture_history_limit'),
+                (['--as-of',(datetime.now(UTC)+timedelta(days=1)).isoformat()],'research_evaluation_from_future')):
+            failure=console(*args,expected_code=1)
+            assert failure['status']=='blocked' and failure['reason_code']==reason and failure['evaluation'] is None
+        assert db.status()['status']=='stopped'
         with db.session() as s:
+            assert db._psql(identity,counts_sql)==counts
             assert s.evaluate_settled_paper_research(generated_at=datetime.fromisoformat(after['history']['generated_at']))==after
             req,_=inputs(7999,at=datetime.now(UTC))
             def interrupted(_):raise SystemExit(86)
@@ -165,6 +194,9 @@ def test_paper_settlement_snapshot_outcomes_denominators_restart_and_no_writes(t
             # A historical view predating that claim remains its original scope.
             assert s.evaluate_settled_paper_research(generated_at=before_at)==before
             assert db._psql(identity,'SELECT count(*) FROM project_private.migrations;')=='67'
+        failure=console(expected_code=1)
+        assert failure['reason_code']=='research_execution_history_incomplete' and failure['evaluation'] is None
+        assert console('--as-of',before_at.isoformat(),'--include-decisions')['evaluation']==dict(before,decisions_included=True)
         assert db.status()['instance_id']==identity['instance_id']
         print('native settled paper: PASS; BTC/ETH four payouts, late-COMMIT snapshot, preserved denominators, historical/restart, no writes')
     finally:

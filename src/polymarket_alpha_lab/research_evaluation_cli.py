@@ -1,5 +1,7 @@
 """Read-only operator view of existing captured-research diagnostics.
 
+The default shows probability diagnostics; --settled-paper shows the existing
+reviewed, assumed-cost settlement view. Neither mode approves a forecast or fee.
 No model, public fetch, outcome capture, migration or file-backed report. The
 managed session's existing evaluator enforces complete visible execution claims
 in one DB snapshot; this view never falls back to the weaker legacy loader.
@@ -64,6 +66,8 @@ def main(argv: list[str] | None = None, *, default_root: Path) -> int:
     parser.add_argument("--min-sample-count", type=int, default=30)
     parser.add_argument("--min-bin-count", type=int, default=5)
     parser.add_argument("--include-decisions", action="store_true", help="also show per-record IDs, reasons and probabilities")
+    parser.add_argument("--settled-paper", action="store_true",
+        help="show saved simulation settlement bounds, not actual account PnL")
     args = parser.parse_args(argv)
     if not 1 <= args.max_records <= MAX_RECORDS:
         parser.error("max-records must be 1..10000")
@@ -71,6 +75,8 @@ def main(argv: list[str] | None = None, *, default_root: Path) -> int:
         ResearchProbabilityDiagnostics((), args.buckets, args.min_sample_count, args.min_bin_count)
     except ValueError:
         parser.error("sample and bin thresholds must be 1..10000")
+    if args.settled_paper:
+        return _run_settled_paper(args)
     envelope = dict(public_network_called=False, live_model_called=False, business_writes_performed=False,
                     outcome_confirmation_performed=False, paper_only=True, report_only=True, readonly=True)
     try:
@@ -92,6 +98,117 @@ def main(argv: list[str] | None = None, *, default_root: Path) -> int:
             reason_code="research_evaluation_operation_failed", evaluation=None)
         code = 1
     print(json.dumps(envelope, ensure_ascii=True, allow_nan=False, indent=2))
+    return code
+
+
+def _settled_paper_summary(report: dict, *, include_decisions: bool) -> dict:
+    """Project the existing managed export, without recalculating any money.
+
+    Envelope checks detect incompatible exports, not forged source authenticity.
+    Source/amount verification belongs to the fixed managed settlement evaluator.
+    Never use this presenter as an independent database/history validator.
+    """
+    from polymarket_alpha_lab.research_paper_settlement import _STATUSES
+
+    constants = dict(schema_version="research-paper-settlement-v1",
+        complete_visible_execution_history=True, single_database_snapshot=True,
+        settled_subset_only=True, money_unit="binary_payout_units", costs_are_assumptions=True,
+        source_authentication_performed=False, tariff_verified=False,
+        commit_before_cutoff_verified=False, actual_account_pnl=None,
+        paper_trades_created=0, business_writes_performed=False,
+        portfolio_return_computed=False, strategy_validation_performed=False,
+        paper_only=True, report_only=True, readonly=True)
+    fields = {"history", "attempts", "groups", "attempt_count", "paper_evidence_count",
+              "status_counts", "input_sha256"}
+    if (type(report) is not dict or type(include_decisions) is not bool
+            or set(report) != fields | constants.keys()
+            or any(type(report[k]) is not type(v) or report[k] != v for k, v in constants.items())):
+        raise ValueError("settled_paper_export_invalid")
+    history, rows = report["history"], report["attempts"]
+    if (type(history) is not dict or history.get("schema_version") != "research-evaluation-v1"
+            or any(history.get(k) is not True for k in ("paper_only", "report_only", "readonly"))
+            or type(rows) is not list or type(report["groups"]) is not list
+            or type(report["attempt_count"]) is not int or report["attempt_count"] != len(rows)
+            or type(report["paper_evidence_count"]) is not int
+            or not 0 <= report["paper_evidence_count"] <= len(rows)
+            or history.get("record_count") != len(rows)
+            or type(history.get("decisions")) is not list or len(history["decisions"]) != len(rows)):
+        raise ValueError("settled_paper_export_invalid")
+    for row, decision in zip(rows, history["decisions"], strict=True):
+        if (type(row) is not dict or type(decision) is not dict
+                or any(row[k] != decision[k] for k in
+                       ("record_id", "record_sha256", "team_id", "model_id", "protocol_version", "condition_id"))
+                or row["original_reason_code"] != decision["reason_code"]
+                or row["status"] not in _STATUSES):
+            raise ValueError("settled_paper_export_invalid")
+    counts = report["status_counts"]
+    if (type(counts) is not dict or set(counts) != set(_STATUSES)
+            or any(type(counts[k]) is not int or counts[k] != sum(r["status"] == k for r in rows)
+                   for k in _STATUSES)):
+        raise ValueError("settled_paper_export_invalid")
+    # Detach the JSON export before omitting per-record data. Refuse non-finite
+    # values instead of emitting nonstandard JSON; preserve decimal strings.
+    output = json.loads(json.dumps(report, ensure_ascii=True, allow_nan=False))
+    if not include_decisions:
+        output.pop("attempts")
+        output["history"].pop("decisions")
+    output["decisions_included"] = include_decisions
+    return output
+
+
+def _run_settled_paper(args) -> int:
+    """One read, one output, no fallback/retry or new capture permission."""
+    envelope = dict(evaluation_kind="settled_paper", public_network_called=False,
+        live_model_called=False, business_writes_performed=False,
+        outcome_confirmation_performed=False, paper_only=True, report_only=True, readonly=True)
+    reason = "research_paper_evaluation_operation_failed"
+    try:
+        with ProjectPostgres(args.root).session() as session:
+            report = session.evaluate_settled_paper_research(generated_at=args.as_of,
+                max_records=args.max_records, bucket_count=args.buckets,
+                min_sample_count=args.min_sample_count, min_bin_count=args.min_bin_count)
+            result = _settled_paper_summary(report, include_decisions=args.include_decisions)
+            history = result["history"]
+            at = _timestamp(history["generated_at"])
+            if (args.as_of is not None and at != args.as_of) or any(
+                    type(history[k]) is not int or not 0 <= history[k] <= args.max_records
+                    for k in ("record_count", "outcome_count")):
+                raise ValueError("settled_paper_request_mismatch")
+            for group in history["groups"]:
+                scores = group["scores"]
+                if (any(scores.get(k) is not True for k in ("paper_only", "report_only", "readonly"))
+                        or any(type(scores[k]) is not int or scores[k] != v for k, v in
+                            (("bucket_count", args.buckets), ("min_sample_count", args.min_sample_count),
+                             ("min_bin_count", args.min_bin_count)))):
+                    raise ValueError("settled_paper_request_mismatch")
+        # Serialize only after cleanup. If serialization fails, discard the whole
+        # success envelope rather than printing partial apparently complete data.
+        rendered = json.dumps(dict(envelope, status="evaluated",
+            history_gate="complete_visible_execution_claims", evaluation=result),
+            ensure_ascii=True, allow_nan=False, indent=2)
+        code = 0
+    except KeyboardInterrupt:
+        envelope.update(status="interrupted", reason_code="research_paper_evaluation_interrupted")
+        code = 130
+    except ResearchCaptureConflict as error:
+        value = error.args[0] if len(error.args) == 1 and type(error.args[0]) is str else None
+        known = value in _BLOCKS | {"research_paper_settlement_read_limit"}
+        envelope.update(status="blocked" if known else "failed", reason_code=value if known else reason)
+        code = 1
+    except (Exception, SystemExit):
+        envelope.update(status="failed", reason_code=reason)
+        code = 1
+    if code:
+        rendered = json.dumps(dict(envelope, history_gate="not_established", evaluation=None),
+                              ensure_ascii=True, allow_nan=False, indent=2)
+    try:
+        print(rendered)
+    except KeyboardInterrupt:
+        return 130
+    except (Exception, SystemExit):
+        # A broken output stream cannot deliver an error envelope reliably.
+        # Return failure without another write or exposing exception details.
+        return 1
     return code
 
 
