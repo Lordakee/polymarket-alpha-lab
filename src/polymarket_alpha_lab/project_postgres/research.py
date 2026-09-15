@@ -134,3 +134,7 @@ class ProjectResearchSession:
     def inspect_paper_research(self, *, record_id):
         from polymarket_alpha_lab.research_paper_capture import inspect_research_paper_with_psycopg
         return self._call(inspect_research_paper_with_psycopg, record_id=record_id)
+
+    def evaluate_settled_paper_research(self, **configuration):
+        from polymarket_alpha_lab.research_paper_settlement import evaluate_settled_paper_with_psycopg
+        return self._call(evaluate_settled_paper_with_psycopg, **configuration)
