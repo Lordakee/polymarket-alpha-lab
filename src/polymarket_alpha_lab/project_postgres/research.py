@@ -101,6 +101,11 @@ class ProjectResearchSession:
         from polymarket_alpha_lab.research_resolution_store import record_resolution_review_with_psycopg
         return self._call(record_resolution_review_with_psycopg, submission=submission)
 
+    def confirm_crypto_resolution(self, *, instruction, allow_resolution_write=False):
+        from polymarket_alpha_lab.research_resolution_confirmation import confirm_crypto_resolution_with_psycopg
+        return self._call(confirm_crypto_resolution_with_psycopg, instruction=instruction,
+            allow_resolution_write=allow_resolution_write)
+
     def inspect_resolution(self, *, review_id):
         from polymarket_alpha_lab.research_resolution_store import load_resolution_review_with_psycopg
         return self._call(load_resolution_review_with_psycopg, review_id=review_id)

@@ -1,13 +1,16 @@
-"""List private resolution work; optionally collect one bounded public batch.
+"""List, collect, or explicitly confirm private resolution work.
 
 The default is metadata-only DB readback. --collect --allow-public-fetch opts
 into Gamma reads and unconfirmed evidence storage, never final outcomes/models.
+The separate --confirm --allow-resolution-write mode consumes reviewed stdin
+and may atomically store an operator-confirmed outcome; it never fetches/models.
 Requires an already initialized native project database; does not initialize it.
 """
 from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
 from polymarket_alpha_lab.project_postgres.server import ProjectPostgres
@@ -17,12 +20,22 @@ from polymarket_alpha_lab.research_resolution_queue import MAX_WORKLIST_MARKETS
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root', type=Path, default=Path(__file__).resolve().parents[1])
+    parser.add_argument('--confirm', action='store_true',
+        help='Read one reviewed settlement JSON from stdin; requires --allow-resolution-write')
+    parser.add_argument('--allow-resolution-write', action='store_true')
     parser.add_argument('--collect', action='store_true')
     parser.add_argument('--allow-public-fetch', action='store_true')
     parser.add_argument('--max-requests', type=int, default=10)
     parser.add_argument('--max-markets', type=int, default=MAX_WORKLIST_MARKETS)
     parser.add_argument('--recheck-after-seconds', type=int, default=300)
     args = parser.parse_args(argv)
+    if args.confirm:
+        if args.collect or args.allow_public_fetch or not args.allow_resolution_write:
+            parser.error('--confirm requires --allow-resolution-write and forbids collection')
+        from polymarket_alpha_lab.research_resolution_confirmation_cli import confirm_from_stdin
+        return confirm_from_stdin(root=args.root, stream=sys.stdin.buffer, allow_resolution_write=True)
+    if args.allow_resolution_write:
+        parser.error('--allow-resolution-write requires --confirm')
     if args.collect != args.allow_public_fetch:
         parser.error('--collect and --allow-public-fetch must be provided together')
     if not 1 <= args.max_requests <= 20 or not 1 <= args.max_markets <= MAX_WORKLIST_MARKETS:
