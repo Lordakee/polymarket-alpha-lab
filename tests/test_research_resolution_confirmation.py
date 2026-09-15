@@ -257,7 +257,8 @@ def test_closed_stdin_decodes_exact_instruction():
 
 
 @pytest.mark.parametrize('raw',[b'',b'null',b'[]',b'{}',b'\xff',b'{"a":1,"a":2}',
-    b'{"x":NaN}',b'0'*(cli.MAX_INPUT_BYTES+1),'not-bytes'])
+    b'{"x":NaN}',b'0'*(cli.MAX_INPUT_BYTES+1),'not-bytes'],
+    ids=['empty','null','array','object','invalid-utf8','duplicate-keys','nonfinite','over-64k','not-bytes'])
 def test_invalid_stdin_rejected(raw):
     with pytest.raises(ValueError,match='settlement_input_invalid'):cli.decode_review(raw)
 
