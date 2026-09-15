@@ -72,6 +72,11 @@ def test_budget_upgrade_shared_cap_replay_and_lost_process(tmp_path,monkeypatch)
     shutil.copytree(ROOT/'database',root/'database')
     shutil.copytree(ROOT/'supabase/migrations',root/'supabase/migrations')
     manifest=json.loads((root/'database/migrations.lock.json').read_text())
+    # Keep this historical upgrade proof at65->66. New-tail coverage has its
+    # own isolated test, not a replacement of this older migration contract.
+    for later in manifest['migrations'][66:]:
+        (root/'supabase/migrations'/later['name']).unlink()
+    manifest=dict(manifest,migrations=manifest['migrations'][:66])
     assert len(manifest['migrations'])==66 and manifest['migrations'][-1]['name']==TAIL
     (root/'supabase/migrations'/TAIL).unlink()
     (root/'database/migrations.lock.json').write_text(json.dumps(dict(manifest,migrations=manifest['migrations'][:-1])))
@@ -85,7 +90,7 @@ def test_budget_upgrade_shared_cap_replay_and_lost_process(tmp_path,monkeypatch)
             assert old.record.run.research.status=='completed'
             identity=db._state()
         shutil.copyfile(ROOT/'supabase/migrations'/TAIL,root/'supabase/migrations'/TAIL)
-        shutil.copyfile(ROOT/'database/migrations.lock.json',root/'database/migrations.lock.json')
+        (root/'database/migrations.lock.json').write_text(json.dumps(manifest))
         assert db.migrate()['migrations_applied']==1 and db.migrate()['migrations_applied']==0
         made=[];calls=[];lock=Lock()
         class CountedModel(Model):
