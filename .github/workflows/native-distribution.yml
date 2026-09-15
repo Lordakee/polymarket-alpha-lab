@@ -9,6 +9,8 @@ on:
       - 'docs/research-model-budget.md'
       - 'src/polymarket_alpha_lab/research_dispatch*.py'
       - 'tests/test_research_dispatch_rotation.py'
+      - 'tests/test_research_dispatch_cli*.py'
+      - 'scripts/manage_research_tasks.py'
       - 'docs/research-dispatch.md'
       - 'src/polymarket_alpha_lab/research_crypto_selection.py'
       - 'tests/test_crypto_supported_selection.py'

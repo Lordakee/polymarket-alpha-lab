@@ -115,8 +115,9 @@ another run. A persistent failure at the head can consume later run limits; this
 slice does not implement durable error rotation, backoff or cross-batch fairness.
 The explicit rotation below prevents this repeated head-of-line monopolization
 within its fixed roster; the single-batch API deliberately retains its old FIFO
-semantics. Unified operation and full WP-02 integration remain G3 gaps. Actual model/factory failures use the original captured result
-and are skipped subsequently, not retried.
+semantics. The controlled operator entry below assembles these methods; approved
+provider integration remains a G3 gap. Actual model/factory failures use the
+original captured result and are skipped subsequently, not retried.
 
 `capture_failed` retains the exact `execution.pending_run` only in memory for the
 existing explicit `retry_capture(request=..., run=...)` API. The queue stores inputs,
@@ -197,7 +198,7 @@ with ProjectPostgres(Path(actual_project_root)).session() as research:
 These names are placeholders for already admitted, independently approved inputs
 and a separately authorized client, not a runnable provider configuration. No
 client/credential is loaded by name, and no model call is authorized by this doc.
-There is still no operator CLI that silently imports an arbitrary factory.
+The operator entry below also refuses to import an arbitrary factory by name.
 
 Each NEW turn reads bounded per-batch snapshots, then under a per-rotation DB lock
 records its selection and next cursor in one append-only transaction. Only after
@@ -276,4 +277,126 @@ semantics and the distinction between reserved bounds and actual billing.
 Omitting the keyword preserves this API's prior unbudgeted behavior. No policies
 are auto-created and D1-D3 still gate real use; this is not verified provider
 pricing or a global monetary guarantee. Original task claims, turn replay and
-cooperative stop rules are unchanged. Unified operating entrypoints remain open.
+cooperative stop rules are unchanged. The operator entry below requires this
+keyword rather than silently using the older unbudgeted default.
+
+
+## One controlled operator entry (WP-03)
+
+`scripts/manage_research_tasks.py` and `research_dispatch_cli.main` assemble the
+existing managed inspection and bounded rotation APIs. They add no queue, file
+journal, background loop, migration, model discovery or provider configuration.
+This closes the operator-entry subtask, **not G3, real-provider acceptance or V1**.
+The 66-migration catalog is unchanged. Use only an explicitly prepared project
+with this schema; no command installs missing tables or adopts another database.
+
+From the fixed source/kit root, using that version's Python environment:
+
+```powershell
+.\.venv\Scripts\python.exe -I scripts/manage_research_tasks.py inspect-batch --batch-id approved-btc-batch
+.\.venv\Scripts\python.exe -I scripts/manage_research_tasks.py inspect-turn --rotation-id approved-roster-1 --turn-id turn-1
+.\.venv\Scripts\python.exe -I scripts/manage_research_tasks.py inspect-budget --budget-id approved-budget-1
+```
+
+Use `--root <actual-project-root>` BEFORE the subcommand only when the reviewed
+source/version-switching procedure explicitly authorizes that physical root.
+The default is the script's own source/kit root, not the current working directory.
+These reads use the managed project session (which may start/stop its private
+engine), do not mutate research records, and never construct a model client.
+Do not overlay old kits or edit bundle manifests to add this command.
+
+### Preparation and explicit run
+
+The application first uses the existing, separately authorized
+`enqueue_research_batch(..., allow_queue_write=True)` and
+`create_model_budget(..., allow_budget_write=True)` APIs with reviewed typed
+inputs and the exact enrolled request hashes. The commands do not read a JSON
+business queue, create policies, approve terms or infer a fee bound. See the
+preparation example above and the existing model-budget runbook.
+
+An approved application can invoke the SAME parser/entry with an already-reviewed
+factory. The following is assembly pseudocode; the names must be supplied by the
+authorized application, not loaded from files or environment by this command:
+
+```python
+from pathlib import Path
+from polymarket_alpha_lab.research_dispatch_cli import main
+from polymarket_alpha_lab.research_dispatch_runner import ResearchDispatchStop
+
+stop = ResearchDispatchStop()
+code = main([
+    'run-turn', '--rotation-id', 'approved-roster-1', '--turn-id', 'turn-1',
+    '--batch-id', 'approved-btc-batch', '--batch-id', 'approved-eth-batch',
+    '--budget-id', 'approved-budget-1', '--max-tasks', '2', '--max-workers', '2',
+    '--allow-model-calls',
+], default_root=Path(actual_project_root),
+   model_factory=approved_model_factory, stop=stop)
+```
+
+Both explicit model opt-in AND the callable factory are required before opening
+a managed session. `--budget-id` is mandatory; no unbudgeted fallback is exposed.
+**The standalone script has NO configured model factory.** Its `run-turn` returns
+exit2 before database access, even with `--allow-model-calls`; it must not be
+advertised as a ready-to-use real-model client. D1-D3 and an actually verified
+adapter/fee bound remain open. An injected factory is a trusted-code boundary,
+not a sandbox or proof that one invocation produces at most one billed request.
+No real or synthetic default client is installed in this production entry.
+
+### Stop, inspect, then choose the next turn
+
+Another authorized application thread can call `stop.request_stop()`. Ctrl+C
+uses the existing executor's cooperative stop/drain behavior: no new admission
+after the token stops, but previously admitted work may finish. It is not an
+administrative cancellation, instant socket kill or persistent stop flag.
+Bounded client I/O is still required; a hung client can delay return.
+
+After interruption or an uncertain write, use `inspect-batch`, `inspect-turn` and
+`inspect-budget` with the original identifiers. The same turn ID only replays its
+selection receipt and starts nothing. A NEW explicit turn ID continues the
+persistent cursor. A selected-but-unclaimed task skipped by a stop is revisited
+on a later circuit; an already captured or incomplete task is never re-executed.
+Do not invent new task IDs or switch budgets to retry a lost provider operation.
+
+The JSON result is the existing metadata receipt, not a second execution ledger
+or final whole-project snapshot. It is emitted only AFTER managed-session cleanup.
+Failures (including `SystemExit` from a client or cleanup) use a fixed reason code,
+not the raw exception string. A failed cleanup suppresses an otherwise successful
+receipt: effects may already have committed, so inspect before further action.
+The run envelope conservatively sets `model_calls_possible` and
+`business_writes_possible`; these are not measured call/write counts.
+`final_database_state_checked=false` and `provider_charge_bound_verified=false`
+remain explicit. `readonly=true` means no trading mutation, NOT no local research
+write. Read results include business IDs/hashes, so they are not anonymized.
+
+| Exit | Meaning and required interpretation |
+| --- | --- |
+| 0 | The selected operation returned successfully, including no work or same-turn replay. NOT a claim that all research completed. |
+| 1 | Operation/cleanup failed, a returned attempt failed/blocked, or an execution has no saved completed result. Inspect original state; no automatic retry. |
+| 2 | Invalid arguments, missing model opt-in or no supplied client. No managed session is opened. |
+| 3 | A specific inspection identifier was not found. Not a claim that the whole database is empty. |
+| 130 | Cooperative stop or keyboard interruption. Previously admitted operations may have completed; inspect before the next explicit turn. |
+
+A `dispatched` result can exit1 because a task failed; always check BOTH the exit
+code and per-attempt metadata. Incomplete and captured failed/blocked records are
+not hidden or relabeled successful. The original strict history evaluator still
+rejects incomplete history. The CLI intentionally never emits raw evidence,
+model output or `pending_run`. On process exit that in-memory pending result is
+lost; use the existing typed session API for authorized capture-only recovery
+while the original result is still held. Never reconstruct a forecast from a
+receipt, and never rerun its model to replace a lost result.
+
+### Operator acceptance and self-review
+
+Offline unit tests are `tests/test_research_dispatch_cli.py`; the separate
+same-assistant adversarial review is `tests/test_research_dispatch_cli_review.py`.
+The review first reproduced six SystemExit escape cases (including real worker
+threads), then verified the sanitized failure fix without weakening assertions.
+These are self-review tests, not an independent third-party audit or a defect-free
+guarantee. The native opt-in proof is
+`tests/test_project_postgres_dispatch_cli_native.py`: two teams, multiple turns,
+stop/restart, captured factory failure, a separate process exiting after claim
+and allowance commit, replay without client work, retained incomplete history
+and unchanged old records. Native inputs/clients/charges are synthetic.
+Final-revision commands, exact counts, first failures, CI identifiers and skipped
+or unexecuted checks belong to the implementation PR and DELIVERY_PLAN.md. No
+local user's database, installed kit, credentials or real provider is exercised.
