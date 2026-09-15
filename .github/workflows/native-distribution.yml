@@ -3,6 +3,9 @@ on:
   pull_request:
     branches: [main]
     paths:
+      - 'src/polymarket_alpha_lab/research_paper*.py'
+      - 'tests/test_research_paper*.py'
+      - 'docs/research-paper.md'
       - 'src/polymarket_alpha_lab/research_model_budget*.py'
       - 'tests/test_research_model_budget.py'
       - 'tests/test_project_postgres_budget_native.py'
