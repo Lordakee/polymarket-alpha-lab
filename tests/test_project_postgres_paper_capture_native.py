@@ -151,6 +151,7 @@ def test_paper_capture_upgrade_atomic_replay_rejection_and_history_preservation(
                     return store.db._local_transaction(dsn,lambda c:c.execute(insert,tuple(wrong)))
                 with pytest.raises(RuntimeError):s._call(invalid)
                 assert s.inspect_paper_research(record_id=q.record_id) is None
+            inserted_before_cutoff=[]
             def expire_at_commit(dsn):
                 def write(c):
                     c.execute(insert,params)
@@ -158,9 +159,11 @@ def test_paper_capture_upgrade_atomic_replay_rejection_and_history_preservation(
                     stamped=c.fetchone()[0]
                     assert value.decision_at <= stamped < q.forecast_cutoff_at
                     assert stamped.year != 2000
+                    inserted_before_cutoff.append(stamped)
                     time.sleep(max(0,(q.forecast_cutoff_at-datetime.now(UTC)).total_seconds())+0.05)
                 return store.db._local_transaction(dsn,write)
             with pytest.raises(RuntimeError):s._call(expire_at_commit)
+            assert len(inserted_before_cutoff)==1  # Do not accept pre-INSERT failure as deferred proof.
             assert s.inspect_paper_research(record_id=q.record_id) is None
             with pytest.raises(store.db.ResearchCaptureConflict,match='not_prospective'):
                 s.capture_paper_research(scenario=value,allow_paper_write=True)
