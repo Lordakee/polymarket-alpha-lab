@@ -292,3 +292,93 @@ Transaction semantics references checked 2026-09-15:
 https://www.postgresql.org/docs/17/explicit-locking.html
 https://www.postgresql.org/docs/17/sql-createtrigger.html
 https://www.psycopg.org/psycopg3/docs/basic/transactions.html
+
+## Capture and inspect with the existing task command
+
+`manage_research_tasks.py capture-paper` and `inspect-paper` invoke the same
+managed storage APIs above. They add no queue, strategy, file input loader,
+provider, timestamp generation or automatic approval. Existing batch/turn/budget
+commands and `evaluate_project_research.py --settled-paper` remain unchanged.
+
+The input must be the exact canonical `research-paper-input-v1` string produced by
+`encode_paper_scenario(reviewed_scenario)`, together with its independently retained
+SHA256. This is not a JSON report reconstructed from metadata. An approved producer
+can prepare the already-reviewed in-memory input using the existing codec:
+
+```python
+from polymarket_alpha_lab.research_paper_capture_codec import encode_paper_scenario, checksum
+canonical_input = encode_paper_scenario(reviewed_scenario)
+reviewed_sha256 = checksum(canonical_input)
+```
+
+The codec emits ASCII JSON with base64 raw evidence and escaped non-ASCII text.
+Do not decode/re-encode its evidence for a shell pipeline. Binary stdin is read
+through EOF in bounded chunks, including short reads. At most4MiB of canonical
+payload is accepted, plus zero or ONE trailing LF/CRLF transport terminator.
+BOMs, pretty printing, extra whitespace/objects/lines are rejected rather than
+normalized. The reader consumes no more than the cap+CRLF+one overflow byte.
+The supplied hash and original record ID are checked before opening the project.
+
+For modest-sized already-reviewed canonical input, no input file is needed:
+
+```powershell
+$recordId = Read-Host 'Original research record ID'
+$expectedHash = Read-Host 'SHA256 supplied with the reviewed canonical input'
+$payload = Read-Host 'Paste the complete canonical ASCII JSON'
+$payload | .\.venv\Scripts\python.exe scripts/manage_research_tasks.py capture-paper --record-id $recordId --input-sha256 $expectedHash --allow-paper-write
+$code = $LASTEXITCODE
+if ($code -ne 0) { throw 'Capture did not return a complete receipt; inspect the same record before explicit replay.' }
+```
+
+Larger inputs can be sent by the approved producer over the same stdin protocol.
+Input preparation, source fetching and human approval are NOT supplied by this
+command. A digest proves matching bytes, not a signature or source/reviewer
+identity. Never compute a replacement hash from corrupted received text just to
+make it pass. Windows PowerShell encoding can differ from Python's; the canonical
+ASCII envelope avoids sending raw non-ASCII evidence through that conversion.
+
+Query without stdin or write permission:
+
+```powershell
+.\.venv\Scripts\python.exe scripts/manage_research_tasks.py inspect-paper --record-id $recordId
+$code = $LASTEXITCODE
+```
+
+`--root` remains a global option placed BEFORE the subcommand. It must identify
+an already-authorized physical project. The managed session can start an existing
+initialized server and stops only one it started. Neither mode initializes,
+migrates, adopts a database or repairs an old kit. Missing write approval never
+consumes stdin; malformed arguments/input never open the project. Inspection
+does not consume stdin or write business evidence.
+
+Exit0 with `paper_receipt_returned` means a stored receipt was returned, including
+exact replay or a SAVED REJECTION. Read the nested simulation status:
+`paper_scenario_ready`, `paper_scenario_rejected` or `not_simulated`. None authorizes
+trading. Original `paper_trades_created=0`, `realized_pnl=null`, source/fee and
+prospective-admission limits remain unchanged. No output is serialized before
+managed cleanup succeeds; returned receipt ID/full capture input must match.
+
+Exit1 means operation/validation/cleanup/output failure; a capture may already have
+committed. Exit2 means invalid input/arguments or missing write permission. Exit3
+means one inspected receipt was not found, NOT an empty project. Exit130 means
+interruption. Once capture enters a managed session, `business_writes_possible`
+remains true, even for replay/failure. A short/broken output write or failed flush
+returns nonzero without a second attempted envelope. Check exit status even when
+stdout contains a partial or apparently complete JSON value.
+
+After uncertainty, inspect the SAME record and explicitly replay only the SAME
+canonical input/hash when appropriate. No automatic retry, changed task ID or
+file-backed recovery record is created. Output is the original metadata receipt,
+not raw input/evidence or exception text. IDs/hashes/assumptions are still business
+metadata; do not redirect them to a new business file journal.
+
+Tests: `test_research_paper_operator.py`, `test_research_paper_operator_review.py`,
+and `test_project_postgres_paper_operator_native.py`. The native proof invokes
+actual command children OUTSIDE the parent lifecycle lease, covering synthetic
+BTC/ETH ready/rejected saves, replay/conflict, restart/query and unchanged originals.
+No user database or real model/source is used. G5/G6, D1-D3 and the older PS5.1
+reliability issue remain open; exact final-revision results are retained in the PR.
+
+Stream/encoding references checked2026-09-15:
+https://docs.python.org/3.12/library/sys.html#sys.stdin
+https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_character_encoding

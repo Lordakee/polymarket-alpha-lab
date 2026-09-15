@@ -55,6 +55,14 @@ def _parser(default_root):
     run.add_argument('--max-tasks', type=int, default=10)
     run.add_argument('--max-workers', type=int, default=2)
     run.add_argument('--allow-model-calls', action='store_true')
+    paper = commands.add_parser('inspect-paper', allow_abbrev=False,
+        help='read one original stored simulation receipt')
+    paper.add_argument('--record-id', type=_identifier, required=True)
+    capture = commands.add_parser('capture-paper', allow_abbrev=False,
+        help='save one reviewed canonical stdin simulation, never a real trade')
+    capture.add_argument('--record-id', type=_identifier, required=True)
+    capture.add_argument('--input-sha256', required=True)
+    capture.add_argument('--allow-paper-write', action='store_true')
     return parser
 
 
@@ -122,6 +130,11 @@ def main(argv: list[str] | None = None, *, default_root: Path,
     """
     parser = _parser(default_root)
     args = parser.parse_args(argv)
+    if args.operation in ('capture-paper', 'inspect-paper'):
+        from polymarket_alpha_lab.research_paper_operator import operate_paper
+        return operate_paper(root=args.root, operation=args.operation, record_id=args.record_id,
+            input_sha256=getattr(args, 'input_sha256', None),
+            allow_paper_write=getattr(args, 'allow_paper_write', False))
     running = args.operation == 'run-turn'
     if running:
         try:
