@@ -204,6 +204,39 @@ def capture_research_outcome_with_psycopg(
     return _local_transaction(dsn, operation)
 
 
+def _read_research_evaluation(cursor, *, at, max_records, bucket_count,
+                              min_sample_count, min_bin_count, require_execution_complete):
+    """Existing evaluator queries on an already managed snapshot; options prevalidated.
+
+    Kept separate so paper settlement reads can share the very same transaction.
+    No alternate selector, driver or weakening of the complete-history check.
+    """
+    cursor.execute("SELECT clock_timestamp()")
+    server_now = _utc("server clock", cursor.fetchone()[0])
+    if at is not None and at > server_now:
+        raise ResearchCaptureConflict("research_evaluation_from_future")
+    cutoff = server_now if at is None else at
+    if require_execution_complete:
+        cursor.execute("SELECT count(*) FROM research_capture.execution_claims c "
+                       "LEFT JOIN research_capture.attempts a ON a.record_id=c.record_id "
+                       "WHERE c.claimed_at<=%s AND (a.record_id IS NULL OR a.recorded_at>%s)", (cutoff, cutoff))
+        if cursor.fetchone()[0]:
+            raise ResearchCaptureConflict("research_execution_history_incomplete")
+    cursor.execute("SELECT count(*),coalesce(sum(octet_length(payload)),0) FROM research_capture.attempts WHERE recorded_at<=%s", (cutoff,))
+    count, size = cursor.fetchone()
+    cursor.execute("SELECT count(*) FROM research_capture.outcomes WHERE recorded_at<=%s", (cutoff,))
+    outcome_count = cursor.fetchone()[0]
+    if count > max_records or outcome_count > max_records or size > MAX_READ_BYTES:
+        raise ResearchCaptureConflict("research_capture_history_limit")
+    cursor.execute(f"SELECT {_RECORD_COLUMNS} FROM research_capture.attempts WHERE recorded_at<=%s ORDER BY record_id", (cutoff,))
+    records = tuple(_record(row) for row in cursor.fetchall())
+    cursor.execute(f"SELECT {_OUTCOME_COLUMNS} FROM research_capture.outcomes WHERE recorded_at<=%s ORDER BY condition_id", (cutoff,))
+    outcomes = tuple(ResearchEvaluationOutcome(*row) for row in cursor.fetchall())
+    if len(records) != count or len(outcomes) != outcome_count:
+        raise ValueError("inconsistent capture snapshot")
+    return ResearchEvaluationReport(records, outcomes, cutoff, bucket_count, min_sample_count, min_bin_count)
+
+
 def load_research_evaluation_with_psycopg(
     dsn: str, *, generated_at: datetime | None = None, max_records: int = MAX_RECORDS,
     bucket_count: int = 10, min_sample_count: int = 30, min_bin_count: int = 5,
@@ -224,30 +257,9 @@ def load_research_evaluation_with_psycopg(
     ResearchProbabilityDiagnostics((), bucket_count, min_sample_count, min_bin_count)
 
     def operation(cursor):
-        cursor.execute("SELECT clock_timestamp()")
-        server_now = _utc("server clock", cursor.fetchone()[0])
-        if at is not None and at > server_now:
-            raise ResearchCaptureConflict("research_evaluation_from_future")
-        cutoff = server_now if at is None else at
-        if require_execution_complete:
-            cursor.execute("SELECT count(*) FROM research_capture.execution_claims c "
-                           "LEFT JOIN research_capture.attempts a ON a.record_id=c.record_id "
-                           "WHERE c.claimed_at<=%s AND (a.record_id IS NULL OR a.recorded_at>%s)", (cutoff, cutoff))
-            if cursor.fetchone()[0]:
-                raise ResearchCaptureConflict("research_execution_history_incomplete")
-        cursor.execute("SELECT count(*),coalesce(sum(octet_length(payload)),0) FROM research_capture.attempts WHERE recorded_at<=%s", (cutoff,))
-        count, size = cursor.fetchone()
-        cursor.execute("SELECT count(*) FROM research_capture.outcomes WHERE recorded_at<=%s", (cutoff,))
-        outcome_count = cursor.fetchone()[0]
-        if count > max_records or outcome_count > max_records or size > MAX_READ_BYTES:
-            raise ResearchCaptureConflict("research_capture_history_limit")
-        cursor.execute(f"SELECT {_RECORD_COLUMNS} FROM research_capture.attempts WHERE recorded_at<=%s ORDER BY record_id", (cutoff,))
-        records = tuple(_record(row) for row in cursor.fetchall())
-        cursor.execute(f"SELECT {_OUTCOME_COLUMNS} FROM research_capture.outcomes WHERE recorded_at<=%s ORDER BY condition_id", (cutoff,))
-        outcomes = tuple(ResearchEvaluationOutcome(*row) for row in cursor.fetchall())
-        if len(records) != count or len(outcomes) != outcome_count:
-            raise ValueError("inconsistent capture snapshot")
-        return ResearchEvaluationReport(records, outcomes, cutoff, bucket_count, min_sample_count, min_bin_count)
+        return _read_research_evaluation(cursor, at=at, max_records=max_records,
+            bucket_count=bucket_count, min_sample_count=min_sample_count,
+            min_bin_count=min_bin_count, require_execution_complete=require_execution_complete)
     return _local_transaction(dsn, operation, readonly=True)
 
 
