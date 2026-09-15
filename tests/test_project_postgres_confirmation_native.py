@@ -58,7 +58,7 @@ def test_original_forecasts_manual_confirmation_replay_restart_and_preservation(
     with socket.socket() as sock:sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
     import_runtime_directory(root,prefix);db=ProjectPostgres(root)
     try:
-        assert db.initialize(port=port)['migrations_applied']==66
+        assert db.initialize(port=port)['migrations_applied']==67
         with db.session() as session:
             identity=db._state()
             now=datetime.now(UTC)
@@ -127,7 +127,7 @@ def test_original_forecasts_manual_confirmation_replay_restart_and_preservation(
                 assert session.inspect(record_id=instruction.record_id).record==record
             assert db._psql(identity,'SELECT count(*) FROM research_capture.resolution_reviews;')=='4'
             assert db._psql(identity,'SELECT count(*) FROM research_capture.outcomes;')=='2'
-            assert db._psql(identity,'SELECT count(*) FROM project_private.migrations;')=='66'
+            assert db._psql(identity,'SELECT count(*) FROM project_private.migrations;')=='67'
         assert db.status()['instance_id']==identity['instance_id']
         print('native forecast confirmation: PASS; prospective BTC/ETH, original candidate, manual outcome, replay/restart, no replacement')
     finally:

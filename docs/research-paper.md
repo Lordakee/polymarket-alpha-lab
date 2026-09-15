@@ -183,3 +183,112 @@ Final revision/first failures/actual CI evidence belong to the implementation PR
 WP-05 remains PARTIAL; G5 requires durable prospective simulation inputs/execution,
 reviewed real outcomes and cost-aware realized evaluation. Original statistical
 promotion thresholds, D1-D3 and the existing WP-06 reliability issue are unchanged.
+
+## Prospective input/result capture in the same database (WP-05)
+
+The earlier `evaluate_paper_research` method stays read-only and retrospective.
+`capture_paper_research(scenario=..., allow_paper_write=True)` now saves ONE
+immutable simulation receipt for an original research record. It reuses that
+same evaluator and simulator rather than making a second strategy or order path.
+`inspect_paper_research(record_id=...)` reads the original receipt and raw inputs
+through the same managed project instance. No input file, model, public fetch or
+real exchange operation is added.
+
+```python
+with ProjectPostgres(Path(actual_project_root)).session() as research:
+    # scenario is the already reviewed ResearchPaperScenario described above.
+    saved = research.capture_paper_research(scenario=scenario, allow_paper_write=True)
+    metadata = saved.to_dict()
+    original = research.inspect_paper_research(record_id=scenario.record_id)
+```
+
+The write flag must be exact `True`; no database access occurs without it. One
+original record ID is the database primary key. Reusing the identical canonical
+input returns its original receipt, even after expiry or restart. Changed raw
+bytes, capture times, quantity, costs or assumptions under that record ID conflict;
+changing an assumptions label is not permission to replace a rejection. No
+automatic paid call, capture retry, new task ID, refresh or outcome correction is
+performed. The original forecast, candidate, outcome and evaluator are unchanged.
+
+The `research-paper-input-v1` codec retains exact raw Gamma/YES/NO bytes as base64,
+including malformed book bytes whose simulation is rejected. Input envelopes are
+limited to 4 MiB; result envelopes to 1 MiB. Decoding verifies hashes, all required
+fields and exact canonical re-encoding. Reads check sizes before fetching bodies.
+The output shows metadata, original input/result hashes, selected first-record ID,
+complete-history snapshot time/hash and the stored per-record decision. Raw input
+is available only via the typed receipt's scenario; it is not in `to_dict()`.
+These IDs/hashes still are business metadata, not anonymized public data.
+
+### Admission, atomicity and historical limits
+
+New captures first run the ORIGINAL complete-visible-history gate in a consistent
+read snapshot, then recheck the original record and first-attempt selection under
+the existing event lock in a separate short write transaction. The receipt records
+that earlier history time/hash; it is NOT a final atomic whole-project snapshot.
+New incomplete claims elsewhere after that snapshot can exist, so use the original
+strict evaluator before making any later complete-history claim. Existing receipt
+inspection/replay does not bypass that evaluator or certify today's completeness.
+
+The database stamps insertion time, checks the actual clock against the original
+forecast cutoff, and requires a recent decision (the explicit scenario age bound,
+1..300 seconds). Callers cannot backdate the database stamp. A deferred constraint
+also checks cutoff near transaction completion. **This is prospective database
+admission, not a guarantee that WAL flush or COMMIT acknowledgement happened before
+the cutoff.** The receipt explicitly sets `commit_before_cutoff_verified=false`.
+Supplied raw timestamps still do not authenticate when a remote source was known.
+
+Validly bound ready, rejected and failed/later-attempt simulation decisions retain
+both original inputs and result in ONE append-only row. Missing original results,
+invalid binding, expired admission or a complete-history failure cannot enter the
+capture transaction. Such pre-admission failures remain errors, not a fabricated
+saved rejection. They do not erase the original research history. There is no
+new durable error journal for failures that could not commit.
+
+UPDATE, DELETE and TRUNCATE are refused; a primary key prevents competing inputs
+for one original. All public writes use the existing validated local transaction
+helper and instance binding. An error may occur after a successful COMMIT; do not
+infer absence of writes from a thrown exception. Inspect the SAME record, and only
+explicitly replay the SAME input. There is no automatic retry. Concurrent exact
+calls serialize on the original event lock; conflicting input cannot overwrite.
+
+Readback reconstructs this single decision from its immutable original/first
+record references and the retained inputs with the existing selector/simulator,
+then compares exact canonical result bytes. It is not a present-day full-history
+re-evaluation and never uses a later outcome to change the selected side. A future
+engine/rule change that produces different bytes fails closed for review; this
+version does not reinterpret or migrate historical results automatically.
+
+The output marks `durable_simulation_evidence=true` and
+`prospective_database_admission=true`. It still has `paper_trades_created=0`,
+`realized_pnl=null`, `tariff_verified=false` and `source_authentication_performed=false`.
+A stored book-walk result is simulation evidence, not an actual filled order or a
+portfolio ledger. Cost-aware realized settlement aggregation is still outstanding.
+
+### Migration and proof
+
+`20260915020000_research_paper_simulations.sql` is the 67th catalog entry. All 66
+older migration bytes are unchanged. It creates only the append-only simulation
+table and validation triggers in `research_capture`; the existing restricted app
+role grant procedure applies. New code requires the existing explicit migration
+operation on an authorized SOURCE instance. Nothing automatically upgrades a user
+database. Do not overlay or edit an old immutable kit or its integrity manifest.
+
+The new isolated native test upgrades a disposable66-schema instance to67, checks
+an existing forecast, saves ready/rejected/failed inputs, runs concurrent exact
+replay, injects acknowledgement loss AFTER a real COMMIT, checks age-expired replay
+and restart, exercises denied mutation/hash writes and real deferred-cutoff rollback,
+and keeps the original incomplete-history block. The historical65->66 budget test
+keeps its old target; current-catalog regression assertions now expect67.
+
+Local adversarial review first reproduced three INSERT-receipt provenance binding
+omissions and then fixed them without weakening assertions. Same-assistant separate
+self-review is not a third-party audit or a zero-defect guarantee. Final fixed-head
+CI counts and original failures are recorded in the implementation PR. Tests use
+synthetic models and fresh private databases, never user business data or paid calls.
+WP-05 remains PARTIAL: real source/fee acceptance, outcome/P&L linkage, D1-D3 and the
+known WP-06 reliability issue are not closed by this engineering evidence.
+
+Transaction semantics references checked 2026-09-15:
+https://www.postgresql.org/docs/17/explicit-locking.html
+https://www.postgresql.org/docs/17/sql-createtrigger.html
+https://www.psycopg.org/psycopg3/docs/basic/transactions.html

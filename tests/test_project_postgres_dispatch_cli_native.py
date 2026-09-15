@@ -83,7 +83,7 @@ def test_operator_rounds_stop_restart_failures_and_process_loss(tmp_path, monkey
     import_runtime_directory(root, prefix)
     db = ProjectPostgres(root)
     try:
-        assert db.initialize(port=port)['migrations_applied'] == 66
+        assert db.initialize(port=port)['migrations_applied'] == 67
         requests = tuple(prepared(1100+i, 'crypto_btc' if i%2 == 0 else 'crypto_eth') for i in range(6))
         with db.session() as session:
             identity = db._state()
@@ -174,7 +174,7 @@ def test_operator_rounds_stop_restart_failures_and_process_loss(tmp_path, monkey
             assert session.inspect(record_id=crashed[0].record_id).status == 'incomplete'
             assert session.inspect(record_id=requests[0].record_id).record == old_record
             with pytest.raises(ResearchCaptureConflict, match='history_incomplete'): session.evaluate()
-            assert db._psql(identity, 'SELECT count(*) FROM project_private.migrations;') == '66'
+            assert db._psql(identity, 'SELECT count(*) FROM project_private.migrations;') == '67'
         assert db.status()['instance_id'] == identity['instance_id']
         print('native operator CLI: PASS; two-team rounds, stop/restart, failed result, replay, crash remains incomplete')
     finally:

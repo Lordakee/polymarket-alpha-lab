@@ -125,3 +125,12 @@ class ProjectResearchSession:
     def evaluate_paper_research(self, *, scenarios, **configuration):
         from polymarket_alpha_lab.research_paper import evaluate_research_paper_with_psycopg
         return self._call(evaluate_research_paper_with_psycopg, scenarios=scenarios, **configuration)
+
+    def capture_paper_research(self, *, scenario, allow_paper_write=False):
+        from polymarket_alpha_lab.research_paper_capture import capture_research_paper_with_psycopg
+        return self._call(capture_research_paper_with_psycopg, scenario=scenario,
+            allow_paper_write=allow_paper_write)
+
+    def inspect_paper_research(self, *, record_id):
+        from polymarket_alpha_lab.research_paper_capture import inspect_research_paper_with_psycopg
+        return self._call(inspect_research_paper_with_psycopg, record_id=record_id)
