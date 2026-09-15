@@ -214,6 +214,7 @@ def test_build_and_run_actual_relocatable_kit(monkeypatch):
         help_result = subprocess.run([str(root / '.venv/Scripts/python.exe'), '-I', str(evaluation_cli), '--help'],
             capture_output=True, text=True, encoding='utf-8', timeout=30, check=True, env=clean_environment())
         assert '--include-decisions' in help_result.stdout
+        assert '--settled-paper' in help_result.stdout
         inspection_cli = root / 'scripts/inspect_project_research.py'
         assert inspection_cli.is_file() and (root / 'docs/research-execution-inspection.md').is_file()
         inspection_help = subprocess.run([str(root / '.venv/Scripts/python.exe'), '-I', str(inspection_cli), '--help'],
@@ -312,6 +313,19 @@ def test_build_and_run_actual_relocatable_kit(monkeypatch):
         other_db = ProjectPostgres(second)
         assert sha256((other_db.layout.home / 'app.pgpass').read_bytes()).hexdigest() != credentials
         assert other_db.status()['status'] == 'stopped'
+        # Both extracted environments execute the new option, not just --help.
+        for kit_root,expected_count in ((first,1),(second,0)):
+            child=subprocess.run([str(kit_root / '.venv/Scripts/python.exe'),'-I',
+                str(kit_root / 'scripts/evaluate_project_research.py'),'--settled-paper'],
+                cwd=proof,capture_output=True,text=True,encoding='utf-8',timeout=120,
+                check=True,env=clean_environment())
+            view=json.loads(child.stdout)
+            assert child.stderr=='' and view['status']=='evaluated'
+            assert view['evaluation']['attempt_count']==expected_count
+            assert view['evaluation']['status_counts']['paper_evidence_missing']==expected_count
+            assert view['evaluation']['groups']==[] and view['evaluation']['actual_account_pnl'] is None
+            assert 'attempts' not in view['evaluation'] and 'decisions' not in view['evaluation']['history']
+            assert ProjectPostgres(kit_root).status()['status']=='stopped'
         # A changed immutable package blocks without modifying stored research.
         target = first / 'src/polymarket_alpha_lab/local_postgres_dsn.py'
         original = target.read_bytes()

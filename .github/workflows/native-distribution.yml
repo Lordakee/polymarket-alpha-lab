@@ -3,6 +3,8 @@ on:
   pull_request:
     branches: [main]
     paths:
+      - 'tests/ci_thread_dump.py'
+      - 'tests/test_ci_thread_dump*.py'
       - 'src/polymarket_alpha_lab/research_paper*.py'
       - 'tests/test_research_paper*.py'
       - 'docs/research-paper.md'
@@ -83,7 +85,7 @@ jobs:
           $env:PYTEST_DISABLE_PLUGIN_AUTOLOAD = '1'
           $env:PYTHONUTF8 = '1'
           Get-ChildItem Env: | Where-Object { $_.Name -like 'PG*' } | ForEach-Object { Remove-Item ('Env:' + $_.Name) }
-          .\.venv\Scripts\python.exe -u -m pytest -q -s -o faulthandler_timeout=180 tests/test_project_postgres_distribution.py tests/test_project_postgres_bootstrap.py tests/test_project_postgres_native_spawn.py tests/test_project_postgres_distribution_native.py --junitxml="$env:RUNNER_TEMP/distribution-proof.xml" 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP/distribution-proof.log"
+          .\.venv\Scripts\python.exe -u -m pytest -p no:faulthandler -p tests.ci_thread_dump -q -s -o faulthandler_timeout=180 tests/test_project_postgres_distribution.py tests/test_project_postgres_bootstrap.py tests/test_project_postgres_native_spawn.py tests/test_project_postgres_distribution_native.py --junitxml="$env:RUNNER_TEMP/distribution-proof.xml" 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP/distribution-proof.log"
           exit $LASTEXITCODE
       - name: Confirm tracked source unchanged
         run: |
