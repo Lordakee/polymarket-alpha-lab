@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import datetime
 import json
+import sys
 from pathlib import Path
 
 from polymarket_alpha_lab.project_postgres.server import ProjectPostgres
@@ -41,7 +42,26 @@ def decode_review(raw: bytes) -> CryptoSettlementReview:
         raise ValueError('settlement_input_invalid') from None
 
 
-def confirm_from_stdin(*, root: Path, stream, allow_resolution_write: bool = False) -> int:
+def _emit(envelope, code):
+    """Publish one resolution result after cleanup; never retry a broken stream.
+
+    A completed write/flush does not prove the receiver consumed the JSON. A
+    partial write can leave a prefix on stdout, so no second envelope is sent.
+    """
+    try:
+        rendered = json.dumps(envelope, ensure_ascii=True, allow_nan=False, indent=2) + '\n'
+        written = sys.stdout.write(rendered)
+        if type(written) is not int or written != len(rendered):
+            return 1
+        sys.stdout.flush()
+    except KeyboardInterrupt:
+        return 130
+    except (Exception, SystemExit):
+        return 1
+    return code
+
+
+def confirm_from_stdin(*, root: Path, stream=None, allow_resolution_write: bool = False) -> int:
     """Consume one <=64KiB UTF8 input, write once, emit only after cleanup.
 
     The caller must keep original input for explicit uncertain-COMMIT replay.
@@ -56,7 +76,8 @@ def confirm_from_stdin(*, root: Path, stream, allow_resolution_write: bool = Fal
         code = 2
     else:
         try:
-            instruction = decode_review(stream.read(MAX_INPUT_BYTES + 1))
+            source_stream = sys.stdin.buffer if stream is None else stream
+            instruction = decode_review(source_stream.read(MAX_INPUT_BYTES + 1))
         except KeyboardInterrupt:
             envelope.update(status='interrupted', reason_code='settlement_input_interrupted')
             code = 130
@@ -95,8 +116,7 @@ def confirm_from_stdin(*, root: Path, stream, allow_resolution_write: bool = Fal
             except (Exception, SystemExit):
                 envelope.update(status='failed', reason_code='settlement_operation_failed')
                 code = 1
-    print(json.dumps(envelope, ensure_ascii=True, allow_nan=False, indent=2))
-    return code
+    return _emit(envelope, code)
 
 
 __all__ = ('decode_review', 'confirm_from_stdin')

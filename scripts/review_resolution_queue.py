@@ -9,7 +9,6 @@ Requires an already initialized native project database; does not initialize it.
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from pathlib import Path
 
@@ -21,6 +20,7 @@ sys.path.insert(0, str(ROOT / 'src'))
 
 from polymarket_alpha_lab.project_postgres.server import ProjectPostgres
 from polymarket_alpha_lab.research_resolution_queue import MAX_WORKLIST_MARKETS
+from polymarket_alpha_lab.research_resolution_confirmation_cli import _emit
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -39,7 +39,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.collect or args.allow_public_fetch or not args.allow_resolution_write:
             parser.error('--confirm requires --allow-resolution-write and forbids collection')
         from polymarket_alpha_lab.research_resolution_confirmation_cli import confirm_from_stdin
-        return confirm_from_stdin(root=args.root, stream=sys.stdin.buffer, allow_resolution_write=True)
+        return confirm_from_stdin(root=args.root, allow_resolution_write=True)
     if args.allow_resolution_write:
         parser.error('--allow-resolution-write requires --confirm')
     if args.collect != args.allow_public_fetch:
@@ -48,6 +48,12 @@ def main(argv: list[str] | None = None) -> int:
         parser.error('max-requests must be 1..20 and max-markets must be 1..1000')
     if not 60 <= args.recheck_after_seconds <= 86400:
         parser.error('recheck-after-seconds must be 60..86400')
+    # Once entering the managed path, a collection may already have fetched or
+    # committed evidence even when the receipt/cleanup fails. Never retry here.
+    failure = dict(live_model_called=False, confirmed_outcomes_created=0,
+        operation_entered=True, public_network_calls_possible=args.collect,
+        business_writes_possible=args.collect, automatic_retry_permitted=False,
+        paper_only=True, report_only=True, readonly=True)
     try:
         with ProjectPostgres(args.root).session() as session:
             options = dict(max_markets=args.max_markets, recheck_after_seconds=args.recheck_after_seconds)
@@ -58,12 +64,11 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 result = session.resolution_worklist(**options).to_dict()
                 code = 0
-    except Exception:
-        print(json.dumps({'status': 'failed', 'reason_code': 'resolution_queue_operation_failed',
-            'live_model_called': False, 'confirmed_outcomes_created': 0}))
-        return 1
-    print(json.dumps(result, ensure_ascii=True, allow_nan=False, indent=2))
-    return code
+    except KeyboardInterrupt:
+        return _emit(dict(failure, status='interrupted', reason_code='resolution_queue_interrupted'), 130)
+    except (Exception, SystemExit):
+        return _emit(dict(failure, status='failed', reason_code='resolution_queue_operation_failed'), 1)
+    return _emit(result, code)
 
 
 if __name__ == '__main__':
