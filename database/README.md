@@ -270,7 +270,9 @@ can affect native server behavior on a later explicit start.
 ```
 
 Recovery is intentionally limited to the SAME project location with identical
-native runtime and migration inventory, and an ABSENT `.local/postgres` directory.
+native runtime and, by default, identical migration inventory, and an ABSENT
+`.local/postgres` directory. The explicit catalog-extension exception below does
+not relax the original path, engine, trust, checksum or absent-target requirements.
 It is NOT an in-place rollback or a way to copy/move a working project. The manager
 will not rename, delete or overwrite existing data, even an empty/partial target.
 Keep an existing damaged/original directory safely preserved through a separately
@@ -290,7 +292,8 @@ claims remain incomplete and can STILL block strict evaluation. Backup is not
 model replay, failed-job recovery or evidence of good forecasting performance.
 Only data included in the snapshot can be recovered; later changes are not in it.
 
-Both operations hold the existing OS lifecycle lock. A live PID, unclean control
+Backup creation and restore hold the existing OS lifecycle lock; verification
+does not start the engine or take that lease. A live PID, unclean control
 state, recovery markers, tablespaces, symlinks/reparse points, hard-linked files,
 path collisions, occupied port, changed runtime/migrations or existing restore
 staging block. Current bounds: 50,000 filesystem entries and 8 GiB uncompressed
@@ -324,3 +327,68 @@ The native catalog now includes the append-only research dispatch batch tail
 unchanged. Batch admission/run requires this schema; it never migrates implicitly.
 See [batch operation and safe upgrade limits](../docs/research-dispatch.md).
 Do not overlay or edit an old immutable kit to obtain this table.
+
+
+## Explicit backup/catalog extension compatibility (not an upgrade)
+
+A previously created v1 cold backup remains immutable. When a reviewed SOURCE
+installation has only appended migrations, `verify-backup` and `restore` can now
+accept its older catalog with the separate `--allow-catalog-extension` flag.
+WITHOUT that flag, the original exact-catalog match is still required. API callers
+must supply the actual boolean `allow_catalog_extension=True`, not a truthy value.
+The backup format, original archive bytes and stored fingerprint are unchanged.
+
+The current catalog is fully validated first, including the added tail's file
+hashes and inventory. The backup fingerprint must equal a NONEMPTY exact prefix
+of the ordered effective migration names/hashes. This reuses the existing native
+migration compatibility transform. Deleted, renamed, reordered or modified old
+migrations, missing/unlisted files, a newer backup with a shorter current catalog,
+and even an invalid new tail are refused. The flag cannot override platform,
+physical root, runtime version/inventory, archive trust/checksum or existing-data
+checks. It does not authenticate an untrusted backup or approve unknown new SQL.
+
+On this opt-in path the existing receipt adds `migration_catalog`: `match`,
+`backup_entries`, `current_entries`, `additional_entries`, `current_sha256`,
+`database_ledger_checked=false` and `migrations_applied=0`. Counts describe the
+CATALOG captured with the backup, not the database's applied migration ledger.
+A snapshot could have been made with pending migrations. The full current
+fingerprint, not just counts, is rechecked before an opted-in restore publishes;
+a changed catalog/runtime leaves private staging rather than reporting success.
+This is bounded integrity checking under the existing trusted-owner assumption,
+not synchronization with out-of-band file edits by that owner.
+
+For an explicitly reviewed source installation at the ORIGINAL physical root,
+a private original backup and its independently retained checksum:
+
+```powershell
+.\.venv\Scripts\python.exe scripts/project_database.py verify-backup --archive "D:\Backups\Original\snapshot.palpg.zip" --sha256 YOUR_RETAINED_SHA256 --trusted-backup --allow-catalog-extension
+# Restore only under an approved recovery procedure with originals preserved and target ABSENT:
+.\.venv\Scripts\python.exe scripts/project_database.py restore --archive "D:\Backups\Original\snapshot.palpg.zip" --sha256 YOUR_RETAINED_SHA256 --trusted-backup --allow-catalog-extension
+```
+
+Check each command's exit status and original JSON; do not chain blindly after a
+failed verification. The backup still contains private credentials and must not
+be uploaded. Restore leaves the database STOPPED and performs no SQL migration.
+The next managed session still validates the actual ledger and refuses pending
+migrations. Only a separate reviewed `migrate` operation applies the pending tail;
+it is not authorized by verifying or restoring a backup. Do not call old code
+against newer schemas as a rollback strategy. A shorter catalog cannot make a
+newer snapshot compatible.
+
+This does NOT permit an immutable old kit overlay, altered bundle manifest,
+engine change, root relocation, in-place restore or automatic schema rollback.
+Keep the existing root/engine/source versions and private originals under the
+release-specific recovery plan. This addition removes only the strict catalog
+fingerprint mismatch for an expressly approved append-only extension.
+
+The isolated native test creates a real 66-migration database, retains completed
+and failed synthetic research, takes a cold backup, and installs the unchanged
+existing 67th migration in its SOURCE catalog. It checks default refusal, opt-in
+verification, existing-target refusal, restore into the same absent path, live
+pending-ledger refusal, then an explicit one-migration upgrade and unchanged
+original records/identity. No user's files or backups are used. Final-head test
+results and limitations belong in the implementation PR; this is not G6 closure.
+
+PostgreSQL's filesystem backup requirements remain applicable: use the whole
+cluster and a clean shutdown, not selective table files. Primary reference:
+https://www.postgresql.org/docs/17/backup-file.html (checked 2026-09-16).

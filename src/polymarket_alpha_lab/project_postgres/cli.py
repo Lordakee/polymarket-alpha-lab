@@ -30,6 +30,8 @@ def main(argv: list[str] | None = None) -> int:
         recovery = sub.add_parser(name, help='verify trusted backup; restore refuses any existing database')
         recovery.add_argument('--archive', type=Path, required=True)
         recovery.add_argument('--sha256', required=True, help='independently retained backup checksum')
+        recovery.add_argument('--allow-catalog-extension', action='store_true',
+                              help='allow only an unchanged historical catalog prefix; never applies migrations')
         recovery.add_argument('--trusted-backup', action='store_true', required=True,
                               help='approve a private backup from your own trusted database')
     args = parser.parse_args(argv)
@@ -43,7 +45,8 @@ def main(argv: list[str] | None = None) -> int:
             from .backup import verify_cold_backup, restore_cold_backup
             operation = verify_cold_backup if args.action == 'verify-backup' else restore_cold_backup
             result = operation(args.root, archive=args.archive, expected_sha256=args.sha256,
-                               trusted_backup=args.trusted_backup)
+                               trusted_backup=args.trusted_backup,
+                               allow_catalog_extension=args.allow_catalog_extension)
         elif args.action == 'install-runtime':
             if args.archive:
                 version = import_runtime_archive(args.root, args.archive, expected_sha256=args.sha256)
