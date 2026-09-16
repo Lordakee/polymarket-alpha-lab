@@ -353,6 +353,8 @@ def test_build_and_run_actual_relocatable_kit(monkeypatch):
         assert composed['project_modules_checked'] > 0 and composed['synthetic_inputs'] is True
         assert composed['actual_account_pnl'] is None
         assert composed['incomplete_claims'] == composed['interrupted_reserved_calls'] == 1
+        assert composed['confirmation_output_failures'] == 1
+        assert composed['same_confirmation_replayed'] is True
         print('packaged research composition: ' + json.dumps(composed, sort_keys=True), flush=True)
         # A changed immutable package blocks without modifying stored research.
         target = first / 'src/polymarket_alpha_lab/local_postgres_dsn.py'

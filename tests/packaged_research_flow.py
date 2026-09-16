@@ -107,6 +107,47 @@ def assert_origins(root):
     return len(modules)
 
 
+# The only injected fault is the operator output stream, not its database or
+# confirmation handler. A success-status witness precedes the short write; the
+# parent separately checks durable readback and exact original-input replay.
+_CONFIRM_SHORT_OUTPUT = r'''
+import json, runpy, sys
+from pathlib import Path
+root = Path(sys.argv[1]).resolve()
+assert (root / 'src/polymarket_alpha_lab/__init__.py').is_file()
+sys.path.insert(0, str(root / 'src'))
+original = sys.stdout
+class ShortOutput:
+    def write(self, text):
+        assert json.loads(text)['status'] == 'recorded_operator_confirmation'
+        # Emit ten ASCII bytes regardless of the host's text newline policy.
+        # The injected text sink still reports ten characters to the real CLI.
+        return original.buffer.write(text[:10].encode('ascii'))
+    def flush(self):
+        original.flush()
+sys.stdout = ShortOutput()
+script = root / 'scripts/review_resolution_queue.py'
+sys.argv = [str(script), '--root', str(root), '--confirm', '--allow-resolution-write']
+runpy.run_path(str(script), run_name='__main__')
+'''
+
+
+def run_confirmation_output_failure(root, payload):
+    """One actual kit command with a test-only short sink, never a retry loop.
+
+    This validates process/output behavior only. run_packaged_flow must also
+    prove prior absence, saved review/outcome and immutable explicit replay.
+    """
+    root = Path(root)
+    result = subprocess.run([sys.executable, '-I', '-c', _CONFIRM_SHORT_OUTPUT, str(root)],
+        input=payload, cwd=root.parent, env=files.clean_environment(),
+        capture_output=True, timeout=60, check=False, shell=False)
+    assert result.returncode == 1, 'short output was not reported as failure'
+    assert result.stdout == b'{\n  "opera', 'successful confirmation output was not witnessed'
+    assert result.stderr == b'', 'unexpected confirmation child stderr'
+    return result
+
+
 def run_packaged_flow(root):
     root = Path(root).resolve()
     manifest = distribution.verify_distribution(root)
@@ -223,6 +264,7 @@ def run_packaged_flow(root):
                     request.content_sha256, candidate.submission.review_id,
                     sha256(encode_resolution(candidate.submission).encode()).hexdigest(), proof,
                     'binance', 'BTCUSDT' if request.intake.team_id == 'crypto_btc' else 'ETHUSDT', '1m', 'close', opening))
+        output_failed_reviews = []
         for instruction in instructions:
             value = asdict(instruction)
             for flag in ('paper_only', 'report_only', 'readonly'):
@@ -230,9 +272,27 @@ def run_packaged_flow(root):
             for clock in ('resolved_at', 'confirmed_at'):
                 value['confirmation'][clock] = value['confirmation'][clock].isoformat()
             value['source_candle_open_at'] = value['source_candle_open_at'].isoformat()
-            confirmed = command('review_resolution_queue.py', ['--confirm', '--allow-resolution-write'],
-                                json.dumps(value).encode())
+            payload = json.dumps(value).encode()
+            original_receipt = None
+            if not output_failed_reviews:
+                # A real database COMMIT precedes the injected short output.
+                # A generic pre-operation failure must not satisfy this proof.
+                absent = command('inspect_project_resolution.py',
+                    ['--review-id', instruction.review_id], expected=3)
+                assert absent['inspection'] is None
+                run_confirmation_output_failure(root, payload)
+                original_receipt = command('inspect_project_resolution.py',
+                    ['--review-id', instruction.review_id])['inspection']
+                assert original_receipt['inspection_status'] == 'recorded_operator_confirmed'
+                assert original_receipt['linked_outcome']['actual_yes'] is True
+                output_failed_reviews.append(instruction.review_id)
+            # Explicit SAME-input replay, not automatic recovery with a new ID.
+            confirmed = command('review_resolution_queue.py', ['--confirm', '--allow-resolution-write'], payload)
             assert confirmed['result']['linked_outcome']['actual_yes'] is True
+            if original_receipt is not None:
+                assert confirmed['result'] == original_receipt
+                assert command('inspect_project_resolution.py',
+                    ['--review-id', instruction.review_id])['inspection'] == original_receipt
         with db.session() as s:
             after = s.evaluate_settled_paper_research()
             assert after['status_counts'] == dict(paper_evidence_missing=0, research_not_selected=1,
@@ -307,7 +367,9 @@ raise SystemExit(99)
             source_tree=manifest['source_tree'], instance_id=identity['instance_id'],
             attempts=4, simulations=4, settlements=2, reserved_calls=7,
             incomplete_claims=1, interrupted_reserved_calls=1, project_modules_checked=count,
-            actual_account_pnl=None, synthetic_inputs=True)
+            actual_account_pnl=None, synthetic_inputs=True,
+            confirmation_output_failures=len(output_failed_reviews),
+            same_confirmation_replayed=True)
     finally:
         # This recipe runs only on the test's fresh second extraction.
         if db.status()['status'] != 'stopped':

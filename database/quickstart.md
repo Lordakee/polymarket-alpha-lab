@@ -406,3 +406,11 @@ human review, real model use or account P&L. It does not close G2-G6, D1-D3, the
 old PS5.1 issue or release-specific upgrade acceptance. Existing component tests
 remain in place. The new recipe has its own bounded child execution; no existing
 process/job timeout, assertion, provider permission or user data is changed.
+
+The combined PR44/PR45 proof also creates one real synthetic confirmation through
+that kit's command with a deliberately short output sink. It first proves the
+review is absent, requires a success-status output prefix and nonzero exit, then
+reads back the committed review/outcome and explicitly replays the SAME input.
+The original receipt and timestamps must match. No database/transaction mock is
+used for this step; no new model call, alternate review ID or automatic retry is
+permitted. It verifies this simulated failure, not real source/human acceptance.
