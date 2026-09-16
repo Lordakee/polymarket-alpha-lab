@@ -38,14 +38,40 @@ def _shutdown(db: ProjectPostgres, info: dict) -> None:
         fail('project_postgres_backup_requires_clean_shutdown')
 
 
-def _bindings(layout: Layout, data: dict) -> None:
+def _catalog_binding(layout: Layout, expected: str) -> dict:
+    """Match a nonempty EXACT prefix of the fully validated effective catalog.
+
+    Old v1 backups retain a catalog fingerprint, not the live database ledger.
+    Matching a prefix does not prove how many migrations the snapshot applied.
+    """
+    catalog = [(name, digest) for name, digest, _ in sql.migration_catalog(layout)]
+    for length in range(len(catalog), 0, -1):
+        if fmt.fingerprint(catalog[:length]) == expected:
+            return dict(migration_catalog=dict(
+                match='identical' if length == len(catalog) else 'append_only_extension',
+                backup_entries=length, current_entries=len(catalog),
+                current_sha256=fmt.fingerprint(catalog),
+                additional_entries=len(catalog)-length, database_ledger_checked=False,
+                migrations_applied=0))
+    fail('project_postgres_backup_migrations_mismatch')
+
+
+def _catalog_opt_in(value: bool) -> None:
+    if type(value) is not bool:
+        fail('project_postgres_backup_catalog_opt_in_invalid')
+
+
+def _bindings(layout: Layout, data: dict, *, allow_catalog_extension: bool = False) -> dict:
     if data['platform'] != fmt.platform_id() or data['instance']['root_sha256'] != layout.root_hash:
         fail('project_postgres_backup_wrong_project_or_platform')
     runtime = verify_runtime(layout)
     if runtime['version'] != data['instance']['version'] or fmt.fingerprint(runtime) != data['runtime_sha256']:
         fail('project_postgres_backup_runtime_mismatch')
+    if allow_catalog_extension:
+        return _catalog_binding(layout, data['migrations_sha256'])
     if _migrations(layout) != data['migrations_sha256']:
         fail('project_postgres_backup_migrations_mismatch')
+    return {}
 
 
 @contextmanager
@@ -153,13 +179,18 @@ def create_cold_backup(root: Path, *, destination: Path) -> dict:
 
 @_public_errors
 def verify_cold_backup(root: Path, *, archive: Path, expected_sha256: str,
-                       trusted_backup: bool = False) -> dict:
-    """Full archive hash/content/current-runtime check. Does not start a server."""
+                       trusted_backup: bool = False, allow_catalog_extension: bool = False) -> dict:
+    """Verify without starting PostgreSQL; catalog extensions require opt-in.
+
+    This checks an immutable catalog prefix, NOT the snapshot's applied ledger.
+    Runtime/platform/root checks remain exact and no migration is performed.
+    """
+    _catalog_opt_in(allow_catalog_extension)
     layout = Layout(root)
     with _approved_archive(archive, expected_sha256, trusted_backup) as (_, data):
-        _bindings(layout, data)
+        binding = _bindings(layout, data, allow_catalog_extension=allow_catalog_extension)
     return {'status': 'backup_verified', 'sha256': expected_sha256, 'contains_credentials': True,
-            'encrypted': False, 'database_started': False}
+            'encrypted': False, 'database_started': False, **binding}
 
 
 class _StagingLayout(Layout):
@@ -170,20 +201,23 @@ class _StagingLayout(Layout):
 
 @_public_errors
 def restore_cold_backup(root: Path, *, archive: Path, expected_sha256: str,
-                        trusted_backup: bool = False) -> dict:
+                        trusted_backup: bool = False, allow_catalog_extension: bool = False) -> dict:
     """Restore ONLY an absent .local/postgres at the original project path.
 
     Verifies the entire trusted archive before staging; hashes extracted files
     again, checks native clean shutdown/config/identity, then publishes once.
     Never deletes/renames an existing cluster. Failures retain private staging
     for explicit operator diagnosis. Success leaves the recovered DB STOPPED.
+    An opted-in catalog extension NEVER applies SQL. A managed session still
+    checks the live ledger and blocks pending migrations until explicit migrate.
     """
+    _catalog_opt_in(allow_catalog_extension)
     db = ProjectPostgres(root)
     layout = db.layout
     if layout.home.exists():
         fail('project_postgres_restore_existing_data_refused')
     with _approved_archive(archive, expected_sha256, trusted_backup) as (source, data):
-        _bindings(layout, data)
+        binding = _bindings(layout, data, allow_catalog_extension=allow_catalog_extension)
         with layout.lock():
             staged = ProjectPostgres(root)
             staged.layout = _StagingLayout(layout.root)
@@ -217,6 +251,12 @@ def restore_cold_backup(root: Path, *, archive: Path, expected_sha256: str,
             if staged._state() != data['instance']:
                 fmt.invalid()
             _shutdown(staged, data['instance'])
+            if allow_catalog_extension:
+                # Do not publish a receipt based on a catalog/runtime that
+                # changed while extracting. External owner changes remain
+                # outside the lifecycle lock's coordination boundary.
+                if _bindings(layout, data, allow_catalog_extension=True) != binding:
+                    fail('project_postgres_backup_catalog_changed')
             # Final recheck while retaining the lifecycle lease and archive FD.
             source.fp.seek(0)
             if file_digest(source.fp, 'sha256').hexdigest() != expected_sha256:
@@ -225,4 +265,4 @@ def restore_cold_backup(root: Path, *, archive: Path, expected_sha256: str,
                 fail('project_postgres_restore_existing_data_refused')
             staged.layout.home.rename(layout.home)
     return {'status': 'restored_stopped', 'sha256': expected_sha256,
-            'existing_data_overwritten': False, 'database_started': False}
+            'existing_data_overwritten': False, 'database_started': False, **binding}
