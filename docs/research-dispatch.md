@@ -400,3 +400,37 @@ and unchanged old records. Native inputs/clients/charges are synthetic.
 Final-revision commands, exact counts, first failures, CI identifiers and skipped
 or unexecuted checks belong to the implementation PR and DELIVERY_PLAN.md. No
 local user's database, installed kit, credentials or real provider is exercised.
+
+
+## Task-command output completion and shared stop
+
+The batch/turn/budget inspections and the budgeted `run-turn` entry now reuse the
+existing checked resolution-result emitter. Successful JSON is unchanged: the
+complete envelope and one newline are serialized first, written exactly once,
+and explicitly flushed only after a complete character-count result. Serialization,
+short-write, write or flush failure returns a nonzero handler result; no second
+error envelope is written into a possibly damaged stream and no task is repeated.
+The paper subcommands keep their existing separate operator behavior.
+
+A `KeyboardInterrupt` during task-envelope publication returns 130 and requests
+any supplied `ResearchDispatchStop`, just as interruption during the managed
+operation does. This remains cooperative: it blocks subsequent admissions, not
+already-admitted work. An ordinary output error does not cancel other invocations
+sharing that stop token. An output prefix can already contain the earlier result;
+check the process exit and inspect the ORIGINAL turn and budget before any explicit
+same-input replay. Neither failure nor shared stop rolls back committed selections,
+claims, results or call reservations. Successful write/flush is not proof that a
+receiver consumed the envelope. Python may replace a requested exit with another
+nonzero status if interpreter shutdown itself cannot flush a stream.
+
+The enhanced existing native test uses a new empty turn after all its six synthetic
+tasks finish: it first proves absence, commits the real selection, injects only a
+short output sink, then verifies real lookup and exact same-turn replay. It asserts
+no new client call and no additional budget reservation. This is not a new paid
+provider run or a claim to reproduce PR49's separate PowerShell timing failure.
+User databases, original migrations, model authorization and the pending D1-D3
+choices are unchanged.
+
+Python stream/exit contracts consulted 2026-09-17:
+https://docs.python.org/3/library/io.html#io.TextIOBase.write
+https://docs.python.org/3/library/sys.html#sys.exit

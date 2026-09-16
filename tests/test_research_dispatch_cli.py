@@ -257,3 +257,75 @@ def test_new_script_is_packaged_without_changing_old_kit_requirements():
     assert selected_source('scripts/manage_research_tasks.py')
     assert selected_source('src/polymarket_alpha_lab/research_dispatch_cli.py')
     assert 'scripts/manage_research_tasks.py' not in FIXED
+
+
+@pytest.mark.parametrize('mode', ['budget', 'run', 'blocked'])
+@pytest.mark.parametrize('fault', ['short', 'flush', 'exit-zero', 'interrupt', 'write-error'])
+def test_task_output_failure_is_nonzero_and_does_not_repeat_work(managed, monkeypatch, mode, fault):
+    """Even after a returned budgeted turn, an incomplete receipt is not success."""
+    managed['value'] = (read_value('inspect-budget') if mode == 'budget' else
+                        ResearchRotationReport('turn_already_reserved', stored_turn()))
+    writes, flushes = [], []
+
+    class Output:
+        def write(self, text):
+            if mode == 'blocked':
+                assert 'entered' not in managed
+            else:
+                assert managed['closed']
+            writes.append(text)
+            if fault == 'exit-zero':
+                raise SystemExit(0)
+            if fault == 'interrupt':
+                raise KeyboardInterrupt(PRIVATE)
+            if fault == 'write-error':
+                raise OSError(PRIVATE)
+            return len(text) - 1 if fault == 'short' else len(text)
+
+        def flush(self):
+            flushes.append(1)
+            if fault == 'flush':
+                raise OSError(PRIVATE)
+
+    argv = ['inspect-budget', '--budget-id', 'budget'] if mode == 'budget' else RUN
+    options = {'model_factory': lambda _: None} if mode == 'run' else {}
+    with monkeypatch.context() as patch:
+        patch.setattr(sys, 'stdout', Output())
+        try:
+            code = cli.main(argv, default_root=ROOT, **options)
+        except (Exception, SystemExit, KeyboardInterrupt) as error:
+            code = ('escaped', type(error).__name__)
+    assert code == (130 if fault == 'interrupt' else 1)
+    assert len(writes) == 1
+    assert len(flushes) == (1 if fault == 'flush' else 0)
+    assert len(managed['calls']) == (0 if mode == 'blocked' else 1)
+    assert all(PRIVATE not in text for text in writes)
+
+
+@pytest.mark.parametrize('mode,expected_code', [('budget', 0), ('missing', 3), ('run', 0), ('blocked', 2)])
+def test_task_receipt_is_written_once_then_flushed_after_cleanup(managed, monkeypatch, mode, expected_code):
+    managed['value'] = (None if mode == 'missing' else read_value('inspect-budget') if mode == 'budget' else
+                        ResearchRotationReport('turn_already_reserved', stored_turn()))
+    actions = []
+
+    class Output:
+        def write(self, text):
+            assert ('entered' not in managed) if mode == 'blocked' else managed['closed']
+            actions.append(('write', text))
+            return len(text)
+
+        def flush(self):
+            actions.append(('flush', None))
+
+    argv = ['inspect-budget', '--budget-id', 'budget'] if mode in ('budget', 'missing') else RUN
+    options = {'model_factory': lambda _: None} if mode == 'run' else {}
+    with monkeypatch.context() as patch:
+        patch.setattr(sys, 'stdout', Output())
+        code = cli.main(argv, default_root=ROOT, **options)
+    assert code == expected_code
+    assert [name for name, _ in actions] == ['write', 'flush']
+    body = json.loads(actions[0][1])
+    assert actions[0][1] == json.dumps(body, ensure_ascii=True, allow_nan=False, indent=2) + '\n'
+    assert body['automatic_retry_permitted'] is False
+    assert body['business_writes_possible'] is (mode == 'run')
+    assert len(managed['calls']) == (0 if mode == 'blocked' else 1)
