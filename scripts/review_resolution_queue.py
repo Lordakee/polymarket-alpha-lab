@@ -13,13 +13,19 @@ import json
 import sys
 from pathlib import Path
 
+# The data-root option must not select a different version of Python code.
+ROOT = Path(__file__).resolve().parents[1]
+if not (ROOT / 'src/polymarket_alpha_lab/__init__.py').is_file():
+    raise SystemExit('project_entry_source_missing')
+sys.path.insert(0, str(ROOT / 'src'))
+
 from polymarket_alpha_lab.project_postgres.server import ProjectPostgres
 from polymarket_alpha_lab.research_resolution_queue import MAX_WORKLIST_MARKETS
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--root', type=Path, default=Path(__file__).resolve().parents[1])
+    parser.add_argument('--root', type=Path, default=ROOT)
     parser.add_argument('--confirm', action='store_true',
         help='Read one reviewed settlement JSON from stdin; requires --allow-resolution-write')
     parser.add_argument('--allow-resolution-write', action='store_true')

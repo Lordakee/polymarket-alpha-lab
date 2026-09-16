@@ -194,6 +194,15 @@ def test_build_and_run_actual_relocatable_kit(monkeypatch):
         assert not (root / '.local').exists() and not (root / 'runtime').exists()
         assert not (root / '.env').exists() and not (root / '.git').exists()
         install_environment(root)
+        # Use the packaged script/source, an unrelated cwd and a foreign
+        # editable-path decoy; --help must not initialize either private root.
+        from tests.project_entry_root_probe import ENTRYPOINTS, probe_entry
+        for entry in ENTRYPOINTS:
+            own = probe_entry(root, root / '.venv/Scripts/python.exe',
+                root.parent / ('source-probe-' + entry), script=entry)
+            assert own.returncode == 0, own.stdout + own.stderr
+            assert 'PROJECT_ENTRY_SOURCE_OK' in own.stderr and '--root' in own.stdout
+            assert not (root / '.local').exists()
         # The shipped operator CLI is inert without public opt-in and needs no DB.
         cli = root / 'scripts/discover_crypto_research.py'
         assert cli.is_file() and (root / 'scripts/download_handoff.ps1').is_file()
