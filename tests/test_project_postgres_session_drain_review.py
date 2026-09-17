@@ -131,3 +131,106 @@ def test_packaged_probe_command_line_and_syntax_are_bounded():
     compile(RECIPE, '<packaged session drain>', 'exec')
     command = ['C:/'+('p'*180)+'/python.exe', '-I', '-c', RECIPE, 'C:/'+('k'*180)]
     assert len(subprocess.list2cmdline(command).encode('utf-16-le')) // 2 + 1 < 32767
+
+
+@pytest.mark.parametrize('started', [False, True])
+@pytest.mark.parametrize('interruption_kind', ['interrupt', 'exit-zero'])
+@pytest.mark.parametrize('output_fault', ['none', 'short', 'interrupt'])
+def test_integrated_task_cli_drains_before_output_and_preserves_shared_stop(
+        managed, monkeypatch, started, interruption_kind, output_fault):
+    """PR50 close and PR51 output controls in one real threaded session.
+
+    Native engine calls and the inspection payload are fixtures; admitted work,
+    Condition.wait, the session context, CLI catch path and emitter are real.
+    """
+    from contextlib import redirect_stdout
+    from threading import Thread
+    import json
+    from polymarket_alpha_lab import research_dispatch_cli as cli
+    from polymarket_alpha_lab.research_dispatch_runner import ResearchDispatchStop
+
+    state = managed
+    state['started'] = started
+    control = ResearchDispatchStop()
+    interruption = KeyboardInterrupt('close-only fixture') if interruption_kind == 'interrupt' else SystemExit(0)
+    output, flushes, emitted_codes = [], [], []
+    original_emit = cli._emit
+    monkeypatch.setattr(cli, 'ProjectPostgres', lambda root: state['db'])
+
+    def work():
+        try:
+            def admitted(dsn):
+                state['operation_calls'] += 1
+                state['operation_entered'].set()
+                assert state['operation_release'].wait(5), 'admitted operation was not released'
+                return 'original result'
+            state['result'] = state['session']._call(admitted)
+        except BaseException as error:
+            state['failures'].append(error)
+
+    def inspect(session, args):
+        state['session'] = session
+        original_wait = session._condition.wait
+        waits = []
+        def wait(timeout=None):
+            waits.append(1)
+            if len(waits) == 1:
+                raise interruption
+            state['release_checkpoint'].set()
+            return original_wait(timeout)
+        session._condition.wait = wait
+        state['worker'] = Thread(target=work)
+        state['worker'].start()
+        assert state['operation_entered'].wait(5), 'worker not admitted'
+        return None
+    monkeypatch.setattr(cli, '_inspect', inspect)
+
+    class Output:
+        def write(self, text):
+            assert state['lease'] is False and state['in_flight_at_unlock'] == [0]
+            output.append(text)
+            if output_fault == 'interrupt':
+                raise KeyboardInterrupt('output-only fixture')
+            return len(text) - int(output_fault == 'short')
+        def flush(self):
+            flushes.append(1)
+
+    def emit(envelope, code):
+        emitted_codes.append(code)
+        with redirect_stdout(Output()):
+            return original_emit(envelope, code)
+    monkeypatch.setattr(cli, '_emit', emit)
+
+    def owner():
+        try:
+            state['code'] = cli.main(['inspect-budget', '--budget-id', 'synthetic'],
+                default_root=state['db'].layout.root, stop=control)
+        except BaseException as error:
+            state['owner_error'] = error
+    thread = Thread(target=owner)
+    thread.start()
+    try:
+        assert state['release_checkpoint'].wait(5), 'close neither waited nor unlocked'
+        assert state['lease'] is True and state['session']._in_flight == 1
+        assert output == emitted_codes == []
+        with pytest.raises(files.ProjectDatabaseError, match='session_closed'):
+            state['session']._call(lambda _: pytest.fail('closed session admitted work'))
+    finally:
+        state['operation_release'].set()
+        thread.join(5)
+        if 'worker' in state:
+            state['worker'].join(5)
+    assert not thread.is_alive() and not state['worker'].is_alive()
+    assert 'owner_error' not in state and state['failures'] == []
+    assert state['operation_calls'] == 1 and state['result'] == 'original result'
+    assert state['in_flight_at_unlock'] == [0]
+    assert state['events'].count('stop') == int(started)
+    assert emitted_codes == [130 if interruption_kind == 'interrupt' else 1]
+    expected_code = 130 if output_fault == 'interrupt' else 1 if output_fault == 'short' else emitted_codes[0]
+    assert state['code'] == expected_code
+    assert control.is_stopped() is (interruption_kind == 'interrupt' or output_fault == 'interrupt')
+    assert len(output) == 1 and len(flushes) == int(output_fault == 'none')
+    body = json.loads(output[0])
+    assert body['status'] == ('interrupted' if interruption_kind == 'interrupt' else 'failed')
+    assert body['result'] is None and body['automatic_retry_permitted'] is False
+    assert 'close-only fixture' not in output[0] and 'output-only fixture' not in output[0]

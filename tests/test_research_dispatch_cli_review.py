@@ -86,3 +86,163 @@ def test_stopped_before_reservation_never_reaches_store_or_client(managed, capsy
     code, out = invoke(capsys, RUN, model_factory=forbidden, stop=control)
     assert code == 130 and out['result']['status'] == 'stopped_before_reservation'
     assert out['result']['cursor_written_here'] is False
+
+
+@pytest.mark.parametrize('mode', ['read', 'run', 'blocked'])
+@pytest.mark.parametrize('phase', ['write', 'flush'])
+def test_output_interrupt_requests_shared_stop_after_cleanup(managed, monkeypatch, mode, phase):
+    """Returning exit130 must retain the shared cooperative-stop semantics."""
+    import sys
+    control = ResearchDispatchStop()
+    managed['value'] = (read_value('inspect-budget') if mode == 'read' else
+                        ResearchRotationReport('turn_already_reserved', stored_turn()))
+    writes = []
+
+    class Output:
+        def write(self, text):
+            assert ('entered' not in managed) if mode == 'blocked' else managed['closed']
+            writes.append(text)
+            if phase == 'write':
+                raise KeyboardInterrupt(PRIVATE)
+            return len(text)
+
+        def flush(self):
+            raise KeyboardInterrupt(PRIVATE)
+
+    argv = ['inspect-budget', '--budget-id', 'budget'] if mode == 'read' else RUN
+    options = {'model_factory': lambda _: None} if mode == 'run' else {}
+    with monkeypatch.context() as patch:
+        patch.setattr(sys, 'stdout', Output())
+        code = cli.main(argv, default_root=ROOT, stop=control, **options)
+    assert code == 130
+    assert control.is_stopped(), 'output interruption lost the caller shared stop request'
+    assert len(writes) == 1
+    assert len(managed['calls']) == (0 if mode == 'blocked' else 1)
+
+
+@pytest.mark.parametrize('fault', ['short', 'exit-zero'])
+def test_noninterrupt_output_failure_does_not_cancel_unrelated_work(managed, monkeypatch, fault):
+    import sys
+    control = ResearchDispatchStop()
+    managed['value'] = ResearchRotationReport('turn_already_reserved', stored_turn())
+    writes = []
+
+    class Output:
+        def write(self, text):
+            writes.append(text)
+            if fault == 'exit-zero':
+                raise SystemExit(0)
+            return 0
+
+        def flush(self):
+            pytest.fail('failed write was flushed')
+
+    with monkeypatch.context() as patch:
+        patch.setattr(sys, 'stdout', Output())
+        code = cli.main(RUN, default_root=ROOT, model_factory=lambda _: None, stop=control)
+    assert code == 1 and not control.is_stopped()
+    assert managed['closed'] and len(managed['calls']) == len(writes) == 1
+
+
+@pytest.mark.parametrize('kind', ['none', 'bool', 'negative', 'float'])
+def test_invalid_task_output_count_never_claims_a_complete_receipt(managed, monkeypatch, kind):
+    import sys
+    writes = []
+    managed['value'] = read_value('inspect-budget')
+
+    class Output:
+        def write(self, text):
+            writes.append(text)
+            return {'none': None, 'bool': True, 'negative': -1, 'float': float(len(text))}[kind]
+
+        def flush(self):
+            pytest.fail('invalid write count was accepted')
+
+    with monkeypatch.context() as patch:
+        patch.setattr(sys, 'stdout', Output())
+        code = cli.main(['inspect-budget', '--budget-id', 'budget'], default_root=ROOT)
+    assert code == 1 and len(writes) == len(managed['calls']) == 1
+    assert managed['closed']
+
+
+@pytest.mark.parametrize('kind', ['value-error', 'exit-zero', 'interrupt'])
+def test_task_envelope_serialization_failure_has_no_partial_output(managed, monkeypatch, kind):
+    import sys
+    control = ResearchDispatchStop()
+    managed['value'] = read_value('inspect-budget')
+    original = cli.json.dumps
+    writes = []
+    error = {'value-error': ValueError(PRIVATE), 'exit-zero': SystemExit(0),
+             'interrupt': KeyboardInterrupt(PRIVATE)}[kind]
+
+    def serialize(value, *args, **kwargs):
+        if type(value) is dict and 'operation' in value:
+            assert managed['closed']
+            raise error
+        return original(value, *args, **kwargs)
+
+    class Output:
+        def write(self, text):
+            writes.append(text)
+            return len(text)
+
+        def flush(self):
+            pytest.fail('no serialized output exists')
+
+    with monkeypatch.context() as patch:
+        patch.setattr(cli.json, 'dumps', serialize)
+        patch.setattr(sys, 'stdout', Output())
+        code = cli.main(['inspect-budget', '--budget-id', 'budget'], default_root=ROOT, stop=control)
+    assert code == (130 if kind == 'interrupt' else 1)
+    assert control.is_stopped() is (kind == 'interrupt')
+    assert writes == [] and len(managed['calls']) == 1
+
+
+_TASK_OUTPUT_CHILD = r'''
+from contextlib import contextmanager
+from pathlib import Path
+import json, runpy, sys
+root, mode, fault = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
+sys.path.insert(0, str(root / 'src'))
+from polymarket_alpha_lab import research_dispatch_cli as cli
+class Session:
+    def inspect_model_budget(self, **kwargs):
+        return None
+class Database:
+    def __init__(self, root): pass
+    @contextmanager
+    def session(self):
+        yield Session()
+cli.ProjectPostgres = Database
+original = sys.stdout
+class Output:
+    def write(self, text):
+        # A real complete envelope must reach this point; the session is synthetic.
+        assert json.loads(text)['status'] == ('blocked' if mode == 'blocked' else 'not_found')
+        if fault == 'exit-zero': raise SystemExit(0)
+        return original.buffer.write(text[:10].encode('ascii'))
+    def flush(self): original.flush()
+sys.stdout = Output()
+script = root / 'scripts/manage_research_tasks.py'
+args = ['inspect-budget', '--budget-id', 'synthetic-budget'] if mode == 'read' else [
+    'run-turn', '--rotation-id', 'synthetic-roster', '--turn-id', 'synthetic-turn',
+    '--batch-id', 'synthetic-batch', '--budget-id', 'synthetic-budget', '--allow-model-calls']
+sys.argv = [str(script), *args]
+runpy.run_path(str(script), run_name='__main__')
+'''
+
+
+@pytest.mark.parametrize('mode', ['read', 'blocked'])
+@pytest.mark.parametrize('fault', ['short', 'exit-zero'])
+def test_actual_task_interpreter_does_not_exit_zero_after_output_failure(tmp_path, mode, fault):
+    import subprocess
+    import sys
+    from polymarket_alpha_lab.project_postgres.files import clean_environment
+
+    result = subprocess.run([sys.executable, '-I', '-c', _TASK_OUTPUT_CHILD, str(ROOT), mode, fault],
+        cwd=tmp_path, env=clean_environment(), stdin=subprocess.DEVNULL,
+        capture_output=True, timeout=30, check=False, shell=False)
+    assert result.returncode == 1, (result.stdout, result.stderr)
+    assert result.stderr == b''
+    assert result.stdout == (b'{\n  "opera' if fault == 'short' else b'')
+    assert not list(tmp_path.iterdir())

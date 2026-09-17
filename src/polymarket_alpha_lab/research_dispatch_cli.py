@@ -16,6 +16,7 @@ from polymarket_alpha_lab.research_dispatch_rotation import StoredResearchRotati
 from polymarket_alpha_lab.research_dispatch_rotation_runner import ResearchRotationReport
 from polymarket_alpha_lab.research_dispatch_runner import ResearchDispatchStop
 from polymarket_alpha_lab.research_model_budget import ModelBudgetSnapshot
+from polymarket_alpha_lab.research_resolution_confirmation_cli import _emit
 from polymarket_alpha_lab.team_research_agent_types import identifier
 
 
@@ -119,6 +120,18 @@ def _run(session, args, model_factory, stop):
     return body, 0
 
 
+def _publish(envelope, code, stop):
+    """Use the existing checked emitter without losing cooperative interruption.
+
+    Cleanup precedes publication. A short write may leave a prefix; neither a
+    failed output nor a stopped token rolls back previously admitted work.
+    """
+    result = _emit(envelope, code)
+    if result == 130 and stop is not None:
+        stop.request_stop()
+    return result
+
+
 def main(argv: list[str] | None = None, *, default_root: Path,
          model_factory=None, stop: ResearchDispatchStop | None = None) -> int:
     """Emit existing metadata receipts only, after managed-session cleanup.
@@ -154,8 +167,7 @@ def main(argv: list[str] | None = None, *, default_root: Path,
                   else 'research_dispatch_approved_client_required')
         envelope.update(status='blocked', reason_code=reason,
             operation_entered=False, model_calls_possible=False, business_writes_possible=False)
-        print(json.dumps(envelope, ensure_ascii=True, allow_nan=False, indent=2))
-        return 2
+        return _publish(envelope, 2, stop)
     # Conservatively report possible effects once the managed operation is
     # entered, including unknown COMMIT/cleanup acknowledgement. Never infer
     # absence of writes from an exception. No success is printed before cleanup.
@@ -178,8 +190,7 @@ def main(argv: list[str] | None = None, *, default_root: Path,
     except (Exception, SystemExit):
         envelope.update(status='failed', reason_code='research_dispatch_operation_failed')
         code = 1
-    print(json.dumps(envelope, ensure_ascii=True, allow_nan=False, indent=2))
-    return code
+    return _publish(envelope, code, control)
 
 
 __all__ = ('main',)
