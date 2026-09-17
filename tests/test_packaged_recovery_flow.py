@@ -1,6 +1,7 @@
 """Offline fixture contracts, not native recovery or access to private backups."""
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from dataclasses import replace
 import json
 from pathlib import Path
 import subprocess
@@ -25,7 +26,15 @@ def state():
                for bid, calls, micros in flow.BUDGETS}
     inventory = dict(claim_count=5, captured_result_count=4, incomplete_claim_count=1)
     history = dict(attempt_count=4, status_counts={'settled_simulation': 2}, actual_account_pnl=None)
-    batches = {'kit-btc': object(), 'kit-eth': object()}
+    # Use the real snapshot class so observation clocks are not hidden by mocks.
+    from tests.test_research_dispatch import batch, receipt, NOW
+    from polymarket_alpha_lab.research_dispatch import ResearchBatchSnapshot, StoredResearchBatch
+    batches = {}
+    for bid in ('kit-btc', 'kit-eth'):
+        b = replace(batch(2), batch_id=bid)
+        batches[bid] = ResearchBatchSnapshot(StoredResearchBatch(b, NOW),
+            NOW + timedelta(seconds=3),
+            tuple(replace(receipt(r), status='already_captured') for r in b.requests))
     turns = {'one': object(), 'two': object()}
     reads = []
     class Session:
@@ -55,7 +64,8 @@ def test_complete_fixture_snapshot_retains_every_category_and_original_objects(s
     assert actual['executions'] == tuple(state.executions.values())
     assert actual['papers'] == tuple(state.papers.values())
     assert actual['reviews'] == tuple(state.reviews.values())
-    assert actual['batches'] == tuple(state.batches.values()) and actual['turns'] == tuple(state.turns.values())
+    assert actual['batches'] == tuple((value.stored, value.executions) for value in state.batches.values())
+    assert actual['turns'] == tuple(state.turns.values())
     assert actual['budgets'] == tuple((v.stored, v.reserved_calls, v.reserved_micros) for v in state.budgets.values())
     assert actual['history'] is state.history
 

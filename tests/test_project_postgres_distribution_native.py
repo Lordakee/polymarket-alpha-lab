@@ -341,6 +341,11 @@ def test_build_and_run_actual_relocatable_kit(monkeypatch):
         # come from this checkout. It waits for a real UTC observation close.
         from tests.packaged_research_flow import run_packaged_recipe
         completed = run_packaged_recipe(second, second / '.venv/Scripts/python.exe', proof)
+        if completed.returncode != 0:
+            # Keep the small synthetic child's actual diagnostic text readable;
+            # pytest's tuple repr can truncate the nested failure and its clock.
+            pytest.fail(f'packaged recipe exit={completed.returncode}; '
+                        f'stdout={completed.stdout}; stderr={completed.stderr}')
         assert completed.returncode == 0, (completed.stdout, completed.stderr)
         assert completed.stderr == ''
         composed = json.loads(completed.stdout)
@@ -355,7 +360,20 @@ def test_build_and_run_actual_relocatable_kit(monkeypatch):
         assert composed['incomplete_claims'] == composed['interrupted_reserved_calls'] == 1
         assert composed['confirmation_output_failures'] == 1
         assert composed['same_confirmation_replayed'] is True
+        assert composed['admission_receipts'] == 3
         print('packaged research composition: ' + json.dumps(composed, sort_keys=True), flush=True)
+        # Only the test's existing first kit: actual lock, PostgreSQL and
+        # packaged source; inject a Python close exception, not an OS signal.
+        from tests.packaged_session_drain import run_packaged_session_drain
+        drained = run_packaged_session_drain(first, first / '.venv/Scripts/python.exe', proof)
+        assert drained.returncode == 0, (drained.stdout, drained.stderr)
+        assert drained.stderr == ''
+        drain_proof = json.loads(drained.stdout)
+        assert drain_proof['status'] == 'packaged_session_drain_verified'
+        assert drain_proof['cases'] == [dict(borrowed=value, admitted_reads=1,
+            original_record_preserved=True) for value in (False, True)]
+        assert drain_proof['database_mocked'] is drain_proof['os_signal_sent'] is drain_proof['model_called'] is False
+        print('packaged session drain: ' + json.dumps(drain_proof, sort_keys=True), flush=True)
         # Extend this same disposable kit's completed business fixture through
         # its existing cold-backup/restore commands. Originals remain private.
         from tests.packaged_recovery_flow import run_recovery_recipe

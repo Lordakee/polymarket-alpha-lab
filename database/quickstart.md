@@ -170,14 +170,18 @@ new loader is provided here. Stop here until D1-D3 and the adapter are approved.
 
 ### 3. Admit a budgeted batch, run one turn, then inspect
 
-The approved application first calls the existing
-`enqueue_research_batch(..., allow_queue_write=True)` and
-`create_model_budget(..., allow_budget_write=True)` with reviewed typed inputs,
-matching request hashes and an independently checked per-call charge bound.
-Use the [task guide](../docs/research-dispatch.md) and
-[budget contract](../docs/research-model-budget.md). Do not use the older
-unbudgeted API default for the real V1 workflow or count response token totals as
-a hard monetary ceiling. No batch or allowance is created by an inspection command.
+Admit the reviewed batch and budget through the existing task command's
+`enqueue-batch --allow-queue-write` and `create-budget --allow-budget-write`, or
+through the original typed session APIs. Each command also requires its original
+ID, `--input-sha256` and canonical binary stdin; it never runs research or reserves
+a model call. Use the [task guide](../docs/research-dispatch.md) for the exact input
+transport and the [budget contract](../docs/research-model-budget.md) for reviewed
+request hashes and an independently checked per-call charge bound. These are two
+separate explicit writes, not an atomic pair: inspect the original IDs after any
+failure, and only explicitly replay the same approved input. Creation does not
+reset a used budget. Do not use the older unbudgeted API default for the real V1
+workflow or count response token totals as a hard monetary ceiling. An inspection
+command creates neither a batch nor an allowance.
 
 The standalone `run-turn` script intentionally has **no model factory**. Even with
 `--allow-model-calls`, it returns exit 2 before opening a managed session. These
@@ -416,6 +420,20 @@ used for this step; no new model call, alternate review ID or automatic retry is
 permitted. It verifies this simulated failure, not real source/human acceptance.
 
 
+### Cold backup across an appended migration catalog
+
+The existing backup verifier/restorer offers an explicit `--allow-catalog-extension`
+for reviewed SOURCE installations at the original physical root. Default behavior
+still requires identical catalogs. The option accepts only the backup's unchanged
+nonempty historical prefix of the fully validated current catalog, keeps exact
+engine/root/trust/hash checks and NEVER overwrites an existing database or applies
+SQL. It does not upgrade an immutable old kit. Its reported catalog counts are NOT
+the snapshot's applied ledger; managed sessions still refuse pending migrations.
+See [the backup contract](README.md#explicit-backupcatalog-extension-compatibility-not-an-upgrade)
+for the separate permissions and private recovery procedure. This is not an
+instruction to modify a user's existing installation or delete its original data.
+
+
 ## Maintainer acceptance: recover the complete packaged evidence
 
 The same disposable second kit now also passes through its EXISTING `backup`,
@@ -436,7 +454,9 @@ and transaction state. The preserved original must also remain byte-identical.
 After restart, the original requests/results, accepted/rejected simulations,
 unconfirmed candidates/confirmed reviews, batches/turns, stored budget policies
 and reserved amounts, and the explicitly fixed historical evaluation must match.
-Only newly generated budget observation times are excluded from that comparison.
+Only fresh budget observation times and batch `generated_at` query times are
+excluded. Every original batch payload/enqueue time and execution claim/result is
+compared; each batch snapshot is revalidated before projecting those stored fields.
 Explicit original-request and original-simulation replays must make no model call,
 refund no reservation and change no history. Strict current evaluation must still
 refuse the incomplete claim. The recovered instance is left stopped.
@@ -455,3 +475,13 @@ G2-G6, D1-D3, release-specific upgrade decisions and the PS5.1 issue remain open
 PostgreSQL's file-system backup restrictions are documented at
 https://www.postgresql.org/docs/17/backup-file.html (checked 2026-09-16): this test
 uses a cleanly stopped WHOLE cluster, not isolated table copies or a live tar.
+
+
+The integrated recovery comparison explicitly checks the current batch-snapshot
+field inventory: a future additional field requires review rather than silently
+being omitted. An invalid observation clock is still rejected by the original
+snapshot constructor. This fixes the old test's comparison of two different
+query times, not a change to the database backup format or stored timestamps.
+The original failed Windows proof is preserved; a controlled reproduction proves
+this comparison defect but does not identify every possible cause of that older
+generic mismatch. The final combined-tree CI result is recorded in PR #46.

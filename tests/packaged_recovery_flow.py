@@ -4,6 +4,7 @@ Injected into the extracted kit's own interpreter; never shipped or called on a
 user project. The archive includes synthetic database credentials and stays in
 the private disposable runner directory, never an uploaded artifact.
 """
+from dataclasses import fields, replace
 from datetime import datetime
 import json
 from pathlib import Path
@@ -13,6 +14,7 @@ import sys
 from polymarket_alpha_lab.project_postgres import backup_format, distribution, files
 from polymarket_alpha_lab.project_postgres.server import ProjectPostgres
 from polymarket_alpha_lab.research_capture_psycopg import ResearchCaptureConflict
+from polymarket_alpha_lab.research_dispatch import ResearchBatchSnapshot
 
 RECORDS = tuple('packaged-' + str(n) for n in range(4))
 BUDGETS = (('kit-budget', 7, 700), ('interrupted-budget', 1, 100))
@@ -38,6 +40,19 @@ def database_command(root, arguments, *, reason=None):
     if reason:
         assert body == dict(status='blocked', reason_code=reason), 'unexpected refusal reason'
     return body
+
+
+def batch_history(snapshot):
+    """Compare all durable batch evidence, not a fresh SELECT's observation clock.
+
+    Revalidate/copy the real snapshot and pin its field inventory so a newly
+    added field cannot silently disappear from recovery comparisons.
+    """
+    assert type(snapshot) is ResearchBatchSnapshot, 'invalid batch snapshot type'
+    assert {field.name for field in fields(snapshot)} == {
+        'stored', 'generated_at', 'executions'}, 'batch snapshot schema changed'
+    checked = replace(snapshot)
+    return checked.stored, checked.executions
 
 
 def saved_state(db, historical_at):
@@ -77,7 +92,8 @@ def saved_state(db, historical_at):
             assert str(error) == 'research_execution_history_incomplete'
         else:
             raise AssertionError('current incomplete history was not blocked')
-    return dict(executions=executions, papers=papers, reviews=reviews, batches=batches,
+    return dict(executions=executions, papers=papers, reviews=reviews,
+                batches=tuple(batch_history(value) for value in batches),
                 turns=turns, budgets=tuple(budgets), history=history)
 
 
