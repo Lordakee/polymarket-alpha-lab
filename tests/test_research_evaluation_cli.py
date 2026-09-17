@@ -363,7 +363,8 @@ def test_readonly_review_serialization_failure_writes_nothing(readonly_view, mon
 
 
 @pytest.mark.parametrize('first', ['research_resolution_inspection_cli', 'research_resolution_confirmation_cli',
-                                  'research_execution_cli', 'research_inventory_cli', 'research_evaluation_cli'])
+                                  'research_execution_cli', 'research_inventory_cli', 'research_evaluation_cli',
+                                  'research_paper_operator', 'research_dispatch_cli'])
 def test_readonly_review_fresh_import_order_and_help(first, tmp_path):
     root = Path(__file__).resolve().parents[1]
     program = '''

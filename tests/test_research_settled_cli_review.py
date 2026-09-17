@@ -140,3 +140,50 @@ raise SystemExit(pytest.main(sys.argv[2:]))
     assert all(c.find('failure') is None and c.find('error') is None
                and c.find('skipped') is None for c in cases)
     assert sum(int(s.get('tests', '0')) for s in xml.iter('testsuite')) == 2
+
+
+@pytest.mark.parametrize('capture', ['no', 'fd'])
+def test_output_fault_preserves_combined_approved_receipt_tests(tmp_path, capture):
+    """A query-output fault must not hide the merged PR56 binding regressions."""
+    import subprocess
+    import sys
+    import xml.etree.ElementTree as ET
+    from collections import Counter
+    from polymarket_alpha_lab.project_postgres.files import clean_environment
+
+    root = Path(__file__).resolve().parents[1]
+    report = tmp_path / 'combined-receipts.xml'
+    nodes = (
+        'tests/test_research_settled_cli_review.py::test_failed_stdout_does_not_retry_or_print_traceback',
+        'tests/test_research_paper_operator.py::test_capture_receipt_is_bound_to_approved_hash_not_mutated_argument',
+        'tests/test_research_paper_operator_review.py::test_correct_original_receipt_survives_post_save_argument_mutation',
+        'tests/test_research_paper_operator_review.py::test_cleanup_cannot_rewrite_the_validated_receipt_projection',
+    )
+    program = """
+import sys
+from pathlib import Path
+root = Path(sys.argv[1])
+sys.path[:0] = [str(root / 'src'), str(root)]
+from polymarket_alpha_lab import research_evaluation_cli, research_paper_operator
+for module in (research_evaluation_cli, research_paper_operator):
+    assert Path(module.__file__).resolve().is_relative_to(root / 'src')
+import pytest
+raise SystemExit(pytest.main(sys.argv[2:]))
+"""
+    result = subprocess.run([sys.executable, '-I', '-c', program, str(root),
+        '-q', '--capture=' + capture, *nodes, '--junitxml=' + str(report)],
+        cwd=root, env=dict(clean_environment(), PYTEST_DISABLE_PLUGIN_AUTOLOAD='1'),
+        capture_output=True, timeout=30)
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert result.stderr == b'' and b'15 passed' in result.stdout
+    xml = ET.fromstring(report.read_bytes())
+    cases = list(xml.iter('testcase'))
+    assert len(cases) == sum(int(s.get('tests', '0')) for s in xml.iter('testsuite')) == 15
+    assert all(c.get('classname') and c.get('name') for c in cases)
+    assert len({(c.get('classname'), c.get('name')) for c in cases}) == 15
+    expected = {tuple(node.replace('.py::', '::').replace('/', '.').split('::')): count
+                for node, count in zip(nodes, (1, 6, 6, 2), strict=True)}
+    actual = Counter((c.get('classname'), c.get('name').split('[', 1)[0]) for c in cases)
+    assert actual == expected
+    assert all(not any(c.find(kind) is not None for kind in ('failure', 'error', 'skipped'))
+               for c in cases)

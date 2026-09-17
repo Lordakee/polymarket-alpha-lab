@@ -217,3 +217,21 @@ synthetic stdout fault injection, not a universal OS pipe or crash guarantee.
 Primary references checked 2026-09-17:
 https://docs.python.org/3.12/library/io.html
 https://docs.python.org/3.12/library/exceptions.html
+
+
+### Integration with approved simulation receipts
+
+The read-only output paths coexist with the original-input-hash binding in
+`capture-paper`. They do not authorize a new write or change that binding.
+Integration tests run the scoped BrokenPipe fixture before all fourteen approved
+receipt regressions, under both captured and uncaptured pytest output. Complete
+named JUnit cases and the whole process exit must agree; a passed-only log tail
+cannot replace a missing report. These nested test cases are not counted twice.
+
+The existing checked emitter and original operation/cleanup boundaries are reused.
+A flush is not consumer acknowledgment. Neither a failed lookup output nor a
+successful later query certifies rollback or permits a write retry. Exception
+message filtering is not a sandbox against arbitrary Python objects.
+
+References checked 2026-09-17: Python 3.12 `io.TextIOBase.write` / `flush`, and
+pytest `monkeypatch.context()` guidance for limiting standard-library patches.
