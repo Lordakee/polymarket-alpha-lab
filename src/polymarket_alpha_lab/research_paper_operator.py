@@ -13,7 +13,7 @@ import sys
 from polymarket_alpha_lab.project_postgres.server import ProjectPostgres
 from polymarket_alpha_lab.research_paper_capture import StoredResearchPaper
 from polymarket_alpha_lab.research_paper_capture_codec import (
-    MAX_PAYLOAD_BYTES, decode_paper_scenario, encode_paper_scenario,
+    MAX_PAYLOAD_BYTES, checksum, decode_paper_scenario, encode_paper_scenario,
 )
 from polymarket_alpha_lab.research_resolution import digest
 from polymarket_alpha_lab.team_research_agent_types import identifier
@@ -51,14 +51,15 @@ def read_scenario(stream, *, record_id: str, input_sha256: str):
     return scenario
 
 
-def _receipt(value, *, record_id, scenario=None):
+def _receipt(value, *, record_id, input_sha256=None):
     if type(value) is not StoredResearchPaper:
         raise ValueError('paper_operator_receipt_invalid')
     value = replace(value)
     if (value.scenario.record_id != record_id
-            or (scenario is not None and encode_paper_scenario(value.scenario)
-                != encode_paper_scenario(scenario))):
+            or (input_sha256 is not None
+                and checksum(encode_paper_scenario(value.scenario)) != input_sha256)):
         raise ValueError('paper_operator_receipt_mismatch')
+    # Bind to the reviewed digest, not the mutable object passed to a collaborator.
     # Storage has already checked original provenance and recomputed its result.
     # This presenter checks request identity, not a second proof of database truth.
     return value.to_dict()
@@ -121,7 +122,7 @@ def operate_paper(*, root: Path, operation: str, record_id: str,
             if value is None and not capturing:
                 result, code, status = None, 3, 'not_found'
             else:
-                result = _receipt(value, record_id=record_id, scenario=scenario)
+                result = _receipt(value, record_id=record_id, input_sha256=input_sha256)
                 code, status = 0, 'paper_receipt_returned'
         envelope.update(status=status, result=result)
     except KeyboardInterrupt:
