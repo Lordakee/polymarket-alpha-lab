@@ -150,6 +150,39 @@ def test_operator_rounds_stop_restart_failures_and_process_loss(tmp_path, monkey
             assert code == 0 and found['result']['state_counts'] == dict(pending=0, expired=0, incomplete=0, captured=3)
         code, budget = invoke(root, ['inspect-budget', '--budget-id', 'operator-budget'])
         assert code == 0 and budget['result']['reserved_calls'] == 16  # 5*3 + one failed factory.
+        # A new empty turn still writes an immutable selection receipt. Fail
+        # ONLY the output after that real commit; never call a synthetic model
+        # again or change the original turn ID to manufacture a successful run.
+        output_turn = 'output-failure-proof'
+        code, absent = invoke(root, ['inspect-turn', '--rotation-id', 'operator', '--turn-id', output_turn])
+        assert code == 3 and absent['result'] is None
+        witnessed, short_writes = [], []
+        class ShortOutput:
+            def write(self, text):
+                witnessed.append(json.loads(text))
+                assert db.status()['status'] == 'stopped'
+                short_writes.append(len(text) - 1)
+                return short_writes[-1]
+            def flush(self):
+                pytest.fail('incomplete output must not be flushed as a full receipt')
+        with redirect_stdout(ShortOutput()):
+            output_code = cli.main(run_args(output_turn), default_root=root, model_factory=forbidden)
+        assert output_code == 1 and len(witnessed) == len(short_writes) == 1
+        assert witnessed[0]['status'] == 'dispatched'
+        assert witnessed[0]['result']['execution_invocations'] == 0
+        assert witnessed[0]['business_writes_possible'] is True
+        code, saved_turn = invoke(root, ['inspect-turn', '--rotation-id', 'operator', '--turn-id', output_turn])
+        assert code == 0 and saved_turn['result'] == witnessed[0]['result']['turn']
+        code, same_turn = invoke(root, run_args(output_turn), model_factory=forbidden)
+        assert code == 0 and same_turn['result']['status'] == 'turn_already_reserved'
+        assert same_turn['result']['turn'] == saved_turn['result']
+        assert same_turn['result']['execution_invocations'] == 0
+        code, retained_budget = invoke(root, ['inspect-budget', '--budget-id', 'operator-budget'])
+        assert code == 0 and retained_budget['result']['reserved_calls'] == 16
+        assert retained_budget['result']['reserved_micros'] == budget['result']['reserved_micros']
+        assert retained_budget['result']['policy_sha256'] == budget['result']['policy_sha256']
+        assert len(made) == 5 and len(failures) == 1
+        print('native task output: PASS; new empty turn committed, short output failed, exact replay, no new calls')
         with db.session() as session:
             old_record = session.inspect(record_id=requests[0].record_id).record
             crashed = (prepared(1200), prepared(1201, 'crypto_btc'))

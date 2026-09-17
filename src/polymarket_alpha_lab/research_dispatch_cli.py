@@ -23,6 +23,7 @@ from polymarket_alpha_lab.research_model_budget import (
     MAX_POLICY_BYTES, ModelBudgetSnapshot, StoredModelBudget, decode_budget,
 )
 from polymarket_alpha_lab.research_resolution import digest
+from polymarket_alpha_lab.research_resolution_confirmation_cli import _emit
 from polymarket_alpha_lab.team_research_agent_types import identifier
 
 
@@ -135,19 +136,17 @@ def _run(session, args, model_factory, stop):
 
 
 
-def _emit(envelope, code):
-    """One checked write after cleanup; a failed stream cannot receive a retry."""
-    try:
-        rendered = json.dumps(envelope, ensure_ascii=True, allow_nan=False, indent=2) + '\n'
-        count = sys.stdout.write(rendered)
-        if type(count) is not int or count != len(rendered):
-            return 1
-        sys.stdout.flush()
-    except KeyboardInterrupt:
-        return 130
-    except (Exception, SystemExit):
-        return 1
-    return code
+def _publish(envelope, code, stop):
+    """Use the existing checked emitter without losing cooperative interruption.
+
+    Cleanup precedes publication. A short write may leave a prefix; neither a
+    failed output nor a stopped token rolls back previously admitted work.
+    """
+    result = _emit(envelope, code)
+    if result == 130 and stop is not None:
+        stop.request_stop()
+    return result
+
 
 
 def _read_admission(args):
@@ -244,7 +243,7 @@ def main(argv: list[str] | None = None, *, default_root: Path,
                   else 'research_dispatch_approved_client_required')
         envelope.update(status='blocked', reason_code=reason,
             operation_entered=False, model_calls_possible=False, business_writes_possible=False)
-        return _emit(envelope, 2)
+        return _publish(envelope, 2, stop)
     admission = None
     if admitting:
         envelope.update(operation_entered=False, model_calls_possible=False,
@@ -252,16 +251,20 @@ def main(argv: list[str] | None = None, *, default_root: Path,
         allowed = (args.allow_queue_write if args.operation == 'enqueue-batch'
                    else args.allow_budget_write)
         if allowed is not True:
-            return _emit(dict(envelope, status='blocked',
-                reason_code='research_dispatch_admission_opt_in_required'), 2)
+            return _publish(dict(envelope, status='blocked',
+                reason_code='research_dispatch_admission_opt_in_required'), 2, stop)
         try:
             admission = _read_admission(args)
         except KeyboardInterrupt:
-            return _emit(dict(envelope, status='interrupted',
-                reason_code='research_dispatch_input_interrupted'), 130)
+            # Preserve the INPUT interruption even if publishing its receipt
+            # also fails. Output status alone cannot carry this shared signal.
+            if stop is not None:
+                stop.request_stop()
+            return _publish(dict(envelope, status='interrupted',
+                reason_code='research_dispatch_input_interrupted'), 130, stop)
         except (Exception, SystemExit):
-            return _emit(dict(envelope, status='invalid_input',
-                reason_code='research_dispatch_input_invalid'), 2)
+            return _publish(dict(envelope, status='invalid_input',
+                reason_code='research_dispatch_input_invalid'), 2, stop)
     # Conservatively report possible effects once the managed operation is
     # entered, including unknown COMMIT/cleanup acknowledgement. Never infer
     # absence of writes from an exception. No success is printed before cleanup.
@@ -287,7 +290,7 @@ def main(argv: list[str] | None = None, *, default_root: Path,
     except (Exception, SystemExit):
         envelope.update(status='failed', reason_code='research_dispatch_operation_failed')
         code = 1
-    return _emit(envelope, code)
+    return _publish(envelope, code, control)
 
 
 __all__ = ('main',)

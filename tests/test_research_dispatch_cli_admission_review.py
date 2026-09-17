@@ -122,3 +122,74 @@ def test_output_failure_is_nonzero_and_never_second_write(managed, monkeypatch, 
     assert len(writes) == 1 and len(flushes) == (1 if fault == 'flush' else 0)
     assert closed_at_write == [operation != 'blocked-run']
     assert len(managed['calls']) == (0 if operation == 'blocked-run' else 1)
+
+
+@pytest.mark.parametrize('phase', ['buffer', 'read'])
+@pytest.mark.parametrize('output_fault', ['none', 'short', 'write-error'])
+def test_input_interrupt_preserves_shared_stop_even_when_error_output_fails(
+        admission, managed, monkeypatch, phase, output_fault):
+    """Set stop for the INPUT interruption before attempting its error receipt."""
+    from polymarket_alpha_lab.research_dispatch_runner import ResearchDispatchStop
+    control = ResearchDispatchStop()
+    reads, writes, flushes = [], [], []
+
+    class Input:
+        @property
+        def buffer(self):
+            if phase == 'buffer':
+                raise KeyboardInterrupt(PRIVATE)
+            return self
+
+        def read(self, count):
+            reads.append(count)
+            raise KeyboardInterrupt(PRIVATE)
+
+    class Output:
+        def write(self, text):
+            writes.append(text)
+            if output_fault == 'write-error':
+                raise OSError(PRIVATE)
+            return len(text) - int(output_fault == 'short')
+
+        def flush(self):
+            flushes.append(1)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(cli.sys, 'stdin', Input())
+        patch.setattr(cli.sys, 'stdout', Output())
+        code = cli.main(admission.arguments + [admission.permission], default_root=ROOT, stop=control)
+    assert code == (130 if output_fault == 'none' else 1)
+    assert control.is_stopped()
+    assert 'root' not in managed and not managed['calls']
+    assert len(reads) == int(phase == 'read')
+    assert len(writes) == 1 and len(flushes) == int(output_fault == 'none')
+    assert PRIVATE not in writes[0]
+
+
+@pytest.mark.parametrize('stage', ['blocked', 'invalid', 'stored'])
+@pytest.mark.parametrize('fault', ['short', 'flush'])
+def test_ordinary_admission_output_failure_does_not_cancel_shared_work(
+        admission, managed, monkeypatch, stage, fault):
+    from polymarket_alpha_lab.research_dispatch_runner import ResearchDispatchStop
+    control = ResearchDispatchStop()
+    managed['value'] = admission.stored
+    raw = b'invalid' if stage == 'invalid' else admission.value.payload.encode()
+    writes = []
+
+    class Output:
+        def write(self, text):
+            writes.append(text)
+            return len(text) - int(fault == 'short')
+
+        def flush(self):
+            raise OSError(PRIVATE)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(cli.sys, 'stdin', SimpleNamespace(buffer=io.BytesIO(raw)))
+        patch.setattr(cli.sys, 'stdout', Output())
+        code = cli.main(admission.arguments + ([] if stage == 'blocked' else [admission.permission]),
+                        default_root=ROOT, stop=control)
+    assert code == 1 and not control.is_stopped()
+    assert len(writes) == 1 and PRIVATE not in writes[0]
+    assert len(managed['calls']) == int(stage == 'stored')
+    assert managed.get('closed', False) is (stage == 'stored')

@@ -132,3 +132,40 @@ def test_receipt_requires_exact_type_and_entire_input(admission, managed, monkey
         admission.stored = replace(admission.stored, policy=replace(admission.value, total_micros=200))
     code, out = invoke(admission, managed, monkeypatch, capsys)
     assert code == 1 and out['result'] is None and managed['closed']
+
+
+@pytest.mark.parametrize('stage', ['blocked', 'invalid', 'stored'])
+@pytest.mark.parametrize('phase', ['write', 'flush'])
+def test_admission_output_interrupt_preserves_original_shared_stop(
+        admission, managed, monkeypatch, stage, phase):
+    """The added admission exits must retain the merged PR51 stop contract."""
+    from polymarket_alpha_lab.research_dispatch_runner import ResearchDispatchStop
+    control = ResearchDispatchStop()
+    managed['value'] = admission.stored
+    writes, flushes = [], []
+    raw = b'invalid' if stage == 'invalid' else admission.value.payload.encode()
+
+    class Output:
+        def write(self, text):
+            if stage == 'stored':
+                assert managed['closed']
+            else:
+                assert 'root' not in managed
+            writes.append(text)
+            if phase == 'write':
+                raise KeyboardInterrupt(PRIVATE)
+            return len(text)
+
+        def flush(self):
+            flushes.append(1)
+            raise KeyboardInterrupt(PRIVATE)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(cli.sys, 'stdin', SimpleNamespace(buffer=io.BytesIO(raw)))
+        patch.setattr(cli.sys, 'stdout', Output())
+        code = cli.main(admission.arguments + ([] if stage == 'blocked' else [admission.permission]),
+                        default_root=ROOT, stop=control)
+    assert code == 130 and control.is_stopped()
+    assert len(writes) == 1 and len(flushes) == int(phase == 'flush')
+    assert len(managed['calls']) == int(stage == 'stored')
+    assert all(PRIVATE not in text for text in writes)

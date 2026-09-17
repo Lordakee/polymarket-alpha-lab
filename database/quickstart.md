@@ -418,3 +418,17 @@ reads back the committed review/outcome and explicitly replays the SAME input.
 The original receipt and timestamps must match. No database/transaction mock is
 used for this step; no new model call, alternate review ID or automatic retry is
 permitted. It verifies this simulated failure, not real source/human acceptance.
+
+
+### Cold backup across an appended migration catalog
+
+The existing backup verifier/restorer offers an explicit `--allow-catalog-extension`
+for reviewed SOURCE installations at the original physical root. Default behavior
+still requires identical catalogs. The option accepts only the backup's unchanged
+nonempty historical prefix of the fully validated current catalog, keeps exact
+engine/root/trust/hash checks and NEVER overwrites an existing database or applies
+SQL. It does not upgrade an immutable old kit. Its reported catalog counts are NOT
+the snapshot's applied ledger; managed sessions still refuse pending migrations.
+See [the backup contract](README.md#explicit-backupcatalog-extension-compatibility-not-an-upgrade)
+for the separate permissions and private recovery procedure. This is not an
+instruction to modify a user's existing installation or delete its original data.
