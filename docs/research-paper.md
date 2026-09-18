@@ -382,3 +382,26 @@ reliability issue remain open; exact final-revision results are retained in the 
 Stream/encoding references checked2026-09-15:
 https://docs.python.org/3.12/library/sys.html#sys.stdin
 https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_character_encoding
+
+
+### Bind capture receipts to the originally approved input
+
+`capture-paper` validates the returned scenario against the caller's original
+`--input-sha256`, not against the scenario object after passing it to the managed
+capture adapter. A faulty adapter must not turn its own changed quantity, costs
+or assumptions into the reference that authorizes its receipt. A mismatching
+receipt returns the existing `paper_operator_operation_failed` response, with no
+success result and no second capture. Possible committed writes remain explicit.
+
+Conversely, when the original approved receipt is intact and only a collaborator's
+argument object changes after storage, the correct receipt is still returned.
+`inspect-paper` keeps its original ID-based lookup contract; it does not invent
+an approval hash. Original canonical input decoding, framing, permissions, output
+format, simulator, storage and cleanup behavior are unchanged.
+
+This is a receipt-consistency check for faulty collaborators, not a sandbox for
+arbitrary Python code, proof of what an untrusted store committed, or permission
+to repair or overwrite a saved scenario. Frozen dataclasses are not an absolute
+immutability boundary. After uncertainty, inspect the original record; never
+infer rollback or automatically create another record or retry a capture.
+Reference: https://docs.python.org/3.12/library/dataclasses.html#frozen-instances
