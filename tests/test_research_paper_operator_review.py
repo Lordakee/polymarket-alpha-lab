@@ -109,3 +109,88 @@ def test_canonical_input_hash_does_not_authorize_pretty_printed_json(managed, ca
     raw = json.dumps(json.loads(encode_paper_scenario(managed['scenario'])), indent=2)
     code, out = invoke(managed, capsys, stream=io.BytesIO(raw.encode()), input_sha256=checksum(raw))
     assert code == 2 and not out['operation_entered']
+
+
+@pytest.mark.parametrize('team', ['crypto_btc', 'crypto_eth'])
+@pytest.mark.parametrize('change', ['size', 'fees', 'assumptions'])
+def test_correct_original_receipt_survives_post_save_argument_mutation(
+        monkeypatch, capsys, team, change):
+    """A correct receipt remains authoritative when only the adapter argument drifts."""
+    from contextlib import contextmanager
+    from decimal import Decimal
+    from tests.test_research_paper_capture import sample
+    _, scenario, _, original = sample(team=team)
+    payload = encode_paper_scenario(scenario)
+    approved = checksum(payload)
+    expected = original.to_dict()
+    state = dict(calls=0, closed=False)
+
+    class Session:
+        def capture_paper_research(self, *, scenario, allow_paper_write):
+            state['calls'] += 1
+            assert allow_paper_write is True
+            assert encode_paper_scenario(scenario) == payload
+            if change == 'size':
+                object.__setattr__(scenario, 'requested_size', Decimal('6'))
+            elif change == 'fees':
+                object.__setattr__(scenario.costs, 'taker_fee_rate', Decimal('.03'))
+            else:
+                object.__setattr__(scenario, 'assumptions_id', 'changed-assumptions')
+            assert encode_paper_scenario(scenario) != payload
+            return original
+
+    class Database:
+        def __init__(self, root):
+            assert root == ROOT
+
+        @contextmanager
+        def session(self):
+            try:
+                yield Session()
+            finally:
+                state['closed'] = True
+
+    monkeypatch.setattr(cli, 'ProjectPostgres', Database)
+    code = cli.operate_paper(root=ROOT, operation='capture-paper', record_id=scenario.record_id,
+        input_sha256=approved, allow_paper_write=True, stream=io.BytesIO(payload.encode()))
+    output = capsys.readouterr()
+    body = json.loads(output.out)
+    assert code == 0 and body['result'] == expected
+    assert body['result']['input_sha256'] == approved and state == dict(calls=1, closed=True)
+    assert output.err == '' and encode_paper_scenario(scenario) == payload
+
+
+@pytest.mark.parametrize('operation', ['capture-paper', 'inspect-paper'])
+def test_cleanup_cannot_rewrite_the_validated_receipt_projection(
+        managed, monkeypatch, capsys, operation):
+    """Do not publish a retained mutable receipt object after session cleanup."""
+    from contextlib import contextmanager
+    from decimal import Decimal
+    original = managed['receipt']
+    expected = original.to_dict()
+
+    class Session:
+        def capture_paper_research(self, **kw):
+            managed['calls'].append(('capture', kw))
+            return original
+
+        def inspect_paper_research(self, **kw):
+            managed['calls'].append(('inspect', kw))
+            return original
+
+    class Database:
+        def __init__(self, root):
+            pass
+
+        @contextmanager
+        def session(self):
+            try:
+                yield Session()
+            finally:
+                object.__setattr__(original.scenario, 'requested_size', Decimal('6'))
+                managed['closed'] = True
+
+    monkeypatch.setattr(cli, 'ProjectPostgres', Database)
+    code, out = invoke(managed, capsys, operation)
+    assert code == 0 and out['result'] == expected
+    assert managed['closed'] and len(managed['calls']) == 1

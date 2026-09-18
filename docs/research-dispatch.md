@@ -400,3 +400,193 @@ and unchanged old records. Native inputs/clients/charges are synthetic.
 Final-revision commands, exact counts, first failures, CI identifiers and skipped
 or unexecuted checks belong to the implementation PR and DELIVERY_PLAN.md. No
 local user's database, installed kit, credentials or real provider is exercised.
+
+
+## Task-command output completion and shared stop
+
+The batch/turn/budget inspections and the budgeted `run-turn` entry now reuse the
+existing checked resolution-result emitter. Successful JSON is unchanged: the
+complete envelope and one newline are serialized first, written exactly once,
+and explicitly flushed only after a complete character-count result. Serialization,
+short-write, write or flush failure returns a nonzero handler result; no second
+error envelope is written into a possibly damaged stream and no task is repeated.
+The paper subcommands keep their existing separate operator behavior.
+
+A `KeyboardInterrupt` during task-envelope publication returns 130 and requests
+any supplied `ResearchDispatchStop`, just as interruption during the managed
+operation does. This remains cooperative: it blocks subsequent admissions, not
+already-admitted work. An ordinary output error does not cancel other invocations
+sharing that stop token. An output prefix can already contain the earlier result;
+check the process exit and inspect the ORIGINAL turn and budget before any explicit
+same-input replay. Neither failure nor shared stop rolls back committed selections,
+claims, results or call reservations. Successful write/flush is not proof that a
+receiver consumed the envelope. Python may replace a requested exit with another
+nonzero status if interpreter shutdown itself cannot flush a stream.
+
+The enhanced existing native test uses a new empty turn after all its six synthetic
+tasks finish: it first proves absence, commits the real selection, injects only a
+short output sink, then verifies real lookup and exact same-turn replay. It asserts
+no new client call and no additional budget reservation. This is not a new paid
+provider run or a claim to reproduce PR49's separate PowerShell timing failure.
+User databases, original migrations, model authorization and the pending D1-D3
+choices are unchanged.
+
+Python stream/exit contracts consulted 2026-09-17:
+https://docs.python.org/3/library/io.html#io.TextIOBase.write
+https://docs.python.org/3/library/sys.html#sys.exit
+
+## Interrupted managed-session close (WP-03 / WP-06)
+
+The enclosing `ProjectPostgres(root).session()` owns the private lifecycle lease
+until admitted work finishes. If `ProjectResearchSession.close()` raises
+`KeyboardInterrupt` or `SystemExit` while sealing admissions or waiting for that
+work, the owner retains the first such exception and resumes the SAME idempotent
+close. It does not rerun any research, model call, claim, reservation, SQL
+operation or engine command. New operations remain refused after admissions are
+sealed. Once close completes, an engine started by this session is stopped once;
+a previously running borrowed engine is left running. The retained interruption
+then propagates to the caller. A stop failure remains the primary error, with the
+retained interruption chained as its cause rather than silently discarded.
+
+This is cooperative draining, not cancellation of an in-flight model or database
+request. A client that does not return can still delay closing; its original I/O
+bounds remain required. No forced thread/process kill, signal handler, OS-policy
+change, new timeout or refund is introduced. Unexpected non-interruption errors
+from close are not retried or declared safely drained. Hard termination and
+arbitrary signal delivery outside the guarded close call are not covered by this
+contract. Inspect original IDs after an uncertain stop; never restart a task or
+release a reservation merely because the caller was interrupted.
+
+Tests inject Python exceptions at the close boundary while real admitted threads
+are held at a deterministic checkpoint. The package proof also checks the real
+OS lifecycle lock and an existing PostgreSQL record under owned/borrowed engines.
+It does not send Ctrl+C to Windows or certify all OS-console signal behavior.
+Reference: Python's `threading.Condition` and `signal` documentation describe the
+wait/reacquire contract and arbitrary exception delivery; neither supplies an
+uninterruptible application cleanup guarantee.
+
+
+### Combined close and receipt behavior
+
+The task command's checked output path is reached only after its managed session
+finishes closing. With the lifecycle-drain fix, a close interruption cannot cause
+a failure envelope to be published while the original admitted work still needs
+the lease. After draining, the existing CLI maps KeyboardInterrupt to130 and
+requests the original shared stop token; an internal SystemExit maps to failure.
+A later short output remains failure and does not undo an already requested stop.
+An output interruption still requests that same token. None of these outcomes
+re-executes the original operation, refunds its reservation or proves rollback.
+
+The combined regression uses real threads and the actual session/CLI/emitter,
+with synthetic engine calls and inspection data. The existing packaged drain
+recipe provides separate real-engine and OS-lease coverage, not OS-signal coverage.
+Python Condition wait/reacquire contract consulted for the integration review:
+https://docs.python.org/3.12/library/threading.html#condition-objects
+
+## Admit reviewed batches and budgets through the existing task command
+
+`manage_research_tasks.py` now exposes the original immutable creation APIs as
+`enqueue-batch` and `create-budget`. This fills the command-line admission step;
+it does NOT select a provider, approve research inputs, start research, reserve
+model calls, verify a tariff or load a model factory. D1-D3 and the reviewed
+application/client boundary still apply. Preparing a valid canonical request is
+not a substitute for reviewing its actual market rules and evidence.
+
+Each operation requires its existing identifier, `--input-sha256`, its OWN explicit
+write flag, and one original canonical payload on binary stdin:
+
+| Operation | ID argument | Required write flag | Original payload / bound |
+| --- | --- | --- | --- |
+| `enqueue-batch` | `--batch-id` | `--allow-queue-write` | `ResearchBatch.payload`, at most 8 MiB |
+| `create-budget` | `--budget-id` | `--allow-budget-write` | `ModelCallBudget.payload`, at most 32 KiB |
+
+The digest must be the SHA256 of the reviewed canonical UTF-8 payload, without
+transport framing. One optional trailing LF or CRLF is accepted, not arbitrary
+whitespace, another JSON object or a changed serialization. Original codecs check
+closed schemas, exact request hashes, immutable flags and bounds. Invalid input
+or a missing write flag stops before any managed database access; missing permission
+also prevents reading stdin. No times, IDs, costs or approval hashes are generated
+by the console. There is no `--file` loader or new business journal.
+
+An already-authorized application may send its reviewed IN-MEMORY values directly.
+The following variables are supplied reviewed values, not filenames, credentials
+or default authorizations:
+
+```python
+from pathlib import Path
+import subprocess
+
+project = Path(actual_project_root)
+python = project / '.venv/Scripts/python.exe'
+script = project / 'scripts/manage_research_tasks.py'
+
+# This example performs ONLY the explicitly approved batch write.
+# reviewed_batch is the original ResearchBatch, not discovery-console JSON.
+result = subprocess.run([
+    str(python), '-I', str(script), '--root', str(project),
+    'enqueue-batch', '--batch-id', reviewed_batch.batch_id,
+    '--input-sha256', reviewed_batch.content_sha256, '--allow-queue-write',
+], input=reviewed_batch.payload.encode('utf-8'), capture_output=True,
+   shell=False, check=False)
+# Check returncode AND the returned status; do not automatically repeat it.
+```
+
+Budget creation follows the SAME byte transport with `create-budget`,
+`--budget-id reviewed_policy.budget_id`, the reviewed policy's digest and
+`--allow-budget-write`. Do not pipeline through PowerShell `Get-Content`, reformat
+JSON, discover a credential, or interpret an example amount as an approved budget.
+The producer must close stdin. The input byte bound does not promise a wall-clock
+deadline against a producer that never finishes; the caller owns transport/I/O
+cancellation. Cancellation does not imply rollback of a possibly completed write.
+
+A successful result has `status=admission_receipt_returned` and ONLY immutable
+metadata: ID, complete payload hash, original admission/creation time and request
+count (budget also includes its expiry). No original evidence, transcript, current
+queue state or remaining allowance is exported in this receipt. It may be the
+first creation OR an exact replay, so it deliberately does not say "newly created"
+or claim zero reservations on a reused budget. Use existing `inspect-batch` /
+`inspect-budget` for the current database view.
+
+Same-ID, identical-input replay preserves the original receipt even after later
+use; changing any payload byte conflicts under the original store. Creation never
+tops up/refunds an existing policy, resets tasks, refreshes a cutoff or admits
+another model call. Input permission is not permission to call a provider.
+
+Batch and budget creation are TWO independent explicit operations, NOT one atomic
+pair. A successful batch write can remain when the budget write is blocked or
+fails. An error, cleanup failure or lost/partial output can follow a COMMIT. Inspect
+the SAME identifier first; only explicitly replay the SAME reviewed payload.
+Never create a replacement ID, repeat model calls or assume that an error undid a
+write. The task console now checks its single output write and flush on admission,
+inspection and turn results; no second result is appended to a damaged stream.
+A completed flush is not proof that a consumer received the message.
+
+The existing `run-turn` standalone script still has **no model factory** and refuses
+real execution without the approved application. These commands do not complete
+G2/G3 or validate real input/fee evidence. The composed Windows kit test admits
+both batches and the policy through actual child commands, proves no claims/call
+reservations exist at that point, and then runs the existing synthetic flow.
+
+Stream references checked 2026-09-16:
+https://docs.python.org/3.13/library/io.html
+https://docs.python.org/3.13/library/sys.html#sys.stdin
+
+
+### Admission with the existing shared-stop and session-drain contracts
+
+Admission now reuses the already-merged checked emitter and shared-stop wrapper;
+there is no second implementation of JSON output. An interruption while reading
+reviewed stdin requests the original supplied stop token BEFORE attempting the
+error receipt. If that receipt itself short-writes or fails, the handler returns
+failure but the stop request remains. Output interruptions on permission-denied,
+invalid-input or stored-admission paths also reach that same token. Ordinary
+output errors alone do not stop other associated task invocations. None of these
+paths replays a store, invokes a model or assumes a COMMIT was rolled back.
+
+Managed admission keeps the current session draining and engine-ownership rules.
+Canonical input codecs, per-command write permissions and original payload/hash
+comparisons remain unchanged. The provider/model, input-send permission and real
+charge limits still require D1-D3; queue/budget admission is not model approval.
+Integration references: Python3.12 text-stream write/flush and Condition contracts
+were checked on2026-09-17; they do not guarantee consumer receipt or an
+uninterruptible filesystem/database operation.

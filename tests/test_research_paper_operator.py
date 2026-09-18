@@ -207,3 +207,60 @@ def test_existing_command_routes_canonical_capture_and_query(managed, capsys, mo
     assert dispatch.main(['inspect-paper', '--record-id', managed['scenario'].record_id], default_root=ROOT) == 0
     capsys.readouterr()
     assert [x[0] for x in managed['calls']] == ['capture', 'inspect']
+
+
+@pytest.mark.parametrize('team', ['crypto_btc', 'crypto_eth'])
+@pytest.mark.parametrize('change', ['size', 'fees', 'assumptions'])
+def test_capture_receipt_is_bound_to_approved_hash_not_mutated_argument(
+        monkeypatch, capsys, team, change):
+    """A faulty adapter must not make a changed scenario its own approval.
+
+    Use a recomputed, internally valid receipt, not merely broken result JSON.
+    This is collaborator-fault injection, not a hostile-Python sandbox claim.
+    """
+    from polymarket_alpha_lab import research_paper_capture as store
+    from polymarket_alpha_lab.research_paper_capture_codec import dump
+    execution, scenario, history, original = sample(team=team)
+    payload = encode_paper_scenario(scenario)
+    approved = checksum(payload)
+    state = dict(calls=0, closed=False)
+
+    class Session:
+        def capture_paper_research(self, *, scenario, allow_paper_write):
+            assert allow_paper_write is True
+            state['calls'] += 1
+            if change == 'size':
+                object.__setattr__(scenario, 'requested_size', Decimal('6'))
+            elif change == 'fees':
+                object.__setattr__(scenario.costs, 'taker_fee_rate', Decimal('.03'))
+            else:
+                object.__setattr__(scenario, 'assumptions_id', 'changed-assumptions')
+            receipt = replace(original, scenario=scenario,
+                result_payload=dump(store._result_for(history, scenario, execution)))
+            assert checksum(encode_paper_scenario(receipt.scenario)) != approved
+            # The ordinary receipt validator and result reconstruction succeed.
+            assert replace(receipt) == receipt
+            return receipt
+
+    class Database:
+        def __init__(self, root):
+            assert root == ROOT
+
+        @contextmanager
+        def session(self):
+            try:
+                yield Session()
+            finally:
+                state['closed'] = True
+
+    monkeypatch.setattr(cli, 'ProjectPostgres', Database)
+    code = cli.operate_paper(root=ROOT, operation='capture-paper', record_id=scenario.record_id,
+        input_sha256=approved, allow_paper_write=True, stream=io.BytesIO(payload.encode()))
+    output = capsys.readouterr()
+    body = json.loads(output.out)
+    assert code == 1 and body['reason_code'] == 'paper_operator_operation_failed'
+    assert body['result'] is None and body['business_writes_possible'] is True
+    assert body['automatic_retry_permitted'] is False
+    assert state == dict(calls=1, closed=True)
+    assert output.err == '' and PRIVATE not in output.out
+    assert encode_paper_scenario(scenario) == payload

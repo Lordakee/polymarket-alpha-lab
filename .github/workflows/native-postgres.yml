@@ -157,7 +157,9 @@ jobs:
               "tests/test_ci_thread_dump.py",
               "tests/test_ci_thread_dump_review.py",
               "tests/test_research_resolution_output.py",
-              "tests/test_research_resolution_output_review.py"
+              "tests/test_research_resolution_output_review.py",
+              "tests/test_research_dispatch_cli_admission.py",
+              "tests/test_research_dispatch_cli_admission_review.py"
             ]
           }
         ]

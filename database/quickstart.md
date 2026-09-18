@@ -170,14 +170,18 @@ new loader is provided here. Stop here until D1-D3 and the adapter are approved.
 
 ### 3. Admit a budgeted batch, run one turn, then inspect
 
-The approved application first calls the existing
-`enqueue_research_batch(..., allow_queue_write=True)` and
-`create_model_budget(..., allow_budget_write=True)` with reviewed typed inputs,
-matching request hashes and an independently checked per-call charge bound.
-Use the [task guide](../docs/research-dispatch.md) and
-[budget contract](../docs/research-model-budget.md). Do not use the older
-unbudgeted API default for the real V1 workflow or count response token totals as
-a hard monetary ceiling. No batch or allowance is created by an inspection command.
+Admit the reviewed batch and budget through the existing task command's
+`enqueue-batch --allow-queue-write` and `create-budget --allow-budget-write`, or
+through the original typed session APIs. Each command also requires its original
+ID, `--input-sha256` and canonical binary stdin; it never runs research or reserves
+a model call. Use the [task guide](../docs/research-dispatch.md) for the exact input
+transport and the [budget contract](../docs/research-model-budget.md) for reviewed
+request hashes and an independently checked per-call charge bound. These are two
+separate explicit writes, not an atomic pair: inspect the original IDs after any
+failure, and only explicitly replay the same approved input. Creation does not
+reset a used budget. Do not use the older unbudgeted API default for the real V1
+workflow or count response token totals as a hard monetary ceiling. An inspection
+command creates neither a batch nor an allowance.
 
 The standalone `run-turn` script intentionally has **no model factory**. Even with
 `--allow-model-calls`, it returns exit 2 before opening a managed session. These
@@ -430,6 +434,59 @@ for the separate permissions and private recovery procedure. This is not an
 instruction to modify a user's existing installation or delete its original data.
 
 
+## Maintainer acceptance: recover the complete packaged evidence
+
+The same disposable second kit now also passes through its EXISTING `backup`,
+`verify-backup` and `restore` commands in a separate test-only process. Before
+backup it has four captured attempts, four simulation receipts, two settlements,
+two batches/two turns, eight nonrefundable reservations and one incomplete claim.
+The test requires a stopped instance, the known fixture identity and the complete
+expected roster before the simulated recovery. It is not a general operator tool.
+
+The proof checks the actual archive checksum, refusal to overwrite existing data,
+and refusal of a bad checksum before staging. It then makes the original fixture
+files unavailable by retaining them in another private directory, NEVER deleting
+them. Restore goes to the SAME original physical project path and uses the SAME
+runtime and migration catalog. Before restart, every restored byte is compared
+with the cold source inventory, including the generated test credentials, WAL
+and transaction state. The preserved original must also remain byte-identical.
+
+After restart, the original requests/results, accepted/rejected simulations,
+unconfirmed candidates/confirmed reviews, batches/turns, stored budget policies
+and reserved amounts, and the explicitly fixed historical evaluation must match.
+Only fresh budget observation times and batch `generated_at` query times are
+excluded. Every original batch payload/enqueue time and execution claim/result is
+compared; each batch snapshot is revalidated before projecting those stored fields.
+Explicit original-request and original-simulation replays must make no model call,
+refund no reservation and change no history. Strict current evaluation must still
+refuse the incomplete claim. The recovered instance is left stopped.
+
+This adds a separate 180-second test child and leaves all previous test/process/job
+limits unchanged. The backup and preserved cluster contain PRIVATE synthetic
+credentials and stay inside the disposable runner directory; they are not uploaded
+with logs, source, or the kit. Only fixed engineering outcomes are emitted.
+
+This is same-version, same-path cold recovery of synthetic data, not a version
+upgrade, rollback, cross-machine/path adoption, real disaster recovery or actual
+human/market acceptance. Existing cold-backup implementation and its component
+regressions are unchanged. No recipe or recovery archive is shipped in the kit.
+G2-G6, D1-D3, release-specific upgrade decisions and the PS5.1 issue remain open.
+
+PostgreSQL's file-system backup restrictions are documented at
+https://www.postgresql.org/docs/17/backup-file.html (checked 2026-09-16): this test
+uses a cleanly stopped WHOLE cluster, not isolated table copies or a live tar.
+
+
+The integrated recovery comparison explicitly checks the current batch-snapshot
+field inventory: a future additional field requires review rather than silently
+being omitted. An invalid observation clock is still rejected by the original
+snapshot constructor. This fixes the old test's comparison of two different
+query times, not a change to the database backup format or stored timestamps.
+The original failed Windows proof is preserved; a controlled reproduction proves
+this comparison defect but does not identify every possible cause of that older
+generic mismatch. The final combined-tree CI result is recorded in PR #46.
+
+
 ### Managed research also checks declared kit integrity
 
 Every new `ProjectPostgres(root).session()` reuses the existing bundle verifier
@@ -455,3 +512,16 @@ The separate `status`/`down` infrastructure controls are unchanged, so a rejecte
 research entry does not itself stop a borrowed running engine or block an operator
 from its existing safe-stop procedure. This does not authorize an old-kit overlay,
 file repair, deletion of state/markers, user database migration or real model call.
+
+
+The mainline integration retains managed-session draining and cold-recovery
+semantics. Integrity admission happens before the private lifecycle lease; after
+admission, existing work drains even when close is interrupted. An already-running
+borrowed engine stays owned by its caller. A later bundle change is rejected at
+the next entry, not used to drop the lease during admitted work. The combined
+tests use real Python Conditions/threads with synthetic lifecycle for unit checks;
+the existing packaged drain and cold-recovery scenarios provide separate real
+PostgreSQL coverage. All previous limits and failed-run evidence are retained.
+This integration is not a diagnosis or repair of the intermittent PS5.1 first run.
+Python Condition semantics reference checked 2026-09-18:
+https://docs.python.org/3.12/library/threading.html#condition-objects

@@ -61,6 +61,41 @@ def test_paper_operator_capture_replay_inspect_and_rejection(tmp_path, monkeypat
             args.append('--allow-paper-write')
         return command(args, payload.encode() + b'\r\n')
 
+    def replay_with_post_store_argument_mutation(spec):
+        # Only the adapter argument is deliberately corrupted AFTER the actual
+        # original database replay. The stored receipt and SQL path are real.
+        payload = encode_paper_scenario(spec)
+        program = (
+            'import runpy, sys\n'
+            'from decimal import Decimal\n'
+            'from polymarket_alpha_lab.project_postgres.research import ProjectResearchSession\n'
+            'from polymarket_alpha_lab.research_paper_capture_codec import checksum, encode_paper_scenario\n'
+            'original = ProjectResearchSession.capture_paper_research\n'
+            'calls = 0\n'
+            'def capture(self, *, scenario, allow_paper_write=False):\n'
+            '    global calls\n'
+            '    calls += 1\n'
+            '    reviewed = checksum(encode_paper_scenario(scenario))\n'
+            '    receipt = original(self, scenario=scenario, allow_paper_write=allow_paper_write)\n'
+            '    assert receipt.to_dict()["input_sha256"] == reviewed\n'
+            '    object.__setattr__(scenario, "requested_size", Decimal("6"))\n'
+            '    assert checksum(encode_paper_scenario(scenario)) != reviewed\n'
+            '    return receipt\n'
+            'ProjectResearchSession.capture_paper_research = capture\n'
+            'sys.argv = sys.argv[1:]\n'
+            'try:\n'
+            '    runpy.run_path(sys.argv[0], run_name="__main__")\n'
+            'finally:\n'
+            '    assert calls == 1\n'
+        )
+        child = subprocess.run([sys.executable, '-I', '-c', program,
+            str(ROOT / 'scripts/manage_research_tasks.py'), '--root', str(root),
+            'capture-paper', '--record-id', spec.record_id, '--input-sha256', checksum(payload),
+            '--allow-paper-write'], input=payload.encode()+b'\r\n', cwd=parent,
+            env=files.clean_environment(), capture_output=True, timeout=120)
+        assert child.returncode == 0 and child.stderr == b''
+        return json.loads(child.stdout)
+
     try:
         assert db.initialize(port=port)['migrations_applied'] == 67
         with db.session() as session:
@@ -89,6 +124,9 @@ def test_paper_operator_capture_replay_inspect_and_rejection(tmp_path, monkeypat
         code, rejected = capture(scenarios[1])
         assert code == 0 and rejected['result']['result']['status'] == 'paper_scenario_rejected'
         assert rejected['result']['result']['reason_code'] == 'malformed_market_or_book'
+        for spec, expected in zip(scenarios, (saved, rejected), strict=True):
+            assert replay_with_post_store_argument_mutation(spec) == expected
+        print('native paper approved-input binding: PASS; original BTC/ETH receipts survive adapter argument mutation, single replay')
         db.down()
         code, inspected = command(['inspect-paper', '--record-id', scenarios[0].record_id])
         assert code == 0 and inspected['result'] == saved['result']
