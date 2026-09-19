@@ -78,6 +78,10 @@ class ProjectResearchSession:
         from polymarket_alpha_lab.research_model_budget_runner import run_budgeted_research_with_psycopg
         return self._call(run_budgeted_research_with_psycopg, **configuration)
 
+    def run_uncapped_research(self, **configuration):
+        from polymarket_alpha_lab.research_uncapped_runner import run_uncapped_research_with_psycopg
+        return self._call(run_uncapped_research_with_psycopg, **configuration)
+
     def inspect(self, *, record_id):
         from polymarket_alpha_lab.research_execution_psycopg import inspect_captured_research_with_psycopg
         return self._call(inspect_captured_research_with_psycopg, record_id=record_id)

@@ -73,7 +73,8 @@ class ResearchRotationReport:
 
 
 def run_research_rotation_with_psycopg(dsn, *, rotation_id, turn_id, batch_ids_to_run,
-        model_factory, allow_model_calls=False, max_tasks=10, max_workers=2, stop=None, model_budget_id=None):
+        model_factory, allow_model_calls=False, max_tasks=10, max_workers=2, stop=None, model_budget_id=None,
+        uncapped_authorization=None, allow_uncapped_costs=False):
     """Persist a fair selection, then reuse the original bounded claim runner.
 
     The roster is fixed under rotation_id. Same turn_id replays only its original
@@ -82,6 +83,8 @@ def run_research_rotation_with_psycopg(dsn, *, rotation_id, turn_id, batch_ids_t
     requests. Failed unclaimed jobs are revisited only by a NEW explicit turn
     after the ring reaches them, never immediately retried within this call.
     """
+    from polymarket_alpha_lab.research_uncapped_runner import validate_uncapped_choice
+    uncapped_authorization = validate_uncapped_choice(uncapped_authorization, allow_uncapped_costs, model_budget_id)
     identifier('rotation_id', rotation_id)
     if model_budget_id is not None:
         identifier('model_budget_id', model_budget_id)
@@ -113,6 +116,15 @@ def run_research_rotation_with_psycopg(dsn, *, rotation_id, turn_id, batch_ids_t
         roster, observed_at, states, requests = roster_inputs(tuple(snapshots))
     if control.is_stopped():
         return ResearchRotationReport('stopped_before_reservation', stop_requested=True)
+    options = {}
+    if uncapped_authorization is not None:
+        for request, state in zip(requests, states, strict=True):
+            if state == 'pending':
+                uncapped_authorization.bind_request(request)
+        from polymarket_alpha_lab.research_uncapped_runner import _available, _now
+        if not _available(uncapped_authorization, _now()):
+            raise ValueError('research_uncapped_not_available')
+        options = dict(uncapped_authorization=uncapped_authorization)
     owned, stored = _reserve(dsn, rotation_id=rotation_id, turn_id=turn_id, roster=roster,
         observed_at=observed_at, states=states,
         request_keys=tuple((r.record_id, r.content_sha256) for r in requests),
@@ -122,5 +134,5 @@ def run_research_rotation_with_psycopg(dsn, *, rotation_id, turn_id, batch_ids_t
     # Reservation is now committed. If interrupted here, a new turn (not replay
     # of this one) rotates onwards. The original claim still governs loop start.
     attempts = drain._drain_requests(dsn, requests, stored.turn.chosen,
-                                     model_factory, max_workers, control, model_budget_id=model_budget_id)
+                                     model_factory, max_workers, control, model_budget_id=model_budget_id, **options)
     return ResearchRotationReport('dispatched', stored, attempts, control.is_stopped())

@@ -23,9 +23,10 @@ No project provider/rate or fee bound has been verified in this delivery.
 The latest owner decisions are local coding agents (Codex first; Claude Code,
 OpenCode, Grok CLI and ZCode CLI are allowed alternatives), all needed research
 data, and no first-round business scale/monetary cap. Do not relabel D2 unapproved.
-The existing positive-micros allowance is capped-only; an explicit uncapped policy
-is a remaining implementation task, not permission to fake zero charges, huge
-ceilings or `cost_bound_attested`. Finite I/O, task identity, isolation and stop
+The positive-micros allowance remains capped-only. A separate explicit uncapped
+application path is now available; see [local-agent integration](research-local-agent.md).
+It does not fake zero charges, huge ceilings or `cost_bound_attested`. The real
+CLI host and independent authorization/usage audit remain unaccepted. Finite I/O, task identity, isolation and stop
 controls remain required. No real client is activated by this source change;
 configuration alone does not close G2. Tests use synthetic clients
 and synthetic integer charges, not real prices or invoices. Existing unwrapped
@@ -361,3 +362,11 @@ request is still claimed and its blocked result captured; no permit or factory
 is entered. Existing expiry/output-cap checks keep their priority. Original
 request/policy hashes and completed/incomplete replay semantics are unchanged.
 This is not permission to delete required evidence or replace immutable inputs.
+
+
+## Explicit uncapped path (2026-09-19)
+
+See [local-agent integration](research-local-agent.md). The explicit uncapped mode
+never creates a ModelCallBudget or monetary permit. The existing capped contract
+and no-refund rules stay unchanged; selecting both modes is an error. The new
+application authorization is not a durable approval ledger or a provider bill.
