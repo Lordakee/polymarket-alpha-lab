@@ -590,3 +590,13 @@ charge limits still require D1-D3; queue/budget admission is not model approval.
 Integration references: Python3.12 text-stream write/flush and Condition contracts
 were checked on2026-09-17; they do not guarantee consumer receipt or an
 uninterruptible filesystem/database operation.
+
+
+## Explicit uncapped integration (2026-09-19)
+
+Managed batch/rotation APIs accept `uncapped_authorization` and
+`allow_uncapped_costs=True` with the original explicit model-call opt-in. This is
+mutually exclusive with `model_budget_id` and preserves original claims/results.
+See [local-agent integration](research-local-agent.md) for scope, expiry, stop
+and replay. The standalone script still has no real client configuration; no
+default subprocess transport or durable authorization ledger is supplied here.

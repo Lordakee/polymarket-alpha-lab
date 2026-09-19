@@ -148,6 +148,18 @@ def run_confirmation_output_failure(root, payload):
     return result
 
 
+def _admission_items(requests, opening):
+    """Same three typed command inputs for rejected controls or approved work."""
+    policy = ModelCallBudget('kit-budget', 'synthetic', requests[0].model_id, 'USD',
+        700, 100, 7, 100000, 1024, opening,
+        tuple((r.record_id, r.content_sha256) for r in requests), 'a'*64, cost_bound_attested=True)
+    return (
+        (ResearchBatch(BATCHES[0], requests[::2]), 'enqueue-batch', '--batch-id', '--allow-queue-write', 'inspect-batch'),
+        (ResearchBatch(BATCHES[1], requests[1::2]), 'enqueue-batch', '--batch-id', '--allow-queue-write', 'inspect-batch'),
+        (policy, 'create-budget', '--budget-id', '--allow-budget-write', 'inspect-budget'),
+    )
+
+
 def run_packaged_flow(root):
     root = Path(root).resolve()
     manifest = distribution.verify_distribution(root)
@@ -156,6 +168,7 @@ def run_packaged_flow(root):
     assert db.status()['status'] == 'stopped'
     identity = db._state()
     models, originals, saved, specifications = [], [], [], []
+    requests = ()  # No approved prospective inputs exist during negative preflight.
 
     def command(script, arguments=(), payload=None, expected=0):
         # Every operator process uses this KIT's Python and absolute script path.
@@ -164,7 +177,7 @@ def run_packaged_flow(root):
             env=files.clean_environment(), capture_output=True, timeout=60, check=False)
         assert result.returncode == expected, (script, result.returncode,
             {'observed_at': datetime.now(UTC).isoformat(),
-             'forecast_cutoff_at': requests[0].forecast_cutoff_at.isoformat(),
+             'forecast_cutoff_at': requests[0].forecast_cutoff_at.isoformat() if requests else None,
              'paper_receipts_already_returned': len(saved)}, result.stdout, result.stderr)
         assert result.stderr == b'', result.stderr
         assert PRIVATE.encode() not in result.stdout and b'raw_base64' not in result.stdout
@@ -184,13 +197,28 @@ def run_packaged_flow(root):
         # Borrow an explicitly started engine across children; never hold a
         # managed lifecycle lease while asking another process to enter it.
         assert db.up()['status'] == 'running'
+        with db.session() as s:
+            assert s.execution_inventory().to_dict()['claim_count'] == 0
+        # Prove rejected admission and absence before binding the FOUR original
+        # prospective requests. These separately named controls are NEVER admitted;
+        # all six real command calls/assertions remain, without spending the real
+        # sample's window. Do not refresh any approved input, cutoff or failed run.
+        check_now = datetime.now(UTC)
+        check_opening = check_now.replace(second=0, microsecond=0) + timedelta(minutes=2)
+        check_requests = tuple(row[0] for row in prepared(check_now, check_opening,
+            namespace='admission-check', condition_base=8700))
+        for item, operation, key, permission, inspect in _admission_items(check_requests, check_opening):
+            identity_key = item.batch_id if operation == 'enqueue-batch' else item.budget_id
+            args = [operation, key, identity_key, '--input-sha256', item.content_sha256]
+            denied = command('manage_research_tasks.py', args, item.payload.encode(), expected=2)
+            assert denied['operation_entered'] is denied['business_writes_possible'] is False
+            assert command('manage_research_tasks.py', [inspect, key, identity_key], expected=3)['result'] is None
         now = datetime.now(UTC)
         opening = now.replace(second=0, microsecond=0) + timedelta(minutes=2)
         rows = prepared(now, opening)
         requests = tuple(row[0] for row in rows)
-        policy = ModelCallBudget('kit-budget', 'synthetic', requests[0].model_id, 'USD',
-            700, 100, 7, 100000, 1024, opening,
-            tuple((r.record_id, r.content_sha256) for r in requests), 'a'*64, cost_bound_attested=True)
+        admission_inputs = _admission_items(requests, opening)
+        policy = admission_inputs[-1][0]
         def factory(team):
             fail = team == 'crypto_eth' and any(m.team == team for m in models)
             value = Model(team, fail=fail)
@@ -207,22 +235,14 @@ def run_packaged_flow(root):
             assert code == expected, output.getvalue()
             assert PRIVATE not in output.getvalue()
             return json.loads(output.getvalue())['result']
-        with db.session() as s:
-            assert s.execution_inventory().to_dict()['claim_count'] == 0
         # Admit through actual KIT commands, not parent-side persistence calls.
         # These operations are independent; neither starts research or reserves a call.
         admitted = []
         deferred_replays = []
-        for item, operation, key, permission, inspect in (
-                (ResearchBatch(BATCHES[0], requests[::2]), 'enqueue-batch', '--batch-id', '--allow-queue-write', 'inspect-batch'),
-                (ResearchBatch(BATCHES[1], requests[1::2]), 'enqueue-batch', '--batch-id', '--allow-queue-write', 'inspect-batch'),
-                (policy, 'create-budget', '--budget-id', '--allow-budget-write', 'inspect-budget')):
+        for item, operation, key, permission, inspect in admission_inputs:
             identity_key = item.batch_id if operation == 'enqueue-batch' else item.budget_id
             args = [operation, key, identity_key, '--input-sha256', item.content_sha256]
             payload = item.payload.encode()
-            denied = command('manage_research_tasks.py', args, payload, expected=2)
-            assert denied['operation_entered'] is denied['business_writes_possible'] is False
-            assert command('manage_research_tasks.py', [inspect, key, identity_key], expected=3)['result'] is None
             receipt = command('manage_research_tasks.py', [*args, permission], payload)
             assert receipt['status'] == 'admission_receipt_returned'
             assert receipt['model_calls_possible'] is receipt['public_network_called'] is False
