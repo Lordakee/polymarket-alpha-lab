@@ -37,6 +37,7 @@ class ResearchProcessSpec:
     max_stdout_bytes: int = 1048576
     max_stderr_bytes: int = 65536
     cleanup_timeout_ms: int = 5000
+    max_executable_bytes: int = 268435456
 
     def __post_init__(self):
         if type(self.argv) is not tuple or not 1 <= len(self.argv) <= 128:
@@ -69,7 +70,7 @@ class ResearchProcessSpec:
             raise ValueError('research_process_spec_invalid')
         for name, upper in (('timeout_ms', 3600000), ('cleanup_timeout_ms', 30000),
                             ('max_stdin_bytes', 16000000), ('max_stdout_bytes', 1048576),
-                            ('max_stderr_bytes', 1048576)):
+                            ('max_stderr_bytes', 1048576), ('max_executable_bytes', 536870912)):
             integer(name, getattr(self, name), 1, upper)
 
 
@@ -98,9 +99,10 @@ def _verify_executable(spec):
     flags = (os.O_RDONLY | getattr(os, 'O_BINARY', 0) | getattr(os, 'O_NOFOLLOW', 0)
              | getattr(os, 'O_NONBLOCK', 0))
     fd = os.open(spec.argv[0], flags)
+    failure = None
     try:
         info = os.fstat(fd)
-        if not stat.S_ISREG(info.st_mode) or not 1 <= info.st_size <= 268435456:
+        if not stat.S_ISREG(info.st_mode) or not 1 <= info.st_size <= spec.max_executable_bytes:
             raise ValueError('research_process_image_invalid')
         digest, prefix, size = sha256(), b'', 0
         while True:
@@ -110,14 +112,24 @@ def _verify_executable(spec):
             if not prefix:
                 prefix = block[:4]
             size += len(block)
-            if size > 268435456:
+            if size > spec.max_executable_bytes:
                 raise ValueError('research_process_image_invalid')
             digest.update(block)
         magic = b'MZ' if os.name == 'nt' else b'\x7fELF'
         if not prefix.startswith(magic) or digest.hexdigest() != spec.executable_sha256:
             raise ValueError('research_process_image_invalid')
+    except BaseException as error:
+        failure = error
     finally:
-        os.close(fd)
+        # A failed close may already have released/reused the descriptor; never
+        # retry its number. Keep cancellation from validation ahead of a later
+        # ordinary close error, matching the existing process cleanup policy.
+        try:
+            os.close(fd)
+        except BaseException as error:
+            failure = _prefer_failure(failure, error)
+    if failure is not None:
+        raise failure
     if not Path(spec.cwd).is_dir():
         raise ValueError('research_process_cwd_invalid')
 

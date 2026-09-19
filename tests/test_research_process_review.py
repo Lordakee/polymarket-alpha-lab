@@ -353,3 +353,72 @@ def test_fifo_executable_is_rejected_without_waiting_for_a_writer(executable, tm
     except subprocess.TimeoutExpired:
         pytest.fail('Image validation blocked waiting for a FIFO writer')
     assert child.returncode == 0 and child.stdout == b'rejected\n' and child.stderr == b''
+
+
+@pytest.mark.parametrize('stage', ['fstat', 'read'])
+@pytest.mark.parametrize('kind', [KeyboardInterrupt, SystemExit])
+def test_image_close_error_preserves_verification_interruption(monkeypatch, executable, tmp_path, stage, kind):
+    """Cancellation before launch must not turn into an ordinary model failure."""
+    import stat
+    request = spec(executable, tmp_path)
+    original = kind('PRIVATE-IMAGE-INTERRUPTION')
+    closed = []
+    def interrupted(*_): raise original
+    def failed_close(fd):
+        closed.append(fd)
+        raise OSError('PRIVATE-IMAGE-CLOSE-ERROR')
+    with monkeypatch.context() as patch:
+        patch.setattr(core.os, 'open', lambda *_: 998)
+        patch.setattr(core.os, 'fstat', interrupted if stage == 'fstat' else
+                      lambda _: SimpleNamespace(st_mode=stat.S_IFREG, st_size=4))
+        patch.setattr(core.os, 'read', interrupted)
+        patch.setattr(core.os, 'close', failed_close)
+        patch.setattr(core, '_spawn', lambda _: pytest.fail('unverified process launched'))
+        with pytest.raises(kind) as caught:
+            core.run_research_process(spec=request, stdin=b'', allow_process_start=True)
+        assert caught.value is original
+    assert closed == [998]
+
+
+@pytest.mark.parametrize('kind', [KeyboardInterrupt, SystemExit])
+def test_image_close_interruption_outranks_ordinary_validation_failure(monkeypatch, executable, tmp_path, kind):
+    request = spec(executable, tmp_path)
+    original = kind('PRIVATE-IMAGE-CLOSE-INTERRUPTION')
+    closed = []
+    def invalid(*_): raise ValueError('PRIVATE-IMAGE-VALIDATION-ERROR')
+    def interrupted_close(fd): closed.append(fd); raise original
+    with monkeypatch.context() as patch:
+        patch.setattr(core.os, 'open', lambda *_: 998)
+        patch.setattr(core.os, 'fstat', invalid)
+        patch.setattr(core.os, 'close', interrupted_close)
+        patch.setattr(core, '_spawn', lambda _: pytest.fail('unverified process launched'))
+        with pytest.raises(kind) as caught:
+            core.run_research_process(spec=request, stdin=b'', allow_process_start=True)
+        assert caught.value is original
+    assert closed == [998]
+
+
+@pytest.mark.parametrize('kind', [OSError, KeyboardInterrupt, SystemExit])
+def test_verified_image_close_failure_never_launches_or_retries(monkeypatch, executable, tmp_path, kind):
+    from hashlib import sha256
+    import stat
+    image = b'MZ' if os.name == 'nt' else b'\x7fELF'
+    request = replace(spec(executable, tmp_path), executable_sha256=sha256(image).hexdigest())
+    original = kind('PRIVATE-VERIFIED-CLOSE-ERROR')
+    blocks = iter((image, b''))
+    closed = []
+    def close(fd): closed.append(fd); raise original
+    with monkeypatch.context() as patch:
+        patch.setattr(core.os, 'open', lambda *_: 998)
+        patch.setattr(core.os, 'fstat', lambda _: SimpleNamespace(st_mode=stat.S_IFREG, st_size=len(image)))
+        patch.setattr(core.os, 'read', lambda *_: next(blocks))
+        patch.setattr(core.os, 'close', close)
+        patch.setattr(core, '_spawn', lambda _: pytest.fail('process launched after failed close'))
+        expected = core.ResearchProcessError if kind is OSError else kind
+        with pytest.raises(expected) as caught:
+            core.run_research_process(spec=request, stdin=b'', allow_process_start=True)
+        if kind is OSError:
+            assert str(caught.value) == 'research_process_failed'
+        else:
+            assert caught.value is original
+    assert closed == [998]
