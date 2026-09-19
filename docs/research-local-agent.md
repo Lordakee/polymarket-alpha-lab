@@ -8,11 +8,13 @@ rotation. They reuse the original managed PostgreSQL session, immutable requests
 claim-before-model ordering and result capture. No second queue, backend,
 monetary reservation or reporting subsystem is introduced.
 
-**No default subprocess transport or real Codex activation is shipped.**
-`CodexExecModel` requires an application-supplied `CodexExecTransport`. CLI
-isolation/persistence/output-bound behavior remains an activation blocker, not
-permission to supply a naive subprocess wrapper or silently use the legacy API.
-The standalone task script still has no configured real client. G2/G3 remain open.
+**A real subprocess transport is shipped; no default approved Codex command
+profile or real provider activation is supplied.** `CodexProcessTransport` starts
+one explicitly configured native command and connects it to `CodexExecModel`.
+It provides bounded pipe I/O and owned-process cleanup, not filesystem/network,
+CLI configuration/persistence or provider-output isolation. Those selected-version
+contracts still require review. The standalone task script has no configured real
+client. G2/G3 remain open. See the concrete process section below.
 
 ## Permission without a fictitious budget
 
@@ -28,12 +30,13 @@ currency, all-inclusive fee attestation, fake huge allowance or refund. Existing
 capped `ModelCallBudget` behavior is unchanged. Selecting both modes, missing an
 explicit opt-in, or mismatching a task/model/hash fails closed.
 
-The value is **not signed authorization or a durable approval ledger**. Its
-digest is a reviewed reference, not executable/provider identity attestation.
-Only the original execution requests/results are written durably by this path;
-authorization metadata and raw Codex streams are not automatically persisted.
-Independent historical approval/usage/invoice audit remains an acceptance gap.
-Real activation must resolve it, not claim that a Boolean certifies approval.
+The value alone is **not signed authorization or a durable approval ledger**.
+The explicit `create_uncapped_authorization` / `require_durable_audit=True` path
+below now stores permission and per-call metadata in the original project database.
+Legacy calls without that opt-in remain unaudited. A digest is a reviewed reference,
+not executable/provider identity attestation; caller-declared approval and reported
+usage do not independently authenticate a human, model or invoice. Raw Codex
+streams are not persisted by this audit path.
 
 The explicitly configured owning application supplies the reviewed values below,
 not a model response, guessed credential or implicit environment scan:
@@ -439,3 +442,182 @@ fail. Sixty original-clock-phase counterexamples failed before this change and
 pass after it; fractional-second, date-rollover and exact-minute controls also
 check the earliest eligible candle. The final source tests, Windows result and
 any remaining failure are retained in PR #61 before any merge.
+
+
+## Concrete process execution (WP-02 / WP-03, 2026-09-19)
+
+`research_process.run_research_process` executes one **explicit native image**;
+`research_codex_process.CodexProcessTransport` supplies its returned bytes to the
+existing strict event decoder. This replaces the missing process-operation layer,
+not the remaining approved-vendor-profile or real-use acceptance work.
+
+### Exact application inputs, no discovery
+
+An immutable `ResearchProcessSpec` supplies absolute executable/working-directory
+paths, a tuple of arguments, the complete environment as key/value tuples, expected
+SHA256 of the executable image, positive operation/cleanup time limits and bounded
+stdin/stdout/stderr byte limits. Construction is inert. `allow_process_start=True`
+is required at the transport or direct execution boundary. There is no shell,
+PATH resolution, inherited parent environment, `.env`/credential lookup, automatic
+installation, health request, repair prompt, fallback or process retry.
+
+Image size, native signature and expected hash are checked before launch. These
+checks bind the chosen file, **not its DLLs/libraries, imported code, configuration,
+model identity or external billing**. The subsequent path-based launch is not an
+atomic defense against a concurrent file replacement. The application must use a
+protected, reviewed installation and separately verify every relevant dependency
+and configuration. Repr hides command/environment/stdout; it does not secure memory
+or redact arbitrary provider-echoed content returned as intended stdout.
+
+The application supplies an inert `prepare_command(request)` function to
+`CodexProcessTransport`. It receives a copied `CodexExecInput` with explicit model,
+unchanged output-token request and output schema. It must choose the reviewed
+version's exact arguments/configuration, not accept command text from a model.
+The original prompt is snapshotted before calling that function, then sent unchanged
+to stdin. No command is silently modified to evade operator or organization policy.
+
+```python
+from polymarket_alpha_lab.research_codex_process import CodexProcessTransport
+from polymarket_alpha_lab.research_codex_exec import CodexExecModel
+from polymarket_alpha_lab.research_process import ResearchProcessSpec
+
+# prepare_reviewed_command must return a ResearchProcessSpec derived solely from
+# the owning application's reviewed native installation/configuration contract.
+# It must honor request.model_id, request.output_schema_json and the original
+# output request; the process layer does not invent or certify Codex flags.
+def inert_factory(team_id):
+    return CodexExecModel(
+        model_id=reviewed_model_id,
+        transport=CodexProcessTransport(
+            prepare_command=prepare_reviewed_command,
+            allow_process_start=True,
+            stop=shared_stop_token,
+        ),
+    )
+
+# Use the existing managed run_uncapped_research API with stored authorization,
+# both model/cost opt-ins and require_durable_audit=True. This keeps the original
+# DB claim and audited call start committed before prepare_command/process entry.
+```
+
+This is an application assembly contract, **not a ready-to-run Codex login or
+real-research command**. No default profile is supplied while the documented
+vendor persistence, context/tool configuration, retry and output-bound questions
+remain unresolved. A `.cmd`/`.bat`/shell launcher is not accepted as a native
+image. Explicit environment values are private application inputs, not an
+invitation to put secrets into chat, source files, arguments or retained evidence.
+
+### Supervision and ownership
+
+Stdin writes and both output reads are nonblocking binary operations in the
+calling thread; no background pipe-reader thread, output spool or business file
+journal is created. Reads are bounded and interleaved so a flooded pipe cannot
+starve stop/deadline checks. Stderr is counted and discarded, never decoded or
+included in error text. Exceeding either output cap fails the operation. An exact
+cap is allowed. Temporary write backpressure is not mistaken for truncated input.
+
+The shared stop token is checked before and during execution. Ordinary failures
+are fixed-code errors; KeyboardInterrupt/SystemExit propagate after cleanup.
+Termination of the owned domain is attempted on exit, including success, so
+successful leader exit does not intentionally leave owned helpers running.
+An exit-zero leader whose descendants retain output pipes still hits the existing
+operation deadline rather than waiting forever for EOF. Cleanup errors suppress
+success and do not launch replacement work. A transport error permanently closes
+that transport; the existing model wrapper also closes on protocol errors.
+
+| Platform | Ownership and explicit limitations |
+| --- | --- |
+| Windows x64, Python >=3.12 | Create native child **suspended**, give it only the three allowed pipe handles, assign it to an anonymous parent-owned **kill-on-close Job Object**, then resume. Assignment/resume failures do not execute the target or fall back. Cleanup terminates the job and waits for its active count and leader exit. After assignment, parent loss closes the noninherited job handle. Nested-job denial stays a failure; no breakaway or security-policy change. |
+| Linux | A new cooperative process group owns the launched command and nonescaping descendants. Keep the leader unreaped until terminating its group to avoid targeting a reused group ID. Reject a pre-existing SIGCHLD handler rather than replacing it. This is **not** containment of malicious `setsid`/group escape or a guarantee of cleanup after the Python parent is killed. |
+
+Timeout accounting begins before image verification, but OS file access, process
+creation, kernel teardown and a stalled Python caller can exceed configured time.
+Operation time plus a separate cleanup wait is **not a universal wall-clock,
+CPU/memory, process-count or provider-charge bound**. A failed cleanup means the
+final state is uncertain, not proof every process has gone. Process groups/Job
+Objects are not filesystem/network or credential sandboxes. Other in-process
+launchers must not use broad handle inheritance during the Windows inheritance
+window. No malicious in-process isolation is claimed.
+
+Cancellation or timeout after transmission may still have incurred provider
+usage; the original audit records failure/unknown and never refunds or resends.
+Success here establishes bounded local execution and a valid process exit, not
+one billable provider submission, authentic usage, valid citations or a complete
+research forecast. The original decoder and research agent apply those separate
+checks unchanged.
+
+### Verification and remaining acceptance
+
+Real synthetic Python processes exercise exact stdin/output, clean explicit
+environment/cwd/argument handling, large input and backpressure, stdout/stderr
+floods, silence, nonzero exit, closed/descendant-held pipes, stop, interrupts,
+cleanup failure and descendants after leader success. Windows native selection
+also executes structure layout, suspended assignment/resume rejection and parent
+loss; Linux-only group/reaping checks are explicitly skipped there. The existing
+native audit proof adds BTC/ETH **real database plus real subprocess** calls:
+start metadata is visible through another DB transaction before each launch,
+reported replies are recorded, stop/restart preserves history and original-ID
+replay does not construct or launch another client. All inputs/providers are
+synthetic; no user database or genuine model service is involved.
+
+A separate same-assistant review reproduced four initial boundary failures:
+zero-write backpressure, arbitrary error text, interrupt precedence and Windows
+handle-close failure. A later two-case review reproduced interrupted partial
+launch being masked by a secondary cleanup error. Original counterexamples stay.
+One test fixture initially timed out waiting for a nested interpreter's site
+startup; the stdlib-only synthetic commands now use `-I -S`, with unchanged
+production and test operation deadlines. A tool-execution timeout and local venv
+setuptools-path setup failure are separate from completed pytest results.
+Exact frozen/full/hosted results and any further failures are recorded in the
+implementation PR; Linux results do not substitute for actual Windows execution.
+
+References checked 2026-09-19:
+- https://docs.python.org/3.12/library/subprocess.html
+- https://docs.python.org/3.12/library/os.html#os.set_blocking
+- https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects
+- https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-createprocessw
+- https://learn.microsoft.com/en-us/windows/win32/api/jobapi2/nf-jobapi2-assignprocesstojobobject
+
+### Continuation review: cancellation and handle ownership
+
+A separate continuation of PR #62 at original head
+`f5eebf9a56d3b9020e9305188fffb89a66383231` reproduced nineteen negative cases:
+four first-interruption/cleanup-error cases, six descriptor-reuse cases, six
+Windows handle/thread-close cases, two repeat-cleanup cases and a real Linux
+FIFO-image check. The original direct process tests passed 72 with four Windows
+skips; these additional counterexamples still failed and were corrected.
+
+Cleanup now retains the first KeyboardInterrupt/SystemExit even when a later
+wait fails or its deadline expires, and still attempts each owned close. Both
+pipe descriptors and Windows handles are relinquished before close: the OS can
+release and reuse a number before Python receives cancellation. Neither a
+subsequent cleanup nor constructor-finally closes that stale number again.
+An error from close is not retried by number and is not proof of successful
+reclamation. This is a specific ownership boundary, not a promise covering every
+possible asynchronous Python/OS interruption point.
+
+On Linux, image validation opens nonblocking before fstat so a FIFO without a
+writer is immediately rejected as nonregular instead of blocking validation.
+Regular native images retain their original digest, size and magic checks.
+Kernel/file operations can still exceed the supervision deadline; this does not
+create a universal wall-clock guarantee.
+
+The Windows native integration fixture explicitly expects `captured` on first
+execution and `already_captured` on replay, comparing every other receipt field
+unchanged. Short named test IDs preserve the entire 200KB binary fixture while
+avoiding a Windows environment-value overflow before the test could run.
+No payload, production semantics, test deadline or workflow selector is relaxed.
+The original failed native run remains evidence, not a passed earlier version.
+
+The existing parent-loss proof observes the target **after Job assignment**.
+The suspended-create/assign sequence is not atomic with respect to hard parent
+termination before assignment; a suspended process may remain in that window.
+No target instructions run before assignment/resume, but this is not complete
+parent-loss containment at every startup instruction. A selected real CLI profile
+must account for this and the existing filesystem/network/persistence limits.
+
+The corrected ten-file local regression passed 380 with five platform/opt-in
+skips. Final frozen full results and actual Windows case inventories belong to
+the exact implementation PR revision; no old-head success replaces them.
+This review is by the same assistant in a separate pass, not an external reviewer.
+Primary reference for close/reuse behavior: https://peps.python.org/pep-0475/

@@ -229,7 +229,66 @@ def test_audited_uncapped_upgrade_calls_uncertainty_and_process_loss(tmp_path, m
                 assert s.inspect_uncapped_calls(record_id=r.record_id) == audit
             assert s.inspect(record_id=old.request.record_id).record == old.record
             assert db._psql(identity,'SELECT count(*) FROM research_capture.model_call_reservations;') == '0'
+        _prove_actual_process_transport(db, parent)
         assert db.status()['status'] == 'stopped'
         print('native uncapped audit: PASS;67->68,immutable authorization,call-before-client,unknown ack/crash,no resend')
     finally:
         if db.layout.home.exists(): db.down()
+
+
+def _prove_actual_process_transport(db, parent):
+    """The same real audit database plus real synthetic processes, no provider."""
+    from hashlib import sha256
+    from polymarket_alpha_lab.research_codex_exec import CodexExecModel
+    from polymarket_alpha_lab.research_codex_process import CodexProcessTransport
+    from tests.test_research_process import spec as process_spec
+    from tests.test_research_codex_exec import action, events, output
+    executable = str(Path(sys.executable).resolve())
+    image = (executable, sha256(Path(executable).read_bytes()).hexdigest())
+    work = parent / 'Synthetic Process With Spaces'; work.mkdir()
+    originals = []
+    for number, team in enumerate(('crypto_btc', 'crypto_eth')):
+        request = prepared(6140+number, team)
+        permission = authorization((request,), authorization_id='actual-process-'+str(number))
+        launches = []
+        with db.session() as session:
+            session.create_uncapped_authorization(authorization=permission, allow_authorization_write=True)
+            def factory(actual_team):
+                assert actual_team == team
+                def prepare_command(incoming):
+                    # Read through a separate real DB transaction before launch;
+                    # the original start must already be visible/committed.
+                    audit = session.inspect_uncapped_calls(record_id=request.record_id)
+                    assert len(audit.calls) == len(launches)+1
+                    assert len(audit.outcomes) == len(launches)
+                    launches.append(incoming)
+                    sources = request.required_source_ids
+                    calls = ([action('read_evidence', {'source_id': sid}) for sid in sources]
+                             if len(launches) == 1 else [action('finish_research', dict(
+                                 probability_yes='0.6', confidence='0.5',
+                                 summary='Synthetic subprocess research', source_ids=list(sources)))])
+                    wire = output(events(calls)).stdout
+                    command = 'import sys,json;json.loads(sys.stdin.buffer.read());sys.stdout.buffer.write('+repr(wire)+')'
+                    return process_spec(image, work, command)
+                return CodexExecModel(model_id=request.model_id, transport=CodexProcessTransport(
+                    prepare_command=prepare_command, allow_process_start=True))
+            result = session.run_uncapped_research(request=request, authorization=permission,
+                model_factory=factory, allow_model_calls=True, allow_uncapped_costs=True, require_durable_audit=True)
+            assert result.record.run.research.status == 'completed' and len(launches) == 2
+            audit = session.inspect_uncapped_calls(record_id=request.record_id)
+            assert audit.to_dict()['reported_tokens_known_subset'] == 240
+            assert len(audit.calls) == len(audit.outcomes) == 2
+            originals.append((request, permission, result, audit))
+        assert db.status()['status'] == 'stopped'
+    with db.session() as session:
+        for request, permission, result, audit in originals:
+            def forbidden(_): pytest.fail('replayed subprocess')
+            replay = session.run_uncapped_research(request=request, authorization=permission,
+                model_factory=forbidden, allow_model_calls=True, allow_uncapped_costs=True,
+                require_durable_audit=True)
+            assert result.status == 'captured' and replay.status == 'already_captured'
+            # This is a new operation receipt over the SAME durable execution.
+            # Compare every other field, not just the record or token count.
+            assert replace(replay, status=result.status) == result
+            assert session.inspect_uncapped_calls(record_id=request.record_id) == audit
+    assert not list(work.iterdir())
