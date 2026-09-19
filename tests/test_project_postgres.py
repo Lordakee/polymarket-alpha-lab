@@ -77,9 +77,9 @@ def test_canonical_validator_is_same_audited_function():
     assert new is old
 
 
-def test_all_67_migrations_have_checked_in_receipts():
+def test_all_68_migrations_have_checked_in_receipts():
     rows = sql.migration_catalog(files.Layout(ROOT))
-    assert len(rows) == 67
+    assert len(rows) == 68
     for name, digest, body in rows:
         from polymarket_alpha_lab.project_postgres.migration_compat import native_migration_bytes
         original = (ROOT/'supabase/migrations'/name).read_bytes()

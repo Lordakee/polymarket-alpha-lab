@@ -57,7 +57,7 @@ def test_paper_settlement_snapshot_outcomes_denominators_restart_and_no_writes(t
     with socket.socket() as sock:sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
     import_runtime_directory(root,prefix);db=ProjectPostgres(root)
     try:
-        assert db.initialize(port=port)['migrations_applied']==67
+        assert db.initialize(port=port)['migrations_applied']==68
         with db.session() as s:
             identity=db._state();now=datetime.now(UTC)
             opening=now.replace(second=0,microsecond=0)+timedelta(minutes=2)
@@ -193,7 +193,7 @@ def test_paper_settlement_snapshot_outcomes_denominators_restart_and_no_writes(t
                 s.evaluate_settled_paper_research()
             # A historical view predating that claim remains its original scope.
             assert s.evaluate_settled_paper_research(generated_at=before_at)==before
-            assert db._psql(identity,'SELECT count(*) FROM project_private.migrations;')=='67'
+            assert db._psql(identity,'SELECT count(*) FROM project_private.migrations;')=='68'
         failure=console(expected_code=1)
         assert failure['reason_code']=='research_execution_history_incomplete' and failure['evaluation'] is None
         assert console('--as-of',before_at.isoformat(),'--include-decisions')['evaluation']==dict(before,decisions_included=True)

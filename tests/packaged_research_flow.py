@@ -14,6 +14,8 @@ from pathlib import Path
 import subprocess
 import sys
 import time
+import os
+import tempfile
 
 from polymarket_alpha_lab.cost_aware_event_strategy import (
     PaperCostAwareEventCostAssumptions as Costs, PaperCostAwareEventStrategyConfig as Gates,
@@ -34,6 +36,88 @@ from polymarket_alpha_lab.team_research_intake import GammaMarketSnapshot, prepa
 
 PRIVATE = 'synthetic-packaged-source-do-not-export'
 BATCHES = ('kit-btc', 'kit-eth')
+
+
+_STAGE_NAMES = frozenset(('entry', 'imports_ready', 'kit_verified', 'engine_up',
+    'controls_done', 'inputs_bound', 'command_enter', 'command_return',
+    'dispatch_enter', 'dispatch_return', 'first_turn_done', 'restart_done',
+    'second_turn_done', 'paper_captured', 'minute_wait_enter', 'minute_wait_exit',
+    'confirmation_inputs_ready', 'confirmations_done', 'settlement_evaluated',
+    'history_verified', 'crash_child_enter', 'crash_child_return', 'crash_readback',
+    'flow_done', 'cleanup_enter', 'cleanup_done'))
+
+
+def _stage(name):
+    # TEST metadata only, independent of stdout/stderr pipe EOF. No arguments,
+    # paths, business IDs, provider text or credentials enter the stage records.
+    global _PAL_STAGE_COUNT
+    path = globals().get('_PAL_STAGE_PATH')
+    count = globals().get('_PAL_STAGE_COUNT', 1)
+    if path is None or name not in _STAGE_NAMES or count >= 256:
+        return
+    try:
+        elapsed = time.monotonic_ns() - _PAL_STAGE_T0
+        with open(path, 'ab', buffering=0) as stream:
+            stream.write(f'{name}|{elapsed}\n'.encode('ascii'))
+        _PAL_STAGE_COUNT = count + 1
+    except Exception:
+        pass  # A missing/torn marker is explicit, not proof of child failure.
+
+
+def _stage_snapshot(path):
+    def result(status, rows=()):
+        return dict(status=status, stages=list(rows))
+    try:
+        with open(path, 'rb') as stream:
+            raw = stream.read(8193)
+    except OSError:
+        return result('unavailable')
+    if len(raw) > 8192:
+        return result('too_large')
+    if not raw:
+        return result('missing')
+    try:
+        lines = raw.decode('ascii').split('\n')
+        if lines.pop() != '' or not 1 <= len(lines) <= 256:
+            raise ValueError
+        rows, prior = [], -1
+        for line in lines:
+            name, value = line.split('|')
+            if name not in _STAGE_NAMES or not value.isascii() or not value.isdigit() or len(value)>18:
+                raise ValueError
+            value = int(value)
+            if value < prior:
+                raise ValueError
+            rows.append(dict(stage=name, elapsed_ns=value)); prior=value
+        if rows[0] != dict(stage='entry', elapsed_ns=0):
+            raise ValueError
+        return result('valid_prefix', rows)
+    except (ValueError, UnicodeError):
+        return result('invalid')
+
+
+def _report_stages(path, observation):
+    print('PACKAGED_STAGE_EVIDENCE ' + json.dumps(dict(
+        observation=observation, **_stage_snapshot(path)), sort_keys=True), flush=True)
+
+
+def _safe_report_stages(path, observation):
+    # This runs AFTER subprocess.run returns/raises, including its own cleanup;
+    # it is not a process-state sample at the supervisory deadline.
+    try:
+        _report_stages(path, observation)
+    except BaseException:
+        pass  # Do not mask the original timeout/interruption or repeat a launch.
+
+
+_stage('imports_ready')
+
+
+def prospective_opening(at):
+    """Fresh TEST sample: cutoff >=120s ahead; never extend an existing task."""
+    earliest = at + timedelta(seconds=121)  # cutoff is one second before open
+    opening = earliest.replace(second=0, microsecond=0)
+    return opening + (timedelta(minutes=1) if opening < earliest else timedelta(0))
 
 
 def prepared(at, opening, *, namespace='packaged', condition_base=8800):
@@ -164,6 +248,7 @@ def run_packaged_flow(root):
     root = Path(root).resolve()
     manifest = distribution.verify_distribution(root)
     assert_origins(root)
+    _stage('kit_verified')
     db = ProjectPostgres(root)
     assert db.status()['status'] == 'stopped'
     identity = db._state()
@@ -172,9 +257,11 @@ def run_packaged_flow(root):
 
     def command(script, arguments=(), payload=None, expected=0):
         # Every operator process uses this KIT's Python and absolute script path.
+        _stage('command_enter')
         result = subprocess.run([sys.executable, '-I', str(root/'scripts'/script),
             '--root', str(root), *arguments], input=payload, cwd=root.parent,
             env=files.clean_environment(), capture_output=True, timeout=60, check=False)
+        _stage('command_return')
         assert result.returncode == expected, (script, result.returncode,
             {'observed_at': datetime.now(UTC).isoformat(),
              'forecast_cutoff_at': requests[0].forecast_cutoff_at.isoformat() if requests else None,
@@ -197,6 +284,7 @@ def run_packaged_flow(root):
         # Borrow an explicitly started engine across children; never hold a
         # managed lifecycle lease while asking another process to enter it.
         assert db.up()['status'] == 'running'
+        _stage('engine_up')
         with db.session() as s:
             assert s.execution_inventory().to_dict()['claim_count'] == 0
         # Prove rejected admission and absence before binding the FOUR original
@@ -213,10 +301,12 @@ def run_packaged_flow(root):
             denied = command('manage_research_tasks.py', args, item.payload.encode(), expected=2)
             assert denied['operation_entered'] is denied['business_writes_possible'] is False
             assert command('manage_research_tasks.py', [inspect, key, identity_key], expected=3)['result'] is None
+        _stage('controls_done')
         now = datetime.now(UTC)
-        opening = now.replace(second=0, microsecond=0) + timedelta(minutes=2)
+        opening = prospective_opening(now)
         rows = prepared(now, opening)
         requests = tuple(row[0] for row in rows)
+        _stage('inputs_bound')
         admission_inputs = _admission_items(requests, opening)
         policy = admission_inputs[-1][0]
         def factory(team):
@@ -225,6 +315,7 @@ def run_packaged_flow(root):
             models.append(value)
             return value
         def dispatch(turn, model_factory, expected=0):
+            _stage('dispatch_enter')
             output = io.StringIO()
             with redirect_stdout(output):
                 code = research_dispatch_cli.main(['--root', str(root), 'run-turn',
@@ -232,6 +323,7 @@ def run_packaged_flow(root):
                     '--batch-id', BATCHES[0], '--batch-id', BATCHES[1], '--budget-id', 'kit-budget',
                     '--max-tasks', '2', '--max-workers', '1', '--allow-model-calls'],
                     default_root=root, model_factory=model_factory)
+            _stage('dispatch_return')
             assert code == expected, output.getvalue()
             assert PRIVATE not in output.getvalue()
             return json.loads(output.getvalue())['result']
@@ -252,6 +344,7 @@ def run_packaged_flow(root):
             assert s.execution_inventory().to_dict()['claim_count'] == 0
             assert s.inspect_model_budget(budget_id='kit-budget').reserved_calls == 0
         first = dispatch('one', factory)
+        _stage('first_turn_done')
         assert first['execution_invocations'] == 2
         assert all(a['execution']['research_status'] == 'completed' for a in first['attempts'])
         with db.session() as s:
@@ -259,10 +352,12 @@ def run_packaged_flow(root):
         db.down()
         assert db.status()['status'] == 'stopped'
         db.up()
+        _stage('restart_done')
         repeat = dispatch('one', forbidden)
         assert repeat['status'] == 'turn_already_reserved' and repeat['execution_invocations'] == 0
         assert len(models) == 2
         second = dispatch('two', factory, expected=1)
+        _stage('second_turn_done')
         assert [a['execution']['research_status'] for a in second['attempts']] == ['completed', 'failed']
         assert [m.calls for m in models] == [2, 2, 2, 1]
         with db.session() as s:
@@ -277,6 +372,7 @@ def run_packaged_flow(root):
                        expected=3)['result'] is None
         for value in specifications:
             saved.append(capture(value)['result'])
+        _stage('paper_captured')
         assert [r['result']['status'] for r in saved] == [
             'paper_scenario_ready', 'paper_scenario_ready', 'paper_scenario_rejected', 'not_simulated']
         # Verification-only replay/conflict checks are not prerequisites for
@@ -302,7 +398,9 @@ def run_packaged_flow(root):
             assert all(g['settled_pnl_lower_bound_sum'] is None for g in before['groups'])
         # Wait for the declared REAL minute to close. Do not patch time, extend
         # cutoffs, retry a late capture or backdate an original forecast.
+        _stage('minute_wait_enter')
         time.sleep(max(0, (opening+timedelta(minutes=1)-datetime.now(UTC)).total_seconds()) + .05)
+        _stage('minute_wait_exit')
         instructions = []
         with db.session() as s:
             for request, raw in rows[:2]:
@@ -319,6 +417,7 @@ def run_packaged_flow(root):
                     request.content_sha256, candidate.submission.review_id,
                     sha256(encode_resolution(candidate.submission).encode()).hexdigest(), proof,
                     'binance', 'BTCUSDT' if request.intake.team_id == 'crypto_btc' else 'ETHUSDT', '1m', 'close', opening))
+        _stage('confirmation_inputs_ready')
         output_failed_reviews = []
         for instruction in instructions:
             value = asdict(instruction)
@@ -348,6 +447,7 @@ def run_packaged_flow(root):
                 assert confirmed['result'] == original_receipt
                 assert command('inspect_project_resolution.py',
                     ['--review-id', instruction.review_id])['inspection'] == original_receipt
+        _stage('confirmations_done')
         with db.session() as s:
             after = s.evaluate_settled_paper_research()
             assert after['status_counts'] == dict(paper_evidence_missing=0, research_not_selected=1,
@@ -360,6 +460,7 @@ def run_packaged_flow(root):
             for request, original, receipt in zip(requests, originals, saved, strict=True):
                 assert s.inspect(record_id=request.record_id).record == original
                 assert s.inspect_paper_research(record_id=request.record_id).to_dict() == receipt
+        _stage('settlement_evaluated')
         db.down()
         # New processes after restart see the same historical and settled views.
         for view in (before, after):
@@ -369,6 +470,7 @@ def run_packaged_flow(root):
         assert command('manage_research_tasks.py', ['inspect-paper', '--record-id', requests[0].record_id])['result'] == saved[0]
         assert db.status()['status'] == 'stopped' and db.status()['instance_id'] == identity['instance_id']
         assert distribution.verify_distribution(root) == manifest
+        _stage('history_verified')
         # A real child dies AFTER its original claim and one permit commit.
         # All input stays in memory/DB; no crash journal or replacement task.
         db.up()
@@ -394,9 +496,11 @@ with ProjectPostgres(root).session() as session:
                                  model_factory=die, allow_model_calls=True)
 raise SystemExit(99)
 """
+        _stage('crash_child_enter')
         died = subprocess.run([sys.executable, '-I', '-c', child_code, str(root), interrupted.content_sha256],
             input=interrupted.payload.encode(), cwd=root.parent, env=files.clean_environment(),
             capture_output=True, timeout=60, check=False, shell=False)
+        _stage('crash_child_return')
         assert died.returncode == 86 and died.stdout == died.stderr == b''
         db.down()
         with db.session() as s:
@@ -410,6 +514,7 @@ raise SystemExit(99)
             inventory = s.execution_inventory().to_dict()
             assert (inventory['claim_count'], inventory['captured_result_count'],
                     inventory['incomplete_claim_count']) == (5, 4, 1)
+        _stage('crash_readback')
         blocked = command('evaluate_project_research.py', ['--settled-paper'], expected=1)
         assert blocked['evaluation'] is None and blocked['reason_code'] == 'research_execution_history_incomplete'
         historical = command('evaluate_project_research.py', ['--settled-paper', '--include-decisions',
@@ -418,6 +523,7 @@ raise SystemExit(99)
         assert db.status()['status'] == 'stopped' and db.status()['instance_id'] == identity['instance_id']
         assert distribution.verify_distribution(root) == manifest
         count = assert_origins(root)
+        _stage('flow_done')
         return dict(status='packaged_flow_verified', source_commit=manifest['source_commit'],
             source_tree=manifest['source_tree'], instance_id=identity['instance_id'],
             attempts=4, simulations=4, settlements=2, reserved_calls=7,
@@ -428,8 +534,10 @@ raise SystemExit(99)
             historical_at=after['history']['generated_at'])
     finally:
         # This recipe runs only on the test's fresh second extraction.
+        _stage('cleanup_enter')
         if db.status()['status'] != 'stopped':
             db.down()
+        _stage('cleanup_done')
 
 
 def run_packaged_recipe(root, python, cwd):
@@ -437,8 +545,31 @@ def run_packaged_recipe(root, python, cwd):
     prefix = ('import sys\nfrom pathlib import Path\nroot=Path(sys.argv[1]).resolve()\n'
         "assert (root/'src/polymarket_alpha_lab/__init__.py').is_file(), 'kit source missing'\n"
         "sys.path.insert(0,str(root/'src'))\n")
-    recipe = Path(__file__).read_text(encoding='utf-8')
-    return subprocess.run([str(python), '-I', '-c', prefix + recipe +
-        '\nprint(json.dumps(run_packaged_flow(root),sort_keys=True))\n', str(root)],
-        cwd=cwd, env=files.clean_environment(), stdin=subprocess.DEVNULL,
-        capture_output=True, text=True, encoding='utf-8', timeout=300, check=False, shell=False)
+    source = Path(__file__).read_text(encoding='utf-8')
+    # The parent launcher never runs in the child. Exclude it from the inline
+    # command to retain the existing Windows CreateProcess size boundary.
+    marker = '\ndef run_packaged_recipe('
+    assert source.count(marker) == 1
+    recipe = source.split(marker)[0]
+    descriptor, name = tempfile.mkstemp(prefix='pal-stage-', dir=cwd)
+    os.close(descriptor)
+    stage_path = Path(name)
+    prefix += ("import time\n_PAL_STAGE_T0=time.monotonic_ns()\n"
+               + "_PAL_STAGE_PATH=" + repr(name) + "\n"
+               + "Path(_PAL_STAGE_PATH).write_bytes(b'entry|0\\n')\n")
+    try:
+        try:
+            result = subprocess.run([str(python), '-I', '-c', prefix + recipe +
+                '\nprint(json.dumps(run_packaged_flow(root),sort_keys=True))\n', str(root)],
+                cwd=cwd, env=files.clean_environment(), stdin=subprocess.DEVNULL,
+                capture_output=True, text=True, encoding='utf-8', timeout=420, check=False, shell=False)
+        except BaseException:
+            _safe_report_stages(stage_path, 'raised_after_run_cleanup')
+            raise
+        _safe_report_stages(stage_path, 'returned_after_run_cleanup')
+        return result
+    finally:
+        try:
+            stage_path.unlink(missing_ok=True)
+        except BaseException:
+            pass  # Private test metadata only; cleanup cannot mask the result.

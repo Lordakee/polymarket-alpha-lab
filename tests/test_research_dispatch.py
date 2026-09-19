@@ -348,7 +348,7 @@ def test_closed_managed_session_and_binding(monkeypatch):
 def test_migration_tail_hashes_and_no_lease_or_destructive_ddl():
     root=Path(__file__).resolve().parents[1]
     entries=json.loads((root/'database/migrations.lock.json').read_text())['migrations']
-    assert len(entries)==67
+    assert len(entries)==68
     entry=entries[63];assert entry['name']=='20260914000000_research_dispatch_batches.sql'
     sql=(root/'supabase/migrations'/entry['name']).read_bytes()
     assert entry['sha256']==sha256(sql).hexdigest()

@@ -74,7 +74,7 @@ class ResearchRotationReport:
 
 def run_research_rotation_with_psycopg(dsn, *, rotation_id, turn_id, batch_ids_to_run,
         model_factory, allow_model_calls=False, max_tasks=10, max_workers=2, stop=None, model_budget_id=None,
-        uncapped_authorization=None, allow_uncapped_costs=False):
+        uncapped_authorization=None, allow_uncapped_costs=False, require_durable_audit=False):
     """Persist a fair selection, then reuse the original bounded claim runner.
 
     The roster is fixed under rotation_id. Same turn_id replays only its original
@@ -83,8 +83,9 @@ def run_research_rotation_with_psycopg(dsn, *, rotation_id, turn_id, batch_ids_t
     requests. Failed unclaimed jobs are revisited only by a NEW explicit turn
     after the ring reaches them, never immediately retried within this call.
     """
-    from polymarket_alpha_lab.research_uncapped_runner import validate_uncapped_choice
+    from polymarket_alpha_lab.research_uncapped_runner import validate_uncapped_choice, validate_audit_mode
     uncapped_authorization = validate_uncapped_choice(uncapped_authorization, allow_uncapped_costs, model_budget_id)
+    validate_audit_mode(uncapped_authorization, require_durable_audit)
     identifier('rotation_id', rotation_id)
     if model_budget_id is not None:
         identifier('model_budget_id', model_budget_id)
@@ -125,6 +126,10 @@ def run_research_rotation_with_psycopg(dsn, *, rotation_id, turn_id, batch_ids_t
         if not _available(uncapped_authorization, _now()):
             raise ValueError('research_uncapped_not_available')
         options = dict(uncapped_authorization=uncapped_authorization)
+        if require_durable_audit:
+            from polymarket_alpha_lab.research_uncapped_audit_store import require_authorization
+            require_authorization(dsn, uncapped_authorization)
+            options['require_durable_audit'] = True
     owned, stored = _reserve(dsn, rotation_id=rotation_id, turn_id=turn_id, roster=roster,
         observed_at=observed_at, states=states,
         request_keys=tuple((r.record_id, r.content_sha256) for r in requests),

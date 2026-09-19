@@ -113,7 +113,7 @@ def run_research_batch_with_psycopg(dsn: str, *, batch_id: str, model_factory,
                                   allow_model_calls: bool = False, max_tasks: int = 10,
                                   max_workers: int = 2, stop: ResearchDispatchStop | None = None,
                                   model_budget_id: str | None = None, uncapped_authorization=None,
-                                  allow_uncapped_costs=False) -> ResearchDispatchReport:
+                                  allow_uncapped_costs=False, require_durable_audit=False) -> ResearchDispatchReport:
     """Run a bounded pending prefix; later explicit rounds skip existing claims.
 
     All batch inputs are persisted BEFORE this operation. Snapshot/transactions
@@ -127,8 +127,9 @@ def run_research_batch_with_psycopg(dsn: str, *, batch_id: str, model_factory,
     capture_failed retains pending_run in the returned execution for the existing
     explicit capture-only recovery API. No automatic model or capture retries.
     """
-    from polymarket_alpha_lab.research_uncapped_runner import validate_uncapped_choice
+    from polymarket_alpha_lab.research_uncapped_runner import validate_uncapped_choice, validate_audit_mode
     uncapped_authorization = validate_uncapped_choice(uncapped_authorization, allow_uncapped_costs, model_budget_id)
+    validate_audit_mode(uncapped_authorization, require_durable_audit)
     identifier('batch_id', batch_id)
     if model_budget_id is not None:
         identifier('model_budget_id', model_budget_id)
@@ -151,13 +152,17 @@ def run_research_batch_with_psycopg(dsn: str, *, batch_id: str, model_factory,
         for position in pending:
             uncapped_authorization.bind_request(snapshot.stored.batch.requests[position])
         options = dict(uncapped_authorization=uncapped_authorization)
+        if require_durable_audit:
+            from polymarket_alpha_lab.research_uncapped_audit_store import require_authorization
+            require_authorization(dsn, uncapped_authorization)
+            options['require_durable_audit'] = True
     attempts = _drain_requests(dsn, snapshot.stored.batch.requests, pending,
                                model_factory, max_workers, stop, model_budget_id=model_budget_id, **options)
     return ResearchDispatchReport(snapshot, attempts, max_tasks, max_workers, stop.is_stopped())
 
 
 def _drain_requests(dsn, requests, pending, model_factory, max_workers, stop, *, model_budget_id=None,
-                    uncapped_authorization=None):
+                    uncapped_authorization=None, require_durable_audit=False):
     """Shared bounded execution mechanics; callers supply a validated selection.
 
     Preserve selection order, including a cyclic order chosen by durable rotation.
@@ -176,7 +181,8 @@ def _drain_requests(dsn, requests, pending, model_factory, max_workers, stop, *,
                 from polymarket_alpha_lab.research_uncapped_runner import run_uncapped_research_with_psycopg
                 receipt = run_uncapped_research_with_psycopg(dsn, request=request,
                     authorization=uncapped_authorization, model_factory=model_factory,
-                    allow_model_calls=True, allow_uncapped_costs=True, stop=stop)
+                    allow_model_calls=True, allow_uncapped_costs=True, stop=stop,
+                    **({"require_durable_audit": True} if require_durable_audit else {}))
             elif model_budget_id is None:
                 receipt = run_captured_research_with_psycopg(dsn, request=request, model_factory=model_factory)
             else:

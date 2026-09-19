@@ -168,7 +168,10 @@ jobs:
               "tests/test_research_uncapped.py",
               "tests/test_research_codex_exec.py",
               "tests/test_research_codex_uncapped_review.py",
-              "tests/test_project_postgres_uncapped_native.py"
+              "tests/test_project_postgres_uncapped_native.py",
+              "tests/test_research_uncapped_audit.py",
+              "tests/test_research_uncapped_audit_review.py",
+              "tests/test_project_postgres_uncapped_audit_native.py"
             ]
           }
         ]

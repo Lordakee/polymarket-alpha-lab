@@ -58,7 +58,7 @@ def test_original_forecasts_manual_confirmation_replay_restart_and_preservation(
     with socket.socket() as sock:sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
     import_runtime_directory(root,prefix);db=ProjectPostgres(root)
     try:
-        assert db.initialize(port=port)['migrations_applied']==67
+        assert db.initialize(port=port)['migrations_applied']==68
         with db.session() as session:
             identity=db._state()
             now=datetime.now(UTC)
@@ -176,7 +176,7 @@ finally:
                 assert session.inspect(record_id=instruction.record_id).record==record
             assert db._psql(identity,'SELECT count(*) FROM research_capture.resolution_reviews;')=='4'
             assert db._psql(identity,'SELECT count(*) FROM research_capture.outcomes;')=='2'
-            assert db._psql(identity,'SELECT count(*) FROM project_private.migrations;')=='67'
+            assert db._psql(identity,'SELECT count(*) FROM project_private.migrations;')=='68'
         # Recovery lookups use real isolated storage; inject ONLY a short stdout
         # sink in actual command processes after all prospective captures finish.
         probe = r"""

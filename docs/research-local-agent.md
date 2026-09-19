@@ -240,3 +240,202 @@ negative-check failure position before any positive operation. The final fixed
 revision must pass full local and hosted verification before leaving draft.
 This removes avoidable preflight work from the sample window, not all host timing
 variability; real-host, usage and V1 acceptance limitations above still apply.
+
+
+## Durable uncapped audit (WP-02 / WP-03; 2026-09-19)
+
+The earlier application-only path is retained as explicit compatibility. New
+real-host integration must use **`require_durable_audit=True`**. This mode adds
+same-project PostgreSQL authorization, call-start and outcome records; it does
+not supply a CLI launcher, change a provider contract or authenticate a human's
+approval. The old `UncappedResearchAuthorization` payload and original request /
+claim / result codecs remain unchanged. No raw transcript, response, exception,
+reasoning or credential is stored in the new audit tables.
+
+### Explicit setup and use
+
+After preparing the reviewed `permission` and exact `reviewed_requests` shown
+above, and with a separately verified inert factory supplied by the application:
+
+```python
+with ProjectPostgres(Path(actual_project_root)).session() as research:
+    saved = research.create_uncapped_authorization(
+        authorization=permission, allow_authorization_write=True,
+    )
+    original = research.inspect_uncapped_authorization(
+        authorization_id=permission.authorization_id,
+    )
+    assert original == saved
+    receipt = research.run_uncapped_research(
+        request=reviewed_requests[0], authorization=original.authorization,
+        model_factory=inert_factory, allow_model_calls=True,
+        allow_uncapped_costs=True, require_durable_audit=True,
+    )
+    audit = research.inspect_uncapped_calls(
+        record_id=reviewed_requests[0].record_id,
+    ).to_dict()
+```
+
+These are application integration calls requiring reviewed inputs, not instructions
+to run on an existing user installation. Current-source migration 68 must first
+be installed on an explicitly authorized instance. There is no credential search,
+automatic migration, default model or inferred authorization. The same
+`require_durable_audit=True` keyword propagates through existing batch and rotation
+APIs with `uncapped_authorization=permission` and the original two opt-ins. A new
+rotation verifies the stored authorization before committing its selection; an
+existing turn still replays without work. The standalone CLI remains unchanged.
+
+Creating the same authorization ID with exact content returns its original
+DB-stamped receipt, even after expiry. Different content under that ID conflicts;
+it is never updated or silently reapproved. The stored receipt copies the original
+value. DB time rejects newly inserted future/expired approval windows. The audit
+flag must be an exact Boolean and cannot be attached to the legacy/capped mode.
+A required but absent/mismatched audit authorization fails before a task claim.
+
+### Ordered, separately immutable evidence
+
+Every audited `complete` first commits a start row bound to the original claimed
+request, authorization hash, call ordinal, exact message hash/UTF-8 byte length
+and requested output ceiling. Only then may the real factory/client be entered.
+The DB checks current authorization/cutoff, request/model/roster binding and
+strict per-task order. A duplicate ordinal is not permission to send again; a
+failed or unresolved preceding call cannot admit the next one. There are no
+monetary amounts or fictitious budget reservations.
+
+A returned **structurally validated** `ResearchModelReply` gets a separate outcome
+with its deterministic hash and reported aggregate token count. Outcome COMMIT
+and cleanup must succeed before the reply is released to the original research
+loop. `returned` does not mean the loop accepted the actions/citations, that a
+forecast completed, or that final research capture succeeded. Those decisions
+remain in the original loop/result. Failures and interrupts record fixed statuses
+with usage/hash null. No automatic retry or second contradictory outcome is used.
+
+The start and returned outcome receipts are independently revalidated against the
+current request/reply at the wrapper boundary. A corrupt receipt suppresses client
+entry or the returned reply. Outcome-logging failure never converts a failed
+operation to success; an original interrupt remains primary, while a new interrupt
+during ordinary failure logging propagates instead of being swallowed.
+
+Process loss after a committed start leaves a row without an outcome: **unknown**,
+not zero external usage and not proof that no provider operation occurred. A lost
+start acknowledgement never enters the factory. A lost outcome acknowledgement
+can leave `returned` in the audit but a failed research result; both are truthful
+observations at different boundaries. Inspect the original IDs; do not resume the
+model. Existing completed/incomplete histories replay unchanged, with no audit
+backfill, no replacement task and no new client. Expiry does not cancel already
+admitted I/O; start stamping is not a universal socket/commit deadline.
+
+### Interpretation and limitations
+
+`inspect_uncapped_calls` uses one bounded read-only snapshot (at most 32 starts).
+It validates identities, order, outcome bindings and time sequence before output.
+No-audit history is `no_audited_calls`, not proof of no calls. Missing, failed and
+interrupted observations retain unknown usage; only structurally validated replies
+contribute to `reported_tokens_known_subset`, which is null if none exist.
+`provider_submission_count` and `actual_billed_micros` always remain null here.
+This is reported application usage, not independently verified provider billing,
+retry accounting, cryptographic approval, model identity or a record of every
+pre-admission refusal. Cache/reasoning breakdowns are not newly inferred.
+
+The explicit compatibility default remains unaudited. This feature is not a
+sandbox against an owner or code deliberately choosing a legacy API, changing
+DB privileges, forging reports or running a CLI separately. Actual host isolation,
+no-hidden-operation evidence and real usage/provider verification remain mandatory
+before activation. No real host is certified by adding these records.
+
+Migration `20260919000000_research_uncapped_audit.sql` is tail 68. The original 67
+SQL files are byte-identical; old 66-to-67 backup/paper proofs retain their original
+catalog targets. New native tests use an isolated 67-to-68 upgrade with existing
+history, concurrent originals, no fake money permits, actual COMMIT-acknowledgement
+loss and child-process death. Existing SELECT/INSERT-only application grants and
+mutation-rejection triggers are reused; no new database backend or user-instance
+operation. Fixed-version installation/upgrade acceptance remains WP-06.
+
+Separate same-assistant review reproduced nine issues before their corrections:
+new interrupts during failure logging, returned receipt binding, and next-call
+start preceding the previous recorded outcome. The original failing tests remain.
+The first corrected run also exposed two synthetic-clock fixtures inconsistent
+with the new ordering rule; fixtures were corrected, not the rule. Final frozen
+full/hosted results, native case inventories, first failures and exact source tree
+are recorded in the implementation PR. This is self-review, not external review
+or a zero-defect guarantee. G2/G3 and the full V1 milestone remain open.
+
+PostgreSQL references checked 2026-09-19:
+https://www.postgresql.org/docs/17/ddl-constraints.html
+https://www.postgresql.org/docs/17/transaction-iso.html
+
+The first complete candidate run reported 1 failure / 38,964 passes / 44 skips:
+the explicit native-workflow inventory expected the prior file list. All three
+new audit modules were already selected by the workflow. Its inventory assertion
+now explicitly adds those modules while preserving every original selector and
+partition requirement. This was not a skipped test or removed assertion; the
+final tree must pass another complete verification.
+
+### PR61 native failures and follow-up evidence
+
+Head `5bbcb4b5aee692de2cee1684122fba44204b147a` passed local/offline verification
+but failed two hosted gates. The new native audit test reached its last assertion:
+following child loss the engine remained running, and the parent correctly borrowed
+it. The fixture incorrectly expected a borrower to stop it. The corrected fixture
+explicitly stops the CI-owned engine after the crash, then enters a new owning
+session to prove actual restart and the SAME unknown/incomplete/history readback.
+Production ownership behavior and every original audit assertion remain unchanged.
+
+The separate whole-kit run raised TimeoutExpired after the original 300 seconds
+waiting for captured output. The parent stack does not identify the child's stage
+or prove whether it was alive or a descendant retained a pipe. The original failed
+run and logs are retained in PR61. This is not the earlier first-paper cutoff failure
+or a demonstrated PS5.1 root cause, and is not retrospectively counted as passed.
+
+The TEST recipe now emits at most 256 fixed-name elapsed-time stage records into
+an 8-KiB-bounded readback of a fresh private test file, independently of stdout/stderr
+EOF. Summaries contain no paths, commands, environment, business IDs or raw output.
+Invalid/missing/torn/oversize records are explicit. Observation occurs AFTER the
+original subprocess.run has returned/raised and performed its cleanup, not exactly
+at the timer boundary; an absent final marker is not proof of a specific cause.
+Reporting or diagnostic cleanup errors cannot replace the original result/exception.
+The parent launcher is omitted from the inline child command (it is never called
+there), retaining every child function/statement while staying under the existing
+Windows command-line size assertion. No application/module is imported from the
+checkout inside the kit. Test stage file I/O can perturb timings and is not a
+hard-deadline, descendant-supervision or reliability certificate.
+
+The original 300-second recipe/60-second commands, original business cutoff,
+all test operations and assertions remain. No CI retry, startup prewarm, favorable
+clock-phase wait, sample refresh or deadline extension is introduced. Stage evidence
+is diagnostic, not itself a runtime repair or permission to close the historical
+failure. Final revised-source gate results and remaining risk stay in PR61.
+
+Python subprocess.run timeout/cleanup and monotonic clock contracts checked
+2026-09-19: https://docs.python.org/3.12/library/subprocess.html
+https://docs.python.org/3.12/library/time.html#time.monotonic_ns
+
+### PR #61 follow-up: explicit whole-flow test timing profile
+
+The instrumented `c4fe3a07` kit run `35435161357` returned a failed second paper
+capture after its original cutoff (one earlier receipt existed). Its stage trace
+shows about 67 seconds from actual sample binding to that return. The old fixture
+used `floor(now to minute) + 2 minutes`, leaving **more than 59 but at most 119
+seconds** before cutoff. A multi-command two-turn/restart acceptance sequence was
+therefore competing with its clock phase; this was not a promised production
+one-minute service-level objective. The older 300-second timeout remains a
+separate failure whose underlying cause has not been established.
+
+This revision deliberately changes the **test timing profile**, not the runtime
+admission rules: choose the earliest whole-minute opening whose cutoff is at
+least 120 seconds after the actual binding time. The resulting initial sample
+window is `[120, 180)` seconds. Construct each actual input once, after negative
+preflight, with no favorable-phase wait, backdating, extension, replacement or
+retry. All real minute-close waits, original business operations and 68 original
+recipe assertions remain; production late-input/DB-cutoff checks are unchanged.
+
+The enclosing test recipe's supervision limit is explicitly **420 seconds,
+previously 300**, to include the increased initial horizon and real settlement
+wait. The individual 60-second operator commands, PowerShell checks, 180-second
+diagnostic watchdog and 20-minute CI job limits are unchanged. This is not a
+claim that a test completed within the former 300-second limit, a repair of the
+historical PS5.1 issue, or an unlimited-runtime guarantee. Future overruns still
+fail. Sixty original-clock-phase counterexamples failed before this change and
+pass after it; fractional-second, date-rollover and exact-minute controls also
+check the earliest eligible candle. The final source tests, Windows result and
+any remaining failure are retained in PR #61 before any merge.

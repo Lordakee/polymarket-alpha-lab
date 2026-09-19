@@ -50,7 +50,7 @@ def test_paper_assembly_replays_reads_preserves_failures_and_blocks_incomplete(t
     with socket.socket() as sock: sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
     import_runtime_directory(root,prefix);db=ProjectPostgres(root)
     try:
-        assert db.initialize(port=port)['migrations_applied']==67
+        assert db.initialize(port=port)['migrations_applied']==68
         with db.session() as s:
             identity=db._state();original=[];scenarios=[];made=[]
             def factory(team): made.append(team);return Model()
@@ -87,7 +87,7 @@ def test_paper_assembly_replays_reads_preserves_failures_and_blocks_incomplete(t
             assert s.inspect(record_id=incomplete.record_id).status=='incomplete'
             assert db._psql(identity,'SELECT count(*) FROM research_capture.attempts;')=='3'
             assert db._psql(identity,'SELECT count(*) FROM research_capture.execution_claims;')=='4'
-            assert db._psql(identity,'SELECT count(*) FROM project_private.migrations;')=='67'
+            assert db._psql(identity,'SELECT count(*) FROM project_private.migrations;')=='68'
         assert db.status()['instance_id']==identity['instance_id']
         print('native research paper: PASS; BTC/ETH read-only scenarios, failures/denominator, replay/restart, incomplete blocked')
     finally:
