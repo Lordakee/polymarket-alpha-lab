@@ -76,5 +76,5 @@ def test_recipe_launch_uses_supplied_interpreter_and_no_checkout_path(monkeypatc
     assert args[:3] == [str(python), '-I', '-c'] and args[-1] == str(root)
     assert 'tests.packaged_research_flow' not in args[3]
     assert str(Path(flow.__file__).parent) not in args[3]
-    assert kw['timeout'] == 300 and kw['shell'] is False and kw['check'] is False
+    assert kw['timeout'] == 420 and kw['shell'] is False and kw['check'] is False
     assert len(calls) == 1

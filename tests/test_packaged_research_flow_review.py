@@ -24,7 +24,7 @@ def test_no_project_modules_is_not_a_successful_origin_check(monkeypatch, tmp_pa
 
 
 def test_recipe_timeout_is_preserved_without_retry(monkeypatch, tmp_path):
-    original = subprocess.TimeoutExpired('synthetic', 300)
+    original = subprocess.TimeoutExpired('synthetic', 420)
     calls = []
     def fail(*args, **kwargs):
         calls.append(1); raise original
@@ -205,7 +205,7 @@ def test_negative_admission_checks_precede_original_prospective_inputs(monkeypat
     control, active = state['prepared']
     assert control[0] == 'admission-check' and active[0] == 'packaged'
     assert active[1] == state['now'] == control[1] + timedelta(seconds=48)
-    assert active[2] == active[1].replace(second=0, microsecond=0) + timedelta(minutes=2)
+    assert active[2] == flow.prospective_opening(active[1])
     control_requests = tuple(row[0] for row in control[3])
     requests = tuple(row[0] for row in active[3])
     assert set(r.record_id for r in requests).isdisjoint(r.record_id for r in control_requests)
@@ -253,7 +253,7 @@ def test_missing_stage_file_is_explicit_and_not_success(tmp_path):
 
 @pytest.mark.parametrize('error_type', [RuntimeError, BrokenPipeError, KeyboardInterrupt, SystemExit])
 def test_stage_reporting_failure_preserves_original_timeout_and_one_launch(monkeypatch, tmp_path, error_type):
-    original = subprocess.TimeoutExpired('synthetic', 300)
+    original = subprocess.TimeoutExpired('synthetic', 420)
     seen = []
     def launch(*a, **kw):
         seen.append(kw['timeout']); raise original
@@ -262,13 +262,13 @@ def test_stage_reporting_failure_preserves_original_timeout_and_one_launch(monke
     monkeypatch.setattr(flow, '_report_stages', broken)
     with pytest.raises(subprocess.TimeoutExpired) as caught:
         flow.run_packaged_recipe(tmp_path, sys.executable, tmp_path)
-    assert caught.value is original and seen == [300]
+    assert caught.value is original and seen == [420]
     assert not list(tmp_path.glob('pal-stage-*'))
 
 
 def test_stage_evidence_is_read_even_without_any_captured_output(monkeypatch, tmp_path, capsys):
     import ast
-    original = subprocess.TimeoutExpired('synthetic', 300)
+    original = subprocess.TimeoutExpired('synthetic', 420)
     def launch(args, **kw):
         assignment = next(n for n in ast.parse(args[3]).body if isinstance(n, ast.Assign)
                           and any(isinstance(t,ast.Name) and t.id=='_PAL_STAGE_PATH' for t in n.targets))
@@ -332,3 +332,41 @@ def test_injected_recipe_keeps_every_child_statement_and_omits_parent_launcher(m
     assert 'run_packaged_recipe' not in by_name
     for node in definitions:
         assert ast.dump(by_name[node.name]) == ast.dump(node)
+
+
+@pytest.mark.parametrize('second', range(60))
+def test_actual_sample_has_two_full_minutes_at_every_binding_phase(monkeypatch, tmp_path, second):
+    """The preflight clock is not a sample lifetime or a reason to wait/retry."""
+    from datetime import timedelta
+    state, run = _admission_order_probe(monkeypatch, tmp_path, second)
+    with pytest.raises(_FirstApprovedAdmission):
+        run()
+    control, active = state['prepared']
+    assert active[1] == state['now']  # no backdating or favorable-phase sleep
+    for request, _ in active[3]:
+        remaining = request.forecast_cutoff_at - active[1]
+        assert timedelta(seconds=120) <= remaining < timedelta(seconds=180)
+        assert request.intake.as_of == active[1]
+        assert request.forecast_cutoff_at == active[2] - timedelta(seconds=1)
+    assert active[2].second == active[2].microsecond == 0
+    assert len(state['prepared']) == 2  # one control set, one actual immutable set
+
+
+@pytest.mark.parametrize('instant', [
+    '2026-09-19T10:00:58.999999+00:00',
+    '2026-09-19T10:00:59+00:00',
+    '2026-09-19T10:00:59.000001+00:00',
+    '2026-12-31T23:59:59.999999+00:00',
+    '2028-02-29T23:59:59+00:00',
+])
+def test_prospective_window_ceil_preserves_minute_and_date_boundaries(instant):
+    from datetime import datetime, timedelta
+    at = datetime.fromisoformat(instant)
+    opening = flow.prospective_opening(at)
+    assert opening.second == opening.microsecond == 0
+    assert timedelta(seconds=120) <= opening - timedelta(seconds=1) - at < timedelta(seconds=180)
+    # It is the earliest eligible candle, not an arbitrarily far future sample.
+    assert opening - timedelta(minutes=1, seconds=1) < at + timedelta(seconds=120)
+    rows = flow.prepared(at, opening)
+    assert all(request.intake.as_of == at for request, _ in rows)
+    assert all(request.forecast_cutoff_at == opening - timedelta(seconds=1) for request, _ in rows)

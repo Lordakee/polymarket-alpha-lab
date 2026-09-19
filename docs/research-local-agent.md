@@ -409,3 +409,33 @@ failure. Final revised-source gate results and remaining risk stay in PR61.
 Python subprocess.run timeout/cleanup and monotonic clock contracts checked
 2026-09-19: https://docs.python.org/3.12/library/subprocess.html
 https://docs.python.org/3.12/library/time.html#time.monotonic_ns
+
+### PR #61 follow-up: explicit whole-flow test timing profile
+
+The instrumented `c4fe3a07` kit run `35435161357` returned a failed second paper
+capture after its original cutoff (one earlier receipt existed). Its stage trace
+shows about 67 seconds from actual sample binding to that return. The old fixture
+used `floor(now to minute) + 2 minutes`, leaving **more than 59 but at most 119
+seconds** before cutoff. A multi-command two-turn/restart acceptance sequence was
+therefore competing with its clock phase; this was not a promised production
+one-minute service-level objective. The older 300-second timeout remains a
+separate failure whose underlying cause has not been established.
+
+This revision deliberately changes the **test timing profile**, not the runtime
+admission rules: choose the earliest whole-minute opening whose cutoff is at
+least 120 seconds after the actual binding time. The resulting initial sample
+window is `[120, 180)` seconds. Construct each actual input once, after negative
+preflight, with no favorable-phase wait, backdating, extension, replacement or
+retry. All real minute-close waits, original business operations and 68 original
+recipe assertions remain; production late-input/DB-cutoff checks are unchanged.
+
+The enclosing test recipe's supervision limit is explicitly **420 seconds,
+previously 300**, to include the increased initial horizon and real settlement
+wait. The individual 60-second operator commands, PowerShell checks, 180-second
+diagnostic watchdog and 20-minute CI job limits are unchanged. This is not a
+claim that a test completed within the former 300-second limit, a repair of the
+historical PS5.1 issue, or an unlimited-runtime guarantee. Future overruns still
+fail. Sixty original-clock-phase counterexamples failed before this change and
+pass after it; fractional-second, date-rollover and exact-minute controls also
+check the earliest eligible candle. The final source tests, Windows result and
+any remaining failure are retained in PR #61 before any merge.

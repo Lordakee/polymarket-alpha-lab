@@ -103,7 +103,7 @@ def _report_stages(path, observation):
 
 def _safe_report_stages(path, observation):
     # This runs AFTER subprocess.run returns/raises, including its own cleanup;
-    # it is not a process-state sample at the exact 300s deadline.
+    # it is not a process-state sample at the supervisory deadline.
     try:
         _report_stages(path, observation)
     except BaseException:
@@ -111,6 +111,13 @@ def _safe_report_stages(path, observation):
 
 
 _stage('imports_ready')
+
+
+def prospective_opening(at):
+    """Fresh TEST sample: cutoff >=120s ahead; never extend an existing task."""
+    earliest = at + timedelta(seconds=121)  # cutoff is one second before open
+    opening = earliest.replace(second=0, microsecond=0)
+    return opening + (timedelta(minutes=1) if opening < earliest else timedelta(0))
 
 
 def prepared(at, opening, *, namespace='packaged', condition_base=8800):
@@ -296,7 +303,7 @@ def run_packaged_flow(root):
             assert command('manage_research_tasks.py', [inspect, key, identity_key], expected=3)['result'] is None
         _stage('controls_done')
         now = datetime.now(UTC)
-        opening = now.replace(second=0, microsecond=0) + timedelta(minutes=2)
+        opening = prospective_opening(now)
         rows = prepared(now, opening)
         requests = tuple(row[0] for row in rows)
         _stage('inputs_bound')
@@ -555,7 +562,7 @@ def run_packaged_recipe(root, python, cwd):
             result = subprocess.run([str(python), '-I', '-c', prefix + recipe +
                 '\nprint(json.dumps(run_packaged_flow(root),sort_keys=True))\n', str(root)],
                 cwd=cwd, env=files.clean_environment(), stdin=subprocess.DEVNULL,
-                capture_output=True, text=True, encoding='utf-8', timeout=300, check=False, shell=False)
+                capture_output=True, text=True, encoding='utf-8', timeout=420, check=False, shell=False)
         except BaseException:
             _safe_report_stages(stage_path, 'raised_after_run_cleanup')
             raise
