@@ -370,3 +370,42 @@ new audit modules were already selected by the workflow. Its inventory assertion
 now explicitly adds those modules while preserving every original selector and
 partition requirement. This was not a skipped test or removed assertion; the
 final tree must pass another complete verification.
+
+### PR61 native failures and follow-up evidence
+
+Head `5bbcb4b5aee692de2cee1684122fba44204b147a` passed local/offline verification
+but failed two hosted gates. The new native audit test reached its last assertion:
+following child loss the engine remained running, and the parent correctly borrowed
+it. The fixture incorrectly expected a borrower to stop it. The corrected fixture
+explicitly stops the CI-owned engine after the crash, then enters a new owning
+session to prove actual restart and the SAME unknown/incomplete/history readback.
+Production ownership behavior and every original audit assertion remain unchanged.
+
+The separate whole-kit run raised TimeoutExpired after the original 300 seconds
+waiting for captured output. The parent stack does not identify the child's stage
+or prove whether it was alive or a descendant retained a pipe. The original failed
+run and logs are retained in PR61. This is not the earlier first-paper cutoff failure
+or a demonstrated PS5.1 root cause, and is not retrospectively counted as passed.
+
+The TEST recipe now emits at most 256 fixed-name elapsed-time stage records into
+an 8-KiB-bounded readback of a fresh private test file, independently of stdout/stderr
+EOF. Summaries contain no paths, commands, environment, business IDs or raw output.
+Invalid/missing/torn/oversize records are explicit. Observation occurs AFTER the
+original subprocess.run has returned/raised and performed its cleanup, not exactly
+at the timer boundary; an absent final marker is not proof of a specific cause.
+Reporting or diagnostic cleanup errors cannot replace the original result/exception.
+The parent launcher is omitted from the inline child command (it is never called
+there), retaining every child function/statement while staying under the existing
+Windows command-line size assertion. No application/module is imported from the
+checkout inside the kit. Test stage file I/O can perturb timings and is not a
+hard-deadline, descendant-supervision or reliability certificate.
+
+The original 300-second recipe/60-second commands, original business cutoff,
+all test operations and assertions remain. No CI retry, startup prewarm, favorable
+clock-phase wait, sample refresh or deadline extension is introduced. Stage evidence
+is diagnostic, not itself a runtime repair or permission to close the historical
+failure. Final revised-source gate results and remaining risk stay in PR61.
+
+Python subprocess.run timeout/cleanup and monotonic clock contracts checked
+2026-09-19: https://docs.python.org/3.12/library/subprocess.html
+https://docs.python.org/3.12/library/time.html#time.monotonic_ns

@@ -224,3 +224,111 @@ def test_failed_negative_admission_check_never_creates_original_inputs(monkeypat
     assert [entry[0] for entry in state['prepared']] == ['admission-check']
     assert 'positive_payload' not in state and len(state['commands']) == fail_call+1
     assert state['running'] is False
+
+
+@pytest.mark.parametrize('wire,status,count', [
+    (b'', 'missing', 0),
+    (b'entry|0\nimports_ready|12\n', 'valid_prefix', 2),
+    (b'entry|0\nPRIVATE-SENTINEL|13\n', 'invalid', 0),
+    (b'entry|5\nimports_ready|4\n', 'invalid', 0),
+    (b'entry|0\nimports_ready|4', 'invalid', 0),
+    (b'entry|0\n'+b'x'*8192, 'too_large', 0),
+    (b'entry|0\n'*257, 'invalid', 0),
+    (b'entry|0\nimports_ready|-1\n', 'invalid', 0),
+    (b'entry|0\nimports_ready|1\r\n', 'invalid', 0),
+    (b'entry|0\nflow_done|3\n', 'valid_prefix', 2),
+])
+def test_bounded_stage_summary_never_echoes_unvalidated_text(tmp_path, wire, status, count):
+    path = tmp_path / 'stages'
+    path.write_bytes(wire)
+    result = flow._stage_snapshot(path)
+    assert result['status'] == status and len(result['stages']) == count
+    assert 'PRIVATE-SENTINEL' not in str(result)
+    assert str(path) not in str(result)
+
+
+def test_missing_stage_file_is_explicit_and_not_success(tmp_path):
+    assert flow._stage_snapshot(tmp_path/'absent') == {'status': 'unavailable', 'stages': []}
+
+
+@pytest.mark.parametrize('error_type', [RuntimeError, BrokenPipeError, KeyboardInterrupt, SystemExit])
+def test_stage_reporting_failure_preserves_original_timeout_and_one_launch(monkeypatch, tmp_path, error_type):
+    original = subprocess.TimeoutExpired('synthetic', 300)
+    seen = []
+    def launch(*a, **kw):
+        seen.append(kw['timeout']); raise original
+    def broken(*a, **kw): raise error_type()
+    monkeypatch.setattr(flow.subprocess, 'run', launch)
+    monkeypatch.setattr(flow, '_report_stages', broken)
+    with pytest.raises(subprocess.TimeoutExpired) as caught:
+        flow.run_packaged_recipe(tmp_path, sys.executable, tmp_path)
+    assert caught.value is original and seen == [300]
+    assert not list(tmp_path.glob('pal-stage-*'))
+
+
+def test_stage_evidence_is_read_even_without_any_captured_output(monkeypatch, tmp_path, capsys):
+    import ast
+    original = subprocess.TimeoutExpired('synthetic', 300)
+    def launch(args, **kw):
+        assignment = next(n for n in ast.parse(args[3]).body if isinstance(n, ast.Assign)
+                          and any(isinstance(t,ast.Name) and t.id=='_PAL_STAGE_PATH' for t in n.targets))
+        Path(ast.literal_eval(assignment.value)).write_bytes(b'entry|0\nminute_wait_enter|200\n')
+        raise original
+    monkeypatch.setattr(flow.subprocess, 'run', launch)
+    with pytest.raises(subprocess.TimeoutExpired):
+        flow.run_packaged_recipe(tmp_path, sys.executable, tmp_path)
+    out = capsys.readouterr().out
+    assert 'minute_wait_enter' in out and 'raised_after_run_cleanup' in out
+    assert str(tmp_path) not in out
+    assert not list(tmp_path.glob('pal-stage-*'))
+
+
+def test_stage_emitter_is_bounded_and_does_not_modify_application_output(monkeypatch, tmp_path, capsys):
+    import time
+    path = tmp_path/'stages'; path.write_bytes(b'entry|0\n')
+    monkeypatch.setattr(flow, '_PAL_STAGE_PATH', str(path), raising=False)
+    monkeypatch.setattr(flow, '_PAL_STAGE_T0', time.monotonic_ns(), raising=False)
+    monkeypatch.setattr(flow, '_PAL_STAGE_COUNT', 1, raising=False)
+    flow._stage('PRIVATE-SENTINEL')
+    for _ in range(300): flow._stage('command_enter')
+    data = path.read_bytes()
+    assert data.count(b'\n') == 256 and len(data) <= 8192
+    assert b'PRIVATE-SENTINEL' not in data
+    assert capsys.readouterr().out == ''
+
+
+@pytest.mark.parametrize('broken', [False, True])
+def test_crash_restart_test_explicitly_stops_its_left_running_engine(broken):
+    from tests.test_project_postgres_uncapped_audit_native import _stop_after_crash
+    calls = []
+    class DB:
+        running = True
+        def status(self): return {'status': 'running' if self.running else 'stopped'}
+        def down(self):
+            calls.append('down')
+            if not broken: self.running=False
+    db = DB()
+    if broken:
+        with pytest.raises(AssertionError): _stop_after_crash(db)
+    else:
+        _stop_after_crash(db)
+        assert not db.running
+    assert calls == ['down']
+
+
+
+def test_injected_recipe_keeps_every_child_statement_and_omits_parent_launcher(monkeypatch, tmp_path):
+    import ast
+    calls = []
+    def capture(args, **kwargs):
+        calls.append(args[3]); return subprocess.CompletedProcess(args, 0, '', '')
+    monkeypatch.setattr(flow.subprocess, 'run', capture)
+    flow.run_packaged_recipe(tmp_path, sys.executable, tmp_path)
+    actual = ast.parse(calls[0])
+    original = ast.parse(Path(flow.__file__).read_text(encoding='utf-8'))
+    definitions = [node for node in original.body if isinstance(node, (ast.FunctionDef, ast.ClassDef))
+                   and node.name != 'run_packaged_recipe']
+    by_name = {node.name: node for node in actual.body if isinstance(node, (ast.FunctionDef, ast.ClassDef))}
+    assert 'run_packaged_recipe' not in by_name
+    for node in definitions:
+        assert ast.dump(by_name[node.name]) == ast.dump(node)

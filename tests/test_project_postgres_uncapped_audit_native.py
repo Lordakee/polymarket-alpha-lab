@@ -42,6 +42,15 @@ raise SystemExit(99)
 '''
 
 
+def _stop_after_crash(db):
+    # The crashed child left its own engine running. A new managed session
+    # would borrow it, not stop it. Explicitly stop the CI-owned instance first
+    # to test an actual engine restart without changing production ownership.
+    assert db.status()['status'] == 'running'
+    db.down()
+    assert db.status()['status'] == 'stopped'
+
+
 @pytest.mark.skipif(not ENABLED, reason='explicit native uncapped audit proof is opt-in')
 def test_audited_uncapped_upgrade_calls_uncertainty_and_process_loss(tmp_path, monkeypatch):
     prefix = Path(os.environ['POLYMARKET_ALPHA_LAB_NATIVE_PG_PREFIX'])
@@ -206,6 +215,7 @@ def test_audited_uncapped_upgrade_calls_uncertainty_and_process_loss(tmp_path, m
         child = subprocess.run([sys.executable,'-c',_CRASH,str(root)],cwd=ROOT,env=files.clean_environment(),
             capture_output=True,timeout=60,check=False)
         assert child.returncode == 86 and child.stdout == child.stderr == b''
+        _stop_after_crash(db)
         with db.session() as s:
             lost = s.inspect(record_id=crash.record_id)
             assert lost.status == 'incomplete' and lost.record is None
