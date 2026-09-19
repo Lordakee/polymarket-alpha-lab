@@ -99,6 +99,7 @@ def _verify_executable(spec):
     flags = (os.O_RDONLY | getattr(os, 'O_BINARY', 0) | getattr(os, 'O_NOFOLLOW', 0)
              | getattr(os, 'O_NONBLOCK', 0))
     fd = os.open(spec.argv[0], flags)
+    failure = None
     try:
         info = os.fstat(fd)
         if not stat.S_ISREG(info.st_mode) or not 1 <= info.st_size <= spec.max_executable_bytes:
@@ -117,8 +118,18 @@ def _verify_executable(spec):
         magic = b'MZ' if os.name == 'nt' else b'\x7fELF'
         if not prefix.startswith(magic) or digest.hexdigest() != spec.executable_sha256:
             raise ValueError('research_process_image_invalid')
+    except BaseException as error:
+        failure = error
     finally:
-        os.close(fd)
+        # A failed close may already have released/reused the descriptor; never
+        # retry its number. Keep cancellation from validation ahead of a later
+        # ordinary close error, matching the existing process cleanup policy.
+        try:
+            os.close(fd)
+        except BaseException as error:
+            failure = _prefer_failure(failure, error)
+    if failure is not None:
+        raise failure
     if not Path(spec.cwd).is_dir():
         raise ValueError('research_process_cwd_invalid')
 
