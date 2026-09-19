@@ -63,7 +63,7 @@ class _BudgetedModel:
 def _initial_message_incompatible(request, policy):
     """Reject only a first call the existing agent would actually attempt.
 
-    Keep no-eligible-evidence/context-limit captures on their original path.
+    Keep no-eligible-evidence/required-citation/context-limit captures on their original path.
     The allowance counts UTF-8 bytes, unlike the agent's character context cap.
     Later tool transcripts still use the original per-call reservation guard.
     """
@@ -71,7 +71,7 @@ def _initial_message_incompatible(request, policy):
         return False
     catalog, messages = agent._initial_context(request.intake.task, request.limits,
                                                request.required_source_ids)
-    if not catalog:
+    if not catalog or not set(request.required_source_ids).issubset(catalog):
         return False
     transcript = agent._dump(messages)
     return (len(transcript) <= request.limits.max_context_chars

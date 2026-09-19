@@ -156,6 +156,10 @@ def _run(task: TeamResearchTask, model: ResearchModel, limits: ResearchAgentLimi
     catalog, messages = _initial_context(task, limits, required_source_ids)
     if not catalog:
         return result("blocked", "no_eligible_evidence")
+    if not set(required_source_ids).issubset(catalog):
+        # A source excluded by freshness can never be read or validly cited.
+        # Keep the original failed-citation reason, but spend no model calls.
+        return result("blocked", "invalid_citations")
     for _ in range(limits.max_model_calls):
         if tool_calls >= limits.max_tool_calls:
             return result("blocked", "tool_call_limit")
@@ -235,6 +239,7 @@ def run_team_research_agent(
     if not callable(getattr(model, "complete", None)):
         raise ValueError("model must provide complete")
     if (type(required_source_ids) is not tuple
+            or len(required_source_ids) > 20
             or any(type(item) is not str for item in required_source_ids)
             or len(set(required_source_ids)) != len(required_source_ids)
             or not set(required_source_ids).issubset(item.source_id for item in task.evidence)):

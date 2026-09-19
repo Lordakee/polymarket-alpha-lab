@@ -21,11 +21,17 @@ roadmaps and team lists are long-term references, not evidence of completed V1.
 - V1 is limited to crypto_btc/crypto_eth, supported prospective terminal Yes/No
   contracts, project-private native PostgreSQL and research/paper evidence.
   Other eight teams remain a future objective, not deleted or silently certified.
-- Model/provider choice, permission to send research inputs, and enforceable
-  first-run budgets remain explicit owner decisions. Scope approval is NOT
-  credential, provider-call, user-database-write or live-execution authorization.
-  Continue safe offline integration while these decisions are pending; do not
-  send local agents to rediscover credentials or repeat completed acceptance.
+- Latest owner decisions (2026-09-19 handoff): D1 permits local Codex, Claude
+  Code, OpenCode, Grok CLI or ZCode CLI; D2 permits all needed research data; D3
+  sets no first-round business scale/monetary cap. Do not ask for these again or
+  label D2 unapproved. Start with one verified local adapter, not five assumed
+  compatible clients. Keep task-scoped inputs, credential isolation, finite I/O
+  and stop controls. This source-development request does not activate a real
+  provider, inspect credentials, mutate user databases or authorize live orders.
+  The existing positive-micros ModelCallBudget is capped-only: do not fake zero
+  prices, huge ceilings or fee attestations to represent an uncapped policy.
+  Implement and review that distinction before real-run acceptance; do not send
+  local agents to rediscover credentials or repeat completed acceptance.
 - Perform a separate self-review/test pass, accurately labeled as self-review.
   Require relevant final-revision gates and no unresolved release-blocking finding
   before merge. Claim V1 completion only when G1-G6 and required owner decisions
