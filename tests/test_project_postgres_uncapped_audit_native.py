@@ -283,8 +283,12 @@ def _prove_actual_process_transport(db, parent):
     with db.session() as session:
         for request, permission, result, audit in originals:
             def forbidden(_): pytest.fail('replayed subprocess')
-            assert session.run_uncapped_research(request=request, authorization=permission,
+            replay = session.run_uncapped_research(request=request, authorization=permission,
                 model_factory=forbidden, allow_model_calls=True, allow_uncapped_costs=True,
-                require_durable_audit=True) == result
+                require_durable_audit=True)
+            assert result.status == 'captured' and replay.status == 'already_captured'
+            # This is a new operation receipt over the SAME durable execution.
+            # Compare every other field, not just the record or token count.
+            assert replace(replay, status=result.status) == result
             assert session.inspect_uncapped_calls(record_id=request.record_id) == audit
     assert not list(work.iterdir())

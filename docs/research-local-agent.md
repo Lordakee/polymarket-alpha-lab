@@ -518,7 +518,7 @@ cap is allowed. Temporary write backpressure is not mistaken for truncated input
 
 The shared stop token is checked before and during execution. Ordinary failures
 are fixed-code errors; KeyboardInterrupt/SystemExit propagate after cleanup.
-Every launched process domain is terminated on exit, including success, so
+Termination of the owned domain is attempted on exit, including success, so
 successful leader exit does not intentionally leave owned helpers running.
 An exit-zero leader whose descendants retain output pipes still hits the existing
 operation deadline rather than waiting forever for EOF. Cleanup errors suppress
@@ -527,7 +527,7 @@ that transport; the existing model wrapper also closes on protocol errors.
 
 | Platform | Ownership and explicit limitations |
 | --- | --- |
-| Windows x64, Python >=3.12 | Create native child **suspended**, give it only the three allowed pipe handles, assign it to an anonymous parent-owned **kill-on-close Job Object**, then resume. Assignment/resume failures do not execute the target or fall back. Cleanup terminates the job and waits for its active count and leader exit. Parent loss closes the noninherited job handle. Nested-job denial stays a failure; no breakaway or security-policy change. |
+| Windows x64, Python >=3.12 | Create native child **suspended**, give it only the three allowed pipe handles, assign it to an anonymous parent-owned **kill-on-close Job Object**, then resume. Assignment/resume failures do not execute the target or fall back. Cleanup terminates the job and waits for its active count and leader exit. After assignment, parent loss closes the noninherited job handle. Nested-job denial stays a failure; no breakaway or security-policy change. |
 | Linux | A new cooperative process group owns the launched command and nonescaping descendants. Keep the leader unreaped until terminating its group to avoid targeting a reused group ID. Reject a pre-existing SIGCHLD handler rather than replacing it. This is **not** containment of malicious `setsid`/group escape or a guarantee of cleanup after the Python parent is killed. |
 
 Timeout accounting begins before image verification, but OS file access, process
@@ -577,3 +577,47 @@ References checked 2026-09-19:
 - https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects
 - https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-createprocessw
 - https://learn.microsoft.com/en-us/windows/win32/api/jobapi2/nf-jobapi2-assignprocesstojobobject
+
+### Continuation review: cancellation and handle ownership
+
+A separate continuation of PR #62 at original head
+`f5eebf9a56d3b9020e9305188fffb89a66383231` reproduced nineteen negative cases:
+four first-interruption/cleanup-error cases, six descriptor-reuse cases, six
+Windows handle/thread-close cases, two repeat-cleanup cases and a real Linux
+FIFO-image check. The original direct process tests passed 72 with four Windows
+skips; these additional counterexamples still failed and were corrected.
+
+Cleanup now retains the first KeyboardInterrupt/SystemExit even when a later
+wait fails or its deadline expires, and still attempts each owned close. Both
+pipe descriptors and Windows handles are relinquished before close: the OS can
+release and reuse a number before Python receives cancellation. Neither a
+subsequent cleanup nor constructor-finally closes that stale number again.
+An error from close is not retried by number and is not proof of successful
+reclamation. This is a specific ownership boundary, not a promise covering every
+possible asynchronous Python/OS interruption point.
+
+On Linux, image validation opens nonblocking before fstat so a FIFO without a
+writer is immediately rejected as nonregular instead of blocking validation.
+Regular native images retain their original digest, size and magic checks.
+Kernel/file operations can still exceed the supervision deadline; this does not
+create a universal wall-clock guarantee.
+
+The Windows native integration fixture explicitly expects `captured` on first
+execution and `already_captured` on replay, comparing every other receipt field
+unchanged. Short named test IDs preserve the entire 200KB binary fixture while
+avoiding a Windows environment-value overflow before the test could run.
+No payload, production semantics, test deadline or workflow selector is relaxed.
+The original failed native run remains evidence, not a passed earlier version.
+
+The existing parent-loss proof observes the target **after Job assignment**.
+The suspended-create/assign sequence is not atomic with respect to hard parent
+termination before assignment; a suspended process may remain in that window.
+No target instructions run before assignment/resume, but this is not complete
+parent-loss containment at every startup instruction. A selected real CLI profile
+must account for this and the existing filesystem/network/persistence limits.
+
+The corrected ten-file local regression passed 380 with five platform/opt-in
+skips. Final frozen full results and actual Windows case inventories belong to
+the exact implementation PR revision; no old-head success replaces them.
+This review is by the same assistant in a separate pass, not an external reviewer.
+Primary reference for close/reuse behavior: https://peps.python.org/pep-0475/

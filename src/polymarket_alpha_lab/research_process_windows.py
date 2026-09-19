@@ -143,8 +143,8 @@ class OwnedWindowsProcess:
             _checked(api.AssignProcessToJobObject(self.job, self.process))
             if api.ResumeThread(thread) == 0xffffffff:
                 raise OSError('research_process_windows_resume_failed')
-            _checked(api.CloseHandle(thread))
-            thread = None
+            closing_thread, thread = thread, None
+            _checked(api.CloseHandle(closing_thread))
         except BaseException as original:
             try:
                 if self.process is not None:
@@ -190,9 +190,11 @@ class OwnedWindowsProcess:
         for name in ('job', 'process'):
             handle = getattr(self, name)
             if handle is not None:
+                # Close can take effect before cancellation is delivered. Do
+                # not retain/retry a value the OS may already have reassigned.
+                setattr(self, name, None)
                 try:
                     _checked(self.api.CloseHandle(handle))
-                    setattr(self, name, None)
                 except BaseException as error:
                     if failure is None or isinstance(failure, Exception) and not isinstance(error, Exception):
                         failure = error

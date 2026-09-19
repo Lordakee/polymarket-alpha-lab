@@ -192,3 +192,164 @@ def test_partial_launch_cleanup_error_does_not_swallow_original_interrupt(monkey
     monkeypatch.setattr(core,'_cleanup',cleanup)
     with pytest.raises(type(fault)) as error:core._spawn(spec(executable,tmp_path))
     assert error.value is fault
+
+
+@pytest.mark.parametrize('kind', [KeyboardInterrupt, SystemExit])
+@pytest.mark.parametrize('later', ['wait-error', 'deadline'])
+def test_cleanup_retains_first_interrupt_after_wait_failure(monkeypatch, kind, later):
+    original = kind('original interruption')
+    events = []
+    now = [0]
+    attempts = [0]
+
+    def terminate():
+        events.append('terminate')
+        attempts[0] += 1
+        if attempts[0] == 1:
+            raise original
+        if later == 'wait-error':
+            raise OSError('secondary failure')
+        now[0] = 1000001
+
+    owner = SimpleNamespace(terminate=terminate, is_closed=lambda: False,
+                            close=lambda: events.append('owner-close'))
+    monkeypatch.setattr(core.time, 'monotonic_ns', lambda: now[0])
+    monkeypatch.setattr(core.os, 'close', lambda fd: events.append(fd))
+    with pytest.raises(kind) as error:
+        core._cleanup(owner, [101, 102, 103], 1)
+    assert error.value is original
+    assert events == ['terminate', 'terminate', 101, 102, 103, 'owner-close']
+
+
+@pytest.mark.parametrize('kind', [KeyboardInterrupt, SystemExit])
+@pytest.mark.parametrize('index', [0, 1, 2], ids=['stdin', 'stdout', 'stderr'])
+def test_close_interruption_never_closes_reused_descriptor(monkeypatch, executable, tmp_path, kind, index):
+    # Simulate close taking effect, then a signal handler allocating the freed
+    # descriptor and raising. No real foreign descriptors are closed by the test.
+    original = kind('original close interruption')
+    target = 101 + index
+    closed = []
+    foreign_closed = []
+    owner = SimpleNamespace(terminate=lambda: None, is_closed=lambda: True,
+                            close=lambda: None, poll=lambda: 0)
+
+    def close(fd):
+        if fd == target and target in closed:
+            foreign_closed.append(fd)
+        closed.append(fd)
+        if fd == target and closed.count(fd) == 1:
+            raise original
+
+    with monkeypatch.context() as patch:
+        patch.setattr(core, '_verify_executable', lambda _: None)
+        patch.setattr(core, '_spawn', lambda _: (owner, (101, 102, 103)))
+        patch.setattr(core.os, 'close', close)
+        patch.setattr(core.os, 'read', lambda *_: b'')
+        with pytest.raises(kind) as error:
+            run(spec(executable, tmp_path))
+    assert error.value is original
+    assert foreign_closed == []
+    assert sorted(closed) == [101, 102, 103]
+
+
+@pytest.mark.parametrize('kind', [KeyboardInterrupt, SystemExit])
+@pytest.mark.parametrize('name', ['job', 'process'])
+def test_windows_closed_handle_is_not_owned_again_after_interruption(kind, name):
+    original = kind('original Windows close interruption')
+    handles = {'job': 201, 'process': 202}
+    closed = []
+    foreign_closed = []
+
+    def close(handle):
+        if handle in closed:
+            foreign_closed.append(handle)
+        closed.append(handle)
+        if handle == handles[name] and closed.count(handle) == 1:
+            raise original
+        return True
+
+    owner = windows.OwnedWindowsProcess.__new__(windows.OwnedWindowsProcess)
+    owner.api = SimpleNamespace(CloseHandle=close)
+    owner.job, owner.process = 201, 202
+    with pytest.raises(kind) as error:
+        owner.close()
+    assert error.value is original
+    owner.close()
+    assert owner.job is owner.process is None
+    assert foreign_closed == [] and closed == [201, 202]
+
+
+@pytest.mark.parametrize('kind', [KeyboardInterrupt, SystemExit])
+def test_windows_constructor_relinquishes_closed_thread_before_cancel(monkeypatch, executable, tmp_path, kind):
+    original = kind('closed thread interruption')
+    closed = []
+    foreign_closed = []
+    def attribute_size(_buffer, _count, _flags, length):
+        length._obj.value = 64
+        return True
+    def create(*args):
+        args[-1]._obj.hProcess = 302
+        args[-1]._obj.hThread = 303
+        return True
+    def close(handle):
+        if handle in closed:
+            foreign_closed.append(handle)
+        closed.append(handle)
+        if handle == 303 and closed.count(handle) == 1:
+            raise original
+        return True
+    api = SimpleNamespace(CreateJobObjectW=lambda *_: 301,
+        SetInformationJobObject=lambda *_: True,
+        InitializeProcThreadAttributeList=attribute_size,
+        UpdateProcThreadAttribute=lambda *_: True,
+        DeleteProcThreadAttributeList=lambda *_: None,
+        CreateProcessW=create, AssignProcessToJobObject=lambda *_: True,
+        ResumeThread=lambda *_: 1, CloseHandle=close,
+        TerminateProcess=lambda *_: True, WaitForSingleObject=lambda *_: 0)
+    monkeypatch.setattr(windows, '_api', lambda: api)
+    monkeypatch.setitem(sys.modules, 'msvcrt', SimpleNamespace(get_osfhandle=lambda fd: fd))
+    monkeypatch.setattr(os, 'set_handle_inheritable', lambda *_: None, raising=False)
+    with pytest.raises(kind) as error:
+        windows.OwnedWindowsProcess(spec(executable, tmp_path), (401, 402, 403))
+    assert error.value is original
+    assert foreign_closed == [] and sorted(closed) == [301, 302, 303]
+
+
+@pytest.mark.parametrize('kind', [KeyboardInterrupt, SystemExit])
+def test_cleanup_relinquishes_descriptors_even_if_close_is_interrupted(monkeypatch, kind):
+    original = kind('closed descriptor interruption')
+    seen = []
+    def close(fd):
+        seen.append(fd)
+        if fd == 101 and seen.count(fd) == 1:
+            raise original
+    owner = SimpleNamespace(terminate=lambda: None, is_closed=lambda: True, close=lambda: None)
+    descriptors = [101, 102, 103]
+    monkeypatch.setattr(core.os, 'close', close)
+    with pytest.raises(kind) as error:
+        core._cleanup(owner, descriptors, 1000)
+    assert error.value is original
+    core._cleanup(owner, descriptors, 1000)
+    assert seen == [101, 102, 103]
+    assert descriptors == [None, None, None]
+
+
+@pytest.mark.skipif(sys.platform != 'linux', reason='Linux FIFO image validation')
+def test_fifo_executable_is_rejected_without_waiting_for_a_writer(executable, tmp_path):
+    fifo = tmp_path / 'not-a-native-image'
+    os.mkfifo(fifo)
+    root = Path(__file__).resolve().parents[1]
+    code = (f'import sys;sys.path.insert(0,{str(root / "src")!r})\n'
+            'from polymarket_alpha_lab import research_process as core\n'
+            f'value=core.ResearchProcessSpec(({str(fifo)!r},),{str(tmp_path)!r},(),"0"*64,100)\n'
+            'def forbidden(_): raise AssertionError("unverified process launched")\n'
+            'core._spawn=forbidden\n'
+            'try: core.run_research_process(spec=value,stdin=b"",allow_process_start=True)\n'
+            'except core.ResearchProcessError: print("rejected")\n'
+            'else: raise AssertionError("FIFO accepted")\n')
+    try:
+        child = subprocess.run([executable[0], '-I', '-S', '-c', code],
+            cwd=tmp_path, env={}, capture_output=True, check=False, timeout=5)
+    except subprocess.TimeoutExpired:
+        pytest.fail('Image validation blocked waiting for a FIFO writer')
+    assert child.returncode == 0 and child.stdout == b'rejected\n' and child.stderr == b''

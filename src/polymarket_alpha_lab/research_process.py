@@ -93,7 +93,10 @@ def _prefer_failure(first, later):
 
 def _verify_executable(spec):
     """Pin only the selected native image, not dependencies or filesystem state."""
-    flags = os.O_RDONLY | getattr(os, 'O_BINARY', 0) | getattr(os, 'O_NOFOLLOW', 0)
+    # A FIFO must reach fstat without waiting for a writer. O_NONBLOCK has no
+    # effect on regular image files; nonregular descriptors are rejected below.
+    flags = (os.O_RDONLY | getattr(os, 'O_BINARY', 0) | getattr(os, 'O_NOFOLLOW', 0)
+             | getattr(os, 'O_NONBLOCK', 0))
     fd = os.open(spec.argv[0], flags)
     try:
         info = os.fstat(fd)
@@ -174,7 +177,7 @@ def _spawn(spec):
         failure = original
         if owned is not None:
             try:
-                _cleanup(owned, live, spec.cleanup_timeout_ms)
+                _cleanup(owned, list(live), spec.cleanup_timeout_ms)
             except BaseException as error:
                 failure = _prefer_failure(failure, error)
         else:
@@ -198,7 +201,11 @@ def _drain(owned, descriptors, stdin, spec, deadline, stop):
         progress = False
         if source is not None:
             if offset == len(stdin):
-                os.close(source); descriptors[0] = source = None
+                # Relinquish before close: cancellation can arrive after the
+                # OS released/reused the number. Cleanup must not close it twice.
+                fd, source = source, None
+                descriptors[0] = None
+                os.close(fd)
             else:
                 try:
                     count = os.write(source, stdin[offset:offset+4096])
@@ -222,9 +229,10 @@ def _drain(owned, descriptors, stdin, spec, deadline, stop):
                 continue
             progress = True
             if not block:
-                os.close(fd); descriptors[index] = None
+                descriptors[index] = None
                 if index == 1: out = None
                 else: err = None
+                os.close(fd)
             elif len(block)+used > cap:
                 raise ResearchProcessError('research_process_output_limit')
             elif index == 1:
@@ -241,8 +249,13 @@ def _drain(owned, descriptors, stdin, spec, deadline, stop):
 
 
 def _cleanup(owned, descriptors, timeout_ms):
-    """Terminate the owned domain and close descriptors on every exit path."""
-    interruption = None
+    """Attempt every close and retain the first interruption on all exit paths.
+
+    Descriptor ownership is relinquished before close, including a failed close:
+    a failure cannot prove that the OS did not already release/reuse its number.
+    There is no retry by stale number or successful-cleanup claim after an error.
+    """
+    failure = None
     try:
         deadline = time.monotonic_ns() + timeout_ms*1000000
         while True:
@@ -254,26 +267,25 @@ def _cleanup(owned, descriptors, timeout_ms):
                     time.sleep(0.005)
                 break
             except (KeyboardInterrupt, SystemExit) as error:
-                if interruption is None:
-                    interruption = error
+                failure = _prefer_failure(failure, error)
                 if time.monotonic_ns() >= deadline:
-                    raise ResearchProcessError('research_process_cleanup_failed') from None
+                    break
+    except BaseException as error:
+        failure = _prefer_failure(failure, error)
     finally:
-        close_failure = None
-        for fd in descriptors:
+        for index, fd in enumerate(descriptors):
             if fd is not None:
+                descriptors[index] = None
                 try:
                     os.close(fd)
                 except BaseException as error:
-                    close_failure = _prefer_failure(close_failure, error)
+                    failure = _prefer_failure(failure, error)
         try:
             owned.close()
         except BaseException as error:
-            close_failure = _prefer_failure(close_failure, error)
-        if close_failure is not None:
-            raise _prefer_failure(interruption, close_failure)
-    if interruption is not None:
-        raise interruption
+            failure = _prefer_failure(failure, error)
+    if failure is not None:
+        raise failure
 
 
 def run_research_process(*, spec, stdin, allow_process_start=False, stop=None):

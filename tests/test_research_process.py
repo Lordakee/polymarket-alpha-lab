@@ -37,7 +37,8 @@ def run(value, data=b'', **kw):
     return core.run_research_process(spec=value, stdin=data, allow_process_start=True, **kw)
 
 
-@pytest.mark.parametrize('data', [b'', b'Chinese \xe4\xb8\xad\xe6\x96\x87\r\n\x00\xff', b'x'*200000])
+@pytest.mark.parametrize('data', [b'', b'Chinese \xe4\xb8\xad\xe6\x96\x87\r\n\x00\xff', b'x'*200000],
+                         ids=['empty', 'unicode-and-binary', 'large-200kb'])
 def test_actual_binary_round_trip_without_spool_files(executable, tmp_path, data):
     before = list(tmp_path.iterdir())
     result = run(spec(executable, tmp_path), data)
