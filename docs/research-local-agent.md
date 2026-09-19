@@ -207,3 +207,36 @@ Four additional BTC/ETH capture/replay checks retain the original failed result
 without invalid summary text or a second host entry. Nineteen added regressions
 cover this correction in total. All real-host/persistence/usage acceptance limits
 above remain open.
+
+
+### Final-head kit failure and test scheduling correction
+
+The first additional-review head `fa19a5e53c4d34078e25384f3e5ed7ef9bea241d`
+passed full offline verification but its actual Windows kit run `35430546829`
+failed: 426 passed / 1 failed. The original first `capture-paper` returned an
+operation error; the post-command clock was 0.384006 seconds past the original
+cutoff, with no paper receipt returned. This suggests an exhausted prospective
+window but does not identify the underlying database exception or prove the
+historical PS5.1 cause. The raw failed log/XML and hashes remain in PR #60;
+no later green run retroactively changes that failure.
+
+The test recipe had put six negative admission/absence commands inside the
+four original requests' finite prospective window. The corrected recipe first
+runs those SAME command kinds, exit/permission/absence assertions and payload
+validation against separately named, never-admitted control requests. Only after
+all six checks succeed does it create the four original `packaged-*` requests,
+then positively admit their exact payloads once. Controls share the batch/budget
+lookup IDs so absence is checked before the actual admission, but their task IDs
+and hashes are distinct. They never become research inputs or durable records.
+This is a test scheduling correction, not a runtime deadline or data rewrite.
+
+The original UTC minute-floor +2-minute opening, cutoff one second before it,
+60-second command and 300-second recipe timeouts, four original tasks, two turns,
+stop/restart, seven permits, all capture/settlement/replay/cold-recovery assertions
+and real native clocks remain. There is no retry, input refresh, artificial wait
+for a favorable clock phase, disabled guard, or startup prewarm. Nine offline
+ordering/early-failure counterexamples exercise three clock phases and every
+negative-check failure position before any positive operation. The final fixed
+revision must pass full local and hosted verification before leaving draft.
+This removes avoidable preflight work from the sample window, not all host timing
+variability; real-host, usage and V1 acceptance limitations above still apply.
