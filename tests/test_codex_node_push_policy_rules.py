@@ -37,7 +37,13 @@ def test_codex_node_push_policy_preserves_verified_push_gate():
     assert "if local claude code is unavailable" in normalized
     assert "treat the review gate as blocked" in normalized
     assert "no fallback reviewer" in normalized
-    assert "opencode" not in normalized.split("## omo / sisyphus session workflow", 1)[0]
+    # Research-client choices in the current owner override are not reviewers.
+    # Preserve the historical review restriction below Scope, not a word ban
+    # on unrelated, explicitly authorized client-selection instructions.
+    legacy_policy = normalized.split("## scope", 1)[1].split(
+        "## omo / sisyphus session workflow", 1
+    )[0]
+    assert "opencode" not in legacy_policy
     _assert_phrases_appear_in_order(
         normalized,
         (
@@ -97,3 +103,14 @@ def test_agent_coordination_defaults_capture_parallel_cap_and_conflict_rule():
     assert "write-scope overlap" in normalized
     assert "avoid assigning multiple subagents to edit the same files" in normalized
     assert "split ownership by non-overlapping files or modules" in normalized
+
+
+def test_research_client_choices_are_separate_from_review_policy():
+    instructions, normalized = _agents_instructions()
+    owner = normalized.split("## current owner instruction: complete github-first handoffs", 1)[0]
+    for client in ("codex", "claude code", "opencode", "grok cli", "zcode cli"):
+        assert client in owner
+    assert "self-review" in owner
+    review = instructions.split("## review / audit defaults", 1)[1].split("\n## ", 1)[0]
+    assert "opencode" not in review
+    assert "unless the user explicitly changes this rule again" in review

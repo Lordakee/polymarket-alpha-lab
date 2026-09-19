@@ -21,19 +21,22 @@ Decimal discipline (project-wide "NEVER float"):
 - ``temperature`` and ``timeout_seconds`` are serialized to ephemeral wire
   values only; the only numbers retained are Decimals.
 
-Token isolation (M2): ``api_token`` lives ONLY on ``GLMChatTransport``. It is
-never copied into ``ProbabilityModelResult``, never logged, and never archived.
-``ProbabilityModelResult`` carries no credential material.
+Token isolation (M2): ``api_token`` is held by ``GLMChatTransport`` and omitted
+from its repr. The transport never deliberately copies it into results or logs.
+HTTPS endpoints are required; redirects are rejected and Authorization is marked
+nonredirectable. This is not a general redactor for provider-echoed secrets, a
+secure-memory container, or an approved WP-02 client.
 """
 
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Protocol
-from urllib.request import Request, urlopen
+from urllib.parse import urlsplit
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 
 __all__ = (
@@ -46,6 +49,37 @@ __all__ = (
 _ZERO = Decimal("0")
 _ONE = Decimal("1")
 _MICROSECONDS_PER_SECOND = Decimal("1000000")
+
+
+class _RejectRedirects(HTTPRedirectHandler):
+    """Never turn a single authenticated operation into another request."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def urlopen(request, *, timeout):
+    """Private no-redirect opener; leave urllib's process-global opener alone."""
+    return build_opener(_RejectRedirects()).open(request, timeout=timeout)
+
+
+def _validate_endpoint_url(value: str) -> None:
+    # urlsplit alone strips some control characters instead of rejecting them.
+    # Fail before Request construction, without echoing a possibly secret URL.
+    try:
+        if (not isinstance(value, str) or not value
+                or any(character.isspace() or ord(character) < 32 or ord(character) == 127
+                       for character in value)):
+            raise ValueError
+        parts = urlsplit(value)
+        if (parts.scheme != "https" or not parts.hostname
+                or parts.username is not None or parts.password is not None
+                or "#" in value):
+            raise ValueError
+        # Accessing port validates syntax and the supported numeric range.
+        parts.port
+    except (ValueError, TypeError):
+        raise ValueError("endpoint_url must be an HTTPS URL without userinfo or fragments") from None
 
 
 # Superforecaster-style system prompt sent as the ``system`` role message.
@@ -111,7 +145,7 @@ class GLMChatTransport:
 
     # ``api_token`` has no default (caller-supplied), so it must precede the
     # defaulted fields per frozen-dataclass field ordering.
-    api_token: str
+    api_token: str = field(repr=False)
     endpoint_url: str = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
     model: str = "glm-4-flash"
     # M1: every Decimal default is string-constructed (never a float literal).
@@ -122,8 +156,9 @@ class GLMChatTransport:
     def __post_init__(self) -> None:
         if not isinstance(self.api_token, str) or not self.api_token.strip():
             raise ValueError("api_token must be a nonblank string")
-        if not isinstance(self.endpoint_url, str) or not self.endpoint_url.strip():
-            raise ValueError("endpoint_url must be a nonblank string")
+        if any(ord(character) < 32 or ord(character) == 127 for character in self.api_token):
+            raise ValueError("api_token must be header-safe")
+        _validate_endpoint_url(self.endpoint_url)
         if not isinstance(self.model, str) or not self.model.strip():
             raise ValueError("model must be a nonblank string")
         if not isinstance(self.temperature, Decimal):
@@ -180,15 +215,18 @@ class GLMChatTransport:
             self.endpoint_url,
             data=body,
             headers={
-                "Authorization": f"Bearer {self.api_token}",
                 "Content-Type": "application/json",
             },
             method="POST",
         )
+        # Defense in depth: Authorization is never copied to a redirected
+        # Request even if an injected opener does not use our redirect policy.
+        request.add_unredirected_header("Authorization", f"Bearer {self.api_token}")
         started_at = datetime.now(UTC)
         raw_text = ""
         try:
-            # urlopen's timeout is an ephemeral float seconds (api.py precedent).
+            # The private opener rejects every redirect; no follow-up or retry.
+            # Its socket timeout is not a universal wall-clock deadline.
             with urlopen(request, timeout=float(self.timeout_seconds)) as response:
                 raw_text = response.read().decode("utf-8")
         except Exception:

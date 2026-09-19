@@ -19,10 +19,15 @@ make at most one operation, with no hidden retries, fallbacks or extra fees beyo
 the attested bound. `bound_reference_sha256` binds reviewed pricing/adapter terms,
 not a trusted live price oracle. The labels do not authenticate a provider/model.
 
-No project provider/rate or fee bound has been selected/verified in this delivery.
-D1 provider/model, D2 data permission and D3 affordable enforceable budgets are
-still owner decisions. An unverified or unbounded adapter must NOT be enabled for
-real research; configuration alone does not close G2. Tests use synthetic clients
+No project provider/rate or fee bound has been verified in this delivery.
+The latest owner decisions are local coding agents (Codex first; Claude Code,
+OpenCode, Grok CLI and ZCode CLI are allowed alternatives), all needed research
+data, and no first-round business scale/monetary cap. Do not relabel D2 unapproved.
+The existing positive-micros allowance is capped-only; an explicit uncapped policy
+is a remaining implementation task, not permission to fake zero charges, huge
+ceilings or `cost_bound_attested`. Finite I/O, task identity, isolation and stop
+controls remain required. No real client is activated by this source change;
+configuration alone does not close G2. Tests use synthetic clients
 and synthetic integer charges, not real prices or invoices. Existing unwrapped
 APIs remain explicit compatibility paths; this is not a sandbox against the
 owning user or code deliberately bypassing the wrapper.
@@ -208,8 +213,8 @@ truncate rules or evidence, or change canonical inputs. The allowance measures
 UTF-8 bytes, while the agent's existing context gate measures characters.
 Equality at the byte ceiling remains permitted.
 
-No-model paths (blocked intake, no eligible evidence or an initial context-limit
-rejection) retain their original captured results. Empty/expired allowance and
+No-model paths (blocked intake, no eligible evidence, an unreadable required
+source or an initial context-limit rejection) retain their captured-result path. Empty/expired allowance and
 the existing output-token incompatibility keep their earlier priority. An already
 visible completed or incomplete execution is revalidated and returned unchanged;
 an incomplete claim is not reclaimed. A history-read failure does not fall through
@@ -221,7 +226,8 @@ fit: the original per-call transaction still checks each actual message, output
 cap, shared balance and expiry. Later denial/failure capture and no-refund rules
 are unchanged. This internal message-size check is not a provider tokenizer,
 HTTP-envelope size calculation, tariff verification or proof that an entire loop
-fits the monetary budget. D1-D3 and real-provider validation remain required.
+fits the monetary budget. The latest D1-D3 decisions are recorded in the delivery
+plan; chosen-client validation and explicit uncapped-policy implementation remain.
 
 Python JSON serialization returns text, not encoded bytes; encoding is explicit.
 Reference checked 2026-09-17: https://docs.python.org/3.12/library/json.html
@@ -232,8 +238,9 @@ Reference checked 2026-09-17: https://docs.python.org/3.12/library/json.html
 **No provider adapter is shipped or enabled by this section.** It records the
 credential-isolation and data-send design that must be reviewed before adding
 one selected adapter. It is not another configuration loader, approval ledger,
-framework or runtime gate. D1-D3 in `DELIVERY_PLAN.md` are still undecided; the
-current standalone task script still supplies no model factory.
+framework or runtime gate. The current D1-D3 decisions are in `DELIVERY_PLAN.md`;
+the standalone task script still supplies no model factory. The contract below
+describes the existing capped path, not an already implemented uncapped adapter.
 
 ### Reuse the current application boundary
 
@@ -245,10 +252,12 @@ its bounded evidence tools. A reply must not cause arbitrary URLs, code or
 provider-hosted tools to execute. No dynamic `module:function` loader, model-chosen
 provider, fallback provider or credential discovery is part of this design.
 
-The application must use the budgeted path: a reviewed `ModelCallBudget`, exact
-request enrollment and an explicit budget ID on the existing task operation.
-Legacy explicitly unbudgeted Python APIs remain compatibility surfaces, not
-approved shortcuts for this first real run. `run-turn` alone, a provider label,
+For capped operation the application must use the budgeted path: a reviewed
+`ModelCallBudget`, exact request enrollment and an explicit budget ID on the
+existing task operation. The owner's uncapped first round needs an explicit
+reviewed policy path, not a fictitious capped allowance. Legacy explicitly
+unbudgeted Python APIs remain compatibility surfaces, not approved shortcuts
+for this first real run. `run-turn` alone, a provider label,
 a model label or an agent's own login cannot supply or authenticate the client.
 
 Existing order is preserved: validate copied request and allowance; reject known
@@ -313,7 +322,7 @@ never refunds the permit or automatically resends. Existing incomplete records
 remain incomplete; do not change task IDs, budget IDs or turn IDs to bypass them.
 A fresh policy is a new explicit decision, not a top-up or refund mechanism.
 
-### Adapter-specific acceptance still to perform after D1-D3
+### Adapter-specific acceptance still to perform under the recorded D1-D3
 
 Use synthetic transports and a fresh CI-owned database before any real call.
 These are pending adapter tests, NOT results of the existing generic tests:
@@ -333,3 +342,22 @@ their existing real-input, stop/restart, source/human settlement and fee-aware
 paper evidence. Generic green CI, this design review and `cost_bound_attested=True`
 are not substitutes. No new acceptance package or reduced completion criterion is
 introduced.
+
+
+## Required evidence before client/permit entry (2026-09-19)
+
+A required source excluded by the original freshness filter cannot be read or
+validly cited. If other evidence remains eligible, the agent now records the
+existing `blocked` / `invalid_citations` result with zero model/tool/token counts,
+rather than entering a loop whose completion is impossible. A wholly empty
+eligible catalog keeps `no_eligible_evidence`. Optional stale sources do not
+block valid research; both inclusive freshness boundaries remain admitted.
+The direct agent also rejects more than 20 required source IDs before calling a
+model, matching the existing finish schema and captured-request limit.
+
+The budget first-message preflight recognizes this no-call path: a tiny message
+allowance does not turn it into a byte-limit exception. An otherwise admissible
+request is still claimed and its blocked result captured; no permit or factory
+is entered. Existing expiry/output-cap checks keep their priority. Original
+request/policy hashes and completed/incomplete replay semantics are unchanged.
+This is not permission to delete required evidence or replace immutable inputs.
