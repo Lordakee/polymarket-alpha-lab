@@ -47,9 +47,13 @@ class CodexExecInput:
     def __post_init__(self):
         identifier('model_id', self.model_id)
         integer('max_output_tokens', self.max_output_tokens, 1, 8192)
-        if (type(self.messages_json) is not str or not 1 <= len(self.messages_json.encode('utf-8')) <= MAX_MESSAGE_BYTES
-                or type(strict_json(self.messages_json)) is not list or not strict_json(self.messages_json)):
+        if (type(self.messages_json) is not str
+                or not 1 <= len(self.messages_json.encode('utf-8')) <= MAX_MESSAGE_BYTES):
             raise ValueError('research_codex_input_invalid')
+        messages = strict_json(self.messages_json)
+        if type(messages) is not list or not messages:
+            raise ValueError('research_codex_input_invalid')
+        _validate_json_text(messages)
 
     @property
     def prompt_json(self):
@@ -96,6 +100,24 @@ def _text(value):
     if type(value) is not str:
         raise ValueError
     value.encode('utf-8')  # rejects decoded lone surrogate escapes
+
+
+def _validate_json_text(value):
+    """Check decoded strings, including keys; preserve original JSON/Decimals.
+
+    An ASCII Unicode escape is valid wire text but can decode to an unpaired
+    surrogate at a nested JSON boundary. Encoding only the envelope misses it.
+    """
+    pending = [value]
+    while pending:
+        item = pending.pop()
+        if type(item) is str:
+            _text(item)
+        elif type(item) is dict:
+            pending.extend(item.keys())
+            pending.extend(item.values())
+        elif type(item) is list:
+            pending.extend(item)
 
 
 def _decode(output, *, call_number, max_output_tokens=None):
@@ -197,7 +219,8 @@ def _decode(output, *, call_number, max_output_tokens=None):
         calls.append(ResearchToolCall(f'codex-{call_number}-{index}', call['name'], call['arguments_json']))
     reply = ResearchModelReply(tuple(calls), usage['input_tokens'] + usage['output_tokens'])
     # Validate the original closed tool/argument contract, not a second schema.
-    agent._actions(reply, set())
+    for _, arguments in agent._actions(reply, set()):
+        _validate_json_text(arguments)
     return reply
 
 

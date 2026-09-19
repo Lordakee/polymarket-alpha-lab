@@ -108,3 +108,89 @@ def test_expiry_after_turn_commit_keeps_receipt_but_does_not_start_task(monkeypa
     again = turn(uncapped_authorization=p, allow_uncapped_costs=True)
     assert again.status == 'turn_already_reserved' and again.stored == result.stored
     assert h.calls == []
+
+
+@pytest.mark.parametrize('messages', [
+    r'[{"role":"user","content":"\ud800"}]',
+    r'[{"role":"user","content":"\udfff"}]',
+    r'[{"\ud800":"value"}]',
+    r'[{"role":"user","content":[{"text":"\udfff"}]}]',
+])
+def test_escaped_surrogate_in_input_rejected_before_transport(messages):
+    seen = []
+    class Host:
+        def run(self, request):
+            seen.append(request)
+            return output()
+    client = codex.CodexExecModel(model_id='model', transport=Host())
+    with pytest.raises(ValueError, match='call_failed'):
+        client.complete(messages_json=messages, max_output_tokens=100)
+    assert seen == []
+    with pytest.raises(ValueError, match='stopped'):
+        client.complete(messages_json='[{}]', max_output_tokens=100)
+
+
+@pytest.mark.parametrize('surrogate', ['\ud800', '\udfff'])
+@pytest.mark.parametrize('target', ['query', 'source_id', 'summary', 'source_ids'])
+def test_escaped_surrogate_in_nested_action_is_not_a_valid_reply(surrogate, target):
+    if target == 'query':
+        name, args = 'search_evidence', {'query': 'prefix' + surrogate}
+    elif target == 'source_id':
+        name, args = 'read_evidence', {'source_id': 'prefix' + surrogate}
+    else:
+        name = 'finish_research'
+        args = dict(probability_yes='0.6', confidence='0.4',
+                    summary='Synthetic evidence', source_ids=['source-1'])
+        args[target] = ['prefix' + surrogate] if target == 'source_ids' else 'prefix' + surrogate
+    # All three JSON envelopes are valid UTF-8 bytes; only the final nested
+    # action decoder exposes the invalid Unicode scalar. Do not alter the wire.
+    selected = dict(name=name, arguments_json=json.dumps(args, ensure_ascii=True))
+    with pytest.raises(ValueError, match='response_invalid'):
+        codex.decode_codex_exec_output(output(events([selected])), call_number=1)
+
+
+@pytest.mark.parametrize('messages', [
+    r'[{"role":"user","content":"\ud83d\ude00","measurement":0.125}]',
+    '[{"role":"user","content":"中文 😀","measurement":0.125}]',
+])
+def test_valid_unicode_and_decimal_input_preserve_exact_approved_text(messages):
+    request = codex.CodexExecInput('model', messages, 100)
+    assert request.messages_json == messages
+    assert json.loads(request.prompt_json)['messages_json'] == messages
+
+
+def test_valid_surrogate_pair_inside_action_still_decodes():
+    selected = dict(name='search_evidence', arguments_json=r'{"query":"BTC \ud83d\ude00"}')
+    reply = codex.decode_codex_exec_output(output(events([selected])), call_number=1)
+    assert json.loads(reply.calls[0].arguments_json)['query'] == 'BTC 😀'
+
+
+@pytest.mark.parametrize('number', [0, 1])
+@pytest.mark.parametrize('surrogate', ['\ud800', '\udfff'])
+def test_invalid_nested_reply_captures_failure_and_replays_without_host(monkeypatch, number, surrogate):
+    h = Harness(monkeypatch)
+    request = req(number)
+    source_id = request.intake.task.evidence[0].source_id
+    seen = []
+    class Host:
+        def run(self, item):
+            seen.append(item)
+            if len(seen) == 1:
+                return output(events([action('read_evidence', {'source_id': source_id})]))
+            args = dict(probability_yes='0.6', confidence='0.4', summary='bad' + surrogate,
+                        source_ids=[source_id])
+            selected = dict(name='finish_research', arguments_json=json.dumps(args, ensure_ascii=True))
+            return output(events([selected]))
+    def factory(team):
+        assert team == request.intake.team_id
+        return codex.CodexExecModel(model_id=request.model_id, transport=Host())
+    result = run(h, request=request, model_factory=factory)
+    assert result.status == 'captured'
+    research = result.record.run.research
+    assert research.status == 'failed' and research.reason_code == 'model_failed'
+    assert research.summary == '' and research.source_ids == ()
+    assert research.model_calls == 2 and research.total_tokens == 120
+    assert len(seen) == 2 and h.events == ['claim', 'capture']
+    assert result.request.content_sha256 == request.content_sha256
+    replay = run(h, request=request, model_factory=lambda _: pytest.fail('replayed host'))
+    assert replay == result and len(seen) == 2

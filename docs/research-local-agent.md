@@ -183,3 +183,27 @@ verifiable; the counterexample is retained in the review test module. A third
 synthetic CLI probe still emitted the missing Code Mode companion error despite
 an explicit feature setting; the decoder rejected it without stripping the error.
 This is an incomplete probe runtime, not proof every Codex installation fails.
+
+
+### Additional separate self-review: nested Unicode (2026-09-19)
+
+A fresh review of PR #60 head `61b260dd41285e59b5587381bacd025f1bbf6385`
+reproduced **12 failing / 3 passing** counterexamples: UTF-8-valid JSON can contain
+an escaped unpaired surrogate that becomes invalid text only after a nested
+parse. Validating only the message/stream envelope admitted four invalid input
+forms and eight invalid evidence-action argument forms. The protocol now checks
+all decoded input strings/keys and the original validator's decoded action
+arguments before a host call or valid reply. No character replacement, transcript
+re-encoding, precision conversion or relaxation of the action schema is used.
+Valid Chinese text, emoji, surrogate pairs and Decimal-bearing original input
+remain byte-for-byte unchanged. These cases stay in the existing review module
+already selected by Windows native CI. No host, database codec or migration changes.
+
+This is another separate same-assistant source/negative-test review, not external
+certification. The earlier local exploratory full run overlapped review edits and
+is NOT final-tree acceptance evidence. Final frozen-tree local and hosted results,
+source hashes and any remaining failures are recorded in the PR before merge.
+Four additional BTC/ETH capture/replay checks retain the original failed result
+without invalid summary text or a second host entry. Nineteen added regressions
+cover this correction in total. All real-host/persistence/usage acceptance limits
+above remain open.
