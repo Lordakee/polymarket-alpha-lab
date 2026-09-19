@@ -50,6 +50,10 @@ def test_paper_capture_upgrade_atomic_replay_rejection_and_history_preservation(
     shutil.copytree(ROOT/'database',root/'database')
     shutil.copytree(ROOT/'supabase/migrations',root/'supabase/migrations')
     manifest=json.loads((root/'database/migrations.lock.json').read_text())
+    # Preserve the historical 66->67 proof, excluding newer catalog tails.
+    for later in manifest['migrations'][67:]:
+        (root/'supabase/migrations'/later['name']).unlink()
+    manifest=dict(manifest,migrations=manifest['migrations'][:67])
     assert len(manifest['migrations'])==67 and manifest['migrations'][-1]['name']==TAIL
     (root/'supabase/migrations'/TAIL).unlink()
     (root/'database/migrations.lock.json').write_text(json.dumps(dict(manifest,migrations=manifest['migrations'][:-1])))
@@ -63,7 +67,7 @@ def test_paper_capture_upgrade_atomic_replay_rejection_and_history_preservation(
             assert old.record.run.research.status=='completed'
             identity=db._state()
         shutil.copyfile(ROOT/'supabase/migrations'/TAIL,root/'supabase/migrations'/TAIL)
-        shutil.copyfile(ROOT/'database/migrations.lock.json',root/'database/migrations.lock.json')
+        (root/'database/migrations.lock.json').write_text(json.dumps(manifest))
         assert db.migrate()['migrations_applied']==1
         assert db.migrate()['migrations_applied']==0
         saved=[]

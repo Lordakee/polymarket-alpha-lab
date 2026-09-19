@@ -97,7 +97,7 @@ def test_paper_operator_capture_replay_inspect_and_rejection(tmp_path, monkeypat
         return json.loads(child.stdout)
 
     try:
-        assert db.initialize(port=port)['migrations_applied'] == 67
+        assert db.initialize(port=port)['migrations_applied'] == 68
         with db.session() as session:
             identity = db._state()
             originals, scenarios = [], []
@@ -137,7 +137,7 @@ def test_paper_operator_capture_replay_inspect_and_rejection(tmp_path, monkeypat
                 assert session.inspect_paper_research(record_id=spec.record_id).scenario == spec
             assert db._psql(identity, 'SELECT count(*) FROM research_capture.paper_simulations;') == '2'
             assert db._psql(identity, 'SELECT count(*) FROM research_capture.attempts;') == '2'
-            assert db._psql(identity, 'SELECT count(*) FROM project_private.migrations;') == '67'
+            assert db._psql(identity, 'SELECT count(*) FROM project_private.migrations;') == '68'
         assert db.status()['instance_id'] == identity['instance_id']
         print('native paper operator: PASS; explicit capture, replay/conflict, rejection, restart/readback, unchanged originals')
     finally:

@@ -157,6 +157,11 @@ def test_native_old_backup_restore_requires_explicit_catalog_extension_and_migra
     manifest_file = root / 'database/migrations.lock.json'
     manifest_bytes = manifest_file.read_bytes()
     manifest = json.loads(manifest_bytes)
+    # This remains the original 66->67 catalog-extension proof.
+    for later in manifest['migrations'][67:]:
+        (root/'supabase/migrations'/later['name']).unlink()
+    manifest = dict(manifest, migrations=manifest['migrations'][:67])
+    manifest_bytes = json.dumps(manifest).encode()
     tail = '20260915020000_research_paper_simulations.sql'
     assert len(manifest['migrations']) == 67 and manifest['migrations'][-1]['name'] == tail
     (root / 'supabase/migrations' / tail).unlink()

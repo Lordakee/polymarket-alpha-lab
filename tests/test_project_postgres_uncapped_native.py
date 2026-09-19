@@ -96,7 +96,7 @@ def test_uncapped_claims_codex_protocol_stop_restart_and_process_loss(tmp_path, 
         return CodexExecModel(model_id='synthetic-function-model', transport=SyntheticExec(calls, lock))
     def forbidden(_): pytest.fail('original history must not start another model')
     try:
-        assert db.initialize(port=port)['migrations_applied'] == 67
+        assert db.initialize(port=port)['migrations_applied'] == 68
         identity = db._state()
         with db.session() as research:
             prior = research.run_research(request=prepared(1900), model_factory=lambda _:Model())
@@ -185,7 +185,7 @@ def test_uncapped_claims_codex_protocol_stop_restart_and_process_loss(tmp_path, 
             assert repeated == incomplete
             assert research.inspect(record_id=prior.request.record_id).record == prior.record
             assert research.inspect(record_id=original.request.record_id).record == original.record
-            assert db._psql(identity, 'SELECT count(*) FROM project_private.migrations;') == '67'
+            assert db._psql(identity, 'SELECT count(*) FROM project_private.migrations;') == '68'
             assert db._psql(identity, 'SELECT count(*) FROM research_capture.model_call_reservations;', owner=False) == '0'
         assert db.status()['instance_id'] == identity['instance_id'] and db.status()['status'] == 'stopped'
         print('native uncapped: PASS; BTC/ETH protocol, two turns, restart, one claim, zero fake permits, incomplete retained')

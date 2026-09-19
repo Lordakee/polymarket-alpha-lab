@@ -82,6 +82,19 @@ class ProjectResearchSession:
         from polymarket_alpha_lab.research_uncapped_runner import run_uncapped_research_with_psycopg
         return self._call(run_uncapped_research_with_psycopg, **configuration)
 
+    def create_uncapped_authorization(self, *, authorization, allow_authorization_write=False):
+        from polymarket_alpha_lab.research_uncapped_audit_store import create_uncapped_authorization_with_psycopg
+        return self._call(create_uncapped_authorization_with_psycopg, authorization=authorization,
+                          allow_authorization_write=allow_authorization_write)
+
+    def inspect_uncapped_authorization(self, *, authorization_id):
+        from polymarket_alpha_lab.research_uncapped_audit_store import load_uncapped_authorization_with_psycopg
+        return self._call(load_uncapped_authorization_with_psycopg, authorization_id=authorization_id)
+
+    def inspect_uncapped_calls(self, *, record_id):
+        from polymarket_alpha_lab.research_uncapped_audit_store import inspect_uncapped_calls_with_psycopg
+        return self._call(inspect_uncapped_calls_with_psycopg, record_id=record_id)
+
     def inspect(self, *, record_id):
         from polymarket_alpha_lab.research_execution_psycopg import inspect_captured_research_with_psycopg
         return self._call(inspect_captured_research_with_psycopg, record_id=record_id)

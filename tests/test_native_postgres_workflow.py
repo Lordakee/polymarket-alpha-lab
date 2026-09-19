@@ -76,6 +76,9 @@ ADMISSION_FILES = (
 
 # Explicit WP02 additions; every original selector remains unchanged.
 UNCAPPED_FILES = ('tests/test_research_uncapped.py', 'tests/test_research_codex_exec.py', 'tests/test_research_codex_uncapped_review.py', 'tests/test_project_postgres_uncapped_native.py')
+AUDIT_FILES = ('tests/test_research_uncapped_audit.py',
+               'tests/test_research_uncapped_audit_review.py',
+               'tests/test_project_postgres_uncapped_audit_native.py')
 
 def matrix(source):
     value, end = json.JSONDecoder().raw_decode(source.split('        include: ', 1)[1])
@@ -87,7 +90,7 @@ def matrix(source):
         assert type(partition['files']) is list and partition['files']
         assert all(type(f) is str and re.fullmatch(r'tests/test_[a-z0-9_]+[.]py', f)
                    for f in partition['files'])
-    assert Counter(f for p in value for f in p['files']) == Counter([*ORIGINAL_FILES, SELF, *ADMISSION_FILES, *UNCAPPED_FILES])
+    assert Counter(f for p in value for f in p['files']) == Counter([*ORIGINAL_FILES, SELF, *ADMISSION_FILES, *UNCAPPED_FILES, *AUDIT_FILES])
     return value
 
 
@@ -96,6 +99,7 @@ def test_native_partitions_preserve_exact_original_inventory():
     assert len(ORIGINAL_FILES) == len(set(ORIGINAL_FILES)) == 51
     assert set(ADMISSION_FILES) <= set(parts[2]['files'])
     assert set(UNCAPPED_FILES) <= set(parts[2]['files'])
+    assert set(AUDIT_FILES) <= set(parts[2]['files'])
     for part in parts:
         assert all((ROOT / path).is_file() for path in part['files'])
     # Both new unit modules and the REAL backup proof stay together on Windows.
