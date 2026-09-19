@@ -744,3 +744,11 @@ failure logs and unexecuted items are recorded in the implementation PR. This is
 same-assistant separate review, not an external/fresh-agent audit or guarantee
 of zero defects. All 68 SQL files, original audit/request codecs and dependencies
 remain unchanged; no user installation/database/credential or live-order work.
+
+
+The first candidate's hosted selection exposed an existing coverage gap: changes
+to the shipped Codex/process modules alone did not trigger the actual-kit job.
+Eight path-selection counterexamples failed before the correction. The existing
+kit workflow now includes these source/test families and this guide, retaining
+all prior filters, test commands, deadlines and permissions. No manual rerun or
+old-head success substitutes for the corrected final tree's full verification.
