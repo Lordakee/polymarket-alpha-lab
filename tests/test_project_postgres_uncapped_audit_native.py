@@ -230,6 +230,7 @@ def test_audited_uncapped_upgrade_calls_uncertainty_and_process_loss(tmp_path, m
             assert s.inspect(record_id=old.request.record_id).record == old.record
             assert db._psql(identity,'SELECT count(*) FROM research_capture.model_call_reservations;') == '0'
         _prove_actual_process_transport(db, parent)
+        _prove_claude_process_transport(db, parent)
         assert db.status()['status'] == 'stopped'
         print('native uncapped audit: PASS;67->68,immutable authorization,call-before-client,unknown ack/crash,no resend')
     finally:
@@ -290,5 +291,52 @@ def _prove_actual_process_transport(db, parent):
             # This is a new operation receipt over the SAME durable execution.
             # Compare every other field, not just the record or token count.
             assert replace(replay, status=result.status) == result
+            assert session.inspect_uncapped_calls(record_id=request.record_id) == audit
+    assert not list(work.iterdir())
+
+
+def _prove_claude_process_transport(db, parent):
+    """Original real DB + real synthetic process; NOT an official Claude CLI test."""
+    from polymarket_alpha_lab.research_claude_exec import ClaudeProcessModel
+    from tests.test_research_claude_exec import MODEL, action, envelope, wire, synthetic_spec
+    work = parent / 'Claude Synthetic Work'; work.mkdir()
+    originals = []
+    for number, team in enumerate(('crypto_btc', 'crypto_eth')):
+        for invalid in (False, True):
+            request = replace(prepared(6200+number*2+int(invalid), team), model_id=MODEL)
+            permission = authorization((request,), authorization_id='claude-native-'+str(number)+'-'+str(int(invalid)))
+            launched = []
+            with db.session() as session:
+                session.create_uncapped_authorization(authorization=permission, allow_authorization_write=True)
+                def factory(actual_team):
+                    assert actual_team == team
+                    def prepare_command(incoming):
+                        audit = session.inspect_uncapped_calls(record_id=request.record_id)
+                        assert len(audit.calls) == len(launched)+1
+                        assert len(audit.outcomes) == len(launched)
+                        launched.append(incoming)
+                        calls = ([action('read_evidence', source_id=sid) for sid in request.required_source_ids]
+                                 if len(launched) == 1 else [action('finish_research',
+                                     probability_yes='0.6', confidence='0.5', summary='Synthetic Claude protocol',
+                                     source_ids=list(request.required_source_ids))])
+                        response = envelope(calls, num_turns=2 if invalid else 1)
+                        return synthetic_spec(work, wire(response).stdout)
+                    return ClaudeProcessModel(model_id=MODEL, prepare_command=prepare_command, allow_process_start=True)
+                result = session.run_uncapped_research(request=request, authorization=permission,
+                    model_factory=factory, allow_model_calls=True, allow_uncapped_costs=True, require_durable_audit=True)
+                assert result.record.run.research.status == ('failed' if invalid else 'completed')
+                audit = session.inspect_uncapped_calls(record_id=request.record_id)
+                assert len(launched) == len(audit.calls) == len(audit.outcomes) == (1 if invalid else 2)
+                assert audit.to_dict()['reported_tokens_known_subset'] == (None if invalid else 52)
+                assert audit.to_dict()['actual_billed_micros'] is None
+                originals.append((request, permission, result, audit))
+            assert db.status()['status'] == 'stopped'
+    with db.session() as session:
+        for request, permission, original, audit in originals:
+            def forbidden(_): pytest.fail('replayed Claude process')
+            replay = session.run_uncapped_research(request=request, authorization=permission,
+                model_factory=forbidden, allow_model_calls=True, allow_uncapped_costs=True, require_durable_audit=True)
+            assert replay.status == 'already_captured'
+            assert replace(replay, status=original.status) == original
             assert session.inspect_uncapped_calls(record_id=request.record_id) == audit
     assert not list(work.iterdir())

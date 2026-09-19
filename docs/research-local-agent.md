@@ -752,3 +752,125 @@ Eight path-selection counterexamples failed before the correction. The existing
 kit workflow now includes these source/test families and this guide, retaining
 all prior filters, test commands, deadlines and permissions. No manual rerun or
 old-head success substitutes for the corrected final tree's full verification.
+
+
+## Claude Code alternative: explicit API-mode source adapter (2026-09-20)
+
+**Implemented here, but not an activated or certified official CLI:**
+`research_claude_exec.ClaudeProcessModel` and
+`research_claude_profile.ClaudeExecProfile` reuse the existing native process
+supervisor, original action validation, uncapped authorization and PostgreSQL
+call audit. The selected contract label is Claude Code **2.1.278**, model
+**claude-opus-5**, effort **max**. This is an explicit alternative already allowed
+by D1, never automatic fallback from Codex. The Codex SQLite finding remains open.
+
+### Operation and authentication
+
+The fixed command requests `--print --bare --restricted --no-session-persistence`,
+text stdin / JSON stdout, one turn, no built-in or MCP tools, no slash commands,
+no user/project settings and no permission-prompt host. Environment switches
+request zero API retries, no non-streaming fallback, compaction, title generation,
+attachments, background tasks, updates, telemetry, automatic memory or fast mode.
+Managed policy is not bypassed. No arbitrary extra flags or inherited environment
+are accepted. The declared command is not proof that all combinations of CLI and
+managed configuration enforce it.
+
+Unlike a logged-in interactive Claude session, **bare mode is an API-mode path**:
+it does not use the user's OAuth/keychain/subscription login. An explicitly
+approved local application supplies an in-memory API key callback; no key is
+requested in chat or searched in files/environment/keychains by this code. The
+factory requires both `allow_process_start=True` and `allow_api_key_use=True`.
+The callback is not invoked until the original audited call enters the client.
+Known incompatible stdin size, stop or changed profile contract blocks before
+key retrieval. Callbacks are trusted, bounded application code, not a sandbox.
+A slow callback is not covered by the process supervisor's later deadline.
+
+Public profile inputs include an explicit native executable and its SHA256,
+complete path-only environment including HOME/CLAUDE_CONFIG_DIR, dedicated
+working directory, HTTPS endpoint and original process limits. Endpoint userinfo,
+query strings, fragments and plaintext HTTP are rejected. No config file, schema
+file, gateway, installer or credential loader is created. The profile digest
+covers the public process/command/environment plus prompt/action protocol;
+credentials are excluded. The supplied key enters only the child environment,
+not argv, prompt, profile digest, result or a new audit field. It is NOT erased
+from memory or protected against privileged environment readers or a compromised
+CLI. This is not a general redactor for secrets echoed by external code.
+
+The application creates the existing UncappedResearchAuthorization with the exact
+`profile.contract_sha256`, model and original request hashes, explicitly stores
+that authorization in the SAME project PostgreSQL, obtains
+`claude_profile_factory(profile=..., authorization=..., api_key_supplier=...,
+allow_process_start=True, allow_api_key_use=True)`, and supplies it on the original
+`run_uncapped_research(..., require_durable_audit=True, allow_model_calls=True,
+allow_uncapped_costs=True)` path with the SAME authorization. This is a typed
+integration contract, not a ready-to-run real-provider command. The standalone
+operator script still does not activate a model client.
+
+### Strict result and usage semantics
+
+Only one JSON object of type `result`, successful subtype, exact false error,
+one turn and end-turn reason is accepted. No stderr bytes are accepted, since an
+unclassified warning may indicate incompatible flags/config. Missing or unknown
+keys, duplicate JSON keys, invalid Unicode at either nested boundary, mismatching
+model usage, permission denials, errors, deferred/structured tool work, trailing
+output, nonzero process exit and reported output overruns fail closed. The final
+`result` text must contain only the original closed `calls` action-data contract;
+the original research agent still checks evidence read/citation relationships.
+No output is repaired and no request/process is retried, resumed or substituted.
+
+This path deliberately omits CLI `--json-schema`: that feature has a separate
+structured-output retry mechanism. The host validates the returned action text
+once rather than permitting CLI-hosted repair turns. The original requested
+output limit is forwarded through CLAUDE_CODE_MAX_OUTPUT_TOKENS and checked again
+in reported usage. The official variable applies to **most** requests; neither
+this flag, the one-turn limit nor a CLI result proves exactly one external API
+submission or an all-inclusive pre-request token/monetary bound.
+
+Reported total tokens add uncached input, cache creation, cache read and output.
+Claude's cache counters are not Codex's input subsets. The single model breakdown
+must agree with those four totals; optional cache-creation splits must also agree.
+Optional cost estimates are validated but discarded, never persisted as verified
+charges. Invalid results retain unknown external usage in the original audit;
+zero research counters do not prove zero outside cost. Successful structural
+conversion does not guarantee a completed forecast.
+
+### Evidence, self-review and outstanding actual-CLI checks
+
+The official CLI reference, environment reference and SDK result parser informed
+this contract. An attempt to retrieve the official Linux binary was denied by the
+available download path and stopped: no mirror, alternate package or helper was
+used to work around it. **The official Claude Code binary was not executed here.**
+The release version/digest is metadata, not an attestation of an installed image.
+There is no demonstrated elimination of SQLite or other CLI-owned files yet.
+The no-session flag documents sessions, not every possible local state/log.
+
+Tests use synthetic keys, declared result envelopes and actual isolated Python
+subprocesses. The native PostgreSQL proof appends BTC/ETH success/failure cases,
+separate-transaction start visibility, reported-cache accounting, restart and
+original-ID replay with no extra process. It does not substitute a fake binary
+for an official-CLI persistence/network acceptance claim. No original native
+scenario, migration, dependency, deadline or old workflow selector is removed.
+Claude source/test paths are added to both native and actual-kit triggers.
+
+Separate same-assistant review reproduced six cases before correction: three
+unclassified-stderr acceptances, two known input-limit failures that entered the
+key callback unnecessarily, and a digest missing the static prompt/action
+protocol. Tests now retain those counterexamples. Earlier stop-method and audit
+projection mistakes were fixture errors, fixed using the original APIs, not
+product defects. Exact final full/frozen/Windows evidence belongs in the PR.
+No independent reviewer or zero-defect guarantee is claimed.
+
+**Still required before real use:** obtain an approved official binary, verify
+its flags/result shape and effective managed settings, inspect writes and network
+activity under fresh dedicated state directories, verify no hidden repair/retry/
+tool calls, validate actual model identity and provider usage, and resolve any
+persistence incompatibility under the existing PostgreSQL-only rule. No change to
+that rule or use of existing subscription credentials is implied. No user-local
+installation/database operation or real provider call occurred. G2–G6 stay open.
+
+Primary references checked 2026-09-20 (no new runtime dependency):
+- https://code.claude.com/docs/en/cli-reference
+- https://code.claude.com/docs/en/env-vars
+- https://code.claude.com/docs/en/headless
+- https://github.com/anthropics/claude-agent-sdk-python/blob/3cb0f73e6234408b5883b1e7e2875a46a3049cb9/src/claude_agent_sdk/_internal/message_parser.py
+- https://github.com/anthropics/claude-code/releases/tag/v2.1.278
