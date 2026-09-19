@@ -176,3 +176,22 @@ def test_windows_64bit_abi_layouts():
 def test_linux_leader_is_reaped_after_return(executable,tmp_path):
     child_pid=int(run(spec(executable,tmp_path,'import os;print(os.getpid())')).stdout)
     with pytest.raises(ChildProcessError): os.waitpid(child_pid,os.WNOHANG)
+
+
+@pytest.mark.parametrize('limit', [0, True, -1, 536870913])
+def test_invalid_explicit_image_limit(executable, tmp_path, limit):
+    with pytest.raises(ValueError):
+        spec(executable, tmp_path, max_executable_bytes=limit)
+
+
+def test_explicit_native_image_limit_boundary(executable, tmp_path, monkeypatch):
+    size = Path(executable[0]).stat().st_size
+    value = spec(executable, tmp_path, max_executable_bytes=size)
+    assert run(value, b'image-boundary').stdout == b'image-boundary'
+    monkeypatch.setattr(core, '_spawn', lambda _: pytest.fail('oversized image launched'))
+    with pytest.raises(core.ResearchProcessError):
+        run(replace(value, max_executable_bytes=size-1))
+
+
+def test_default_image_limit_is_not_silently_expanded(executable, tmp_path):
+    assert spec(executable, tmp_path).max_executable_bytes == 268435456

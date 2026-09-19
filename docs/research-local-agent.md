@@ -8,12 +8,12 @@ rotation. They reuse the original managed PostgreSQL session, immutable requests
 claim-before-model ordering and result capture. No second queue, backend,
 monetary reservation or reporting subsystem is introduced.
 
-**A real subprocess transport is shipped; no default approved Codex command
-profile or real provider activation is supplied.** `CodexProcessTransport` starts
+**A real subprocess transport and pinned restrictive command builder are shipped;
+no approved real-provider activation is supplied.** `CodexProcessTransport` starts
 one explicitly configured native command and connects it to `CodexExecModel`.
 It provides bounded pipe I/O and owned-process cleanup, not filesystem/network,
-CLI configuration/persistence or provider-output isolation. Those selected-version
-contracts still require review. The standalone task script has no configured real
+CLI configuration/persistence or provider-output isolation. The selected-version
+profile below has synthetic upstream evidence, not complete isolation approval. The standalone task script has no configured real
 client. G2/G3 remain open. See the concrete process section below.
 
 ## Permission without a fictitious budget
@@ -621,3 +621,126 @@ skips. Final frozen full results and actual Windows case inventories belong to
 the exact implementation PR revision; no old-head success replaces them.
 This review is by the same assistant in a separate pass, not an external reviewer.
 Primary reference for close/reuse behavior: https://peps.python.org/pep-0475/
+
+
+## Pinned restrictive command profile (WP-02; real activation still blocked)
+
+`research_codex_profile.CodexExecProfile` constructs one closed command for the
+explicit model label **gpt-5.6-sol**, Codex **0.155.1**. No fallback model/version,
+extra flags, shell, config loader, downloader, credential lookup or business store
+is added. This is an executable command builder, not a provider-authentication
+proxy or an assertion that the declared model label is the real serving model.
+
+The caller supplies an original `ResearchProcessSpec` containing only its ONE
+native image, explicit working directory, whole environment, image SHA256 and I/O
+limits, plus an exact schema-file path and explicit gateway URL. Only path-valued
+HOME/CODEX_HOME, USERPROFILE, SYSTEMROOT/WINDIR and TMPDIR/TMP/TEMP environment
+entries are admitted; HOME and CODEX_HOME are required. Parent variables, PATH,
+proxies, loader overrides, credentials and token-variable discovery are not
+inherited. The URL permits HTTPS or literal `http://127.0.0.1:<port>` only, with no
+userinfo/query/fragment. This syntax restriction does not authenticate a gateway
+or redact secrets a caller incorrectly places in a path.
+
+The generated `exec` command uses strict config, ignores the selected user config,
+uses ephemeral mode, JSON events, no colors, the supplied output schema and stdin.
+Closed TOML overrides request max reasoning/default service tier, read-only tool
+sandbox, no interactive approvals, no project documents/environment injection,
+no history/memories/skills instructions/hooks/plugins/MCP/app/shell/search tools,
+no telemetry/update checks, and zero HTTP/SSE retries on the one explicit Responses
+gateway. These are configured switches, **not a blanket guarantee about inherited
+managed configuration or all model-dependent tool behavior**. Required organization
+policies are not bypassed: no ignore-rules, bypass-hook-trust or dangerous sandbox
+flag is used. An empty config table is not an effective-config certificate.
+
+The existing action schema must match byte-for-byte at command preparation. Its
+read is size-bounded and regular-file checked; it is not recreated or repaired.
+The approved prompt remains exact stdin bytes, never an argument or journal.
+There is no invented provider-side `max_output_tokens` flag: the original decoder
+still rejects REPORTED output overrun only after the operation. Neither image nor
+schema verification closes concurrent path replacement, ancestor symlinks,
+dependency loading or malicious in-process mutation. A separately reviewed
+execution boundary is still required for real inputs.
+
+`profile.contract_sha256` covers the complete declared process/environment,
+version/model/URL/schema path, exact action schema and closed settings. It returns
+only a hash, not private paths or transcript. `codex_profile_factory` requires the
+same model and profile digest in an explicit copied uncapped authorization before
+any schema read or process launch, then supplies a fresh client per BTC/ETH task.
+Use it with the existing STORED authorization and `require_durable_audit=True`
+execution path. It does not create approval, waive expiry/request-roster checks,
+or make the legacy unaudited API an approved shortcut. The caller must supply
+that SAME reviewed authorization to both factory construction and execution.
+
+### Explicit executable size compatibility
+
+The official full Linux package's main image is **269,273,536 bytes**, larger
+than the original 256 MiB image ceiling. `ResearchProcessSpec.max_executable_bytes`
+now permits an explicitly declared ceiling up to **512 MiB**, retaining **256 MiB
+as the unchanged default**. No bound is inferred from a file or automatically
+raised after rejection. Both initial file size and actual read bytes enforce the
+selected limit; regular/native-image and SHA256 checks remain. This pins the
+selected image, not all companions/dependencies or filesystem state. Old callers
+retain their original ceiling; explicit limits also enter the profile digest.
+
+### Actual pinned upstream experiment and limits
+
+Source `be2951ea34f0d295ed0becf97079f92fa5f6950e` was obtained as a complete
+blob-verified public archive; the full public Linux release package was downloaded
+without execution, size/SHA256 checked, then tested only with synthetic data,
+new temporary HOME/CODEX_HOME/work directories and an in-memory loopback service.
+No user files/authentication or real model/market requests were used. Unlike the
+earlier standalone-image probe, this full package includes its Code Mode companion.
+
+Package: `codex-package-x86_64-unknown-linux-musl.tar.gz`, 138,838,055 bytes,
+SHA256 `a65b895c6ac1a73629bbe4b864640c86133e94a43b4d67b3103044e1a306d5a2`.
+Main image SHA256 `0753dfe1d8b87a52436deb13eb1c549661ef4c84fee2c5aa688385eebeccb761`;
+companion SHA256 `210ab8ebaebf4bc1421d9e30339c858354ca35fa91e2f87f4c6204e5382f8a63`.
+These are the observed Linux package, not Windows artifact hashes or a reproducible
+build attestation. Binaries are not added to this repository/distribution.
+
+Five opt-in tests use the ACTUAL process transport plus strict decoder: success,
+429, 500, malformed action and unapproved tool action. Each observed exactly one
+loopback POST; request body contained the intended model label and exact schema,
+no offered tool list or Authorization header, the approved prompt sentinel and
+neither the synthetic parent instruction nor hostile user-config sentinel. Valid
+reply reports 120 tokens; every invalid scenario closes the original client and
+never resends. This is not proof of arbitrary managed-config isolation, every
+possible network operation, actual provider billing or Windows CLI acceptance.
+
+**Ephemeral mode still produced SQLite state files in these successful probes.**
+This is explicit negative evidence, not an allowed project persistence backend.
+No real research profile is activated; no flags are invented or errors suppressed
+to pretend zero-persistence. Next resolve CLI-owned state/context isolation within
+the owner's persistence rules (or verify an allowed alternative CLI) before real
+activation. An empty working directory is not proof of no other filesystem writes.
+
+The native test `tests/test_research_codex_profile_native.py` is skipped unless
+`POLYMARKET_ALPHA_LAB_TEST_CODEX_PROFILE_NATIVE=1` and an explicitly supplied
+`POLYMARKET_ALPHA_LAB_TEST_CODEX_PACKAGE_ROOT` points to that hash-checked Linux
+package. It downloads nothing; the sanitized full verifier removes the opt-in.
+Its optional tests are distinct from default Windows/native database checks.
+The two new unit/review modules run in the existing Windows dispatch partition.
+
+### Separate self-review and retained first failures
+
+The original image check was directly observed rejecting the full official image
+before launch. Six interface acceptance tests were RED before adding the explicit
+field; those missing-field failures are not six separate production defects.
+The first profile test run had 2 failed/48 passed because its fixture used the
+old synthetic model and imported the base instead of audit harness. Both fixture
+mistakes were corrected; the original expected audited behavior remained.
+
+The first full-package diagnostic stream contained deprecated-feature/unknown-model
+errors despite exit zero. The decoder correctly refused it. The final profile
+uses the current `hooks` switch and the explicitly reviewed model metadata; no
+error item is stripped. A distinct self-review then reproduced 4 failures/6valid
+controls: JSON surrogate-pair escaping was invalid TOML for non-BMP URL text, and
+schema-close errors could mask original interruptions. UTF-8 scalar serialization
+and original-cancellation precedence fix them without replacing approved text,
+retrying a descriptor close or weakening their assertions.
+
+Final local/hosted exact-tree tests, independent frozen-copy review, original
+failure logs and unexecuted items are recorded in the implementation PR. This is
+same-assistant separate review, not an external/fresh-agent audit or guarantee
+of zero defects. All 68 SQL files, original audit/request codecs and dependencies
+remain unchanged; no user installation/database/credential or live-order work.
