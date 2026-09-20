@@ -1,0 +1,86 @@
+name: Offline Claude probe environment
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'scripts/claude_probe_environment.py'
+      - 'scripts/inspect_claude_probe_host.ps1'
+      - 'tests/test_claude_probe_environment.py'
+      - 'docs/handoffs/2026-09-20-probe-preparation.md'
+      - '.github/workflows/claude-probe-environment.yml'
+permissions:
+  contents: read
+jobs:
+  windows-environment:
+    runs-on: windows-2025
+    timeout-minutes: 15
+    env:
+      PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
+      PYTHONUTF8: '1'
+      UV_LINK_MODE: copy
+      UV_PYTHON_PREFERENCE: only-managed
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e
+        with:
+          version: '0.10.0'
+          enable-cache: false
+      - name: Install CI-owned locked build environment (not the user's tools)
+        shell: pwsh
+        run: |
+          uv sync --locked --extra dev --python 3.12
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Test preparation and real PowerShell synthetic host queries
+        shell: pwsh
+        run: |
+          .\.venv\Scripts\python.exe -m pytest -q tests/test_claude_probe_environment.py --junitxml="$env:RUNNER_TEMP/preparation-tests.xml" 2>&1 | Tee-Object "$env:RUNNER_TEMP/preparation-tests.log"
+          exit $LASTEXITCODE
+      - name: Build offline runtime without a vendor image
+        shell: pwsh
+        run: |
+          .\.venv\Scripts\python.exe -B scripts/claude_probe_environment.py build --source . --output "$env:RUNNER_TEMP/probe-environment-build" --allow-ci-build 2>&1 | Tee-Object "$env:RUNNER_TEMP/environment-build.log"
+          exit $LASTEXITCODE
+      - name: Verify two relocated runtimes with loopback only (not a Sandbox or vendor test)
+        shell: pwsh
+        run: |
+          $Build = Join-Path $env:RUNNER_TEMP 'probe-environment-build'
+          $Zip = Join-Path $Build 'claude-probe-environment.zip'
+          $Hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $Zip).Hash.ToLowerInvariant()
+          foreach ($n in @(1,2)) {
+            $Stage = Join-Path $env:RUNNER_TEMP ('probe-environment-relocated-' + $n)
+            .\.venv\Scripts\python.exe -B scripts/claude_probe_environment.py stage --archive $Zip --sha256 $Hash --destination $Stage
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $Root = Join-Path $Stage 'input'
+            $Receipt = Join-Path $Stage 'output/environment.json'
+            & (Join-Path $Root 'python/python.exe') -I -S -B (Join-Path $Root 'probe-environment.py') selftest --root $Root --receipt $Receipt
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            Copy-Item -LiteralPath $Receipt -Destination (Join-Path $env:RUNNER_TEMP ('relocated-proof-' + $n + '.json'))
+          }
+      - name: Preserve exact tracked source
+        shell: pwsh
+        run: |
+          git diff --check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git diff --exit-code
+          exit $LASTEXITCODE
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: probe-environment-proof-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/preparation-tests.xml
+            ${{ runner.temp }}/preparation-tests.log
+            ${{ runner.temp }}/environment-build.log
+            ${{ runner.temp }}/relocated-proof-*.json
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: probe-environment-package-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/probe-environment-build/claude-probe-environment.zip
+            ${{ runner.temp }}/probe-environment-build/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 7
