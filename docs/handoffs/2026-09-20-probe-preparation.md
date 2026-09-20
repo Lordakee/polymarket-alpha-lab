@@ -110,3 +110,21 @@ explicit here. The install reference distinguishes feature enablement/reboot fro
 opening an already enabled Sandbox. Old instructions banning any preparatory work
 are not a requirement to block harmless read-only discovery forever; actual OS
 changes remain an explicit owner/admin decision. G2–G6 stay open.
+
+
+## CI scheduling follow-up (source unit, not a Sandbox result)
+
+Run35510808899 was cancelled at the original15-minute job budget. Its52tests
+passed and the ZIP built; only the first stage completed. The first smoke was
+interrupted during its final full payload verification, and the second relocation
+was never reached. No package was accepted or published for local use.
+
+Build and the two unchanged relocation/smoke checks now have separate15-minute
+Windows jobs. Both relocation jobs download the SAME built ZIP, verify its recorded
+SHA256, then stage and check the relocated runtime with all original payload,
+version, dependency, origin and loopback checks. No source/runtime/manifest check
+is removed. Original windows-environment remains a fail-closed aggregation over
+build plus BOTH copies. The declared maximum Windows runner budget increases from
+one15-minute job to three15-minute jobs (45aggregate runner-minutes), not a faster
+runtime claim or a hidden retry. Each first result is retained. A built artifact
+alone is not delivery acceptance; only a verified successor may be published.
