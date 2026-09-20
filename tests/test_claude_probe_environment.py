@@ -132,7 +132,7 @@ def test_expanding_mapping_path_rejected_before_creation(tmp_path):
 
 def test_xml_escapes_paths_without_expanding_scope():
     doc=ET.fromstring(e.sandbox_xml(Path('C:/clean & dedicated/input'),Path('C:/clean & dedicated/output')))
-    assert doc.findtext('MappedFolders/MappedFolder/HostFolder')=='C:/clean & dedicated/input'
+    assert doc.findtext('MappedFolders/MappedFolder/HostFolder')==str(Path('C:/clean & dedicated/input'))
     assert len(doc.findall('MappedFolders/MappedFolder'))==2
 
 
