@@ -88,6 +88,8 @@ PROFILE_FILES = ('tests/test_research_codex_profile.py',
 
 CLAUDE_FILES = ('tests/test_research_claude_exec.py', 'tests/test_research_claude_profile.py', 'tests/test_research_claude_review.py')
 
+CLAUDE_PROBE_FILES = ('tests/test_claude_cli_probe.py', 'tests/test_claude_cli_probe_review.py')
+
 def matrix(source):
     value, end = json.JSONDecoder().raw_decode(source.split('        include: ', 1)[1])
     assert source.split('        include: ', 1)[1][end:].lstrip().startswith('runs-on:')
@@ -98,7 +100,7 @@ def matrix(source):
         assert type(partition['files']) is list and partition['files']
         assert all(type(f) is str and re.fullmatch(r'tests/test_[a-z0-9_]+[.]py', f)
                    for f in partition['files'])
-    assert Counter(f for p in value for f in p['files']) == Counter([*ORIGINAL_FILES, SELF, *ADMISSION_FILES, *UNCAPPED_FILES, *AUDIT_FILES, *PROCESS_FILES, *PROFILE_FILES, *CLAUDE_FILES])
+    assert Counter(f for p in value for f in p['files']) == Counter([*ORIGINAL_FILES, SELF, *ADMISSION_FILES, *UNCAPPED_FILES, *AUDIT_FILES, *PROCESS_FILES, *PROFILE_FILES, *CLAUDE_FILES, *CLAUDE_PROBE_FILES])
     return value
 
 
@@ -111,6 +113,7 @@ def test_native_partitions_preserve_exact_original_inventory():
     assert set(PROCESS_FILES) <= set(parts[2]['files'])
     assert set(PROFILE_FILES) <= set(parts[2]['files'])
     assert set(CLAUDE_FILES) <= set(parts[2]['files'])
+    assert set(CLAUDE_PROBE_FILES) <= set(parts[2]['files'])
     for part in parts:
         assert all((ROOT / path).is_file() for path in part['files'])
     # Both new unit modules and the REAL backup proof stay together on Windows.
