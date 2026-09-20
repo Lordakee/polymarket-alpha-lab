@@ -202,3 +202,39 @@ def test_unreadable_walk_never_silently_certifies_partial_inventory(monkeypatch,
         yield from original(path,**kwargs)
     monkeypatch.setattr(e.os,'walk',failing_walk)
     with pytest.raises(OSError):e.verify(root)
+
+
+def test_committed_source_bytes_survive_windows_checkout_eol_conversion(tmp_path):
+    repository = tmp_path/'git-source'; repository.mkdir()
+    def git(*args):
+        return subprocess.check_output(['git','-C',str(repository),'-c','core.autocrlf=true',*args],
+                                       stderr=subprocess.PIPE)
+    git('init')
+    names = ('src/sample.py', *e.SOURCE_EXTRA)
+    for name in names:
+        target=repository/name;target.parent.mkdir(parents=True,exist_ok=True)
+        target.write_bytes(b'# committed LF\nsecond line\n')
+    git('add','.')
+    git('-c','user.name=Fixture','-c','user.email=fixture@invalid','commit','-m','synthetic source')
+    for name in names:
+        (repository/name).write_bytes(b'# committed LF\r\nsecond line\r\n')
+    # Compare content after Git's own EOL conversion, not transient index stat cache.
+    assert git('diff','--exit-code')==b''
+    selected=dict(e.committed_source_files(git))
+    assert set(selected)==set(names)
+    assert all(data==b'# committed LF\nsecond line\n' for data in selected.values())
+
+
+def test_export_substitution_cannot_silently_change_committed_bytes(tmp_path):
+    repository=tmp_path/'git-source';repository.mkdir()
+    def git(*args):
+        return subprocess.check_output(['git','-C',str(repository),*args],stderr=subprocess.PIPE)
+    git('init')
+    for name in ('src/sample.py', *e.SOURCE_EXTRA):
+        target=repository/name;target.parent.mkdir(parents=True,exist_ok=True)
+        target.write_bytes(b'# $Format:%H$\n')
+    (repository/'.gitattributes').write_bytes(b'src/sample.py export-subst\n')
+    git('add','.')
+    git('-c','user.name=Fixture','-c','user.email=fixture@invalid','commit','-m','synthetic export substitution')
+    with pytest.raises(ValueError,match='source_changed'):
+        tuple(e.committed_source_files(git))
