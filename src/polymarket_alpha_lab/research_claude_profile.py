@@ -151,6 +151,11 @@ def claude_profile_factory(*, profile, authorization, api_key_supplier,
         if (request.model_id != profile.model_id or profile.contract_sha256 != digest
                 or len(request.prompt_json.encode('utf-8')) > profile.process.max_stdin_bytes):
             raise ValueError('research_claude_profile_input_incompatible')
+        # Preparation above may take time. Recheck immediately before entering
+        # the credential callback, not only at the model's earlier admission.
+        # This is cooperative stop handling, not an atomic cancel/callback lock.
+        if stop is not None and stop.is_stopped():
+            raise ValueError('research_claude_profile_stopped')
         # No stored credential lookup here. The owning local application chooses
         # its explicit supplier; supplier exceptions are fixed-code upstream.
         return profile.prepare(request, api_key=api_key_supplier())
