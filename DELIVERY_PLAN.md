@@ -1529,3 +1529,73 @@ owner 于同日批准第 45 节停止点的两项解锁；执行结果如下：
 旧安装包、原物理根和原环境保持保全，D1—D3 不重开。
 
 **WP-06 仍 PARTIAL，G6 未关闭，V1 仍 1／6。**
+
+## 52. WP-02：官方探针运行配置生成（OFFLINE ONLY；G2 未关闭）
+
+规划来源：`D:/Projects/.agent-artifacts/polymarket-alpha-lab/wp02-hn-planning/codex-plan-01.md`
+（组合规划评审 PASS；Node H 固定三文件范围，Node N 外部文档不在本节点）。实施基线
+`2b45a440065919daa2c177f2a1920c9141152c91`（树 `8797c10dfc9ad3632c38f7503edadb109c214ab6`，
+2026-09-25）；实施前复核第 51 节在位、本节取 §52，工作树干净。实施提交／树与最终
+评审提交／树待协调者提交后固定，不在本节自引用未发生的提交。
+
+本节点为源码级配置生成器，不启动任何子进程、不打开沙箱、不执行官方镜像
+（stand-in `claude.exe` 仅作字节与清单校验，从不执行）。新增两个子命令：
+`official-control`（校验 IMAGE 后独占创建新 CONTROL 目录，仅含生成的
+`official-probe.cmd`）与 `official-config`（校验既有载荷／镜像／控制目录后独占
+创建空 OUTPUT 与独立 `.wsb`；`--isolated-host-attested` 为必需的操作人显式断言，
+非程序化隔离证明）。启动器为固定 ASCII/CRLF 模板，仅替换已校验 SHA256 与十进制
+字节数，五个探针变量名／语义与 `tests/claude_cli_probe.py` 及原生测试一致，输出
+守卫先于重定向、回执 `'x'` 独占创建。镜像清单 `image-manifest.json`（≤4,096 字节、
+恰五键、ASCII 严格 JSON，复用既有重复键／非有限数拒绝）经独立有界流式读取校验
+长度与 SHA256，不经过 150 MB 载荷读取路径（`MAX_FILE` 等准备限额未变）。校验
+序列：词法分类（%、控制字符、遍历、UNC／共享、设备与扩展命名空间、盘符相对、
+ADS、DOS 设备含扩展变体、非法 Win32 字符、尾点／尾空格；Windows 生产路径须
+本地固定盘，只读盘类型查询）→ lstat 逐级普通目录祖先（不创建调用方父链）→
+含别名（大小写拼写与目录身份，覆盖 8.3／junction 类身份别名）的映射互斥
+（official-control 内先行施加 IMAGE/CONTROL 互斥，创建后复查边界）→ 未改动的
+`verify(INPUT)` 加启动器所需清单成员 → 镜像与控制目录逐字节等于
+`official_launcher(manifest)` → OUTPUT／`.wsb` 目标 `lexists` 新异（含断链）与
+`.wsb` 后缀且置于四个映射之外 → 独占创建，部分失败保留尝试不清理不复用。
+`.wsb` 为四映射结构（input／image／control 只读，output 可写），八项加固值与
+既有准备配置一致，logon 命令固定为
+`C:\Windows\System32\cmd.exe /d /c C:\pal-control\official-probe.cmd --isolated-host-attested`。
+既有 `SMOKE_CMD`、`sandbox_xml`、stage／verify／selftest／build 行为与输出格式
+字节兼容；既有 ZIP 与已 staging 载荷不受影响。配置检查为快照而非锁；授权启动
+预检须重查固定文件与映射。
+
+- 焦点测试（净化环境：unset `PYTEST_ADDOPTS`／`PYTEST_PLUGINS`／`PYTHONPATH`／
+  `PYTHONHOME`，`PYTHONUTF8=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1
+  POLYMARKET_ALPHA_LAB_RUN_SUPABASE_SMOKE=0`；`.venv/Scripts/python.exe -m pytest
+  tests/test_claude_probe_environment.py tests/test_claude_cli_probe.py
+  tests/test_claude_cli_probe_review.py -q`）：174 passed（本文件 119＋邻接探针
+  55），exit 0；计划表 19 个新测试函数（含全部参数化用例）全部通过。首轮 8 项
+  失败均为测试侧缺陷（launcher 用例误含 schema 键、missing-key 用例 update 无法
+  删键、分块常数补丁名不一致、CLI 参数切片多删一项、partial-IO 用例比较路径
+  写错、legacy 用例 payload 目录冲突），修正后通过；首次失败与修正如实保留。
+- 独立于 pytest 的 Windows 端到端 CLI 冒烟：以 `-I -S -B` 按计划拟用形态调用两个
+  新子命令（合成镜像，离线），均 exit 0，状态
+  `official_control_generated_not_launched`／`official_config_generated_not_launched`，
+  `official_cli_executed=false`、`activation_authorized=false`；`.wsb` 1,366 字节
+  全 ASCII、launcher 1,677 字节、OUTPUT 为空目录。
+- 协调者单独标注自审／测试轮：待协调者执行（合并前完成）。
+- 全量净化套件（同净化环境）：`.venv/Scripts/python.exe scripts/verify_local.py
+  --full`：39,655 passed、41 skipped（全部为既有显式 opt-in／权限门控 skip）、
+  0 failed，耗时 1,850.80 秒，含 compileall 编译验证，`PASS: full local
+  verification`，exit 0。预期中至多出现的 5 项已知环境性 CRLF 迁移回执失败
+  本轮未复现（本轮零失败，无需调查）。
+- 编译：`py_compile` 两个改动 `.py` 通过。新增 1,002 行全部 ASCII；两 `.py` 文件
+  保持纯 CRLF；本节追加保持 LF。
+- `git diff --check` 干净；diff 恰为 3 文件（`scripts/claude_probe_environment.py`、
+  `tests/test_claude_probe_environment.py`、`DELIVERY_PLAN.md` 仅追加）；新增行
+  凭据扫描零命中（按形态扫描，未输出任何匹配值）。
+- CodeGraph 同步：工具不可用，门禁记录为受阻（自 2026-09-11 既有状态，
+  先例第 46—51 节）。
+- 独立只读评审：PASS（2026-09-25；函数级对照方案逐项核验、19 项测试名齐全且对抗性抽查通过、启动器模板逐字节比对、174 焦点复跑通过；两项 MINOR 均为测试质量缺口——缩写拒绝用例不具判别力与一处恒真断言——已修复并复跑，无 BLOCKER/MAJOR）。
+- 推送提交与适用 CI 证据：待协调者提交／推送后在回报中固定。
+
+官方用例执行：0/6；官方二进制执行：false；激活授权：false。WP-02：PARTIAL；
+G2：未关闭；V1 完成门 1／6。
+
+剩余：获批隔离主机（第 49 节既有结论不变：本机无 Sandbox、共享开发服务器非
+隔离主机）；所需准备／溯源／执行证据；官方六案执行与对账；实际身份／使用验证；
+获批真实运行操作人组装（含两团队并发前提）与 G2 验收。D1—D3 不重开。

@@ -1,13 +1,20 @@
-"""Offline TEST-environment packaging/preparation; never a vendor CLI launcher.
+"""Offline TEST packaging/preparation plus official-run CONFIG GENERATION.
 
+Preparation modes (build/stage/verify/selftest) keep their reviewed behavior
+and never launch a vendor CLI. The official-control/official-config generators
+likewise execute no program: they only validate reviewed inputs and write the
+control launcher and a separate four-mapping .wsb. OPENING that generated
+configuration is what runs the official launcher inside Windows Sandbox.
 Build only on a disposable Windows CI host. Stage/verify use stdlib and never
 modify global tools, OS features, firewall or project business installations.
-The generated Sandbox has no network/clipboard and maps only fresh input/output
-folders. A smoke check is not official-image acceptance or an isolation proof.
+Generated Sandboxes have no network/clipboard and map only the reviewed
+input/image/control/output folders. A smoke check or generated configuration
+is not official-image acceptance or an isolation proof.
 """
 from __future__ import annotations
 
 import argparse
+import ctypes
 from hashlib import sha256
 import importlib.metadata as metadata
 import io
@@ -33,6 +40,59 @@ SOURCE_EXTRA = ('tests/__init__.py', 'tests/claude_cli_probe.py',
 SMOKE_CMD = (b'@echo off\r\nC:\\pal-input\\python\\python.exe -I -S -B '
              b'C:\\pal-input\\probe-environment.py selftest --root C:\\pal-input '
              b'--receipt C:\\pal-output\\environment.json\r\n')
+
+OFFICIAL_IMAGE_MEMBER = 'claude.exe'
+OFFICIAL_MANIFEST_NAME = 'image-manifest.json'
+OFFICIAL_MANIFEST_MAX_BYTES = 4096
+OFFICIAL_IMAGE_MAX_BYTES = 536870912
+OFFICIAL_IMAGE_VERSION = '2.1.278'
+OFFICIAL_IMAGE_KEYS = {'schema', 'path', 'sha256', 'bytes', 'version'}
+OFFICIAL_IMAGE_INVENTORY = [OFFICIAL_IMAGE_MEMBER, OFFICIAL_MANIFEST_NAME]
+OFFICIAL_LAUNCHER_NAME = 'official-probe.cmd'
+OFFICIAL_CONTROL_INVENTORY = [OFFICIAL_LAUNCHER_NAME]
+OFFICIAL_IMAGE_CHUNK = 1048576
+OFFICIAL_DEVICE_STEMS = {'CON', 'PRN', 'AUX', 'NUL',
+    *(f'COM{i}' for i in range(1, 10)), *(f'LPT{i}' for i in range(1, 10))}
+OFFICIAL_LAUNCHER_TEMPLATE = (
+    b'@echo off\r\n'
+    b'setlocal EnableExtensions DisableDelayedExpansion\r\n'
+    b'if not "%~1"=="--isolated-host-attested" exit /b 2\r\n'
+    b'if not "%~2"=="" exit /b 2\r\n'
+    b'if not "%*"=="--isolated-host-attested" exit /b 2\r\n'
+    b'\r\n'
+    b'cd /d "C:\\pal-output"\r\n'
+    b'if errorlevel 1 exit /b 2\r\n'
+    b'if exist "C:\\pal-output\\launcher-tmp" exit /b 2\r\n'
+    b'if exist "C:\\pal-output\\pytest-tmp" exit /b 2\r\n'
+    b'if exist "C:\\pal-output\\pytest.log" exit /b 2\r\n'
+    b'if exist "C:\\pal-output\\junit.xml" exit /b 2\r\n'
+    b'if exist "C:\\pal-output\\exit-code.txt" exit /b 2\r\n'
+    b'mkdir "C:\\pal-output\\launcher-tmp"\r\n'
+    b'if errorlevel 1 exit /b 2\r\n'
+    b'\r\n'
+    b'set "POLYMARKET_ALPHA_LAB_CLAUDE_PROBE=1"\r\n'
+    b'set "POLYMARKET_ALPHA_LAB_CLAUDE_PROBE_IMAGE=C:\\pal-claude-image\\claude.exe"\r\n'
+    b'set "POLYMARKET_ALPHA_LAB_CLAUDE_PROBE_SHA256={image_sha256}"\r\n'
+    b'set "POLYMARKET_ALPHA_LAB_CLAUDE_PROBE_BYTES={image_bytes}"\r\n'
+    b'set "POLYMARKET_ALPHA_LAB_CLAUDE_PROBE_ISOLATED_HOST=1"\r\n'
+    b'set "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1"\r\n'
+    b'set "PYTEST_ADDOPTS="\r\n'
+    b'set "PYTEST_PLUGINS="\r\n'
+    b'set "TMP=C:\\pal-output\\launcher-tmp"\r\n'
+    b'set "TEMP=C:\\pal-output\\launcher-tmp"\r\n'
+    b'\r\n'
+    b'"C:\\pal-input\\python\\python.exe" -I -S -B -c "import sys; sys.path[:0]='
+    b"[r'C:\\pal-input\\source',r'C:\\pal-input\\source\\src',"
+    b"r'C:\\pal-input\\python\\Lib\\site-packages']; import pytest; "
+    b"code=int(pytest.main(['-q','-s','--tb=short','-o','junit_family=legacy',"
+    b"'-p','no:cacheprovider',r'--basetemp=C:\\pal-output\\pytest-tmp',"
+    b"r'--junitxml=C:\\pal-output\\junit.xml',"
+    b"r'C:\\pal-input\\source\\tests\\test_research_claude_profile_native.py'])); "
+    b"receipt=open(r'C:\\pal-output\\exit-code.txt','x',encoding='ascii'); "
+    b"receipt.write(str(code)+'\\n'); receipt.close(); raise SystemExit(code)\" "
+    b'>"C:\\pal-output\\pytest.log" 2>&1\r\n'
+    b'exit /b %ERRORLEVEL%\r\n'
+)
 
 
 def fail(code):
@@ -356,6 +416,313 @@ def build(source, output, allow_ci_build=False):
                 source_commit=commit, source_tree=tree, official_cli_included=False)
 
 
+def _identity(info):
+    """Identity tuple used by every official-generation boundary comparison."""
+    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns)
+
+
+def _windows_path_problem(text):
+    """Pure lexical classification of a production Windows path spelling."""
+    if type(text) is not str or not text or len(text) > 4096:
+        return 'not_a_bounded_string'
+    if text.startswith('\\\\'):
+        return 'unc_or_device_namespace'
+    if any(c == '%' or ord(c) < 32 or ord(c) == 127 for c in text):
+        return 'expansion_or_control'
+    drive = re.match(r'[A-Za-z]:(.*)$', text, re.DOTALL)
+    if drive is None or drive.group(1)[:1] not in ('\\', '/'):
+        return 'not_drive_rooted'
+    for part in re.split(r'[\\/]+', drive.group(1)):
+        if not part:
+            continue
+        if part in ('.', '..'):
+            return 'traversal_component'
+        if re.search(r'[:*?"<>|]', part):
+            return 'win32_forbidden_character'
+        if part.endswith((' ', '.')):
+            return 'trailing_dot_or_space'
+        if part.split('.')[0].upper() in OFFICIAL_DEVICE_STEMS:
+            return 'dos_device_name'
+    return None
+
+
+def _windows_local_drive(text):
+    """Read-only drive-type query; production paths need a known local drive."""
+    if os.name != 'nt':
+        return False
+    try:
+        return ctypes.windll.kernel32.GetDriveTypeW(text[:2] + '\\') == 3
+    except Exception:
+        return False
+
+
+def _official_path_argument(value, *, file=False):
+    """Lexically classify a supplied official path before any filesystem access."""
+    text = str(value)
+    if os.name == 'nt':
+        if _windows_path_problem(text) is not None:
+            fail('official_path_invalid')
+        if not _windows_local_drive(text):
+            fail('official_drive_unavailable')
+    elif (not text.startswith('/') or len(text) > 4096
+            or any(c == '%' or ord(c) < 32 or ord(c) == 127 for c in text)
+            or any(part in ('', '.', '..') for part in text.split('/')[1:])):
+        fail('official_path_invalid')
+    path = Path(text)
+    if not path.is_absolute():
+        fail('official_path_invalid')
+    if file and path.suffix != '.wsb':
+        fail('destination_suffix_invalid')
+    return path
+
+
+def _plain_ancestry(path):
+    """Every selected parent must already exist as a plain directory."""
+    try:
+        for parent in (path.parent, *path.parent.parents):
+            plain(parent, directory=True)
+    except OSError:
+        fail('ancestor_missing')
+
+
+def _directory_chain(path):
+    """Own identity plus plain ancestors; identity-aware alias detection."""
+    own, ancestors = None, set()
+    for index, node in enumerate((path, *path.parents)):
+        try:
+            identity = _identity(plain(node, directory=True))
+        except (OSError, ValueError):
+            continue
+        if index == 0:
+            own = identity
+        else:
+            ancestors.add(identity)
+    return own, ancestors
+
+
+def _mapping_spelling(path):
+    """Case- and separator-normalized spelling for mapping overlap checks."""
+    return os.path.normpath(str(path)).replace('\\', os.sep).replace('/', os.sep).casefold()
+
+
+def _reject_mapping_overlap(*paths):
+    """Refuse equal or nested mappings by spelling or directory identity.
+
+    Identity comparison catches case and Windows short-name aliases of existing
+    directories that spelling alone cannot; shared plain ancestors are allowed.
+    """
+    spellings = [_mapping_spelling(path) for path in paths]
+    chains = [_directory_chain(path) for path in paths]
+    for first in range(len(paths)):
+        for second in range(first + 1, len(paths)):
+            a, b = spellings[first], spellings[second]
+            if a == b or a.startswith(b + os.sep) or b.startswith(a + os.sep):
+                fail('mapping_overlap')
+            own_a, ancestors_a = chains[first]
+            own_b, ancestors_b = chains[second]
+            if own_a is not None and (own_a in ancestors_b or own_a == own_b):
+                fail('mapping_overlap')
+            if own_b is not None and own_b in ancestors_a:
+                fail('mapping_overlap')
+
+
+def _exclusive_write(path, data):
+    """Exclusive creation only; a failed attempt is preserved, never retried."""
+    with path.open('xb') as stream:
+        stream.write(data)
+
+
+def _bounded_image_digest(path, expected_bytes):
+    """Bounded streamed length/digest; growth or truncation is refused."""
+    if (type(expected_bytes) is not int
+            or not 1 <= expected_bytes <= OFFICIAL_IMAGE_MAX_BYTES):
+        fail('image_manifest_invalid')
+    digest, read = sha256(), 0
+    with path.open('rb') as stream:
+        while block := stream.read(OFFICIAL_IMAGE_CHUNK):
+            read += len(block)
+            if read > expected_bytes:
+                fail('image_size_mismatch')
+            digest.update(block)
+        after = os.fstat(stream.fileno())
+    if read != expected_bytes:
+        fail('image_size_mismatch')
+    return digest.hexdigest(), _identity(after)
+
+
+def _official_image(image_dir):
+    """Exact inventory, bounded strict manifest, stable streamed hash/size."""
+    try:
+        plain(image_dir, directory=True)
+        entries = sorted(os.listdir(image_dir))
+    except OSError:
+        fail('image_unavailable')
+    if entries != sorted(OFFICIAL_IMAGE_INVENTORY):
+        fail('image_inventory_invalid')
+    manifest_path = image_dir/OFFICIAL_MANIFEST_NAME
+    if plain(manifest_path).st_size > OFFICIAL_MANIFEST_MAX_BYTES:
+        fail('image_manifest_too_large')
+    try:
+        text = file_bytes(manifest_path).decode('ascii')
+    except UnicodeDecodeError:
+        fail('image_manifest_invalid')
+    try:
+        value = strict_json(text)
+    except ValueError:
+        fail('image_manifest_invalid')
+    if (type(value) is not dict or set(value) != OFFICIAL_IMAGE_KEYS
+            or value['schema'] != 'claude-probe-image-v1'
+            or value['path'] != OFFICIAL_IMAGE_MEMBER
+            or type(value['sha256']) is not str
+            or re.fullmatch('[0-9a-f]{64}', value['sha256']) is None
+            or type(value['bytes']) is not int
+            or not 1 <= value['bytes'] <= OFFICIAL_IMAGE_MAX_BYTES
+            or type(value['version']) is not str or value['version'] != OFFICIAL_IMAGE_VERSION):
+        fail('image_manifest_invalid')
+    image_path = image_dir/OFFICIAL_IMAGE_MEMBER
+    before = plain(image_path)
+    if before.st_size != value['bytes']:
+        fail('image_size_mismatch')
+    digest, after = _bounded_image_digest(image_path, value['bytes'])
+    if digest != value['sha256']:
+        fail('image_hash_mismatch')
+    if _identity(before) != after or _identity(before) != _identity(plain(image_path)):
+        fail('image_changed')
+    return value
+
+
+def official_launcher(image_manifest):
+    """Pure deterministic ASCII/CRLF launcher; only digest and size vary."""
+    if type(image_manifest) is not dict:
+        fail('launcher_manifest_invalid')
+    digest, size = image_manifest.get('sha256'), image_manifest.get('bytes')
+    if (type(digest) is not str or re.fullmatch('[0-9a-f]{64}', digest) is None
+            or type(size) is not int or not 1 <= size <= OFFICIAL_IMAGE_MAX_BYTES):
+        fail('launcher_manifest_invalid')
+    data = (OFFICIAL_LAUNCHER_TEMPLATE
+            .replace(b'{image_sha256}', digest.encode('ascii'))
+            .replace(b'{image_bytes}', str(size).encode('ascii')))
+    if b'{' in data or any(len(line) >= 8191 for line in data.split(b'\r\n')):
+        fail('launcher_invalid')
+    return data
+
+
+def _official_control(control_dir, image_manifest):
+    """CONTROL must be exactly the generated launcher; anything else is refused."""
+    try:
+        plain(control_dir, directory=True)
+        entries = sorted(os.listdir(control_dir))
+    except OSError:
+        fail('control_invalid')
+    if entries != sorted(OFFICIAL_CONTROL_INVENTORY):
+        fail('control_invalid')
+    data = file_bytes(control_dir/OFFICIAL_LAUNCHER_NAME)
+    if not data or data != official_launcher(image_manifest):
+        fail('control_mismatch')
+    return data
+
+
+def _official_payload_ready(value):
+    """The launcher needs manifest-inventoried payload layout members."""
+    names = {entry['path'] for entry in value['files']}
+    required = {'python/python.exe',
+                'source/tests/test_research_claude_profile_native.py'}
+    if not required <= names:
+        fail('payload_layout_unsupported')
+    for prefix in ('source/', 'source/src/', 'python/Lib/site-packages/'):
+        if not any(name.startswith(prefix) for name in names):
+            fail('payload_layout_unsupported')
+
+
+def official_sandbox_xml(input_dir, image_dir, control_dir, output_dir):
+    """Four-mapping hardened Sandbox XML for the official probe run."""
+    root = ET.Element('Configuration')
+    for key, value in (('Networking', 'Disable'), ('ClipboardRedirection', 'Disable'),
+            ('vGPU', 'Disable'), ('AudioInput', 'Disable'), ('VideoInput', 'Disable'),
+            ('PrinterRedirection', 'Disable'), ('ProtectedClient', 'Enable'), ('MemoryInMB', '4096')):
+        ET.SubElement(root, key).text = value
+    mapped = ET.SubElement(root, 'MappedFolders')
+    for host, guest, readonly in ((input_dir, r'C:\pal-input', 'true'),
+                                 (image_dir, r'C:\pal-claude-image', 'true'),
+                                 (control_dir, r'C:\pal-control', 'true'),
+                                 (output_dir, r'C:\pal-output', 'false')):
+        # Sandbox expands percent variables; XML escaping does not disable that.
+        if '%' in str(host) or any(ord(c) < 32 for c in str(host)):
+            fail('mapping_path_invalid')
+        folder = ET.SubElement(mapped, 'MappedFolder')
+        for key, value in (('HostFolder', str(host)), ('SandboxFolder', guest), ('ReadOnly', readonly)):
+            ET.SubElement(folder, key).text = value
+    command = ET.SubElement(root, 'LogonCommand')
+    ET.SubElement(command, 'Command').text = (
+        r'C:\Windows\System32\cmd.exe /d /c C:\pal-control\official-probe.cmd'
+        r' --isolated-host-attested')
+    return ET.tostring(root, encoding='ascii', xml_declaration=True)
+
+
+def official_control(image_dir, destination):
+    """Validate IMAGE, exclusively create CONTROL, write the launcher; no launch."""
+    image_dir = _official_path_argument(image_dir)
+    destination = _official_path_argument(destination)
+    _plain_ancestry(image_dir)
+    value = _official_image(image_dir)
+    _plain_ancestry(destination)
+    if os.path.lexists(destination):
+        fail('destination_exists')
+    _reject_mapping_overlap(image_dir, destination)
+    launcher = official_launcher(value)
+    try:
+        destination.mkdir()
+    except FileExistsError:
+        fail('destination_exists')
+    plain(destination, directory=True)
+    _reject_mapping_overlap(image_dir, destination)
+    _exclusive_write(destination/OFFICIAL_LAUNCHER_NAME, launcher)
+    return dict(status='official_control_generated_not_launched',
+                image_sha256=value['sha256'], image_bytes=value['bytes'],
+                image_version=value['version'], official_cli_executed=False,
+                activation_authorized=False)
+
+
+def official_config(payload_root, image_dir, control_dir, output_dir, destination,
+                    *, isolated_host_attested=False):
+    """Coordinate validations, then exclusively create OUTPUT and the .wsb."""
+    if isolated_host_attested is not True:
+        fail('isolated_host_attestation_required')
+    payload_root = _official_path_argument(payload_root)
+    image_dir = _official_path_argument(image_dir)
+    control_dir = _official_path_argument(control_dir)
+    output_dir = _official_path_argument(output_dir)
+    destination = _official_path_argument(destination, file=True)
+    _plain_ancestry(payload_root)
+    _official_payload_ready(verify(payload_root))
+    _plain_ancestry(image_dir)
+    value = _official_image(image_dir)
+    launcher = official_launcher(value)
+    _plain_ancestry(control_dir)
+    _official_control(control_dir, value)
+    _plain_ancestry(output_dir)
+    if os.path.lexists(output_dir):
+        fail('output_dir_exists')
+    _plain_ancestry(destination)
+    if os.path.lexists(destination):
+        fail('destination_exists')
+    _reject_mapping_overlap(payload_root, image_dir, control_dir, output_dir,
+                            destination)
+    try:
+        output_dir.mkdir()
+    except FileExistsError:
+        fail('output_dir_exists')
+    plain(output_dir, directory=True)
+    _reject_mapping_overlap(payload_root, image_dir, control_dir, output_dir)
+    _reject_mapping_overlap(output_dir, destination)
+    _exclusive_write(destination, official_sandbox_xml(payload_root, image_dir,
+                                                       control_dir, output_dir))
+    return dict(status='official_config_generated_not_launched',
+                image_sha256=value['sha256'], image_bytes=value['bytes'],
+                image_version=value['version'], official_cli_executed=False,
+                activation_authorized=False)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest='command', required=True)
@@ -366,11 +733,27 @@ def main():
     p.add_argument('--sha256', required=True); p.add_argument('--destination', type=Path, required=True)
     p = sub.add_parser('build'); p.add_argument('--source', type=Path, required=True)
     p.add_argument('--output', type=Path, required=True); p.add_argument('--allow-ci-build', action='store_true')
+    p = sub.add_parser('official-control', allow_abbrev=False)
+    p.add_argument('--image-dir', type=Path, required=True)
+    p.add_argument('--destination', type=Path, required=True)
+    p = sub.add_parser('official-config', allow_abbrev=False)
+    p.add_argument('--payload-root', type=Path, required=True)
+    p.add_argument('--image-dir', type=Path, required=True)
+    p.add_argument('--control-dir', type=Path, required=True)
+    p.add_argument('--output-dir', type=Path, required=True)
+    p.add_argument('--destination', type=Path, required=True)
+    p.add_argument('--isolated-host-attested', action='store_true')
     args = parser.parse_args()
     try:
         if args.command == 'build': result = build(args.source, args.output, args.allow_ci_build)
         elif args.command == 'stage': result = stage(args.archive, args.sha256, args.destination)
         elif args.command == 'selftest': result = selftest(args.root, args.receipt)
+        elif args.command == 'official-control':
+            result = official_control(args.image_dir, args.destination)
+        elif args.command == 'official-config':
+            result = official_config(args.payload_root, args.image_dir, args.control_dir,
+                                     args.output_dir, args.destination,
+                                     isolated_host_attested=args.isolated_host_attested)
         else:
             value = verify(args.root)
             result = dict(status='verified_not_activated', source_commit=value['source_commit'])
