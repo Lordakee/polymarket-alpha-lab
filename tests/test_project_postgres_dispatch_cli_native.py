@@ -16,7 +16,9 @@ import uuid
 
 import pytest
 
+from polymarket_alpha_lab import research_capture_psycopg as capture_db
 from polymarket_alpha_lab import research_dispatch_cli as cli
+from polymarket_alpha_lab import research_model_budget_runner
 from polymarket_alpha_lab.project_postgres import files
 from polymarket_alpha_lab.project_postgres.runtime import import_runtime_directory
 from polymarket_alpha_lab.project_postgres.server import ProjectPostgres
@@ -38,10 +40,10 @@ def allowance(name, requests, calls):
 
 
 def run_args(turn, *, rotation='operator', batches=('operator-btc', 'operator-eth'),
-             budget='operator-budget', tasks=2):
+             budget='operator-budget', tasks=2, workers=1):
     return ['run-turn', '--rotation-id', rotation, '--turn-id', turn,
         *sum((['--batch-id', name] for name in batches), []), '--budget-id', budget,
-        '--max-tasks', str(tasks), '--max-workers', '1', '--allow-model-calls']
+        '--max-tasks', str(tasks), '--max-workers', str(workers), '--allow-model-calls']
 
 
 def invoke(root, args, **kwargs):
@@ -62,6 +64,67 @@ raise SystemExit(main(['run-turn','--rotation-id','crash-operator','--turn-id','
     '--batch-id','operator-crash','--budget-id','operator-crash-budget',
     '--max-tasks','1','--max-workers','1','--allow-model-calls'],
     default_root=Path(sys.argv[1]),model_factory=factory))
+'''
+
+# Workers are threads in one CLI child; a worker that calls os._exit kills the
+# whole process, so the durable DB state is reconciled with one flushed stdout
+# witness emitted before the exit. argv: [1] isolated project root, [2] source
+# checkout root (only for importing the synthetic tests.Model fixture).
+_MULTI_CRASH = r'''
+import json, os, sys, threading
+from pathlib import Path
+sys.path.insert(0, sys.argv[2])
+from tests.test_team_research_cross_source import Model
+from polymarket_alpha_lab import research_capture_psycopg as capture_db
+from polymarket_alpha_lab import research_execution_psycopg as execution
+from polymarket_alpha_lab import research_model_budget_runner as budget_runner
+from polymarket_alpha_lab.research_dispatch_cli import main
+
+barrier = threading.Barrier(2)
+peer_committed = threading.Event()
+lock = threading.Lock()
+entries, identities, committed = [], [], []
+real_budgeted = budget_runner.run_budgeted_research_with_psycopg
+real_capture = execution._capture
+
+def budgeted_spy(dsn, **kwargs):
+    with lock:
+        entries.append(kwargs['request'].record_id)
+    return real_budgeted(dsn, **kwargs)
+
+def capture_spy(dsn, state, run):
+    result = real_capture(dsn, state, run)
+    if result.status == 'captured':
+        with lock:
+            committed.append(state.request.record_id)
+        peer_committed.set()
+    return result
+
+budget_runner.run_budgeted_research_with_psycopg = budgeted_spy
+execution._capture = capture_spy
+
+def factory(team):
+    with lock:
+        identities.append([team, threading.get_ident()])
+    barrier.wait(timeout=30)
+    if team == 'crypto_btc':
+        return Model()
+    if team != 'crypto_eth':
+        raise AssertionError('unexpected team admitted')
+    if not peer_committed.wait(timeout=30):
+        raise AssertionError('peer result never committed')
+    with lock:
+        witness = dict(execution_entries=sorted(entries),
+                       factory_identities=sorted(identities),
+                       committed_record_id=committed[0])
+    sys.stdout.write(json.dumps(witness) + '\n')
+    sys.stdout.flush()
+    os._exit(86)
+
+raise SystemExit(main(['run-turn','--rotation-id','operator-multi','--turn-id','multi-1',
+    '--batch-id','operator-multi-btc','--batch-id','operator-multi-eth',
+    '--budget-id','operator-multi-budget','--max-tasks','2','--max-workers','2',
+    '--allow-model-calls'], default_root=Path(sys.argv[1]), model_factory=factory))
 '''
 
 
@@ -183,6 +246,169 @@ def test_operator_rounds_stop_restart_failures_and_process_loss(tmp_path, monkey
         assert retained_budget['result']['policy_sha256'] == budget['result']['policy_sha256']
         assert len(made) == 5 and len(failures) == 1
         print('native task output: PASS; new empty turn committed, short output failed, exact replay, no new calls')
+        # Retained-result recovery: a capture that fails after a real model run
+        # keeps the ORIGINAL run only in memory; the existing capture-only API
+        # saves exactly that run without rerunning a model or new reservations.
+        retained_request = prepared(1304)
+        with db.session() as session:
+            session.enqueue_research_batch(batch=ResearchBatch('operator-retained', (retained_request,)),
+                allow_queue_write=True)
+            session.create_model_budget(policy=allowance('operator-retained-budget', (retained_request,), 3),
+                allow_budget_write=True)
+        retained_model = Model()
+        retained_results = []
+        real_budgeted = research_model_budget_runner.run_budgeted_research_with_psycopg
+        real_capture = capture_db.capture_research_with_psycopg
+        with monkeypatch.context() as patch:
+            def failing_capture(dsn, **kwargs):
+                if kwargs.get('record_id') == retained_request.record_id:
+                    raise RuntimeError('synthetic capture storage failure')
+                return real_capture(dsn, **kwargs)
+            def retaining_budgeted(dsn, **kwargs):
+                receipt = real_budgeted(dsn, **kwargs)
+                retained_results.append(receipt)
+                return receipt
+            patch.setattr(capture_db, 'capture_research_with_psycopg', failing_capture)
+            patch.setattr(research_model_budget_runner, 'run_budgeted_research_with_psycopg', retaining_budgeted)
+            code, failed = invoke(root, run_args('retained-1', rotation='operator-retained',
+                batches=('operator-retained',), budget='operator-retained-budget'),
+                model_factory=lambda _team: retained_model)
+        assert code == 1 and failed['result']['execution_invocations'] == 1
+        assert failed['result']['attempts'][0]['execution']['status'] == 'capture_failed'
+        assert failed['result']['attempts'][0]['execution']['research_status'] is None
+        assert 'pending_run' not in json.dumps(failed)
+        assert len(retained_results) == 1
+        retained = retained_results[0]
+        assert retained.status == 'capture_failed' and retained.record is None
+        assert retained.request.record_id == retained_request.record_id
+        assert retained.pending_run is not None and retained_model.calls == 3
+        with db.session() as session:
+            assert session.inspect_model_budget(budget_id='operator-retained-budget').reserved_calls == 3
+            outstanding = session.inspect(record_id=retained_request.record_id)
+            assert outstanding.status == 'incomplete' and outstanding.record is None
+            with pytest.raises(ResearchCaptureConflict, match='history_incomplete'):
+                session.evaluate()
+            recovered = session.retry_capture(request=retained.request, run=retained.pending_run)
+            assert recovered.status == 'captured' and recovered.record.run == retained.pending_run
+            repeated = session.retry_capture(request=retained.request, run=retained.pending_run)
+            assert repeated.status == 'already_captured' and repeated.record == recovered.record
+            assert retained_model.calls == 3
+            assert session.inspect_model_budget(budget_id='operator-retained-budget').reserved_calls == 3
+            assert len(session.evaluate().records) == 7
+        print('native retained result: PASS; capture failed once, original run saved by capture-only retry')
+        # Concurrent hard interruption: two CLI workers truly overlap (a
+        # two-party barrier both factory entries must cross), one result
+        # commits, then a worker kills the whole CLI child process. A genuinely
+        # lost result stays incomplete; replay is inert; a new turn drains only
+        # the pending work. No refund, no duplicate execution.
+        multi_requests = (prepared(1300, 'crypto_btc'), prepared(1301, 'crypto_eth'),
+                          prepared(1302, 'crypto_btc'), prepared(1303, 'crypto_eth'))
+        multi_batches = (ResearchBatch('operator-multi-btc', multi_requests[::2]),
+                         ResearchBatch('operator-multi-eth', multi_requests[1::2]))
+        with db.session() as session:
+            for batch in multi_batches:
+                session.enqueue_research_batch(batch=batch, allow_queue_write=True)
+            session.create_model_budget(policy=allowance('operator-multi-budget', multi_requests, 10),
+                allow_budget_write=True)
+
+        def multi_reservations(dsn):
+            def read(cursor):
+                cursor.execute('SELECT record_id,call_number,request_sha256,budget_id FROM '
+                    'research_capture.model_call_reservations WHERE record_id = ANY(%s) '
+                    'ORDER BY record_id, call_number', ([r.record_id for r in multi_requests],))
+                return cursor.fetchall()
+            return capture_db._local_transaction(dsn, read, readonly=True)
+
+        child = subprocess.run([sys.executable, '-I', '-c', _MULTI_CRASH, str(root), str(ROOT)],
+            capture_output=True, text=True, encoding='utf-8', env=files.clean_environment(), timeout=120)
+        assert child.returncode == 86, (child.stdout, child.stderr)
+        lines = [line for line in child.stdout.splitlines() if line.strip()]
+        assert len(lines) == 1, child.stdout
+        witness = json.loads(lines[0])  # Test evidence from the dead child, not a CLI receipt.
+        assert set(witness) == {'execution_entries', 'factory_identities', 'committed_record_id'}
+        assert sorted(witness['execution_entries']) == sorted(r.record_id for r in multi_requests[:2])
+        assert witness['committed_record_id'] == multi_requests[0].record_id
+        assert sorted(entry[0] for entry in witness['factory_identities']) == ['crypto_btc', 'crypto_eth']
+        assert len({entry[1] for entry in witness['factory_identities']}) == 2
+        db.down()
+        db = ProjectPostgres(root)
+        assert db.status()['instance_id'] == identity['instance_id']
+        with db.session() as session:
+            btc_snapshot = session.inspect_research_batch(batch_id='operator-multi-btc')
+            eth_snapshot = session.inspect_research_batch(batch_id='operator-multi-eth')
+            turn_one = session.inspect_research_turn(rotation_id='operator-multi', turn_id='multi-1')
+            reserved_now = session._call(multi_reservations)
+            claimed = sorted(e.request.record_id for snapshot in (btc_snapshot, eth_snapshot)
+                             for e in snapshot.executions if e is not None)
+            assert claimed == sorted(r.record_id for r in multi_requests[:2])
+            assert btc_snapshot.states() == ('captured', 'pending')
+            assert btc_snapshot.executions[0].record.run.research.status == 'completed'
+            assert btc_snapshot.executions[1] is None
+            assert eth_snapshot.states() == ('incomplete', 'pending')
+            assert eth_snapshot.executions[0].status == 'incomplete'
+            assert eth_snapshot.executions[0].record is None
+            assert eth_snapshot.executions[1] is None
+            assert eth_snapshot.to_dict()['items'][0]['worker_liveness'] == 'unknown'
+            stored = turn_one.turn
+            assert (stored.rotation_id, stored.turn_number, stored.start_slot) == ('operator-multi', 1, 0)
+            assert (stored.max_tasks, stored.max_workers, stored.chosen, stored.next_slot) == (2, 2, (0, 1), 2)
+            assert stored.roster == (('operator-multi-btc', multi_batches[0].content_sha256, 2),
+                                     ('operator-multi-eth', multi_batches[1].content_sha256, 2))
+            assert stored.request_keys == tuple((r.record_id, r.content_sha256) for r in multi_requests)
+            assert sorted(reserved_now) == sorted(
+                (r.record_id, number, r.content_sha256, 'operator-multi-budget')
+                for r, numbers in ((multi_requests[0], (1, 2, 3)), (multi_requests[1], (1,)))
+                for number in numbers)
+            multi_budget = session.inspect_model_budget(budget_id='operator-multi-budget')
+            assert (multi_budget.reserved_calls, multi_budget.reserved_micros) == (4, 400)
+        code, replayed = invoke(root, run_args('multi-1', rotation='operator-multi',
+            batches=('operator-multi-btc', 'operator-multi-eth'), budget='operator-multi-budget',
+            tasks=2, workers=2), model_factory=forbidden)
+        assert code == 0 and replayed['result']['status'] == 'turn_already_reserved'
+        assert replayed['result']['execution_invocations'] == 0
+        with db.session() as session:
+            assert session.inspect_research_turn(rotation_id='operator-multi', turn_id='multi-1') == turn_one
+            assert session.inspect_research_batch(batch_id='operator-multi-btc').executions == btc_snapshot.executions
+            assert session.inspect_research_batch(batch_id='operator-multi-eth').executions == eth_snapshot.executions
+            assert session._call(multi_reservations) == reserved_now
+        multi_entries = []
+        def multi_factory(team):
+            multi_entries.append(team)
+            return Model()
+        code, resumed = invoke(root, run_args('multi-2', rotation='operator-multi',
+            batches=('operator-multi-btc', 'operator-multi-eth'), budget='operator-multi-budget',
+            tasks=2, workers=2), model_factory=multi_factory)
+        assert code == 0 and resumed['result']['execution_invocations'] == 2
+        assert sorted(multi_entries) == ['crypto_btc', 'crypto_eth']
+        receipt_ids = sorted(attempt['execution']['record_id'] for attempt in resumed['result']['attempts'])
+        assert receipt_ids == sorted(r.record_id for r in multi_requests[2:])
+        assert sorted(witness['execution_entries'] + receipt_ids) == sorted(r.record_id for r in multi_requests)
+        with db.session() as session:
+            btc_final = session.inspect_research_batch(batch_id='operator-multi-btc')
+            eth_final = session.inspect_research_batch(batch_id='operator-multi-eth')
+            assert btc_final.states() == ('captured', 'captured')
+            assert eth_final.states() == ('incomplete', 'captured')
+            assert session.inspect_research_turn(rotation_id='operator-multi', turn_id='multi-2').turn.chosen == (2, 3)
+            assert btc_final.executions[0].record == btc_snapshot.executions[0].record
+            assert eth_final.executions[0] == eth_snapshot.executions[0]
+            completed = (btc_final.executions[0], btc_final.executions[1], eth_final.executions[1])
+            assert all(e.record is not None and e.record.run.research.status == 'completed'
+                       for e in completed) and len(completed) == 3
+            final_reserved = session._call(multi_reservations)
+            assert sorted(final_reserved) == sorted(
+                (r.record_id, number, r.content_sha256, 'operator-multi-budget')
+                for r, numbers in ((multi_requests[0], (1, 2, 3)), (multi_requests[1], (1,)),
+                                   (multi_requests[2], (1, 2, 3)), (multi_requests[3], (1, 2, 3)))
+                for number in numbers)
+            assert len(final_reserved) == 10
+            multi_budget = session.inspect_model_budget(budget_id='operator-multi-budget')
+            assert (multi_budget.reserved_calls, multi_budget.reserved_micros) == (10, 1000)
+            for snapshot, counts in ((btc_final, dict(pending=0, expired=0, incomplete=0, captured=2)),
+                                     (eth_final, dict(pending=0, expired=0, incomplete=1, captured=1))):
+                assert snapshot.to_dict()['state_counts'] == counts
+            with pytest.raises(ResearchCaptureConflict, match='history_incomplete'):
+                session.evaluate()
+        print('native multi-worker interruption: PASS; overlap proven, one committed, one lost, replay inert, new turn drained')
         with db.session() as session:
             old_record = session.inspect(record_id=requests[0].record_id).record
             crashed = (prepared(1200), prepared(1201, 'crypto_btc'))

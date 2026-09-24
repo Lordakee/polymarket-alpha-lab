@@ -401,6 +401,14 @@ Final-revision commands, exact counts, first failures, CI identifiers and skippe
 or unexecuted checks belong to the implementation PR and DELIVERY_PLAN.md. No
 local user's database, installed kit, credentials or real provider is exercised.
 
+The combined synthetic native scenario also runs a turn with `--max-workers 2`,
+proves overlapping worker admission, and commits one task before another worker
+terminates the CLI child process. Restart preserves the incomplete claim and all
+call reservations; same-turn replay executes nothing, while a new turn completes
+only pending tasks. Capture-only recovery requires the retained original run and
+cannot repair a lost result. G3 remains open pending the approved real-client
+evidence.
+
 
 ## Task-command output completion and shared stop
 
