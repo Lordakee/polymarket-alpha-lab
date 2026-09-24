@@ -31,12 +31,13 @@ def test_codex_node_push_policy_preserves_verified_push_gate():
     assert "python compile verification passes" in normalized
     assert "codegraph is synced" in normalized
     assert "secret scan finds no leaked credentials or tokens" in normalized
-    assert "post-node external review gate passes through claude code" in normalized
-    assert "claude-opus-5" in normalized
-    assert "thinking level `max`" in normalized
-    assert "if local claude code is unavailable" in normalized
+    assert (
+        "post-node external review gate passes through an independent read-only"
+        " review subagent"
+    ) in normalized
+    assert "if no independent review subagent can be dispatched" in normalized
     assert "treat the review gate as blocked" in normalized
-    assert "no fallback reviewer" in normalized
+    assert "there is no other reviewer under the current rules" in normalized
     # Research-client choices in the current owner override are not reviewers.
     # Preserve the historical review restriction below Scope, not a word ban
     # on unrelated, explicitly authorized client-selection instructions.
@@ -47,7 +48,8 @@ def test_codex_node_push_policy_preserves_verified_push_gate():
     _assert_phrases_appear_in_order(
         normalized,
         (
-            "the configured post-node external review gate passes through claude code",
+            "the configured post-node external review gate passes through an"
+            " independent read-only review subagent",
             "do not push half-finished work",
         ),
     )
@@ -69,27 +71,25 @@ def test_codex_node_push_policy_continues_after_verified_push_by_default():
     ) < normalized.index("## omo / sisyphus session workflow (historical)")
 
 
-def test_claude_review_monitoring_has_no_fixed_timeout_or_live_interruption():
+def test_review_subagent_monitoring_has_no_fixed_deadline_or_live_interruption():
     instructions, normalized = _agents_instructions()
 
-    assert "must not be wrapped in a fixed elapsed-time timeout" in normalized
-    assert "inspectable session" in normalized
-    assert "check them about every 30 seconds" in normalized
-    assert "process/session liveness" in normalized
-    assert "when available, stream growth or event count" in normalized
-    assert "stderr or terminal events, cpu, and network activity" in normalized
     assert (
-        "elapsed time alone or a quiet interval is not evidence of a stall"
+        "do not impose a fixed elapsed-time deadline on a review subagent"
         in normalized
     )
-    assert "do not interrupt, terminate, restart, duplicate, or replace it" in normalized
-    assert "do not route around" in normalized
-    assert "keep waiting and monitoring" in normalized
-    assert "act only on an explicit result or error" in normalized
-    assert "confirmed process/session exit" in normalized
-    assert "concrete auth/permission/provider failure" in normalized
-    assert "proven stall" in normalized
-    assert "newer user instruction" in normalized
+    assert "let it run to an explicit conclusion" in normalized
+    assert (
+        "do not interrupt, duplicate, or replace it while it is still working"
+        in normalized
+    )
+    assert "independent, freshly dispatched" in normalized
+    assert "had no role in planning or implementing" in normalized
+    assert "read-only" in normalized
+    assert "must not modify, create, or delete files" in normalized
+    assert "explicit verdict line" in normalized
+    assert "`verdict: pass`" in normalized
+    assert "`verdict: fail`" in normalized
 
 
 def test_agent_coordination_defaults_capture_parallel_cap_and_conflict_rule():
@@ -113,4 +113,6 @@ def test_research_client_choices_are_separate_from_review_policy():
     assert "self-review" in owner
     review = instructions.split("## review / audit defaults", 1)[1].split("\n## ", 1)[0]
     assert "opencode" not in review
-    assert "unless the user explicitly changes this rule again" in review
+    assert "independent, freshly dispatched read-only review subagent" in review
+    assert "had no role in the reviewed change" in review
+    assert "no other reviewer under the current rules" in review

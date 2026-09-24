@@ -318,10 +318,24 @@ def test_project_policy_freezes_sustained_parallel_development_iron_rule() -> No
         assert stale_text not in concurrency_text
 
 
-def test_project_policy_freezes_long_running_claude_review_monitoring() -> None:
+def test_project_policy_freezes_long_running_review_monitoring() -> None:
     for path in CLAUDE_REVIEW_MONITORING_PATHS:
         text = _normalized(_read(path))
 
+        if path == AGENT_POLICY_PATH:
+            # Owner rule change (2026-09-24): reviews run as independent
+            # read-only subagents. The no-fixed-deadline and no-live-
+            # interruption protections carry over in the new phrasing.
+            assert (
+                "Do not impose a fixed elapsed-time deadline on a review"
+                " subagent"
+            ) in text
+            assert "let it run to an explicit conclusion" in text
+            assert (
+                "do not interrupt, duplicate, or replace it while it is still"
+                " working"
+            ) in text
+            continue
         assert "must not be wrapped in a fixed elapsed-time timeout" in text
         assert "inspectable session" in text
         assert "check them about every 30 seconds" in text
