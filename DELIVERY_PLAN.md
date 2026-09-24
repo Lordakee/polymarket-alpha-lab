@@ -69,7 +69,7 @@ PR #26 的全量、Windows 和 kit 测试是组件工程证据，不是六个工
 | ID／工作包 | 当前状态 | 剩余缺口 | 依赖 | 完成证据 |
 | --- | --- | --- | --- | --- |
 | WP-01 候选到研究入口 | **DONE（G1）** | 有界发现、最新规则／观察时刻、一次完整预览和待审规格已接通；本项不包含模型授权或来源真伪认证 | 现有公开输入、PR #19／#20 门禁 | [PR #28](https://github.com/wmqfl861/polymarket-alpha-lab/pull/28)：52 项反例测试、三条 CI、真实 BTC／ETH 待审样例；详见第 10 节 |
-| WP-02 真实模型与预算 | **PARTIAL** | D1—D3 已明确；本次修复凭据／重定向和必引证据调用前边界。已实现显式无金额封顶 Python 执行路径及 Codex 事件协议转换；已补同库授权／逐次调用审计及真实原生子进程启动、I/O 限制和退出清理；已增加固定版本受控命令配置及官方完整包合成验证；已增加 Claude Code bare／不保存会话的显式 API 模式替代接线，复用审计及进程层；官方 Claude 二进制未实测，仍缺实际写入／上下文／提供商核验；Codex ephemeral 仍写 SQLite，禁止据此真实启用 | 先接 Codex CLI 的现有 factory 合同；不探测凭据；真实验收依赖具体本地配置和 WP-01 | G2：两团队分别至少一次获准真实研究；原失败保留；重复请求不再次调用模型；授权与使用可核对 |
+| WP-02 真实模型与预算 | **PARTIAL** | D1—D3 已明确；本次修复凭据／重定向和必引证据调用前边界。已实现显式无金额封顶 Python 执行路径及 Codex 事件协议转换；已补同库授权／逐次调用审计及真实原生子进程启动、I/O 限制和退出清理；已增加固定版本受控命令配置及官方完整包合成验证；已增加 Claude Code bare／不保存会话的显式 API 模式替代接线，复用审计及进程层；官方 Claude 二进制未实测，仍缺实际写入／上下文／提供商核验；Codex ephemeral 仍写 SQLite，禁止据此真实启用；隔离宿主待定（本机无 Sandbox 功能，第 49 节） | 先接 Codex CLI 的现有 factory 合同；不探测凭据；真实验收依赖具体本地配置和 WP-01 | G2：两团队分别至少一次获准真实研究；原失败保留；重复请求不再次调用模型；授权与使用可核对 |
 | WP-03 任务调度与恢复 | **PARTIAL** | 持久批次／公平轮转／共享额度已接统一受控入口：查询批次、轮次和预算，审核后显式入库批次／预算，显式运行一轮与停止恢复；独立脚本不装配真实客户端。同一合成 CLI 原生组合场景已补两工作者并发中断、领取不重放和额度不返还证明（第 47 节）。仍缺本地 Agent／实际使用核验及最终 G3 组合验收 | 复用现有领取／收录；先合成模型，真实运行依赖 WP-02 与已明确的 D3 | G3：两轮调度＋一次停机重启＋混合失败／中断场景，任务不丢失、不重复执行、不隐去 incomplete |
 | WP-04 结算闭环 | **PARTIAL** | 已接原预测／候选哈希绑定的人工确认入口，核对原规则、声明来源与分钟时刻，并复用原子结算保存；仍缺真实 BTC／ETH 前瞻预测、实际匹配来源和独立人工核验 | WP-01 支持事件；WP-02 真实记录；事件到期和独立人工核验 | G4：BTC／ETH 各至少一个真实事件保留预测到结算的完整证据；过期、争议、拒绝和未决路径可追踪 |
 | WP-05 研究到模拟评估 | **PARTIAL** | 已接同库模拟证据、审核结算损益下界、--settled-paper 评估及现有任务命令的保存／查询入口；全部尝试、未决和缺失仍保留。仍缺获准真实预测、真实输入／费率证据及完整操作验收；假设成本不等于账户收益，准入不保证提交确认先于截止 | WP-02、WP-04；订单簿和成本记录；可先做离线组合 | G5：两团队至少各一个完整工程样本；拒绝项、样本缺口、成本和时间均可复算，不据此声称策略有效 |
@@ -1410,3 +1410,43 @@ polymarket-alpha-lab 的 native-postgres.yml 上共确认三例
 
 **WP-06 仍 PARTIAL，G6 未关闭。** 安全数据版本切换实施与验收、获准配置、
 长期 Release 及既有 PS5.1 问题继续待办。D1—D3 的既有决定不重开。
+
+## 49. WP-02：主机检查执行结果、本机 Sandbox 不可用与开发服务器部署（G2 未关闭）
+
+基线 `4bb734db24faf587c5270e8a79032bc8829d6c78`，树
+`0241a5c247d5644261c6cad0f31cebc631d5d5a3`（2026-09-24）。本节为**协调者执行事实的
+记录**（操作结果与环境发现），不新增代码、测试或工作流，不改变任何验收条件。
+
+owner 于同日批准第 45 节停止点的两项解锁；执行结果如下：
+
+- **批准1（执行策略）已执行并验证**：`Set-ExecutionPolicy -Scope CurrentUser
+  RemoteSigned` 生效，仅 CurrentUser 作用域，其余作用域未动。`scripts/
+  inspect_claude_probe_host.ps1` 随即成功运行，返回：`os_64bit=true`、
+  `edition=ProfessionalWorkstation`、`hypervisor_present=true`、
+  `virtualization_firmware=false`（Hyper-V 运行时的已知掩蔽现象，非故障）、
+  `sandbox_feature=unknown`、`next_action=operator_decision_required`。本机
+  handoff／probe 相关 **96 项测试全部通过**（此前因执行策略失败的 15 项 PS5.1 用例
+  转绿；复核工件 `policy-unlock-verification-20260924.log`：96 通过／1 分 40 秒，
+  SHA256 前 16 位 `a8f0d10eabc65a40`）。本地全量验证的执行策略阻塞就此消除。
+- **批准2（Windows Sandbox）被操作系统阻塞**：本机为 Windows 11 Insider 构建 22624
+  （ProfessionalWorkstation），**该构建未打包 Windows Sandbox 功能**。证据链：DISM
+  `/get-features` 枚举不存在 `Containers-DisposableClientVM`（仅有 Containers／
+  Containers-HNS／Containers-SDN）；DISM 显式查询返回 0x800f080c「功能名称未知」；
+  `Get-WindowsCapability` 无任何 Sandbox 能力包；`C:\Windows\System32\WindowsSandbox.exe`
+  不存在。故「启用＋重启」路径在本机不可行，重启亦无济于事。
+  按第 45 节交接的「another approved guest」条款，已向 owner 呈交替代隔离宿主选项
+  （A：一次性 Hyper-V 虚拟机，需 owner 提供 Windows 安装镜像；B：换一台含该功能的
+  稳定版 Windows 机器；C：升级本机系统构建）——选择待定。官方 Claude 2.1.278 六场景
+  探针继续 BLOCKED：探针测试架已交付并通过评审，映像元数据已记录（240,767,648 字节，
+  SHA256 `39be063c2512b43347fe7b0ab18c46f1596141701c9c5fc895ddfca9a051067c`，
+  `--version` 报告 2.1.278，与 profile 钉定一致）。
+- **开发服务器部署（owner 指示）**：`ubuntu@166.1.232.93`（Ubuntu 26.04.1 LTS，
+  16 核 EPYC 7571／15GB 内存，共享机器）。项目部署于 `~/polymarket-alpha-lab` @
+  `4bb734db`，uv 管理 Python 3.12.14 ＋锁定依赖；全量离线验证 **39,566 通过／
+  63 跳过／0 失败（46 分 39 秒）**，日志 SHA256 前 16 位 `97699bdb6e57f420`。
+  SSH 经 owner 授权安装公钥后全程密钥访问；未在服务器存放本机任何其他凭据。
+  **边界声明：该服务器为共享机器（非一次性、非无凭据、无强制断网），仅作开发／
+  运行／验证环境，不充当 WP-02 官方探针的隔离宿主。**
+
+**WP-02 仍 PARTIAL，G2 未关闭，V1 仍 1／6。** 本节不改变任何验收条件；隔离宿主选择、
+映像拷贝与官方执行授权仍待 owner，开发服务器不替代隔离宿主。
