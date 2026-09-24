@@ -105,3 +105,126 @@ Primary reference: https://docs.python.org/3/library/subprocess.html
 
 JUnit property/family reference (checked 2026-09-16):
 https://docs.pytest.org/en/stable/_modules/_pytest/junitxml.html
+
+## Coordinator analysis of fixed historical logs, 2026-09-24; not a root-cause finding
+
+This section preserves the coordinator's analysis of fixed GitHub Actions logs
+on wmqfl861/polymarket-alpha-lab, dated 2026-09-24. It is evidence preservation
+and bounded description only. It is not a root-cause finding,
+`root_cause_established=false` still governs every summary below, no rule
+stated earlier in this guide is weakened, and the defect remains open until a
+separately reviewed repair lands.
+
+### The two known timeout instances
+
+A bounded historical scan (method and limits below) found exactly two
+instances of `test_real_powershell_download_publication[*-powershell.exe]
+timed out after 30 seconds`, both on wmqfl861/polymarket-alpha-lab workflow
+native-postgres.yml:
+
+| # | When (UTC) | Run / job | Head | Instrumentation | What happened |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 2026-09-14 15:50 | run 34864774728 / job 104045727679 | 6e29e02437bbbc2ae1163d8864bda00547599363 | pre-instrumentation | Both `[success-powershell.exe]` and `[manifest_hash-powershell.exe]` timed out at 30 s in one session; no stages captured (stage instrumentation landed the next day in f3537b27). |
+| 2 | 2026-09-16 15:19 | run 35114517410 / job 104856403479 | 061a55703197cc526f3d707d9da58b971c582e0b | post-instrumentation | `[success-powershell.exe]` timed out at 30.46 s with complete staged evidence; the decisive sample, never previously preserved or analyzed. |
+
+### Instance 2 staged evidence (job 104856403479)
+
+| Stage | Elapsed ms |
+| --- | --- |
+| script_entered | 523 |
+| encoding_ready | 18397 |
+| helper_loaded | 18435 |
+| invoke_entered | 18435 |
+| manifest_entered | 26871 |
+| manifest_returned | 26874 |
+| killed at the 30 s deadline, before payload | last_observed_stage=manifest_returned |
+
+The single line `[Console]::OutputEncoding = New-Object
+System.Text.UTF8Encoding($false)` cost about 17.9 s (523 to 18397 ms). Summary
+fields recorded for the killed case: malformed_marker_seen=false,
+retry_count=0, root_cause_established=false.
+
+### Same-session contrast rows (same job 104856403479)
+
+| Case | Result | Notes |
+| --- | --- | --- |
+| `[success-pwsh]` (PS7) | passed in 2.67 s | encoding_ready @ 58 ms |
+| `[manifest_hash-powershell.exe]` (second PS5.1 case in the session) | passed in 20.16 s | 15,000 ms gap invoke_returned to serialization on the ConvertTo-Json path |
+| every later powershell.exe case | passed | each took 0.7 s or less |
+
+### Observations (stated as observations, not mechanism proof)
+
+- The 2026-09-16 timeout did NOT hang before script entry: process startup
+  reached script entry in about 0.5 s.
+- The 30 s was consumed inside the harness by first-use .NET Framework
+  operations: the encoding constructor about 17.9 s, the first helper
+  invocation path about 8.4 s, and about 3.5 s more before the kill.
+- The cost amortizes machine-wide across the first roughly two powershell.exe
+  processes: the second process still paid about 15 s on a different cold path
+  (ConvertTo-Json serialization), and the third and later ones were
+  sub-second. PS7 was unaffected in the same session.
+
+Taken together, this refutes, for this instance, any "blocked before the
+script starts" explanation, and it explains instance 1's two consecutive case
+timeouts as the same amortizing first-use cost paid by two fresh processes.
+
+### Hypotheses remain open
+
+The observations do not distinguish between .NET Framework native-image (NGen)
+regeneration or mismatch on the fresh runner image, security-software
+first-scan of framework assemblies, and first-JIT costs. All three remain
+unproven hypotheses and none is asserted. Per this guide's existing
+no-guessing rule, no marker pattern is a mechanism proof, and no security,
+antivirus or module-path setting may be changed to chase green.
+
+### Frequency bound and its caveats
+
+Exposure is one first-powershell.exe-invocation pytest session per
+native-postgres.yml run since the test landed (ab7ec1d0, 2026-09-13): 73
+completed sessions, plus 6 first-invocation sessions from two
+handoff-first-run.yml runs (all passed). That gives 2 timeouts in at most 79
+exposed sessions, about 2.5% (2/73, about 2.7%, counting native-postgres
+only). Caveats: only failing-job logs were downloaded, so successful runs
+could have contained the failing case only where a re-run to green hides the
+first attempt (none suspected); the denominator counts sessions, not
+cold-runner boots; runner image updates during the window make trials
+heterogeneous; 4 cancelled runs were excluded; the Lordakee remote contributed
+zero exposure (its history starts 2026-09-24).
+
+### Scan method and its limits
+
+The scan used bounded `gh api` run listings capped at 100 runs listed per
+workflow, and downloaded and examined 33 failing-job logs; the effective
+window is 2026-09-13..2026-09-24. Limits: the listing cap means older runs
+outside the window were not enumerated; log availability depends on GitHub
+retention; and no successful-run log was downloaded, as recorded in the
+caveats above.
+
+### Campaign decision: implemented, explicitly NOT executed
+
+Per the node plan's own provision ("if the bounded scan already finds usable
+source-faithful staged failure evidence, preserve and analyse it first; the
+campaign may remain explicitly unexecuted"), the predeclared 30-trial capture
+campaign is implemented and published but NOT dispatched. Campaign state:
+`implemented_not_executed`, 0 of 30 trials run, 0 runner-minutes spent.
+Spending its declared 300-minute budget now would only re-derive a frequency
+bound that existing evidence already provides; the owner may dispatch it
+manually in the future if an independent-trials frequency estimate is ever
+wanted:
+
+```bash
+gh workflow run handoff-first-run-campaign.yml --repo Lordakee/polymarket-alpha-lab --ref <retained-ref>
+```
+
+The deliberate one-shot design is unchanged: workflow_dispatch only;
+`if: github.run_attempt == 1` so UI reruns cannot silently extend the sample;
+fail-fast disabled; all trials retained; failures are the goal. The campaign
+ships with a read-only bounded JUnit summarizer (`tests/handoff_campaign_summary.py`
+and its focused test module) that never infers a root cause.
+
+### Raw log availability
+
+The raw logs remain retrievable at the two job URLs while GitHub retains
+them:
+https://github.com/wmqfl861/polymarket-alpha-lab/actions/runs/34864774728/job/104045727679
+https://github.com/wmqfl861/polymarket-alpha-lab/actions/runs/35114517410/job/104856403479
