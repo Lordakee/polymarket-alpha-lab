@@ -1450,3 +1450,33 @@ owner 于同日批准第 45 节停止点的两项解锁；执行结果如下：
 
 **WP-02 仍 PARTIAL，G2 未关闭，V1 仍 1／6。** 本节不改变任何验收条件；隔离宿主选择、
 映像拷贝与官方执行授权仍待 owner，开发服务器不替代隔离宿主。
+
+## 50. 服务器 Linux 原生验证矩阵：跨平台原生证据扩充（工程验证记录）
+
+基线 `a218fe53`（2026-09-24）。本节为**工程验证事实记录**：在第 49 节部署的开发服务器
+（ubuntu@166.1.232.93，Ubuntu 26.04.1）上，以自组装的 PostgreSQL 18 便携前缀（apt 包
+`postgresql-18` 的 bin／lib 与 `/usr/share/postgresql/18` 的 share 合并为真实文件前缀
+`~/pg-runtime-src`，无符号链接，49MB）运行项目原生测试矩阵。
+
+- 组合 CLI 场景 `tests/test_project_postgres_dispatch_cli_native.py`：**1 通过／0 跳过
+  （183.20 秒）**——含第 47 节两工作者并发中断轮；这是该组合场景的**首个 Linux 原生
+  证据**（此前仅有 Windows CI 与本机 Windows PG18 证据）。
+- `rotation_native`＋`budget_native`：**2 通过（148.96 秒）**。
+- 其余同一命令行收集的原生文件（`POLYMARKET_ALPHA_LAB_RUN_NATIVE_PROJECT_POSTGRES`
+  门控 14 个＋自带独立开关的 distribution）：**原始计数 13 通过／5 跳过／0 失败
+  （1456.70 秒）**。5 项跳过逐项归属：publication_native 2 项（`os.name == 'nt'`
+  Windows 专用句柄竞争证明）、distribution_native 1 项（独立 opt-in 且为 Windows kit
+  构建／解压／首启证明）、backup_native 2 项（独立开关，见下条补跑已转 2 通过）；
+  扣除后跨矩阵净跳过 3 项。
+- 补跑独立开关 `POLYMARKET_ALPHA_LAB_RUN_NATIVE_BACKUP=1` 的 backup 分区：
+  **2 通过（242.12 秒）**（冷备份恢复＋旧备份显式目录扩展迁移证明）。
+- **合计：18 通过／3 跳过／0 失败。** 一次性诊断重跑曾出现一次
+  `project_postgres_port_in_use`（共享机端口竞争，首败已保留于会话记录；非原矩阵结果，
+  非产品缺陷）。日志保留于服务器 `~/pal-artifacts/`（native-dispatch-cli-server2／
+  native-rotbud-server／native-matrix-rest／native-backup-server 四份）。
+
+边界：本节为开发服务器上的工程验证证据（合成输入、一次性实例），不改变任何验收条件、
+不关闭任何 G 门、不替代 CI 的 Windows 原生验收；真实模型／真实事件／真实业务验收边界
+不变；服务器仍不充当 WP-02 隔离宿主（第 49 节边界声明保留）。
+
+**V1 仍 1／6，G2—G6 未关闭。** 本节仅记录跨平台原生验证的事实结果。
