@@ -1376,8 +1376,11 @@ polymarket-alpha-lab 的 native-postgres.yml 上共确认三例
 - 首败记录：原生场景首轮在既有 round-1 断言（未改动行）出现一次 code==1 环境抖动
   （本机首次冷启动初始化）；计时分析排除 300 秒启动窗，后续两次完整通过。非生产
   缺陷、未修复、如实保留。
-- CI 标识：**待 PR 触发后补充**——CI（offline-verification 与 native dispatch 分区）
-  结果待本 PR 记录，未运行前不记为通过。
+- CI 标识：测试提交 `c156e6f4`（PR #1）全部 7 项检查通过——offline-verification
+  run `35968154735`（8m40s）；native-postgres run `35968154693`：dispatch 分区
+  `107531371198`（11m45s，含本节扩展场景）、research `107531371468`、storage
+  `107531371376`；windows-kit run `35968154760`（12m43s）；windows-paper run
+  `35968154714`。本行 CI 记录追加于上述结果之后，最终合并提交的复跑仍须全绿。
 
 **WP-03 仍 PARTIAL，G3 未关闭，V1 仍 1／6。** 本节只补齐合成统一 CLI 场景中的并发中断
 证据；真实获准客户端及最终组合验收仍依赖 WP-02。原结果丢失的任务继续保留 incomplete，
