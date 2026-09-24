@@ -159,26 +159,21 @@ the user explicitly changes them in a later instruction.
    `paper_only=True`, `report_only=True`, and `readonly=True` where those flags
    exist, and must describe any DB persistence as local paper evidence storage
    rather than execution authorization.
-4. **Reviews go directly to Claude Code.** All plan reviews, code reviews,
-   stage audits, post-node external review gates, and handoff review gates must
-   go directly to local Claude Code using model `claude-opus-5` with thinking
-   level `max`. Do not route reviews to any other reviewer unless the user
-   explicitly changes this rule. If local Claude Code is unavailable, treat the
-   review gate as blocked; there is no fallback reviewer under the current
-   rules. Review prompts must be read-only: reviewers may inspect plans, diffs,
-   and files, but must not modify, create, or delete files. Claude Code review
-   invocations must not be wrapped in a fixed elapsed-time timeout. Run long
-   reviews in inspectable sessions and check them about every 30 seconds. At
-   each check, observe process/session liveness and, when available, stream
-   growth or event count, stderr or terminal events, CPU, and network activity.
-   Elapsed time alone or a quiet interval is not evidence of a stall. While the
-   review remains alive and no concrete terminal failure or stall is proven, do
-   not interrupt, terminate, restart, duplicate, or replace it, and do not route
-   around it; keep waiting and monitoring. Act only on an explicit result or
-   error, confirmed process/session exit, concrete auth/permission/provider
-   failure, proven stall, or a newer user instruction.
+4. **Reviews are performed by an independent review subagent.** All plan
+   reviews, code reviews, stage audits, post-node external review gates, and
+   handoff review gates must be performed by an independent, freshly dispatched
+   read-only review subagent that had no role in planning or implementing the
+   reviewed change. Do not reuse an implementation, planning, or test subagent
+   as the reviewer for the same change. Review prompts must be read-only:
+   reviewers may inspect plans, diffs, and files, but must not modify, create,
+   or delete files. Every review must end with an explicit verdict line
+   (`VERDICT: PASS` or `VERDICT: FAIL` with findings). Do not impose a fixed
+   elapsed-time deadline on a review subagent; let it run to an explicit
+   conclusion, and do not interrupt, duplicate, or replace it while it is still
+   working. This rule replaces the earlier local Claude Code reviewer
+   requirement by explicit owner instruction (2026-09-24).
 5. **Fast mode is forbidden.** Do not use fast mode for the main Codex agent,
-   Codex subagents, Claude Code reviews, implementation workers, planning workers,
+   Codex subagents, review subagents, implementation workers, planning workers,
    or audit workers.
 6. **Sustained parallel development is a project iron rule.** Whenever useful,
    independent, non-conflicting work exists, keep useful collaboration capacity
@@ -189,7 +184,7 @@ the user explicitly changes them in a later instruction.
    available. Parallel work may span multiple modules and multiple development
    nodes, but write ownership must be split by non-overlapping files or isolated
    worktrees, and every node must retain its own focused tests, full-suite
-   verification, CodeGraph sync, Claude Code review, commit, and push gates.
+   verification, CodeGraph sync, independent review subagent, commit, and push gates.
    Reclaim agents immediately when they complete, fail, or become blocked,
    inspect any work they left on disk, and redeploy the freed capacity to the
    next independent task. Do not impose a permanent lower coordinator-side
@@ -256,25 +251,21 @@ Avoid using website scraping as a primary data path unless a needed field is una
 - Every Codex subagent must explicitly use model `gpt-5.6-sol` with reasoning
   effort `max`, as required by Project Iron Rule 7. No other Codex subagent
   model or reasoning effort is permitted.
-- Local Claude Code reviews for this project must use model `claude-opus-5`
-  with reasoning effort `max` (CLI `--effort max`).
-- Do not use fast mode for the main Codex agent, Codex subagents, Claude Code
-  reviews, or local implementation/review gates.
+- Review subagents (Project Iron Rule 4) run as native subagents on the
+  session's current model; do not pin, substitute, or fast-path them.
+- Do not use fast mode for the main Codex agent, Codex subagents, review
+  subagents, or local implementation/review gates.
 
 ## Review / Audit Defaults
 
-- All plan reviews, code reviews, stage audits, and post-node external review gates go directly to local Claude Code.
-- Use `claude-opus-5` with reasoning effort `max` (CLI `--effort max`) for every local Claude Code review.
-- Do not route reviews to any other reviewer unless the user explicitly changes this rule again.
-- If local Claude Code is unavailable, treat the review gate as blocked; there is no fallback reviewer under the current rules.
+- All plan reviews, code reviews, stage audits, and post-node external review gates go to an independent, freshly dispatched read-only review subagent that had no role in the reviewed change (Project Iron Rule 4).
+- Do not reuse an implementation, planning, or test subagent as the reviewer for the same change.
+- If no independent review subagent can be dispatched, treat the review gate as blocked; there is no other reviewer under the current rules.
 - Review prompts must be read-only: reviewers may inspect plans, diffs, and files, but must not modify, create, or delete files.
-- Do not impose a fixed elapsed-time timeout on Claude Code reviews. Run long
-  reviews in an inspectable session and check their health about every 30
-  seconds without interrupting a review that is still working.
-- Elapsed time alone or a quiet monitoring interval does not prove a stall. If
-  the process/session remains alive and no concrete terminal failure or stall
-  is proven, keep waiting and monitoring; do not terminate, restart, duplicate,
-  replace, or route around the review.
+- Every review must end with an explicit verdict line (`VERDICT: PASS` or `VERDICT: FAIL` with findings).
+- Do not impose a fixed elapsed-time deadline on a review subagent, and do not
+  interrupt, duplicate, or replace a review that is still working; wait for its
+  explicit conclusion.
 
 ## Codex Node Push Policy
 
@@ -289,8 +280,8 @@ Push a completed Codex node to GitHub after all of the following are true:
 - Python compile verification passes.
 - CodeGraph is synced when `.codegraph/` exists.
 - A secret scan finds no leaked credentials or tokens in tracked content.
-- The configured post-node external review gate passes through Claude Code (`claude-opus-5`, reasoning effort `max`, CLI `--effort max`).
-- If local Claude Code is unavailable, treat the review gate as blocked; there is no fallback reviewer under the current rules.
+- The configured post-node external review gate passes through an independent read-only review subagent (Project Iron Rule 4) with `VERDICT: PASS`.
+- If no independent review subagent can be dispatched, treat the review gate as blocked; there is no other reviewer under the current rules.
 
 Do not push half-finished work, failing tests, unreviewed code, or work that still has unresolved review findings.
 
@@ -302,7 +293,7 @@ the user explicitly asks to stop or pause.
 
 ## OMO / Sisyphus Session Workflow (historical)
 
-This section is retained only as historical context for the 2026-06-16 Sisyphus handoff. It is not an active Codex rule and does not override the current Claude Code review default above.
+This section is retained only as historical context for the 2026-06-16 Sisyphus handoff. It is not an active Codex rule and does not override the current independent review-subagent default above.
 
 ### Authority and handoff
 
@@ -320,8 +311,8 @@ This section is retained only as historical context for the 2026-06-16 Sisyphus 
 
 The old OMO/Sisyphus model and review-gate configuration has been superseded.
 Do not use it as current project guidance. Current plan and code review goes to
-Claude Code with model `claude-opus-5` and reasoning effort `max` (CLI
-`--effort max`).
+an independent, freshly dispatched read-only review subagent (Project Iron
+Rule 4).
 
 Two gates were mandatory during that historical workflow:
 
