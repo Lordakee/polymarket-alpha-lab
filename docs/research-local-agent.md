@@ -1035,3 +1035,179 @@ official binary is still not available or run here.
 
 Python reference checked2026-09-20:
 https://docs.python.org/3.12/library/os.html#os.DirEntry.stat
+
+## Codex ephemeral SQLite state containment analysis (WP-02; analysis only)
+
+Baseline: repository commit `65053b3232307091af8845c9bfb1270a19944dd9`
+(2026-09-24). This addendum is a current static inspection of the checked-in
+source and tests only; no Codex CLI, package, loopback service, test, or
+network operation was executed for it. The prior results are labeled separately
+as historical execution evidence: the 2026-09-19 investigation against official
+Codex `0.155.1`, upstream source `be2951ea34f0d295ed0becf97079f92fa5f6950e`,
+remains the existing upstream pin and is cited here, not re-run, re-derived,
+or extended.
+
+### Observed state and path controls
+
+What is known to be written, and where:
+
+- Historical execution evidence (2026-09-19 synthetic Linux probes with new
+  private home/work directories and an in-memory loopback Responses service)
+  reported local SQLite state files under the supplied Codex home despite
+  `--ephemeral`.
+- The pinned profile requests no history persistence (`history.persistence`
+  set to `none`) and disables memories, skills, apps, plugins, hooks, shell,
+  search and telemetry. Those are declared configuration switches, not proof
+  of what the CLI actually writes.
+- The existing investigation states that pinned-source CLI state
+  initialization is separate from rollout persistence: disabling rollout
+  persistence does not remove state initialization.
+
+Path and environment contract from static source inspection of
+[src/polymarket_alpha_lab/research_codex_profile.py](../src/polymarket_alpha_lab/research_codex_profile.py):
+
+- `CODEX_HOME` and `HOME` are mandatory explicit environment entries. The
+  optional admitted path variables are `USERPROFILE`, `SYSTEMROOT`, `WINDIR`,
+  `TMPDIR`, `TMP`, and `TEMP`; any other variable is rejected.
+- Every admitted value must be a non-empty absolute path string; the profile
+  does not check that the path exists. Parent environment variables are not
+  implicitly inherited or discovered; the caller supplies the complete
+  environment.
+- The recorded native probe supplied four separate temporary locations under
+  its pytest base path: the Codex home, home, working directory, and TMPDIR.
+
+The checked-in evidence does not retain the observed SQLite file names, table
+schemas, or a session/history content classification, and none is invented
+here: those details remain unknown. A similarly named synthetic state file in
+another CLI's test is not Codex evidence.
+
+### Application-supplied isolation and its limits
+
+Isolation is not enforced by the application profile.
+
+- The native test directs `CODEX_HOME` to `tmp_path / 'codex'`. That is a
+  test-supplied path, not a root that the production profile allocates,
+  checks, or enforces.
+- The profile validates allowed variable names and absolute path values. It
+  does not require those paths to be fresh, distinct, empty, protected, or
+  outside user-global locations. An application caller can supply a global
+  path, and the profile accepts it.
+- Conversely, the recorded test does not establish that any user-global write
+  occurred: the probe used dedicated temporary paths, and no location outside
+  them was observed.
+
+Three different things must not be conflated: explicit environment
+configuration (what the profile builds), the model/tool sandbox settings
+(`sandbox_mode` of `read-only` plus the disabled feature switches), and a
+genuine filesystem/network containment boundary around the executed CLI. The
+transport and the strict decoder certify none of these; they supervise pipes
+and validate the event stream only.
+
+### What the negative proof establishes
+
+The recorded negative proof in
+[tests/test_research_codex_profile_native.py](../tests/test_research_codex_profile_native.py)
+is, exactly:
+
+```python
+assert any((tmp_path/'codex').glob('*.sqlite'))
+```
+
+It establishes that at least one immediate entry matching `*.sqlite` existed
+under the supplied Codex home at the final check, after the observed single
+submission sequence in that scenario. It does not establish more:
+
+- It does not check the entry type or contents; any entry matching the glob
+  satisfies it.
+- It does not preserve the observed basenames, so no file name can be cited
+  from it.
+- It is not recursive; subdirectories of the Codex home are not covered and
+  sidecar or adjacent files are not inspected.
+- It cannot detect transient create-then-delete activity before the final
+  check.
+- It inspects no other root: not home, TMPDIR, the working directory, or any
+  path outside the supplied temporary tree.
+- The adjacent empty-work-directory assertion
+  (`assert list((tmp_path/'work').iterdir()) == []`) is likewise local to that
+  one directory.
+
+The same test pins the Linux executable by exact size and SHA256 and its Code
+Mode companion by SHA256. It performs no `--version` invocation, establishes
+no Windows behavior, and proves no complete dependency or host isolation.
+
+### Governing persistence rule
+
+Containment of the write location would not by itself lift the activation
+block. The governing sentences, quoted from their existing sources:
+
+> These native-engine/configuration files are not a file-backed substitute for
+> business records: project evidence remains PostgreSQL only.
+
+(from the native project-private PostgreSQL owner override in
+[AGENTS.md](../AGENTS.md))
+
+> This is explicit negative evidence, not an allowed project persistence backend.
+
+> No real research profile is activated; no flags are invented or errors
+> suppressed to pretend zero-persistence.
+
+(from [the pinned upstream experiment section](#actual-pinned-upstream-experiment-and-limits)
+in this document)
+
+A temporary directory provides no persistence-policy exception: pointing the
+CLI at a disposable directory says nothing about whether real research inputs
+may be activated under the project's PostgreSQL-only evidence rule. The
+existing proof also does not establish the content of the observed state
+entries, so classifying them as harmless would be unsupported. The explicit
+retained blocker is recorded in [DELIVERY_PLAN.md](../DELIVERY_PLAN.md)
+Section 42 and continues through Sections 43 and 44; those sections are not
+modified by this addendum.
+
+### Conditions for a future no-write proof
+
+Any later claim that a newer CLI writes no local state requires separate
+authorization and all of the following conditions:
+
+- The owner explicitly authorizes evaluation of the exact newer CLI and any
+  related pin/profile or protected model/provider configuration change.
+- The source, complete package, native image, and required companions are
+  pinned with sizes and SHA256; the exact command, environment, profile
+  digest, OS, and host image are recorded.
+- The evaluation uses a fresh disposable, credential-free host, synthetic
+  inputs, an in-memory loopback service, and enforced external-network denial.
+  The ordinary business installation is not used, and user profiles,
+  authentication state, `.local`, databases, and backups are not copied into
+  it.
+- The existing five-scenario probe contract is reused. In the later reviewed
+  change, the positive SQLite assertion is replaced with an absence assertion;
+  the existing success/error, request-count, input, tool, retry, bounded-I/O,
+  and cleanup checks are retained.
+- The final glob is supplemented with bounded recursive state comparison and
+  suitable host-level write evidence covering descendants, transient writes,
+  sidecars, and paths outside the intended task directories. A final empty
+  directory alone is insufficient.
+- Any future version check is measured inside that same boundary. Observed
+  state is not deleted, ignored, renamed, or reclassified to obtain a pass.
+- First failures, reruns, skipped checks, and unexecuted checks are preserved
+  separately. The current Linux probe cannot certify Windows; target Windows
+  acceptance requires a separately reviewed, correctly pinned Windows
+  counterpart.
+- A passing state-write result addresses that blocker only for the exact
+  artifact and measured host. Provider/model identity, approved context,
+  actual usage, credential isolation, and authorized real-run acceptance
+  remain separate requirements.
+
+### Scope exclusions and current conclusion
+
+This addendum is analysis only. It changes no CLI version, source pin,
+profile, code, test, workflow, credential handling, or authorization; it adds
+no diagnostic, reporting, or gate layer; and it does not modify
+DELIVERY_PLAN.md. It is a static inspection at the stated baseline: no Codex
+binary, package, loopback service, or network operation was run, and the
+historical execution evidence above is cited, not re-executed. Linux
+observations do not extend to Windows, and nothing here activates a real
+research profile or certifies a provider, model identity, or usage path.
+
+> The Codex 0.155.1 activation block remains in force. This addendum changes
+> no version, pin, profile, code, test, credential handling, or real-run
+> authorization. WP-02 remains PARTIAL and G2 remains open.
