@@ -115,19 +115,21 @@ and bounded description only. It is not a root-cause finding,
 stated earlier in this guide is weakened, and the defect remains open until a
 separately reviewed repair lands.
 
-### The two known timeout instances
+### The three known timeout instances
 
-A bounded historical scan (method and limits below) found exactly two
-instances of `test_real_powershell_download_publication[*-powershell.exe]
-timed out after 30 seconds`, both on wmqfl861/polymarket-alpha-lab workflow
+A bounded historical scan (method and limits below) — seeded, per the node
+plan, with this guide's own section-1 record of job 104082175714 — recovered
+three instances of `test_real_powershell_download_publication[*-powershell.exe]
+timed out after 30 seconds`, all on wmqfl861/polymarket-alpha-lab workflow
 native-postgres.yml:
 
 | # | When (UTC) | Run / job | Head | Instrumentation | What happened |
 | --- | --- | --- | --- | --- | --- |
 | 1 | 2026-09-14 15:50 | run 34864774728 / job 104045727679 | 6e29e02437bbbc2ae1163d8864bda00547599363 | pre-instrumentation | Both `[success-powershell.exe]` and `[manifest_hash-powershell.exe]` timed out at 30 s in one session; no stages captured (stage instrumentation landed the next day in f3537b27). |
-| 2 | 2026-09-16 15:19 | run 35114517410 / job 104856403479 | 061a55703197cc526f3d707d9da58b971c582e0b | post-instrumentation | `[success-powershell.exe]` timed out at 30.46 s with complete staged evidence; the decisive sample, never previously preserved or analyzed. |
+| 2 | 2026-09-14 17:35 | run 34875688580 / job 104082175714 | 972f8143eff906cb5e3617a30bc25fcd3d799791 | pre-instrumentation | `[success-powershell.exe]` timed out at 30 s; the instance already recorded in this guide's section 1. Its run was later re-run to green (run_attempt 2 conclusion success), so listing runs by latest conclusion does not surface it — it is the one confirmed "re-run to green hides the first attempt" case and was recovered from the fixed record and its retained job log. |
+| 3 | 2026-09-16 15:19 | run 35114517410 / job 104856403479 | 061a55703197cc526f3d707d9da58b971c582e0b | post-instrumentation | `[success-powershell.exe]` timed out at 30.46 s with complete staged evidence; the decisive sample, never previously preserved or analyzed. |
 
-### Instance 2 staged evidence (job 104856403479)
+### Instance 3 staged evidence (job 104856403479)
 
 | Stage | Elapsed ms |
 | --- | --- |
@@ -182,22 +184,27 @@ antivirus or module-path setting may be changed to chase green.
 Exposure is one first-powershell.exe-invocation pytest session per
 native-postgres.yml run since the test landed (ab7ec1d0, 2026-09-13): 73
 completed sessions, plus 6 first-invocation sessions from two
-handoff-first-run.yml runs (all passed). That gives 2 timeouts in at most 79
-exposed sessions, about 2.5% (2/73, about 2.7%, counting native-postgres
+handoff-first-run.yml runs (all passed). That gives 3 timeouts in at most 79
+exposed sessions, about 3.8% (3/73, about 4.1%, counting native-postgres
 only). Caveats: only failing-job logs were downloaded, so successful runs
 could have contained the failing case only where a re-run to green hides the
-first attempt (none suspected); the denominator counts sessions, not
-cold-runner boots; runner image updates during the window make trials
-heterogeneous; 4 cancelled runs were excluded; the Lordakee remote contributed
-zero exposure (its history starts 2026-09-24).
+first attempt — and exactly one such case was confirmed (instance 2,
+recovered from the fixed record, not from run-level listing); the denominator
+counts sessions, not cold-runner boots; runner image updates during the
+window make trials heterogeneous; 4 cancelled runs were excluded; the
+Lordakee remote contributed zero exposure (its history starts 2026-09-24).
 
 ### Scan method and its limits
 
 The scan used bounded `gh api` run listings capped at 100 runs listed per
 workflow, and downloaded and examined 33 failing-job logs; the effective
-window is 2026-09-13..2026-09-24. Limits: the listing cap means older runs
-outside the window were not enumerated; log availability depends on GitHub
-retention; and no successful-run log was downloaded, as recorded in the
+window is 2026-09-13..2026-09-24. Declared deviations from the node plan's
+predeclared scan bounds: the listing cap was 100 runs per workflow instead
+of the predeclared 50 (coverage-increasing, and the effective window start
+2026-09-13 replaces the predeclared 2026-09-01 because the test only landed
+2026-09-13 — earlier runs have no exposure). Limits: the listing cap means
+older runs outside the window were not enumerated; log availability depends
+on GitHub retention; and no successful-run log was downloaded, as recorded in the
 caveats above.
 
 ### Campaign decision: implemented, explicitly NOT executed
@@ -224,7 +231,8 @@ and its focused test module) that never infers a root cause.
 
 ### Raw log availability
 
-The raw logs remain retrievable at the two job URLs while GitHub retains
+The raw logs remain retrievable at the three job URLs while GitHub retains
 them:
 https://github.com/wmqfl861/polymarket-alpha-lab/actions/runs/34864774728/job/104045727679
+https://github.com/wmqfl861/polymarket-alpha-lab/actions/runs/34875688580/job/104082175714
 https://github.com/wmqfl861/polymarket-alpha-lab/actions/runs/35114517410/job/104856403479

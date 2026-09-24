@@ -78,9 +78,13 @@ jobs:
           path: ${{ runner.temp }}/capture
           merge-multiple: false
       - name: Summarize campaign evidence
+        if: always()
+        shell: bash
         run: |
+          set +e
           python3 tests/handoff_campaign_summary.py --artifacts "$RUNNER_TEMP/capture" --markdown "$RUNNER_TEMP/campaign-summary.md"
           status=$?
+          set -e
           if [ -f "$RUNNER_TEMP/campaign-summary.md" ]; then cat "$RUNNER_TEMP/campaign-summary.md" >> "$GITHUB_STEP_SUMMARY"; fi
           exit $status
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
