@@ -1684,3 +1684,131 @@ WP-02：PARTIAL；G2：未关闭；V1 完成门：1／6。
 owner 对具体真实调用／凭据使用／项目私有数据库证据写入的授权，
 以及两团队真实研究与授权／使用对账，方可评估 G2。
 D1—D3 不重开；软件接线通过不代表真实激活、G3 或策略统计有效性。
+
+
+## 54. WP-02：operator 组装端到端原生组合验证（合成 factory；G2 未关闭）
+
+实施基线：`ef19a28d20fc68b0abe08f7ccc66be6832015a7e`；
+计划评审时树：`43d62fc700951a63fc4069cff082c44ac3a16d75`。
+实施前复核末节编号；当前基线末节为 §53。本节承接 §53 明确延期的
+operator 原生组合验收缺口。
+
+固定两文件范围：既有原生审计测试文件新增一个 opt-in 用例
+`test_operator_assembly_native_two_team_stop_restart_replay_and_audit`
+（含全部函数内 helper），以及本计划追加本节。
+无生产代码、迁移、工作流、CLI 或打包改动。
+
+证据类别：隔离原生集成；真实一次性项目私有 PostgreSQL、
+真实 operator／授权／批次／轮次／领取／审计／收录路径，
+配合合成 Model factory（按执行请求新建 `Model` 子类计数）；
+ObservedSession 为真实会话的纯透传观察者，无预制回执或结果；
+supplier 调用全程为 0；未启动任何子进程或网络连接。
+
+场景：BTC／ETH 两个单请求批次；BTC 第三次（finish_research）
+成功回复返回前按计数子类协作停止（显式 max_tasks=2、
+max_workers=1 建立确定性停止顺序，ETH 未被提交）；
+真实 down／新 ProjectPostgres（身份保留）／up（零迁移重放）；
+同轮 turn-one 经 operator 惰性重放（turn_already_reserved、
+attempts 为空、builder 允许多构造一次且返回的禁止 factory
+零进入）；显式新轮 turn-two 完成 ETH；双记录授权、请求、
+消息哈希、回复指纹及令牌审计逐项对账（每记录 3 次调用、
+每次回复 10 令牌、已知子集 30、调用序数 1/2/3）；
+evaluate() 恰含两条已收录记录。累积计数：builder 构造
+1→2→3、factory 进入 1→1→2、模型完成 3→3→6、领取 1→1→2、
+轮次 1→1→2；factory 进入顺序 ['crypto_btc','crypto_eth']；
+原生表计数：领取 2、attempts 2、batches 2、turns 2、
+authorization 1、call_starts 6、call_outcomes 6、
+model_budgets 0、model_call_reservations 0、结算 outcomes 0。
+原 report 对象与首次回执保留（同一轮内共享身份断言用 is，
+跨数据库读／重启用相等）；轮次回执本身无 authorization_id，
+授权绑定仅由逐调用 join 建立；provider_submission_count 与
+actual_billed_micros 为 None，usage／identity 核验声明为 false，
+paper/report/readonly 与显式授权标志为 true。
+
+本用例不证明真实首轮 2/2 并发、Claude profile 共用路径或
+supplier 并发安全；未新增 operator 丢失结果／capture-only
+恢复的原生证明（既有 native capture-loss 与离线 pending_run
+证据仍是该范围的历史参考，非本节新证据）。
+
+可用本地验证环境：Windows `D:\PostgreSQL\18`（psql 18.6）；
+Linux 服务器 `~/pg-runtime-src`。本轮实际执行平台：Windows
+（win32 10.0.22624 x64；Python 3.12.10；pytest 9.1.1；
+RUNNER_TEMP=`D:\Projects\.tmp-j-runner`）。Linux 平台本轮
+未执行，单列于此，不由一个平台推导另一个平台通过。
+
+验证证据：
+- 焦点离线测试（净化环境：unset PYTEST_ADDOPTS／PYTEST_PLUGINS／
+  PYTHONPATH／PYTHONHOME，PYTHONUTF8=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1
+  POLYMARKET_ALPHA_LAB_RUN_SUPABASE_SMOKE=0）：operator 及原生模块
+  离线依赖 14 文件（test_research_claude_operator／claude_profile／
+  uncapped／uncapped_audit／uncapped_audit_review／dispatch／
+  dispatch_rotation／execution／crypto_launch／
+  team_research_cross_source／claude_exec／codex_exec／
+  research_process／native_postgres_workflow）`-q`：
+  951 passed、1 skipped（test_research_process.py 既有平台门控）、
+  120.81 秒，exit 0。
+- 新用例本地原生执行（Git Bash；另设
+  POLYMARKET_ALPHA_LAB_RUN_NATIVE_PROJECT_POSTGRES=1、
+  POLYMARKET_ALPHA_LAB_NATIVE_PG_PREFIX='D:\PostgreSQL\18'、
+  RUNNER_TEMP='D:\Projects\.tmp-j-runner'，命令
+  `.venv/Scripts/python.exe -u -m pytest -q -s
+  "tests/test_project_postgres_uncapped_audit_native.py::
+  test_operator_assembly_native_two_team_stop_restart_replay_and_audit"
+  --durations=10`）：最终字节 1 passed in 300.81s（call 290.89s），
+  exit 0；首次通过 1 passed in 260.31s（call 251.54s）。
+- 修改后的原生文件整体运行（同环境，另加 `-p no:faulthandler
+  -p tests.ci_thread_dump -o junit_family=legacy
+  -o faulthandler_timeout=120 --durations=20 --junitxml`）：
+  2 passed、0 skipped，826.50 秒（13 分 46 秒），exit 0
+  （既有用例 532.54s＋新用例 285.76s）。该命令为原生 opt-in 证据。
+- scripts/verify_local.py --full（净化环境，命令自身剥离全部
+  POLYMARKET_ALPHA_LAB_* 原生 opt-in）：PASS: full local
+  verification；39,740 passed、42 skipped、0 failed，2156.01 秒
+  （0:35:56），exit 0（42＝§53 基线 41 项既有显式 opt-in／平台门控
+  skip＋新用例在 opt-in 剥离后的 1 项 skip）。该命令不能替代上一条
+  原生证据；其原生 skip 在此单列。
+- 编译、diff --check、两文件范围与凭据扫描：`py_compile` 通过；
+  verify_local 内 compileall PASS；测试文件新增 355 行全部 ASCII，
+  该文件保持纯 CRLF，本节追加保持 LF；`git diff --check` 干净；
+  diff 恰为 2 文件（tests/test_project_postgres_uncapped_audit_native.py
+  ＋本文件仅追加 §54）；新增行凭据形态扫描 0 命中／355 行
+  （按形态扫描，未输出任何匹配值）。
+- 首败、修正、重跑、跳过及未执行项：新用例前 4 次原生执行失败均为
+  测试侧缺陷、实施代码零改动——(1) research_capture 业务行计数须用
+  application 角色（owner 连接对业务表计 0 行；首败 270.11s）；
+  (2) 已收录研究记录存于 research_capture.attempts，outcomes 为市场
+  结算表（本场景正确值 0），曾误按 outcomes=2 断言（238.10s）；
+  (3) project_private 仅 owner 可读，application 角色计数为权限错误
+  （254.51s 首现；248.43s 复跑以捕获完整 traceback）。修正后连续
+  通过：260.31s、整文件 826.50s、最终字节复跑 300.81s（补两行注释
+  后逐字节重跑）。各失败运行的一次性集群均保留在 RUNNER_TEMP，
+  未删除／未重建以换取通过。跳过：焦点轮 1 项既有平台 skip；
+  全量轮 42 项既有显式 opt-in／平台门控 skip。未执行（外部门控，
+  非遗漏）：Linux 平台原生运行、官方探针（0/6）、独立评审、
+  CodeGraph、推送。
+- 协调者单独标注自审／测试轮：待回填。
+- 全新独立只读代码评审及明确 verdict：首轮 FAIL（2026-09-25）——测试文件零缺陷；
+  但 §54 两处前缀路径含写入脚本引入的 SOH 控制字节（MAJOR，证据记录失真）及一处
+  分区归属误记 storage（MINOR，实为 dispatch）。三项已修正（见上文修正注记），
+  机械复核：全文档零控制字节、两处前缀路径已就位、dispatch 措辞就位；
+  修正后增量复审：第二轮 FAIL 仅余一项 MINOR（修正注记自引用路径使「恰两处」计数失真），按该评审者处方改写；第三轮终检 PASS（2026-09-25：路径恰两处、零控制字节、自引用声明移除、范围与检查全部干净）。评审链闭合，测试文件全程零缺陷。
+- CodeGraph 实际状态及适用既有例外：工具不可用，门禁记录为受阻
+  （自 2026-09-11 既有状态，先例第 46—53 节），不冒称同步成功。
+- 实施提交／树、PR、最终修订 CI run／job：产生后固定；
+  本节追加时实施提交尚未创建，明确为待提交／待推送。
+
+CI：PR paths 的 `tests/test_project_postgres*` 覆盖本文件；
+Windows dispatch 分区（windows-2025，既有 20 分钟上限）已显式执行
+本文件，无需修改工作流。本地 Windows 该文件整体 826.50 秒为实测
+记录而非 CI 余量证据；本轮不调整分区超时，分区与聚合门实际耗时
+及结果以 PR 最终修订 CI 为准。（评审修正：本行原误记为 storage
+分区；另 §54 两处前缀路径曾含写入脚本引入的控制字节，已修正为正确前缀路径，
+全文档现零控制字节。）
+
+官方用例执行：0/6；官方二进制执行：false；
+真实提供商调用：false；activation_authorized：false。
+WP-02：PARTIAL；G2：未关闭；V1 完成门：1／6。
+
+剩余真实激活、官方探针、身份／溯源、获批 supplier、
+真实并发安全及两团队真实研究／授权使用对账条件保持原要求。
+本节不关闭 G3，不证明统计策略有效性。
