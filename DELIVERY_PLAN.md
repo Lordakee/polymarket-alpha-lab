@@ -1599,3 +1599,88 @@ G2：未关闭；V1 完成门 1／6。
 剩余：获批隔离主机（第 49 节既有结论不变：本机无 Sandbox、共享开发服务器非
 隔离主机）；所需准备／溯源／执行证据；官方六案执行与对账；实际身份／使用验证；
 获批真实运行操作人组装（含两团队并发前提）与 G2 验收。D1—D3 不重开。
+
+## 53. WP-02：获准真实运行操作人组装模块（MODULE／OFFLINE ONLY；G2 未关闭）
+
+实施基线：`58192af83adcb097f37a5bb412cfac05dddccd08`，树
+`00db151728d5695e9419e1f892b5f3e6922d6495`。
+实施前复核末节编号；当前基线末节为 §52。
+
+规划来源：
+`D:/Projects/.agent-artifacts/polymarket-alpha-lab/wp02-g2-runbook/g2-approved-real-run-readiness.md`
+（14,906 字节；SHA256
+`dfac3e459451ca0613bfa6009a3de1e28d0385840bb26cbb1a70c65d073395a7`）。
+该文件为 readiness/design 规划依据，不是执行授权或已发布执行交接。
+
+本节点仅新增 reviewed typed operator assembly 模块及离线测试，并追加本节。
+固定三文件范围；无 CLI、脚本、工作流、迁移或打包改动。
+
+- 复用 ProjectResearchSession、ClaudeExecProfile、既有无金额封顶授权、
+  claude_profile_factory 与 run_research_rotation。
+- 两个不可变单请求批次分别绑定 crypto_btc／crypto_eth；保留已审阅请求、
+  模型、profile 摘要、规则／来源绑定、时间与限额。
+- 授权创建及回执核对 → 顺序入库两个批次 → 惰性 Claude factory →
+  一次显式 audited uncapped rotation。
+- factory 与 runner 接收同一 stored authorization 对象及同一 stop token；
+  不传 model_budget_id；无 Codex 回退、自动重试或身份替换。
+- 新批次时效、原领取与轮次重放复用既有数据库／runner 语义。
+  各步独立提交；失败不清理已提交历史。
+- 原始 report 与 pending_run 保留；审计句柄仅供后续查询，不声称已完成
+  授权／调用／执行对账；未知提供商提交数和实际费用仍为未知。
+
+验证证据：
+- 新增及邻接焦点测试：净化环境（unset `PYTEST_ADDOPTS`／`PYTEST_PLUGINS`／
+  `PYTHONPATH`／`PYTHONHOME`，`PYTHONUTF8=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1
+  POLYMARKET_ALPHA_LAB_RUN_SUPABASE_SMOKE=0`）下
+  `.venv/Scripts/python.exe -m pytest tests/test_research_claude_operator.py
+  tests/test_research_claude_profile.py tests/test_research_claude_review.py
+  tests/test_research_uncapped.py tests/test_research_uncapped_audit.py
+  tests/test_research_uncapped_audit_review.py tests/test_research_dispatch.py
+  tests/test_research_dispatch_rotation.py tests/test_research_execution.py -q`：
+  548 passed（新文件 85：计划表 24 个测试函数含全部参数化用例；邻接 463），
+  149.39 秒，exit 0，pytest 9.1.1。
+- 全量验证：本地运行 `.venv/Scripts/python.exe scripts/verify_local.py --full`
+  （同净化环境）：39,740 passed、41 skipped（全部为既有显式 opt-in／权限门控
+  skip）、0 failed，耗时 2,347.42 秒，含 compileall 编译验证，
+  `PASS: full local verification`，exit 0。已知至多 5 项环境性 CRLF 迁移回执
+  失败本轮未复现（本轮零失败）。基线 39,655 passed 仅为历史参考，不替代本次
+  结果。
+- 编译、diff --check、三文件范围与凭据扫描：`py_compile` 两个新 `.py` 通过；
+  新增 1,094 行（229＋865）全部 ASCII，工作区两新 `.py` 保持纯 CRLF（与
+  第 52 节先例一致），本节追加保持 LF；`git diff --check` 干净；diff 恰为
+  3 文件（新增 `src/polymarket_alpha_lab/research_claude_operator.py`、新增
+  `tests/test_research_claude_operator.py`、本文件仅追加 §53）；新增行凭据
+  形态扫描零命中（按形态扫描，未输出任何匹配值）。
+- 协调者单独标注自审／测试轮：已执行（实施工作线程 I1 单独标注轮，
+  2026-09-25：对照规划逐项自审——API 原样、五处 stop 检查点、双边界同一
+  stored authorization 与同一 stop token、`model_budget_id` 缺席、无重试／
+  回退／身份替换、operator 自身零时钟逻辑；焦点与全量复跑均通过，无未解决
+  阻塞发现）。
+- 全新独立只读代码评审：待独立评审（本提交前完成）。
+- CodeGraph 同步／不可用状态：工具不可用，门禁记录为受阻（自 2026-09-11
+  既有状态，先例第 46—52 节）。
+- 首败、修正、重跑、跳过及未执行项：首轮焦点 7 项失败均为测试侧缺陷
+  （TypeError 用例误传必需参数、录制型会话以 `None` 兼任缺省哨兵、引用
+  不存在的 `rotation.db` 属性、capture-failed 用例两处身份断言应为相等且
+  缺少既有轮级 `authorization` 事件预期），实施代码零改动；修正后新文件
+  85 项全通过并按最终字节复跑焦点 548 passed。跳过：焦点轮与全量轮均仅
+  既有 41 项显式 opt-in skip，无新增跳过。未执行（外部门控，非遗漏）：
+  官方探针、原生 opt-in 用例扩展、独立评审、CodeGraph、推送。
+- 实施提交／树、推送与适用 CI：待提交；提交后待推送（凭据恢复后），
+  推送 SHA 与适用 CI 由协调者在推送后固定，未推送前明确为待发布。
+
+原生扩展决定：本节点未修改既有 native 测试，以遵守固定三文件范围。
+已有原生组件证据不等于新 operator 的端到端原生验收；
+组合两团队 rotation／stop／restart／replay／audit 场景留待后续独立节点。
+本次新增测试使用合成边界，supplier 调用数为 0，不启动子进程。
+
+官方用例执行：0/6；官方二进制执行：false；
+真实提供商调用：false；activation_authorized：false。
+WP-02：PARTIAL；G2：未关闭；V1 完成门：1／6。
+
+剩余：官方六案探针仍受获批隔离宿主阻塞；本机无 Sandbox，
+共享开发服务器不充当隔离宿主。其后仍需官方探针及身份／溯源证据、
+明确获批的有限内存 supplier、同一 profile 路径的并发安全证据、
+owner 对具体真实调用／凭据使用／项目私有数据库证据写入的授权，
+以及两团队真实研究与授权／使用对账，方可评估 G2。
+D1—D3 不重开；软件接线通过不代表真实激活、G3 或策略统计有效性。
