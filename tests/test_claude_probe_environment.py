@@ -834,7 +834,8 @@ def test_legacy_preparation_bytes_and_modes_unchanged(tmp_path,monkeypatch,capsy
     assert doc.findtext('MemoryInMB') == '4096'
     assert [(m.findtext('HostFolder'),m.findtext('SandboxFolder'),m.findtext('ReadOnly'))
             for m in doc.findall('MappedFolders/MappedFolder')] == [
-        ('C:\\x\\input', r'C:\pal-input', 'true'), ('C:\\x\\output', r'C:\pal-output', 'false')]
+        (str(Path('C:/x/input')), r'C:\pal-input', 'true'),
+        (str(Path('C:/x/output')), r'C:\pal-output', 'false')]
     assert doc.findtext('LogonCommand/Command') == (
         r'C:\Windows\System32\cmd.exe /d /c C:\pal-input\smoke.cmd')
     staged = tmp_path/'staged'; staged.mkdir()
