@@ -199,6 +199,9 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
+          # The version-switch proof extracts a pinned historical commit; the
+          # shallow default checkout lacks that history.
+          fetch-depth: 0
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e
         with:
           version: '0.10.0'
@@ -222,6 +225,22 @@ jobs:
           .\.venv\Scripts\python.exe -u -m pytest -p no:faulthandler -p tests.ci_thread_dump -q -s -o junit_family=legacy -o faulthandler_timeout=120 @testFiles --durations=20 --junitxml="$env:RUNNER_TEMP/native-proof.xml" 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP/native-proof.log"
           $code = $LASTEXITCODE
           exit $code
+      - name: Prove native version switch
+        # Direct invocation of the opt-in OLD->CURRENT switch proof. The closed
+        # matrix inventory above stays unchanged; this step is storage-only.
+        if: matrix.partition == 'storage'
+        env:
+          # This path supplies binaries ONLY. No installed data/role/password is used.
+          POLYMARKET_ALPHA_LAB_NATIVE_PG_PREFIX: 'C:\Program Files\PostgreSQL\17'
+        shell: pwsh
+        run: |
+          $env:POLYMARKET_ALPHA_LAB_RUN_NATIVE_PROJECT_POSTGRES = '1'
+          $env:PYTEST_DISABLE_PLUGIN_AUTOLOAD = '1'
+          $env:PYTHONUTF8 = '1'
+          Get-ChildItem Env: | Where-Object { $_.Name -like 'PG*' } | ForEach-Object { Remove-Item ('Env:' + $_.Name) }
+          .\.venv\Scripts\python.exe -u -m pytest -q -s -o junit_family=legacy tests/test_project_postgres_version_switch_native.py --durations=20 --junitxml="$env:RUNNER_TEMP/version-switch-proof.xml" 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP/version-switch-proof.log"
+          $code = $LASTEXITCODE
+          exit $code
       - name: Verify tracked source unchanged
         run: |
           git diff --check
@@ -233,6 +252,8 @@ jobs:
           path: |
             ${{ runner.temp }}/native-proof.log
             ${{ runner.temp }}/native-proof.xml
+            ${{ runner.temp }}/version-switch-proof.log
+            ${{ runner.temp }}/version-switch-proof.xml
           retention-days: 7
           if-no-files-found: error
 
