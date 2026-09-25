@@ -1005,7 +1005,7 @@ def _running_physical_state(original: Path) -> tuple[dict, dict, dict]:
         counts = _physical_counts(db, info)
     finally:
         db.down()
-    assert db.status() == 'stopped'
+    assert db.status()['status'] == 'stopped'
     return state, info, counts
 
 
