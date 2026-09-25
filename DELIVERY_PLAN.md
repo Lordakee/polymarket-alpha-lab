@@ -73,7 +73,7 @@ PR #26 的全量、Windows 和 kit 测试是组件工程证据，不是六个工
 | WP-03 任务调度与恢复 | **PARTIAL** | 持久批次／公平轮转／共享额度已接统一受控入口：查询批次、轮次和预算，审核后显式入库批次／预算，显式运行一轮与停止恢复；独立脚本不装配真实客户端。同一合成 CLI 原生组合场景已补两工作者并发中断、领取不重放和额度不返还证明（第 47 节）。仍缺本地 Agent／实际使用核验及最终 G3 组合验收 | 复用现有领取／收录；先合成模型，真实运行依赖 WP-02 与已明确的 D3 | G3：两轮调度＋一次停机重启＋混合失败／中断场景，任务不丢失、不重复执行、不隐去 incomplete |
 | WP-04 结算闭环 | **PARTIAL** | 已接原预测／候选哈希绑定的人工确认入口，核对原规则、声明来源与分钟时刻，并复用原子结算保存；仍缺真实 BTC／ETH 前瞻预测、实际匹配来源和独立人工核验 | WP-01 支持事件；WP-02 真实记录；事件到期和独立人工核验 | G4：BTC／ETH 各至少一个真实事件保留预测到结算的完整证据；过期、争议、拒绝和未决路径可追踪 |
 | WP-05 研究到模拟评估 | **PARTIAL** | 已接同库模拟证据、审核结算损益下界、--settled-paper 评估及现有任务命令的保存／查询入口；全部尝试、未决和缺失仍保留。仍缺获准真实预测、真实输入／费率证据及完整操作验收；假设成本不等于账户收益，准入不保证提交确认先于截止 | WP-02、WP-04；订单簿和成本记录；可先做离线组合 | G5：两团队至少各一个完整工程样本；拒绝项、样本缺口、成本和时间均可复算，不据此声称策略有效 |
-| WP-06 操作与发布收尾 | **PARTIAL** | 统一说明、入口完整性、排空与同版本整包冷恢复已合并验收（PR #49）；冷备份仍绑定原物理根；获准配置、安全数据版本切换和长期 Release 待办；PS5.1 首跑超时根因仍未定位（已保全三例失败证据并定位到进程内 .NET 首用冷路径；机制仍为假设，修复待独立评审节点）；安全数据版本切换设计已交付（第 48 节）；安全数据版本切换离线兼容性证据已交付（第 51 节；仅限固定版本对） | 文档整理现在可做；最终验收依赖 G1—G5 | G6：固定版本 Windows 全流程＋负向恢复验收＋发布资产哈希；无本机补丁拼装、无覆盖旧数据 |
+| WP-06 操作与发布收尾 | **PARTIAL** | 统一说明、入口完整性、排空与同版本整包冷恢复已合并验收（PR #49）；冷备份仍绑定原物理根；获准配置、安全数据版本切换和长期 Release 待办；PS5.1 首跑超时根因仍未定位（已保全三例失败证据并定位到进程内 .NET 首用冷路径；机制仍为假设，修复待独立评审节点）；安全数据版本切换设计已交付（第 48 节）；安全数据版本切换离线兼容性证据已交付（第 51 节；仅限固定版本对）；一次性数据上的版本切换原生证据已交付（第 55 节） | 文档整理现在可做；最终验收依赖 G1—G5 | G6：固定版本 Windows 全流程＋负向恢复验收＋发布资产哈希；无本机补丁拼装、无覆盖旧数据 |
 
 **当前完整验收：1／6（仅 WP-01／G1）。** 这是六个端到端工作包的状态，不表示现有代码完成量为零。
 每项达到 DONE 必须填入确切 PR、head／merge／tree、执行命令、结果、适用平台和未执行项；
@@ -1812,3 +1812,134 @@ WP-02：PARTIAL；G2：未关闭；V1 完成门：1／6。
 剩余真实激活、官方探针、身份／溯源、获批 supplier、
 真实并发安全及两团队真实研究／授权使用对账条件保持原要求。
 本节不关闭 G3，不证明统计策略有效性。
+
+## 55. WP-06：一次性合成数据上的安全源码版本切换原生证据（第 3 类；G6 未关闭）
+
+规划基线：`ef19a28d20fc68b0abe08f7ccc66be6832015a7e`，
+树 `43d62fc700951a63fc4069cff082c44ac3a16d75`。
+实际实施基线／所选候选源码提交与树：与规划基线相同，即候选提交
+`ef19a28d20fc68b0abe08f7ccc66be6832015a7e`、树
+`43d62fc700951a63fc4069cff082c44ac3a16d75`（隔离分支 wp06-switch-native
+上实施开始时一次解析固定，场景内以 `git archive` 归档该修订，不随 main 移动）。
+实施前复核末节编号：本隔离工作树末节为 §53；按协调指示本节预取 §55 编号，
+待 Node J 的 §54 合入后由协调者重定基并复核编号与内容衔接。
+
+OLD 提交：`2b20002c83ee33acb95fb2ca3de841f3e883ebbf`，
+树 `d6f6750b1068a3c75ab6249d5ca4f1ef7e010ee4`（提交—树一致性、对 HEAD 祖先
+关系及归档字节均实测核对）。OLD／CURRENT 目录：63／68 项；有效指纹实测
+OLD `3e8c813dcb7ce2389f11aa7aebba03819392f014e1208910c75d70bf709ccee5`、
+候选 68 项 `8b984158a7fda85b1f8a58583d0d20ac86cc9abae6acdf713bd7b5946a8fdd71`，
+均与第 51 节固定值一致；前 63 项名称与原始哈希逐项相同，新增五项为连续追加。
+
+本节仅记录第 48 节第 3 类隔离原生工程证据。输入为固定 Git 源码归档
+（二进制 `git archive --format=tar` 输出；逐成员清单与 Git blob 核对、
+拒绝遍历／绝对路径／链接／重名／大小写冲突／非普通文件后才写入全新目录）
+及测试生成的合成记录，不是已发布 kit 的重新验收，不接触既有安装、
+用户业务数据或用户凭据。旧源码与候选源码使用本次固定依赖环境
+（同一锁定 venv 解释器 + `-I -B` 独立子进程注入各自 src 并断言来源归属，
+含无关 decoy 包对照）；不声称复原历史 Python 环境。测试自身不抓取历史、
+不下载软件；opt-in 开启时缺少历史／二进制／前提一律失败而非跳过。
+
+- Windows 环境：Windows 10.0.22624、Python 3.12.10、psycopg 3.3.4、
+  PostgreSQL 18.6；原生前缀 `D:\PostgreSQL\18`，仅经 OLD 条目
+  `install-runtime --from-directory` 导入引擎文件到一次性根。
+- OLD 初始化与写入：`init` 报告 63 项迁移、初始化后引擎停止；二次 `init`
+  拒绝 `project_postgres_existing_data_not_reinitialized`；合成写入为
+  1 条 crypto_btc 完成记录、1 条 crypto_eth model_factory_failed 已捕获记录、
+  1 条无捕获结果的未完成领取（经 OLD `session._call(_claim)`）；OLD 侧检查
+  三个状态符合预期，`evaluate` 以 `research_execution_history_incomplete`
+  拒绝不完整历史。
+- 生命周期与保全：真实线程／`Event` 已准入读排空——close 封堵新准入
+  （`project_postgres_session_closed`）、竞争 OLD `down` 得 `project_postgres_busy`、
+  释放后正常排空并停机，持有的读结果等于原存储记录；OLD 显式 `up` 后
+  CURRENT 借用会话不停机、OLD 随后显式 `down`；随后 OLD 在项目外创建并验证
+  真实冷备份（'Private Backup'，仅保留于测试私有目录，不上传）。
+- 同一物理根切换及回退：OLD 与 CURRENT `status` 观测同一停止实例
+  （instance_id／port／version 一致）；CURRENT 源目录未新增 `.local` 或运行时；
+  CURRENT 实邻接条目（review_resolution_queue 默认工作清单保留
+  incomplete_execution_count=1、evaluate_blocked_by_incomplete=true、
+  三个合成市场可见；manage_research_tasks 对 63 项模式缺失批次
+  exit 1 `research_dispatch_operation_failed`）与托管读回原始记录／时间／
+  领取／哈希（记录相等，非集群文件字节相等）；63／63 下 OLD 源码回退
+  共享 API 全部准入且账本（含 applied_at）、身份、运行时清单与业务快照逐项不变。
+- 准入区分（本节显式记录）：CURRENT 源码配 OLD 目录 63＋账本 63 可通过
+  托管会话准入；目录 68／账本 63 拒绝 `project_postgres_migrations_pending`
+  （该会话启动过的引擎随拒绝停止）；缺失 CURRENT 功能表是与前两者分开的
+  兼容性失败（exit 1 operation_failed，非 pending 拒绝）。回退结论仅限本场景
+  实际行使的共享 API，不据此断言全部 CURRENT 功能与 63 项模式兼容。
+- 拒绝路径：合成 kit 标记先通过真实 verifier，再在独立子进程分别证明
+  源根（一次性候选副本）与数据根单字节失配均 `project_bundle_invalid_or_changed`
+  （经真实进入 `session()` 的路径；另一实邻接条目 exit 1），引擎保持停止，
+  finally 恢复字节后业务记录与身份不变；既有目标恢复拒绝
+  `project_postgres_restore_existing_data_refused`（集群仍在、无
+  postgres.restoring 暂存）；OLD 默认 verify-backup 对 68/63 拒绝
+  `project_postgres_backup_migrations_mismatch`；显式目录扩展回执恰为
+  backup_entries=63／current_entries=68／additional_entries=5／
+  database_ledger_checked=False／migrations_applied=0／database_started=False；
+  非 63 项内部修改＋测试专用清单哈希更新后显式扩展仍拒绝 mismatch、
+  活账本准入拒绝 `project_postgres_migration_history_conflict`；
+  畸形目录为独立用例并断言其实际代码（`project_postgres_migration_changed`、
+  `project_postgres_migration_inventory_mismatch`）。
+- 显式测试迁移：`up()` 实测 5 项 pending 且 finally `down()` 后停止；
+  CURRENT `migrate` 恰施加 5 项、再次施加 0 项；68/68 准入成功；缺失批次
+  检查改为 exit 3 `not_found`（可用空功能表与缺表失败区分）；原业务行相等、
+  前 63 项回执（含 applied_at）不变、仅追加 5 张新回执；临时回选 63 目录
+  对 68 账本拒绝 `project_postgres_migration_history_conflict` 后恢复 68 目录；
+  不做反向 SQL／覆盖恢复／模式回退，不据此断言所有旧源码配 68 目录均失败。
+- outcomes 为空：仅证明切换未新增结算记录，不作为既有结算保全证据。
+  引擎启动可能改变日志／控制文件／WAL；本节不主张启动后的物理字节相等。
+- 焦点离线、Windows 原生、验证与编译：净化环境（unset
+  PYTEST_ADDOPTS／PYTEST_PLUGINS／PYTHONPATH／PYTHONHOME，
+  PYTHONUTF8=1、PYTEST_DISABLE_PLUGIN_AUTOLOAD=1、
+  POLYMARKET_ALPHA_LAB_RUN_SUPABASE_SMOKE=0）下焦点离线
+  `tests/test_project_postgres_version_switch_native.py +
+  tests/test_claude_probe_environment.py`：120 passed、1 skipped（本文件
+  原生场景按 opt-in 显式跳过）、89.99 秒、exit 0；同净化环境＋
+  POLYMARKET_ALPHA_LAB_RUN_NATIVE_PROJECT_POSTGRES=1、前缀
+  `D:\PostgreSQL\18`、RUNNER_TEMP 私有 UUID 子目录下 Windows 原生整文件
+  运行：2 passed、0 skipped、exit 0、总耗时 1,850.32 秒（测试体 1,823.32 秒；
+  分阶段实测 old-initialize 339.8s／lifecycle-backup 220.3s／
+  current-selection 199.9s／old-rollback 93.6s／bundle-refusals 346.6s／
+  pending-backup-refusals 322.1s／explicit-migration 233.7s；本机 PG18 导入与
+  Windows I/O 占主要耗时，计划 8–15 分钟本地预留低估，实测如实记录）；
+  `py_compile` 通过；编辑后工作流 YAML 解析及既有
+  test_native_postgres_workflow.py 全部字符串不变式在 LF 归一化文本上复核
+  通过（矩阵 51＋追加清单逐项未动）。全量 `verify_local --full`、托管 CI
+  storage／dispatch 分区实际耗时：待协调者／PR 后固定。
+- CI 接线：native-postgres.yml checkout 增加 `fetch-depth: 0`（保留
+  persist-credentials: false）；storage 分区新增专用步骤
+  'Prove native version switch'（`if: matrix.partition == 'storage'`，
+  直接调用本测试文件、现有原生启用变量、显式 `$LASTEXITCODE` 传播、
+  独立 version-switch-proof.log/.xml 并入既有 always-upload 工件）；
+  封闭矩阵清单未动；新增常收接线测试断言步骤、条件、选择器、启用、
+  历史设置、退出传播、工件路径与聚合门关联。不新增第四个文件。
+- 首败、内部重试、修正、重跑、跳过及未执行项：原生场景共 4 轮首败均
+  为测试侧缺陷并逐一修复——(1) 未完成领取的检查状态误期望
+  already_captured（实为 incomplete）；(2) 快照经应用角色读取仅 owner 可读的
+  project_private.migrations（改为会话租约内 owner `_psql` 路径，权限模型未动）；
+  (3) owner `_psql` 物理计数在引擎停止时执行（改为显式 up／读／finally down
+  的 `_running_physical_state`，同时充当真实 up() pending 计数观测）；
+  (4) CURRENT 条目 stderr 末行为来源标记而非 CLI JSON（`_blocked_reason`
+  改为扫描含 reason_code 的 JSON 行）。实施代码零改动；修复后第 6 轮整文件
+  一次通过。跳过：焦点离线轮仅既有 opt-in 显式 skip 1 项；原生轮零跳过。
+  未执行（外部门控，非遗漏）：全量 verify_local、PR CI、Linux 补充证据、
+  CodeGraph、推送。
+- 凭据与隐私：测试不打开、哈希、打印或上传任何生成的凭据文件或私有日志；
+  冷备份归档与集群仅存在于一次性私有证明目录（RUNNER_TEMP 下
+  pal-version-switch-<uuid>，由 `private_directory(create=True)` 建立，
+  不改任何既有父目录 ACL）。
+- 协调者单独自审／测试轮：待协调者执行（合并前完成）。
+- 全新独立只读评审：PASS（2026-09-25；方案逐相位对照、workflow 契约与归档校验逐项核验、离线 wiring/契约测试独立复跑；一项前瞻性 MAJOR（本地 30:50 对 storage 分区 20 分钟上限，PR 实测时长为硬验收项，超限按停止条件上报不放宽）与两项 MINOR（WP-06 行引用、终版焦点/全量）均已处置：行引用已补、重定基后焦点 898 过＋全量 39,741/43/0 过 45 分 36 秒）。
+- CodeGraph 同步：工具不可用，门禁记录为受阻（自 2026-09-11 既有状态，
+  先例第 46—53 节）。
+- 推送提交与适用 CI：待推送（隔离分支 wp06-switch-native，待 J 合并后重定基；
+  推送后由协调者固定 SHA 与 storage／dispatch 实际耗时）。
+- Linux 补充证据：明确未执行（Windows 第 3 类证据已覆盖本节范围）。
+
+测试冷备份仅保留于测试私有目录，不上传归档、凭据、集群或私有日志。
+真实安装的具体版本对、物理根、引擎／备份操作、切换／回退窗口及任何
+模式／运行时／数据迁移，仍须分别取得 owner 明确授权；本节不激活真实
+provider、不触碰凭据、不变异用户数据库、不授权真实下单。本节不替代
+第 4／5 类证据，不重开 D1—D3。
+
+WP-06 仍 PARTIAL；G6 未关闭；V1 仍 1／6。
