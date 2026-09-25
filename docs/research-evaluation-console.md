@@ -184,9 +184,11 @@ checks do not pretend to be the four-payout settlement proof. Inputs/models are
 synthetic; no user's database or real provider is involved. Final source/CI
 identities and preserved first failures are recorded in the implementation PR.
 
-WP-05 remains PARTIAL, G5 open and V1 1/6. Real approved forecasts, input/fee evidence,
-remaining operator configuration, D1-D3 and the existing PowerShell 5.1 reliability
-issue remain open. No user-machine step or new migration is required by this change.
+WP-05 remains PARTIAL, G5 open and V1 1/6. Real approved forecasts, input/fee
+evidence, remaining operator configuration (the exact executable/version/model
+setup and concrete execution authorization) and the existing PowerShell 5.1
+reliability issue remain open; D1-D3 are accepted and are not an open decision.
+No user-machine step or new migration is required by this change.
 
 
 ## Checked read-only output (WP-03 / WP-04 / WP-05)

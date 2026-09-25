@@ -96,9 +96,14 @@ passing synthetic test establishes real model forecasting performance.
 ## One operating path: discovery to retained simulation and settlement
 
 This is the shared operator route for the existing commands, not a new scheduler
-or a claim that V1 is released. **Only G1 is complete.** Real research still needs
-D1 (provider and exact model), D2 (permission to send the reviewed input) and D3
-(enforceable request/concurrency/spending limits), plus a reviewed client adapter.
+or a claim that V1 is released. **Only G1 is complete.** The three direction
+decisions are already accepted: D1 permits the named local-agent choices (Codex,
+Claude Code, OpenCode, Grok CLI, ZCode CLI), D2 permits sending all needed
+research data, and D3 sets no first-round business-scale or monetary cap. Still
+pending and separate from those decisions: the exact executable/version/model
+configuration, an accepted isolation host and official binary probe, an approved
+finite in-memory key supplier with its concurrency conditions, and the concrete
+execution authorization for a real run.
 A ChatGPT/Codex login does not configure this application. Do not search for keys,
 copy an example into `.env`, or treat a synthetic test client as a real provider.
 
@@ -166,11 +171,29 @@ application must prepare fresh reviewed requests using the existing
 [crypto launch](../docs/research-crypto-launch.md),
 [contract](../docs/research-crypto-contract-scope.md) and
 [observation](../docs/research-crypto-observation-time.md) paths. No file queue or
-new loader is provided here. Stop here until D1-D3 and the adapter are approved.
+new loader is provided here. What gates live execution is no longer a D1-D3
+decision: the remaining prerequisites are the exact executable/version/model
+configuration, an accepted isolation host and official binary probe, an approved
+finite in-memory key supplier, and the concrete execution authorization recorded
+in the [local-agent integration](../docs/research-local-agent.md) contract.
 
-### 3. Admit a budgeted batch, run one turn, then inspect
+### 3. Admit reviewed work, run one turn, then inspect
 
-Admit the reviewed batch and budget through the existing task command's
+The accepted first-round route is uncapped and runs through the delivered typed
+assembly `run_claude_research_rotation` in
+`src/polymarket_alpha_lab/research_claude_operator.py`, which composes the stored
+authorization, two reviewed single-request BTC/ETH batches, the lazy Claude
+factory, the durable call audit and one bounded rotation. Its exact supplied
+inputs and side effects are stated in the
+[local-agent integration](../docs/research-local-agent.md) guide. Importing that
+module is inert; invoking the function is NOT a harmless readiness check: it
+writes the typed uncapped authorization, enqueues both batches and can enter the
+real model path, with each step committing separately. It is application
+assembly for an authorized application, not a standalone command, and the
+remaining activation prerequisites above still apply before any real call.
+
+The capped-budget alternative remains supported. Admit the reviewed batch and
+budget through the existing task command's
 `enqueue-batch --allow-queue-write` and `create-budget --allow-budget-write`, or
 through the original typed session APIs. Each command also requires its original
 ID, `--input-sha256` and canonical binary stdin; it never runs research or reserves
@@ -381,7 +404,9 @@ A release-specific reviewed procedure and final Windows end-to-end acceptance
 are still required before deploying a changed version to an existing user's data.
 This guide authorizes none of those user-machine writes. The known intermittent
 PS5.1 first-invocation problem is still open; its test observations do not prove a
-runtime fix. WP-06/G6 and D1-D3 remain open, as do real forecast/input/fee acceptance.
+runtime fix. WP-06/G6 remain open, as do real forecast/input/fee acceptance and
+the still-pending exact executable/version/model configuration and concrete
+execution authorization; the D1-D3 decisions themselves are accepted.
 
 ## Maintainer acceptance: one packaged research-to-settlement route
 
@@ -406,8 +431,10 @@ blocks while a pre-interruption historical view remains unchanged. The recipe
 also checks all loaded project modules and the unchanged kit manifest.
 
 This is isolated engineering evidence, not real source/fee verification, actual
-human review, real model use or account P&L. It does not close G2-G6, D1-D3, the
-old PS5.1 issue or release-specific upgrade acceptance. Existing component tests
+human review, real model use or account P&L. It does not close G2-G6, the old
+PS5.1 issue or release-specific upgrade acceptance; D1-D3 are accepted, and the
+exact executable/version/model configuration and concrete execution authorization
+under them remain pending. Existing component tests
 remain in place. The new recipe has its own bounded child execution; no existing
 process/job timeout, assertion, provider permission or user data is changed.
 
@@ -470,7 +497,9 @@ This is same-version, same-path cold recovery of synthetic data, not a version
 upgrade, rollback, cross-machine/path adoption, real disaster recovery or actual
 human/market acceptance. Existing cold-backup implementation and its component
 regressions are unchanged. No recipe or recovery archive is shipped in the kit.
-G2-G6, D1-D3, release-specific upgrade decisions and the PS5.1 issue remain open.
+G2-G6, release-specific upgrade decisions and the PS5.1 issue remain open; D1-D3
+are accepted, and the exact executable/version/model configuration and concrete
+execution authorization under them remain pending.
 
 PostgreSQL's file-system backup restrictions are documented at
 https://www.postgresql.org/docs/17/backup-file.html (checked 2026-09-16): this test
@@ -531,9 +560,13 @@ https://docs.python.org/3.12/library/threading.html#condition-objects
 
 The [approved-client assembly contract](../docs/research-model-budget.md#approved-client-assembly-contract-wp-02-design-only)
 is the pending adapter's design and acceptance boundary, not a delivered provider
-or a command that enables one. Give D1-D3 as non-secret decisions in the existing
-delivery plan; do not paste a key or ask a local agent to find credentials. Generic
-allowance tests do not certify a provider's invoice or SDK retry behavior.
+or a command that enables one. D1-D3 are already accepted as non-secret
+decisions: D1 permits the named local-agent choices, D2 permits all needed
+research data, and D3 sets no first-round business-scale or monetary cap. Do not
+re-ask them; the remaining decisions are the exact executable/version/model
+configuration and the concrete execution authorization for a real run. Do not
+paste a key or ask a local agent to find credentials. Generic allowance tests do
+not certify a provider's invoice or SDK retry behavior.
 
 Cold backup verification/restoration remains bound to the ORIGINAL physical
 project path, platform and engine. `--allow-catalog-extension` does not authorize

@@ -1036,6 +1036,42 @@ official binary is still not available or run here.
 Python reference checked2026-09-20:
 https://docs.python.org/3.12/library/os.html#os.DirEntry.stat
 
+## Delivered typed operator assembly for one audited uncapped rotation (WP-02)
+
+`run_claude_research_rotation` in
+[src/polymarket_alpha_lab/research_claude_operator.py](../src/polymarket_alpha_lab/research_claude_operator.py)
+is the delivered, reviewed assembly for the accepted uncapped first-round route
+under D1-D3. It composes the existing stored authorization, exactly two reviewed
+immutable single-request batches (one crypto_btc, one crypto_eth), the lazy
+Claude factory, the durable call audit and one bounded rotation. The caller
+supplies an already-open project-private managed session, the reviewed Claude
+profile, the typed uncapped authorization bound to both request keys and the
+profile digest, an approved synchronous finite in-memory API-key supplier, the
+rotation/turn identifiers, a shared stop token and the 1..2 task/worker limits
+(2/2 is the reviewed first-run configuration). No `model_budget_id` is passed;
+the capped `ModelCallBudget` path remains fully supported as the alternative.
+
+Importing or constructing the module is inert: no session is opened, no
+credential store is read, no supplier is invoked, no process starts. Invoking
+the function with a real session is NOT inert and is not a readiness check: it
+writes the typed authorization, enqueues both batches, constructs the factory
+and can enter the real model path. Each step commits separately; a later
+failure leaves earlier commits in place. The shared stop token is checked at
+entry and before each admission. Batch freshness, original claims, same-turn
+replay and capture semantics remain governed by the existing stores and
+runners, with no retry, fallback or identity replacement in the assembly.
+
+The result returns the original runner report (including any `pending_run`),
+the stored authorization receipt and per-team audit handles. The handles are
+lookup references for later inspection, not reconciled provenance; provider
+submission counts and actual charges remain unknown. Remaining activation
+blockers are unchanged: an approved isolation host, the official binary probe
+and exact profile provenance, the exact executable/version/model configuration,
+an approved finite in-memory supplier and its concurrency conditions,
+credential/database/call authorization, and actual provider identity/usage
+reconciliation with real BTC/ETH records. No standalone command, default
+client or provider fallback is added.
+
 ## Codex ephemeral SQLite state containment analysis (WP-02; analysis only)
 
 Baseline: repository commit `65053b3232307091af8845c9bfb1270a19944dd9`

@@ -182,7 +182,9 @@ Final revision/first failures/actual CI evidence belong to the implementation PR
 
 WP-05 remains PARTIAL; G5 requires durable prospective simulation inputs/execution,
 reviewed real outcomes and cost-aware realized evaluation. Original statistical
-promotion thresholds, D1-D3 and the existing WP-06 reliability issue are unchanged.
+promotion thresholds and the existing WP-06 reliability issue are unchanged;
+D1-D3 are accepted, with the exact executable/version/model configuration and
+concrete execution authorization still pending.
 
 ## Prospective input/result capture in the same database (WP-05)
 
@@ -285,7 +287,9 @@ omissions and then fixed them without weakening assertions. Same-assistant separ
 self-review is not a third-party audit or a zero-defect guarantee. Final fixed-head
 CI counts and original failures are recorded in the implementation PR. Tests use
 synthetic models and fresh private databases, never user business data or paid calls.
-WP-05 remains PARTIAL: real source/fee acceptance, outcome/P&L linkage, D1-D3 and the
+WP-05 remains PARTIAL: real source/fee acceptance, outcome/P&L linkage, the
+still-pending exact executable/version/model configuration and concrete execution
+authorization under the accepted D1-D3, and the
 known WP-06 reliability issue are not closed by this engineering evidence.
 
 Transaction semantics references checked 2026-09-15:
@@ -376,8 +380,10 @@ Tests: `test_research_paper_operator.py`, `test_research_paper_operator_review.p
 and `test_project_postgres_paper_operator_native.py`. The native proof invokes
 actual command children OUTSIDE the parent lifecycle lease, covering synthetic
 BTC/ETH ready/rejected saves, replay/conflict, restart/query and unchanged originals.
-No user database or real model/source is used. G5/G6, D1-D3 and the older PS5.1
-reliability issue remain open; exact final-revision results are retained in the PR.
+No user database or real model/source is used. G5/G6 and the older PS5.1
+reliability issue remain open; D1-D3 are accepted, with the exact
+executable/version/model configuration and concrete execution authorization
+still pending. Exact final-revision results are retained in the PR.
 
 Stream/encoding references checked2026-09-15:
 https://docs.python.org/3.12/library/sys.html#sys.stdin

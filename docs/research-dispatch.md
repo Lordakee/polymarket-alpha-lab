@@ -12,7 +12,10 @@ There is no file-backed queue, broker, alternate driver or implicit model choice
 service, automatic fresh-market collection, global provider budget, administrative
 cancellation or repair of lost model outputs. The explicit multi-batch rotation
 below adds a durable cursor; it is not a recurring or fleet-wide scheduler.
-WP-02 model/data/cost decisions remain required before real provider use. A run
+The WP-02 direction decisions are accepted (named local agents, all needed
+research data, no first-round business scale/monetary cap); real provider use
+still requires the exact executable/version/model configuration and the concrete
+execution authorization. A run
 starts only with an explicit factory and `allow_model_calls=True`; no model or
 credential is discovered. This delivery is tested with synthetic models only.
 
@@ -275,7 +278,9 @@ created shared allowance to each original task's lazy model client. See
 [model-call budgets](research-model-budget.md) for exact enrollment, no-refund
 semantics and the distinction between reserved bounds and actual billing.
 Omitting the keyword preserves this API's prior unbudgeted behavior. No policies
-are auto-created and D1-D3 still gate real use; this is not verified provider
+are auto-created; real use is gated not by D1-D3 (already accepted) but by the
+exact executable/version/model configuration and concrete execution
+authorization. This is not verified provider
 pricing or a global monetary guarantee. Original task claims, turn replay and
 cooperative stop rules are unchanged. The operator entry below requires this
 keyword rather than silently using the older unbudgeted default.
@@ -337,8 +342,14 @@ Both explicit model opt-in AND the callable factory are required before opening
 a managed session. `--budget-id` is mandatory; no unbudgeted fallback is exposed.
 **The standalone script has NO configured model factory.** Its `run-turn` returns
 exit2 before database access, even with `--allow-model-calls`; it must not be
-advertised as a ready-to-use real-model client. D1-D3 and an actually verified
-adapter/fee bound remain open. An injected factory is a trusted-code boundary,
+advertised as a ready-to-use real-model client. D1-D3 are accepted; an actually
+verified adapter/fee bound, the exact executable/version/model configuration and
+the concrete execution authorization remain open. The accepted uncapped
+first-round application route is the delivered typed assembly
+`run_claude_research_rotation` in
+`src/polymarket_alpha_lab/research_claude_operator.py`, described in the
+[local-agent integration](research-local-agent.md) guide; this console keeps the
+capped `--budget-id` contract. An injected factory is a trusted-code boundary,
 not a sandbox or proof that one invocation produces at most one billed request.
 No real or synthetic default client is installed in this production entry.
 
@@ -436,8 +447,9 @@ tasks finish: it first proves absence, commits the real selection, injects only 
 short output sink, then verifies real lookup and exact same-turn replay. It asserts
 no new client call and no additional budget reservation. This is not a new paid
 provider run or a claim to reproduce PR49's separate PowerShell timing failure.
-User databases, original migrations, model authorization and the pending D1-D3
-choices are unchanged.
+User databases, original migrations and model authorization are unchanged; D1-D3
+are accepted, and the exact executable/version/model configuration and concrete
+execution authorization under them remain pending.
 
 Python stream/exit contracts consulted 2026-09-17:
 https://docs.python.org/3/library/io.html#io.TextIOBase.write
@@ -496,8 +508,10 @@ https://docs.python.org/3.12/library/threading.html#condition-objects
 `manage_research_tasks.py` now exposes the original immutable creation APIs as
 `enqueue-batch` and `create-budget`. This fills the command-line admission step;
 it does NOT select a provider, approve research inputs, start research, reserve
-model calls, verify a tariff or load a model factory. D1-D3 and the reviewed
-application/client boundary still apply. Preparing a valid canonical request is
+model calls, verify a tariff or load a model factory. D1-D3 are accepted; the
+reviewed application/client boundary, the exact executable/version/model
+configuration and the concrete execution authorization still apply. Preparing a
+valid canonical request is
 not a substitute for reviewing its actual market rules and evidence.
 
 Each operation requires its existing identifier, `--input-sha256`, its OWN explicit
@@ -593,8 +607,9 @@ paths replays a store, invokes a model or assumes a COMMIT was rolled back.
 
 Managed admission keeps the current session draining and engine-ownership rules.
 Canonical input codecs, per-command write permissions and original payload/hash
-comparisons remain unchanged. The provider/model, input-send permission and real
-charge limits still require D1-D3; queue/budget admission is not model approval.
+comparisons remain unchanged. The exact provider/model configuration and the
+concrete execution authorization for real charge limits remain pending; D1-D3
+are accepted, and queue/budget admission is not model approval.
 Integration references: Python3.12 text-stream write/flush and Condition contracts
 were checked on2026-09-17; they do not guarantee consumer receipt or an
 uninterruptible filesystem/database operation.
@@ -606,5 +621,10 @@ Managed batch/rotation APIs accept `uncapped_authorization` and
 `allow_uncapped_costs=True` with the original explicit model-call opt-in. This is
 mutually exclusive with `model_budget_id` and preserves original claims/results.
 See [local-agent integration](research-local-agent.md) for scope, expiry, stop
-and replay. The standalone script still has no real client configuration; no
+and replay. The accepted uncapped first-round application route is the delivered
+typed assembly `run_claude_research_rotation` in
+`src/polymarket_alpha_lab/research_claude_operator.py`: it composes the existing
+stored authorization, two reviewed BTC/ETH batches, the lazy Claude factory, the
+durable call audit and one bounded rotation, and is itself side-effecting when
+invoked. The standalone script still has no real client configuration; no
 default subprocess transport or durable authorization ledger is supplied here.

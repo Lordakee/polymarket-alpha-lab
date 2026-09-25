@@ -1943,3 +1943,48 @@ provider、不触碰凭据、不变异用户数据库、不授权真实下单。
 第 4／5 类证据，不重开 D1—D3。
 
 WP-06 仍 PARTIAL；G6 未关闭；V1 仍 1／6。
+
+## 56. WP-06／WP-02：随包操作文档对齐已决口径与已交付装配（G6／G2 未关闭）
+
+实施基线：`ef81f23d`（2026-09-25；§54 已在其内，本节追加于 K 节点合并 §55 之后，
+编号顺延）。规划来源：残余可建节点审计（Codex 只读，工件
+`residual-backlog-audit/codex-plan-01.md`，基线 `ef19a28d`——该审计确认除本节点外
+可建积压为空）。
+
+本节点修正**随包分发的操作文档**与权威决策的冲突：quickstart 等仍将 D1—D3 写作
+待决并指示操作员"批准前停止"，且未指向已交付的无封顶首跑装配——这改变的是当前
+操作员被指令做什么，属于 WP-06"统一说明"既有要求范围内的缺陷修复，不是新增文档层。
+
+固定范围：七份既有 Markdown（database/quickstart.md、docs/research-dispatch.md、
+research-model-budget.md、research-local-agent.md、research-paper.md、
+research-paper-settlement.md、research-evaluation-console.md），151 插入／40 删除；
+无生产代码、测试、工作流或打包改动；随包选择清单不变（七份文件本已全部入包，
+新增链接只指向包内文件与源码模块）。
+
+- D1—D3 按既决口径直述（本地 Agent 方向、研究数据许可、首轮无业务规模／金额封顶），
+  与仍待决项（具体可执行文件／版本／模型配置、隔离宿主＋官方探针、获批的有限内存
+  密钥供应方及其并发条件、具体执行授权）明确分离；quickstart 三处方案点名的
+  "待决／停止等待／重复请求"缺陷全部修正，provider 章节不再重问 D1—D3。
+- 无封顶首跑应用路线指向已交付的类型化装配
+  `src/polymarket_alpha_lab/research_claude_operator.py::run_claude_research_rotation`，
+  含副作用诚实声明（导入惰性；调用会写入授权与批次并可进入模型路径，不是就绪检查；
+  各步独立提交）；封顶预算替代路线与独立脚本"无模型工厂"边界逐字保留。
+- 三方区分写入 research-model-budget.md：封顶正整数预留、无封顶授权的普通应用值
+  （其本身不成为审批账本）、以及仅由同库存储授权＋`require_durable_audit=True`
+  调用审计构成的耐久证据。
+- research-local-agent.md 增补装配模块短节（输入、检查点、结果／查询句柄语义、
+  仍存激活阻断）；其余三份文档仅修正当前时态决策语句，历史证据与真实缺口保留。
+
+验证证据（实施者执行＋独立评审复核）：七文件 UTF-8 有效、新增行纯 ASCII、
+`git diff --check` 干净、范围恰七文件、凭据扫描零命中、陈旧措辞模式全库清零
+（七处剩余 D1—D3 提及逐处核为既决表述或历史上下文）；
+`tests/test_project_quickstart.py` 17 项通过（含字面不变量与链接解析）。
+协调者单独自审：核对方案六项区分逐条在位、无越界（无新增可运行激活命令、
+无凭据装载、无提供商回退、无结算模板、无发布清单、无对包外 DELIVERY_PLAN 的
+新增依赖）。全量套件与编译为文档例外 N/A；CodeGraph 工具不可用，按第 46—55 节
+先例如实记录受阻。全新独立只读评审：PASS（2026-09-25；方案逐项对照、六区分在位、
+无越界、契约测试复跑；四项 NOTE 均无碍）。
+
+官方用例执行：0/6；真实提供商调用：false；activation_authorized：false。
+**WP-02—WP-06 仍 PARTIAL，G2—G6 未关闭，V1 仍 1／6。** 本节仅修正操作文档的
+当前指令，不改变任何验收条件；隔离宿主、探针与真实运行授权仍待 owner。

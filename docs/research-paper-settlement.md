@@ -132,7 +132,9 @@ exchange action is used. Final fixed-head CI evidence is recorded in the PR.
 WP-05 remains PARTIAL and G5 remains open. Real approved forecasts, reviewed real
 input/fee evidence, full operator acceptance and strategy-validation thresholds
 are not replaced by synthetic engineering tests or assumed-cost settlement sums.
-D1-D3 and the existing WP-06 first-run reliability issue remain unchanged.
+D1-D3 are accepted; the exact executable/version/model configuration and the
+concrete execution authorization remain pending, and the existing WP-06
+first-run reliability issue is unchanged.
 
 Primary semantics checked 2026-09-15:
 https://docs.polymarket.com/concepts/resolution

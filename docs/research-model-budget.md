@@ -25,7 +25,12 @@ OpenCode, Grok CLI and ZCode CLI are allowed alternatives), all needed research
 data, and no first-round business scale/monetary cap. Do not relabel D2 unapproved.
 The positive-micros allowance remains capped-only. A separate explicit uncapped
 application path is now available; see [local-agent integration](research-local-agent.md).
-It does not fake zero charges, huge ceilings or `cost_bound_attested`. The real
+It does not fake zero charges, huge ceilings or `cost_bound_attested`. Keep three
+things distinct: a capped `ModelCallBudget` enforces reserved positive-integer
+allowances; the uncapped authorization is a plain application value that carries
+no monetary ledger; and durable uncapped evidence comes only from the stored
+authorization plus `require_durable_audit=True` call records in the same project
+database. The value alone did not become an approval ledger. The real
 CLI host and independent authorization/usage audit remain unaccepted. Finite I/O, task identity, isolation and stop
 controls remain required. No real client is activated by this source change;
 configuration alone does not close G2. Tests use synthetic clients
@@ -227,8 +232,11 @@ fit: the original per-call transaction still checks each actual message, output
 cap, shared balance and expiry. Later denial/failure capture and no-refund rules
 are unchanged. This internal message-size check is not a provider tokenizer,
 HTTP-envelope size calculation, tariff verification or proof that an entire loop
-fits the monetary budget. The latest D1-D3 decisions are recorded in the delivery
-plan; chosen-client validation and explicit uncapped-policy implementation remain.
+fits the monetary budget. The latest D1-D3 decisions are accepted (named local
+agents, all needed research data, no first-round monetary cap); chosen-client
+validation (the exact executable/version/model configuration) and the concrete
+execution authorization remain, and the explicit uncapped path is implemented in
+[local-agent integration](research-local-agent.md).
 
 Python JSON serialization returns text, not encoded bytes; encoding is explicit.
 Reference checked 2026-09-17: https://docs.python.org/3.12/library/json.html
@@ -239,9 +247,13 @@ Reference checked 2026-09-17: https://docs.python.org/3.12/library/json.html
 **No provider adapter is shipped or enabled by this section.** It records the
 credential-isolation and data-send design that must be reviewed before adding
 one selected adapter. It is not another configuration loader, approval ledger,
-framework or runtime gate. The current D1-D3 decisions are in `DELIVERY_PLAN.md`;
-the standalone task script still supplies no model factory. The contract below
-describes the existing capped path, not an already implemented uncapped adapter.
+framework or runtime gate. The current D1-D3 decisions are accepted (named local
+agents, all needed research data, no first-round monetary cap); the standalone
+task script still supplies no model factory. The contract below describes the
+existing capped path; the delivered uncapped application path and its
+stored/audited composition are covered in
+[local-agent integration](research-local-agent.md), while an actually verified
+real-provider adapter remains future work.
 
 ### Reuse the current application boundary
 
