@@ -2155,3 +2155,46 @@ WP-06/G6 或 V1。
 
 官方用例执行：0/6；真实提供商调用：false；activation_authorized：false。
 **WP-02—WP-06 仍 PARTIAL，G2—G6 未关闭，V1 仍 1／6。**
+
+
+## 59. WP-06 随包指南 PS5.1 状态一致性修正（2026-09-26）
+
+### 授权与出处
+
+常设规则（owner，2026-09-26：任何决策问 Codex）。可建面咨询（只读，task
+buildable-surface-consult-01；工件 buildable-surface-consult/codex-verdict.md，
+判定 BUILDABLE SURFACE REMAINS，恰一小节点）：§57 关闭 PS5.1 项后，
+随包 quickstart 收尾段（原行 555—556）仍称该问题「still open」，与已采纳
+决策矛盾——按第 56 节确立的『随包操作文档与权威决策矛盾即为 WP-06 缺陷』
+先例，该句为待修一致性缺陷，全部证据在 §57 内、无需主机／凭据／真实
+调用／新 owner 决定。咨询同时处置：connect_timeout=5 维持既有缓期（无新增
+失败证据；server.py:88 已由受管 DSN 供应且 research_capture_psycopg.py:64
+显式覆盖）；G3 合成组合、G5 离线组合、G6 切换引擎与发布基础设施均已
+交付，不重复；其余全部验收依原状态被 owner 前提阻塞（G2 物理主机为最近
+关键前提，但非唯一前提）。
+
+### 范围
+
+恰两文件：`database/quickstart.md`（文档工作者，仅替换收尾段中
+「still open」两句为 §57 环境特定关闭表述＋历史证据保全＋精确重开条件＋
+不宣称通用运行时修复）、本文件 §59（协调者）。八步切换过程、
+`scripts/download_handoff.ps1`、`docs/handoff-first-run.md`、测试断言、
+生产模块、迁移、工作流一律不动；不关 G6；不重开 §56/§58。
+
+### 验证与评审
+
+焦点：`tests/test_project_quickstart.py` 全量通过（含随包链接与切换命令
+契约）。全量与编译、`git diff --check`、凭据扫描、CI 按标准门禁执行；
+CodeGraph 工具不可用按先例如实记录。协调者单独自审（标注）后，最终修订
+新派独立只读评审须 `VERDICT: PASS`。首败与重试分开保留。
+
+### 交接完整性附带项
+
+咨询指出：保留分支 `handoff/wp02-host-transfer-20260926`（cf8ce2ab）中
+`transfer-instructions-DRAFT.md` 引用的伴随执行 runbook
+（codex-plan-probe-exec.md）不在该分支跟踪树内（走源机 .agent-artifacts
+路径）。协调者须在声称交接完成前补齐该伴随文件的不可变发布或等价处置，
+不得重造载荷或臆造替代执行过程；本轮记录为待办，不视为新可建节点。
+
+官方用例执行：0/6；真实提供商调用：false；activation_authorized：false。
+**WP-02—WP-06 仍 PARTIAL，G2—G6 未关闭，V1 仍 1／6。**

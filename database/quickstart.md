@@ -554,9 +554,18 @@ separate design and authorization.
 
 A release-specific reviewed procedure and final Windows end-to-end acceptance
 are still required before deploying a changed version to an existing user's data.
-This guide authorizes none of those user-machine writes. The known intermittent
-PS5.1 first-invocation problem is still open; its test observations do not prove a
-runtime fix. WP-06/G6 remain open, as do real forecast/input/fee acceptance and
+This guide authorizes none of those user-machine writes. The recorded
+delivery-plan decision (`DELIVERY_PLAN.md` section 57) closes the intermittent
+PS5.1 first-invocation item for the supported environment: the owner-approved
+CurrentUser RemoteSigned policy change is executed, and the existing 96
+handoff/probe test passes stand as its evidence. The historical first-invocation
+evidence remains preserved unrevised: the three CI instances recorded in
+`docs/handoff-first-run.md` and the retained `scripts/download_handoff.ps1`
+helper. The item reopens only as a bounded repair if a reproducible failure
+occurs under the supported configuration, CurrentUser RemoteSigned on Windows
+PowerShell 5.1; no universal Windows runtime fix is claimed, and no further
+policy change, execution-policy bypass or ACL relaxation is authorized.
+WP-06/G6 remain open, as do real forecast/input/fee acceptance and
 the still-pending exact executable/version/model configuration and concrete
 execution authorization; the D1-D3 decisions themselves are accepted.
 
