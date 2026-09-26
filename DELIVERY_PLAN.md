@@ -2071,3 +2071,87 @@ CodeGraph 如可用、CI）与最终修订新派独立只读评审 `VERDICT: PAS
 本节仅为决策采纳记录，不宣称任何执行完成：官方用例执行 0/6；
 真实提供商调用：false；activation_authorized：false。
 **WP-02—WP-06 仍 PARTIAL，G2—G6 未关闭，V1 仍 1／6。**
+
+## 58. WP-06 生产版本切换随包操作过程交付（2026-09-26）
+
+### 授权与范围
+
+第 57 节授权 VERSION-SWITCH IMPLEMENTATION: authorize-now（仅源码开发及其
+既定验证流程）。Codex 规划（只读，task wp06-version-switch-impl-plan-03；
+工件 wp06-version-switch-impl/codex-plan-01.md；其内部计划评审首轮 FAIL、
+R2 PASS 均保留）判定：现行代码**不缺**生产切换引擎——第 48 节设计明确复用
+既有入口并排除新选择器／更新器／切换工具；真实缺口是把已接受过程变为随包
+交付的完整受测操作说明。本节点恰改三文件：
+`database/quickstart.md`（文档工作者）、`tests/test_project_quickstart.py`
+（测试工作者）、本文件 §58（协调者）。运行边界不变：不切换真实部署、不变更
+用户数据库、不对真实数据重放迁移、不激活 provider、不处理凭据。
+
+### 出处
+
+实施基线：commit `4ed7cc189631688eb2c3cd144dbbc8bf0dc06e4c`、tree
+`8b5959b3b4b41e850ef61ce4813e549f4be0e381`（干净树）。引用第 48（设计）、
+51（固定版本对离线兼容）、55（一次性数据原生过程证明）为历史证据，不重复。
+命令权威：`scripts/project_database.py:5-15`（相邻源选择 + 包装器前置
+`--root`、用户 `--root` 覆盖）、`tests/test_project_entry_roots.py:24-35`
+（接受文法）、`src/polymarket_alpha_lab/project_postgres/cli.py:16-36`
+（`--root`／`up`／`down`／`status`／`migrate`／`backup --destination`／
+`verify-backup --archive --sha256 --trusted-backup`）。
+
+### 交付义务
+
+quickstart 新增小节「Ordered source-switch procedure for a separately
+authorized release」（纯插入 152 行，行 403—554），按计划八步契约依序交付：
+固定版本对与环境；候选源旁路准备（外档先信任后用、新目录、入口
+`verify_distribution`、明令禁 `start_project.py`——其无 `--root` 且自建
+安装）；schema 硬前提四情形表（63/63 仅既证公共操作；68/63 pending 停；
+63/68 冲突停；68/68 计数不足）与选择前停止条件；先排空后 `down`／`status`
+（无虚构 stop-turn、禁止强杀与删锁）；私有恢复材料另需授权（新外部目的地、
+独立留存 SHA256、`verify-backup --trusted-backup` 回执、凭据保密、不接
+restore 覆盖生产根）；显式批准点绑定两版本／原根／证据／恢复材料／窗口、
+无批准库；以候选绝对入口 `--root $OriginalRoot`（子命令前置位）选源、保留
+OLD 语义回滚；后续操作另需授权（WAL／控制／日志警示、条件回滚、不可撤销
+记录或 schema）。字面示例钉死五变量：`$OriginalRoot`／`$CandidateSource`／
+`$CandidatePython`／`$OldSource`／`$OldPython`，示例路径明示非部署批准。
+
+测试新增三函数八用例（+125 行）：五变量钉合与套件配对（不交叉、候选源
+≠旧源≠原根）；非空提取（严格文法计数==宽松调用行计数==6，零命令通过不可
+能）并钉死文档命令多重集（候选 status；旧 down/status×2/backup/
+verify-backup）；六条命令经真实解析器隔离子进程验证——有效解析根等于原根
+值（覆盖包装器相邻默认）、动作等于文档子命令、入口脚本与接受 `cli` 模块均
+解析自对应合成套件而非开发检出或另一套件、仅解析终止以空工作目录与原根
+目录未动证明。无通用 Markdown 命令解释器；既有 15 项字面命令用例与随包
+链接检查保持绿色。
+
+### 验证表
+
+| 检查 | 命令／出处 | 结果 |
+| --- | --- | --- |
+| 焦点（阶段 1） | `pytest -q tests/test_project_quickstart.py`（净化环境） | 25 通过 79.90s（工作者执行） |
+| 焦点集成（阶段 2） | quickstart＋entry_roots＋entry_roots_review＋distribution＋native_postgres_workflow | 103 通过 202.87s |
+| 全量与编译 | `scripts/verify_local.py --full`（净化环境，含 compileall） | PASS：全量 pytest 39,749 通过／43 跳过（38m20s）；`PASS: full pytest`＋`PASS: full local verification` 标记齐 |
+| 空白检查 | `git diff --check`（工作与暂存） | 通过 |
+| 凭据／边界扫描 | `git grep -l -i -E`（计划规定模式，列名不列值）＋新增行逐条分类 | 通过：新增行命中仅两类——安全文本 prose「authorization」×2 与测试代码 shlex `tokens` 分词变量×3；全文件命中为既有安全文档措辞；无未分类疑似凭据（独立评审复核一致） |
+| CodeGraph | 工具不可用（既有受阻先例如实保留） | 受阻 |
+| CI | 既有必需检查（storage 20 分钟上限保留；本地 §55 实测 30m50s 为已记录计时风险，本节点无工作流改动） | 待推送后 |
+
+### 失败史
+
+规划分发 -01／-02 被提供方截断（仅意图声明），-03 成功；无测试失败；
+工作者无偏差报告；无重试或跳过的新增。
+
+### 评审
+
+协调者单独自审（标注为自审）：范围恰三文件、四情形表逐字对照计划、
+`start_project.py` 禁令在位、全文件 ASCII、六命令均为既有入口、无新命令
+／标志／版本对／批准面。计划评审（Codex 内部）：FAIL→R2 PASS。最终修订的
+新派独立只读实现评审：待执行。
+
+### 剩余边界
+
+冻结项仅两条 G2/G4 依赖验收声明（真实研究跨切换保全依赖 G2 获准记录；
+真实前瞻预测—结算链保全依赖 G4 证据）。安装批准、真实目录／账本证据、
+备份／启动／读取授权、维护窗口与发布资产出处为独立运行前提。本节点不关闭
+WP-06/G6 或 V1。
+
+官方用例执行：0/6；真实提供商调用：false；activation_authorized：false。
+**WP-02—WP-06 仍 PARTIAL，G2—G6 未关闭，V1 仍 1／6。**
