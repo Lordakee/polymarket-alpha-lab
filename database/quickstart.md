@@ -400,6 +400,158 @@ explicit and uses the catalog at the selected data root. A schema change is not
 undone by checking out old code. Restore refuses existing data; do not delete a
 working cluster to force it through. Cross-path restore/adoption is not promised.
 
+### Ordered source-switch procedure for a separately authorized release
+
+The steps below make that boundary operational. They add no switch command,
+persistent selector or approval record; every executable line is an existing
+entrypoint already documented in this guide. The procedure stays
+release-gated: the paths below are illustrative placeholders, and the
+retained historical offline/native evidence for the pinned version pair is
+evidence, not deployment approval. A missing release-specific value (a pinned
+commit or tree, environment, archive hash or size) blocks use of the
+procedure instead of silently defaulting.
+
+**1. Pin the intended operation.** Record both versions' source commits and
+trees, their Python environments, the trusted outer archive SHA256 values and
+byte sizes, the unchanged original physical root, the runtime version and
+instance identity, and reviewed compatibility evidence covering EVERY
+feature you intend to operate, not only the migration counts in step 3. Keep
+the complete OLD kit and its environment in place as the rollback baseline.
+Pin the values from the reviewed release record, replacing every illustrative
+path:
+
+```powershell
+$OriginalRoot = 'C:\Example\Existing\polymarket-alpha-lab'
+$CandidateSource = 'C:\Example\NewKit\polymarket-alpha-lab'
+$CandidatePython = Join-Path $CandidateSource '.venv\Scripts\python.exe'
+$OldSource = 'C:\Example\RetainedOld\polymarket-alpha-lab'
+$OldPython = Join-Path $OldSource '.venv\Scripts\python.exe'
+if (-not (Test-Path -LiteralPath $OriginalRoot -PathType Container)) { throw 'Pin the reviewed original root; an illustrative path is not deployment approval' }
+if (-not (Test-Path -LiteralPath $CandidatePython -PathType Leaf)) { throw 'Reviewed candidate kit is not installed in its own directory; do not proceed' }
+if (-not (Test-Path -LiteralPath $OldPython -PathType Leaf)) { throw 'Complete retained old kit missing; there is no rollback baseline' }
+```
+
+When the original installation's own code is the reviewed OLD source, pin
+`$OldSource` to that same absolute path as `$OriginalRoot`; the two values are
+still pinned and reviewed separately.
+
+**2. Prepare the candidate source separately.** Verify the candidate's OUTER
+archive SHA256 and byte size against the trusted build record BEFORE using
+any code from it, then extract it into a NEW side-by-side directory as
+described under [obtain and verify a kit](#obtain-and-verify-a-kit).
+Preparing candidate source does not initialize a replacement database. A
+declared kit's extracted inventory is checked by the existing
+`verify_distribution` API at managed-session entry, for both the source
+directory and the selected data root; this procedure adds no separate
+verifier command. NEVER run `start_project.py` for this purpose: it has no
+`--root` option and verifies and initializes its own installation instead of
+selecting this root.
+
+**3. Make schema compatibility a hard precondition.** The original root keeps
+its effective migration catalog (`database/migrations.lock.json` plus
+`supabase/migrations`) and its applied migration ledger exactly as they are;
+establish both from reviewed evidence of the actual installation, not from
+assumption. The counts below name the pinned historical pair (an OLD
+63-entry catalog and a 68-entry candidate catalog) only, not a general rule
+for other version pairs:
+
+| Effective catalog / applied ledger | Required decision before selection |
+| --- | --- |
+| 63 entries / 63 applied | The candidate's complete NEW functionality is unsupported on the unchanged schema; only the specifically evidenced common operations may be considered. |
+| 68 entries / 63 applied | Migrations are pending; managed sessions refuse entry with `project_postgres_migrations_pending`. Stop. Catalog adoption and migration are separately authorized, never implied by new source. |
+| 63 entries / 68 applied | Conflicting history; refusal is `project_postgres_migration_history_conflict`, and selecting an old catalog does not undo schema changes. Stop. |
+| 68 entries / 68 applied | The catalog condition is satisfied only; candidate-feature compatibility and installation evidence are still required. Counts alone are insufficient. |
+
+Unknown requirements, a missing intended feature, pending or conflicting
+history, missing compatibility evidence, a failed kit check, or runtime or
+identity drift stops the procedure BEFORE any source selection.
+
+**4. Drain before stopping.** Under the already-authorized maintenance window,
+stop admitting new work and let previously admitted work finish through the
+existing cooperative controls described under [stop and restart without
+erasing history](#6-stop-and-restart-without-erasing-history); there is no
+`stop-turn` CLI to invent or invoke. Preserve admitted, failed and incomplete
+work exactly as recorded. Only after the drain, stop the engine and verify
+the stopped state with the currently selected reviewed source (illustratively
+the retained OLD kit):
+
+```powershell
+& $OldPython -I "$OldSource/scripts/project_database.py" --root $OriginalRoot down
+if ($LASTEXITCODE -ne 0) { throw 'Stop blocked; do not force-kill or delete lock/state files' }
+& $OldPython -I "$OldSource/scripts/project_database.py" --root $OriginalRoot status
+if ($LASTEXITCODE -ne 0) { throw 'Could not verify stopped state' }
+```
+
+A busy engine or an active-connection failure never permits force-killing
+processes or deleting lock or state files; retain the failure and stop the
+procedure.
+
+**5. Require verified private recovery material.** This step exists only
+under the later, separate installation and backup authorization; the switch
+itself does not authorize a backup. With the engine stopped, use the existing
+cold-backup commands from a specifically pinned management-tool revision
+whose flags that revision's own documentation confirms; do not assume a
+historical OLD kit supports current flags. The destination must be a NEW
+directory OUTSIDE the project under an already existing parent. Backups
+contain private credentials: keep the directory private, never publish it,
+and retain the SHA256 independently of the backup media:
+
+```powershell
+& $OldPython -I "$OldSource/scripts/project_database.py" --root $OriginalRoot backup --destination 'D:\Example\Backups\PreSwitch'
+if ($LASTEXITCODE -ne 0) { throw 'Backup failed or was refused; the switch is blocked' }
+& $OldPython -I "$OldSource/scripts/project_database.py" --root $OriginalRoot verify-backup --archive 'D:\Example\Backups\PreSwitch\snapshot.palpg.zip' --sha256 YOUR_RETAINED_SHA256 --trusted-backup
+if ($LASTEXITCODE -ne 0) { throw 'Backup verification failed; the switch is blocked' }
+```
+
+`--trusted-backup` approves a backup of your own trusted database; it is not
+a compatibility or upgrade check, and `--allow-catalog-extension` is not part
+of this procedure. Any backup or verification failure blocks the switch.
+Restore stays a separate disaster-recovery operation with an absent-target
+requirement; it is never wired into this switch.
+
+**6. Bind an explicit operator approval point.** Before any invocation
+changes, the operator's existing approval process must explicitly bind both
+source versions with their commits, trees and environments, the unchanged
+`$OriginalRoot`, the compatibility evidence covering every intended
+operation, the verified recovery material, and the switch and rollback
+window. This guide adds no approval database, file journal or selector; the
+approval lives in that existing process. No approval, no switch.
+
+**7. Select source and environment.** The switch is only which absolute
+entrypoint subsequent commands invoke. Keep `--root` on `$OriginalRoot`, in
+its existing position before the subcommand: the invoked script still selects
+its own adjacent source, and the explicit `--root` selects the data target,
+overriding the script's adjacent default. Selection alone must not alter
+catalogs, runtime, identity, credentials or business records:
+
+```powershell
+& $CandidatePython -I "$CandidateSource/scripts/project_database.py" --root $OriginalRoot status
+if ($LASTEXITCODE -ne 0) { throw 'Candidate status failed; retain the error, do not force anything' }
+```
+
+Routine rollback selects the retained OLD kit and environment again with the
+same root:
+
+```powershell
+& $OldPython -I "$OldSource/scripts/project_database.py" --root $OriginalRoot status
+if ($LASTEXITCODE -ne 0) { throw 'Old-source status failed; retain the error' }
+```
+
+The direct OLD form above applies only when the retained OLD kit ships
+`scripts/project_database.py` with today's adjacent-source behavior; the
+retained historical pair needed an explicit adjacent-source runner, so pin
+the OLD kit's actual entrypoint form from its own reviewed evidence instead
+of assuming today's wrapper.
+
+**8. Keep subsequent operations separately authorized.** Engine start and
+managed reads are later, separately authorized operations: a session may
+start PostgreSQL and change WAL, control and log state even when the business
+operation is read-only, so physical byte equality of cluster files is not
+promised after the engine starts. Source rollback remains valid only while
+the original schema and storage contract stay compatible; it cannot undo
+written records or schema changes, and any such requirement stops for a
+separate design and authorization.
+
 A release-specific reviewed procedure and final Windows end-to-end acceptance
 are still required before deploying a changed version to an existing user's data.
 This guide authorizes none of those user-machine writes. The known intermittent
