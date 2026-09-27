@@ -11,7 +11,6 @@ import json
 import os
 from pathlib import Path
 import shutil
-import socket
 import subprocess
 import sys
 import time
@@ -27,6 +26,7 @@ from polymarket_alpha_lab.research_resolution_codec import encode_resolution
 from polymarket_alpha_lab.research_resolution_confirmation import CryptoSettlementReview
 from polymarket_alpha_lab.team_research_agent_types import ResearchModelReply, ResearchToolCall
 from polymarket_alpha_lab.team_research_intake import GammaMarketSnapshot
+from tests.native_port_selection import pick_port
 from tests.test_research_resolution_confirmation import request, input_bytes
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -55,7 +55,7 @@ def test_original_forecasts_manual_confirmation_replay_restart_and_preservation(
     (root/'pyproject.toml').write_text('[project]\nname="polymarket-alpha-lab"\n')
     shutil.copytree(ROOT/'database',root/'database')
     shutil.copytree(ROOT/'supabase/migrations',root/'supabase/migrations')
-    with socket.socket() as sock:sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
+    port=pick_port()
     import_runtime_directory(root,prefix);db=ProjectPostgres(root)
     try:
         assert db.initialize(port=port)['migrations_applied']==68

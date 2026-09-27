@@ -10,7 +10,6 @@ import json
 import os
 from pathlib import Path
 import shutil
-import socket
 import subprocess
 import sys
 import uuid
@@ -23,6 +22,7 @@ from polymarket_alpha_lab.research_dispatch import ResearchBatch
 from polymarket_alpha_lab.project_postgres import files
 from polymarket_alpha_lab.project_postgres.runtime import import_runtime_directory
 from polymarket_alpha_lab.project_postgres.server import ProjectPostgres
+from tests.native_port_selection import pick_port
 from tests.test_project_postgres_dispatch_native import prepared
 from tests.test_team_research_cross_source import Model
 
@@ -64,8 +64,7 @@ def test_rotation_failure_fairness_upgrade_restart_and_no_reclaim(tmp_path, monk
     assert len(manifest['migrations'])==65 and manifest['migrations'][-1]['name']==TAIL
     (root/'supabase/migrations'/TAIL).unlink()
     (root/'database/migrations.lock.json').write_text(json.dumps(dict(manifest,migrations=manifest['migrations'][:-1])))
-    with socket.socket() as sock:
-        sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
+    port=pick_port()
     import_runtime_directory(root,prefix);db=ProjectPostgres(root)
     try:
         assert db.initialize(port=port)['migrations_applied']==64

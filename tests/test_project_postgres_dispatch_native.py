@@ -10,7 +10,6 @@ import json
 import os
 from pathlib import Path
 import shutil
-import socket
 import subprocess
 import sys
 import time
@@ -25,6 +24,7 @@ from polymarket_alpha_lab import research_capture_psycopg as capture
 from polymarket_alpha_lab.research_crypto_launch import CryptoResearchPreview, CryptoResearchSpec
 from polymarket_alpha_lab.research_dispatch import ResearchBatch
 from polymarket_alpha_lab.research_dispatch_runner import ResearchDispatchStop
+from tests.native_port_selection import pick_port
 from tests.test_research_crypto_launch import snapshots
 from tests.test_team_research_cross_source import Model
 from tests.test_project_postgres_native import request as original_request, Model as OriginalModel
@@ -84,8 +84,7 @@ def test_durable_batches_upgrade_stop_restart_and_crash_without_model_replay(tmp
     (root/'database/migrations.lock.json').write_text(json.dumps(dict(manifest,
         migrations=manifest['migrations'][:-1])))
     (root/'supabase/migrations'/TAIL).unlink()
-    with socket.socket() as sock:
-        sock.bind(('127.0.0.1',0)); port = sock.getsockname()[1]
+    port = pick_port()
     import_runtime_directory(root,prefix)
     db=ProjectPostgres(root)
     try:

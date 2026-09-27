@@ -20,6 +20,7 @@ from polymarket_alpha_lab.project_postgres.backup import (
 from polymarket_alpha_lab.project_postgres.files import ProjectDatabaseError, digest_file, private_directory
 from polymarket_alpha_lab.project_postgres.runtime import import_runtime_directory
 from polymarket_alpha_lab.project_postgres.server import ProjectPostgres
+from tests.native_port_selection import pick_port
 from tests.test_project_postgres_native import Model, request, ROOT
 
 ENABLED = os.environ.get('POLYMARKET_ALPHA_LAB_RUN_NATIVE_BACKUP') == '1'
@@ -41,9 +42,7 @@ def test_native_cold_backup_recovery_preserves_prospective_history(tmp_path, mon
     (root / 'pyproject.toml').write_text('[project]\nname="polymarket-alpha-lab"\n')
     shutil.copytree(ROOT / 'database', root / 'database')
     shutil.copytree(ROOT / 'supabase/migrations', root / 'supabase/migrations')
-    with socket.socket() as sock:
-        sock.bind(('127.0.0.1', 0))
-        port = sock.getsockname()[1]
+    port = pick_port()
     import_runtime_directory(root, prefix)
     db = ProjectPostgres(root)
     db.initialize(port=port)
@@ -166,9 +165,7 @@ def test_native_old_backup_restore_requires_explicit_catalog_extension_and_migra
     assert len(manifest['migrations']) == 67 and manifest['migrations'][-1]['name'] == tail
     (root / 'supabase/migrations' / tail).unlink()
     manifest_file.write_text(json.dumps(dict(manifest, migrations=manifest['migrations'][:-1])))
-    with socket.socket() as sock:
-        sock.bind(('127.0.0.1', 0))
-        port = sock.getsockname()[1]
+    port = pick_port()
     import_runtime_directory(root, prefix)
     db = ProjectPostgres(root)
     try:

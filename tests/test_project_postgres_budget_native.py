@@ -10,7 +10,6 @@ import json
 import os
 from pathlib import Path
 import shutil
-import socket
 import subprocess
 import sys
 from threading import Lock
@@ -26,6 +25,7 @@ from polymarket_alpha_lab.research_dispatch import ResearchBatch
 from polymarket_alpha_lab.research_model_budget import ModelCallBudget
 from polymarket_alpha_lab import research_model_budget_store as store
 from polymarket_alpha_lab import research_model_budget_runner as guarded
+from tests.native_port_selection import pick_port
 from tests.test_project_postgres_dispatch_native import prepared
 from tests.test_team_research_cross_source import Model
 
@@ -80,8 +80,7 @@ def test_budget_upgrade_shared_cap_replay_and_lost_process(tmp_path,monkeypatch)
     assert len(manifest['migrations'])==66 and manifest['migrations'][-1]['name']==TAIL
     (root/'supabase/migrations'/TAIL).unlink()
     (root/'database/migrations.lock.json').write_text(json.dumps(dict(manifest,migrations=manifest['migrations'][:-1])))
-    with socket.socket() as sock:
-        sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
+    port=pick_port()
     import_runtime_directory(root,prefix);db=ProjectPostgres(root)
     try:
         assert db.initialize(port=port)['migrations_applied']==65

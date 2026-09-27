@@ -21,6 +21,7 @@ from polymarket_alpha_lab.project_postgres.server import ProjectPostgres
 from polymarket_alpha_lab.research_execution import CapturedResearchRequest
 from polymarket_alpha_lab.team_research_agent_types import ResearchEvidence, ResearchModelReply, ResearchToolCall
 from polymarket_alpha_lab.team_research_intake import GammaMarketSnapshot, prepare_team_research_from_gamma
+from tests.native_port_selection import pick_port
 
 ROOT=Path(__file__).resolve().parents[1]
 ENABLED=os.environ.get('POLYMARKET_ALPHA_LAB_RUN_NATIVE_PROJECT_POSTGRES')=='1'
@@ -84,8 +85,7 @@ def test_native_project_lifecycle_all_migrations_and_real_research(tmp_path,monk
     (root/'pyproject.toml').write_text('[project]\nname="polymarket-alpha-lab"\n')
     shutil.copytree(ROOT/'database',root/'database')
     shutil.copytree(ROOT/'supabase/migrations',root/'supabase/migrations')
-    with socket.socket() as s:
-        s.bind(('127.0.0.1',0));port=s.getsockname()[1]
+    port=pick_port()
     # Test-only diagnostics for the fresh synthetic cluster. Never log argv,
     # stdin, passwords, existing system databases or the production error path.
     from polymarket_alpha_lab.project_postgres import files

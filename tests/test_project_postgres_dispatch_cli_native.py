@@ -9,7 +9,6 @@ import json
 import os
 from pathlib import Path
 import shutil
-import socket
 import subprocess
 import sys
 import uuid
@@ -26,6 +25,7 @@ from polymarket_alpha_lab.research_dispatch import ResearchBatch
 from polymarket_alpha_lab.research_dispatch_runner import ResearchDispatchStop
 from polymarket_alpha_lab.research_model_budget import ModelCallBudget
 from polymarket_alpha_lab.research_capture_psycopg import ResearchCaptureConflict
+from tests.native_port_selection import pick_port
 from tests.test_project_postgres_dispatch_native import prepared
 from tests.test_team_research_cross_source import Model
 
@@ -141,8 +141,7 @@ def test_operator_rounds_stop_restart_failures_and_process_loss(tmp_path, monkey
     (root/'pyproject.toml').write_text('[project]\nname="polymarket-alpha-lab"\n')
     shutil.copytree(ROOT/'database', root/'database')
     shutil.copytree(ROOT/'supabase/migrations', root/'supabase/migrations')
-    with socket.socket() as sock:
-        sock.bind(('127.0.0.1', 0)); port = sock.getsockname()[1]
+    port = pick_port()
     import_runtime_directory(root, prefix)
     db = ProjectPostgres(root)
     try:

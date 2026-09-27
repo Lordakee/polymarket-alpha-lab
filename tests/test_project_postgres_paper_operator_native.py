@@ -6,7 +6,6 @@ import json
 import os
 from pathlib import Path
 import shutil
-import socket
 import subprocess
 import sys
 import uuid
@@ -17,6 +16,7 @@ from polymarket_alpha_lab.project_postgres import files
 from polymarket_alpha_lab.project_postgres.runtime import import_runtime_directory
 from polymarket_alpha_lab.project_postgres.server import ProjectPostgres
 from polymarket_alpha_lab.research_paper_capture_codec import checksum, encode_paper_scenario
+from tests.native_port_selection import pick_port
 from tests.test_research_paper_capture import inputs, scenario
 from tests.test_project_postgres_paper_capture_native import Model
 
@@ -39,9 +39,7 @@ def test_paper_operator_capture_replay_inspect_and_rejection(tmp_path, monkeypat
     (root / 'pyproject.toml').write_text('[project]\nname="polymarket-alpha-lab"\n')
     shutil.copytree(ROOT / 'database', root / 'database')
     shutil.copytree(ROOT / 'supabase/migrations', root / 'supabase/migrations')
-    with socket.socket() as sock:
-        sock.bind(('127.0.0.1', 0))
-        port = sock.getsockname()[1]
+    port = pick_port()
     import_runtime_directory(root, prefix)
     db = ProjectPostgres(root)
 

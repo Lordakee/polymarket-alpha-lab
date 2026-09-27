@@ -29,7 +29,6 @@ from hashlib import sha256
 import json
 import os
 from pathlib import Path
-import socket
 import shutil
 import subprocess
 import sys
@@ -44,15 +43,14 @@ from polymarket_alpha_lab.project_postgres.server import ProjectPostgres
 from polymarket_alpha_lab.research_execution import CapturedResearchRequest
 from polymarket_alpha_lab.team_research_agent_types import ResearchEvidence, ResearchModelReply, ResearchToolCall
 from polymarket_alpha_lab.team_research_intake import GammaMarketSnapshot, prepare_team_research_from_gamma
+from tests.native_port_selection import pick_port
 
 ROOT = Path(__file__).resolve().parents[1]
 ENABLED = os.environ.get('POLYMARKET_ALPHA_LAB_RUN_NATIVE_DISTRIBUTION') == '1'
 
 
 def port():
-    with socket.socket() as sock:
-        sock.bind(('127.0.0.1', 0))
-        return sock.getsockname()[1]
+    return pick_port()
 
 
 def extract(archive, parent):

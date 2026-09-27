@@ -5,7 +5,6 @@ import json
 import os
 from pathlib import Path
 import shutil
-import socket
 import subprocess
 import sys
 import uuid
@@ -21,6 +20,7 @@ from polymarket_alpha_lab.project_postgres.server import ProjectPostgres
 from polymarket_alpha_lab.research_execution import CapturedResearchRequest
 from polymarket_alpha_lab.team_research_agent_types import ResearchEvidence
 from polymarket_alpha_lab.team_research_intake import GammaMarketSnapshot, prepare_team_research_from_gamma
+from tests.native_port_selection import pick_port
 from tests.test_research_execution import Model
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -40,8 +40,7 @@ def test_native_inventory_snapshot_limits_legacy_and_incomplete_visibility(tmp_p
     (root / 'pyproject.toml').write_text('[project]\nname="polymarket-alpha-lab"\n')
     shutil.copytree(ROOT / 'database', root / 'database')
     shutil.copytree(ROOT / 'supabase/migrations', root / 'supabase/migrations')
-    with socket.socket() as sock:
-        sock.bind(('127.0.0.1', 0)); port = sock.getsockname()[1]
+    port = pick_port()
     import_runtime_directory(root, prefix)
     db = ProjectPostgres(root); db.initialize(port=port)
     cutoff = datetime.now(UTC) + timedelta(hours=1)

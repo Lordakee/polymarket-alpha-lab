@@ -7,7 +7,6 @@ import json
 import os
 from pathlib import Path
 import shutil
-import socket
 import time
 import uuid
 
@@ -20,6 +19,7 @@ from polymarket_alpha_lab.project_postgres import files
 from polymarket_alpha_lab.project_postgres.runtime import import_runtime_directory
 from polymarket_alpha_lab.project_postgres.server import ProjectPostgres
 from polymarket_alpha_lab.team_research_agent_types import ResearchModelReply, ResearchToolCall
+from tests.native_port_selection import pick_port
 from tests.test_research_paper_capture import inputs, scenario
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -57,7 +57,7 @@ def test_paper_capture_upgrade_atomic_replay_rejection_and_history_preservation(
     assert len(manifest['migrations'])==67 and manifest['migrations'][-1]['name']==TAIL
     (root/'supabase/migrations'/TAIL).unlink()
     (root/'database/migrations.lock.json').write_text(json.dumps(dict(manifest,migrations=manifest['migrations'][:-1])))
-    with socket.socket() as sock:sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
+    port=pick_port()
     import_runtime_directory(root,prefix);db=ProjectPostgres(root)
     try:
         assert db.initialize(port=port)['migrations_applied']==66

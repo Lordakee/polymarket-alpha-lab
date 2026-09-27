@@ -9,7 +9,6 @@ import os
 import json
 from pathlib import Path
 import shutil
-import socket
 import subprocess
 import sys
 import uuid
@@ -23,6 +22,7 @@ from polymarket_alpha_lab.project_postgres import files
 from polymarket_alpha_lab.project_postgres.runtime import import_runtime_directory
 from polymarket_alpha_lab.project_postgres.server import ProjectPostgres
 from polymarket_alpha_lab.research_crypto_launch import CryptoLaunchBlocked, CryptoResearchPreview, CryptoResearchSpec
+from tests.native_port_selection import pick_port
 from tests.test_research_crypto_launch import snapshots
 from tests.test_team_research_cross_source import Model
 
@@ -43,7 +43,7 @@ def test_native_empty_database_to_captured_research_and_worklist(tmp_path, monke
     (root/'pyproject.toml').write_text('[project]\nname="polymarket-alpha-lab"\n')
     shutil.copytree(ROOT/'database',root/'database')
     shutil.copytree(ROOT/'supabase/migrations',root/'supabase/migrations')
-    with socket.socket() as sock:sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
+    port=pick_port()
     import_runtime_directory(root,prefix)
     db=ProjectPostgres(root);db.initialize(port=port)
     count=[];fetches=[]

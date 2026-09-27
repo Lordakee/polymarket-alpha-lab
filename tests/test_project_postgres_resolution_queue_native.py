@@ -5,7 +5,6 @@ import json
 import os
 from pathlib import Path
 import shutil
-import socket
 import time
 import uuid
 
@@ -21,6 +20,7 @@ from polymarket_alpha_lab.research_execution import CapturedResearchRequest
 from polymarket_alpha_lab.research_resolution import IndependentResolutionConfirmation, ResolutionSubmission
 from polymarket_alpha_lab.team_research_agent_types import ResearchEvidence
 from polymarket_alpha_lab.team_research_intake import GammaMarketSnapshot, prepare_team_research_from_gamma
+from tests.native_port_selection import pick_port
 from tests.test_project_postgres_native import Model
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -40,8 +40,7 @@ def test_native_queue_selects_collects_and_retains_unconfirmed_evidence(tmp_path
     (root/'pyproject.toml').write_text('[project]\nname="polymarket-alpha-lab"\n')
     shutil.copytree(ROOT/'database', root/'database')
     shutil.copytree(ROOT/'supabase/migrations', root/'supabase/migrations')
-    with socket.socket() as sock:
-        sock.bind(('127.0.0.1', 0));port = sock.getsockname()[1]
+    port = pick_port()
     import_runtime_directory(root, prefix)
     db = ProjectPostgres(root);db.initialize(port=port)
     cid = {name: '0x'+hex(i)[2:]*64 for i, name in enumerate(('candidate','pending','blocked','failed','incomplete'),1)}

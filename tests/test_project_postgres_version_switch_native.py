@@ -40,7 +40,6 @@ import os
 from pathlib import Path, PurePosixPath
 import re
 import shutil
-import socket
 import subprocess
 import sys
 import tarfile
@@ -76,6 +75,7 @@ from polymarket_alpha_lab.project_postgres import backup_format as fmt
 from polymarket_alpha_lab.project_postgres import distribution, files, sql
 from polymarket_alpha_lab.project_postgres.runtime import runtime_version, verify_runtime
 from polymarket_alpha_lab.project_postgres.server import ProjectPostgres
+from tests.native_port_selection import pick_port
 
 ENABLED = os.environ.get('POLYMARKET_ALPHA_LAB_RUN_NATIVE_PROJECT_POSTGRES') == '1'
 # The pinned source pair. The OLD side is the tagged v0.1.0-native-preview.1
@@ -776,9 +776,7 @@ def prepare_verified_archives_and_private_root(tmp_path, monkeypatch) -> _Rig:
     print('version-switch fixture: candidate', candidate_commit, candidate_tree,
           'old-catalog-63', original_pairs[1][:16], 'candidate-catalog-68',
           candidate_fingerprint[:16])
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
-        probe.bind(('127.0.0.1', 0))
-        port = probe.getsockname()[1]
+    port = pick_port()
     return _Rig(base=parent, neutral=neutral, foreign=foreign.parent, payloads=payloads,
                 old_source=old_source, candidate=candidate, original=original,
                 candidate_commit=candidate_commit, candidate_tree=candidate_tree,
