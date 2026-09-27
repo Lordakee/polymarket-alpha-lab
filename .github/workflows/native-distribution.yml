@@ -163,7 +163,7 @@ jobs:
         # pinned apt postgresql-18 package supplies binaries ONLY. No installed
         # cluster, data directory, role or password from the package is used.
         run: |
-          set -euxo pipefail
+          set -euo pipefail
           sudo install -d /usr/share/postgresql-common/pgdg
           sudo curl --fail --silent --show-error -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
           echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt noble-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
@@ -171,10 +171,13 @@ jobs:
           sudo apt-get install -y -qq postgresql-18
           PREFIX="$RUNNER_TEMP/pg18-portable-prefix"
           mkdir -p "$PREFIX"
-          cp -a /usr/lib/postgresql/18/bin "$PREFIX/bin"
-          cp -a /usr/lib/postgresql/18/lib "$PREFIX/lib"
-          cp -a /usr/share/postgresql/18 "$PREFIX/share"
+          # -L dereferences: PGDG's 24.04 layout ships development symlinks the
+          # symlink-free prefix contract must not contain; broken links fail loudly.
+          cp -aL /usr/lib/postgresql/18/bin "$PREFIX/bin"
+          cp -aL /usr/lib/postgresql/18/lib "$PREFIX/lib"
+          cp -aL /usr/share/postgresql/18 "$PREFIX/share"
           cp /usr/share/doc/postgresql-18/copyright "$PREFIX/COPYRIGHT"
+          find "$PREFIX" -type l -ls
           test "$(find "$PREFIX" -type l | wc -l)" -eq 0
           test -x "$PREFIX/bin/postgres" && test -f "$PREFIX/share/postgres.bki"
           "$PREFIX/bin/postgres" --version
