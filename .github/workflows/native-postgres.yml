@@ -392,7 +392,7 @@ jobs:
         # pinned apt postgresql-18 package supplies binaries ONLY. No installed
         # cluster, data directory, role or password from the package is used.
         run: |
-          set -euo pipefail
+          set -euxo pipefail
           sudo install -d /usr/share/postgresql-common/pgdg
           sudo curl --fail --silent --show-error -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
           echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt noble-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
