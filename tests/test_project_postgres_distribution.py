@@ -1,9 +1,13 @@
 """Clean source distribution tests. Fixtures contain no live engine or DB."""
 from hashlib import sha256
+import io
 import json
 import os
 from pathlib import Path
+import platform
+import stat
 import subprocess
+import sys
 import zipfile
 
 import pytest
@@ -47,13 +51,14 @@ def checkout(tmp_path):
 @pytest.fixture
 def native(tmp_path, monkeypatch):
     prefix = tmp_path / 'Explicit Trusted Prefix'
-    for name in ('bin/postgres.exe', 'lib/native.dll', 'share/postgres.bki', 'COPYRIGHT',
-                 'doc/postgresql/html/legalnotice.html', 'data/PG_VERSION', 'data/credentials', 'pgAdmin/private.txt'):
+    for name in ('bin/postgres', 'lib/postgresql/libpq.so.18', 'share/postgres.bki',
+                 'COPYRIGHT', 'doc/postgresql/html/legalnotice.html', 'data/PG_VERSION',
+                 'data/credentials', 'pgAdmin/private.txt'):
         path = prefix / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b'Synthetic native fixture, not executable.\n')
-    monkeypatch.setattr(mod, 'runtime_version', lambda _: '17.11')
-    monkeypatch.setattr(mod, 'require_windows', lambda: None)
+    monkeypatch.setattr(mod, 'runtime_version', lambda _: '18.5')
+    monkeypatch.setattr(mod, 'require_linux', lambda: None)
     return prefix
 
 
@@ -80,6 +85,8 @@ def test_build_verified_relocatable_clean_kit(checkout, native, tmp_path):
     (checkout / 'src/polymarket_alpha_lab/untracked.py').write_text('sensitive fixture')
     archive, installed, receipt = kit(checkout, native, tmp_path)
     manifest = mod.verify_distribution(installed)
+    assert manifest['target'] == 'linux-x86_64'
+    assert manifest['postgres_version'] == '18.5'
     assert receipt['archive_sha256'] == sha256(archive.read_bytes()).hexdigest()
     assert receipt['source_commit'] == git(checkout, 'rev-parse', 'HEAD').decode().strip()
     assert receipt['source_tree'] == git(checkout, 'rev-parse', 'HEAD^{tree}').decode().strip()
@@ -161,7 +168,7 @@ def test_malformed_manifest_rejected(checkout, native, tmp_path, change):
     elif change == 'extra': value['unexpected'] = True
     elif change == 'hash': value['files'][mod.ENGINE] = 'bad'
     elif change == 'target': value['target'] = 'anything'
-    elif change == 'version': value['postgres_version'] = '18.1'
+    elif change == 'version': value['postgres_version'] = '17.11'
     elif change == 'source': value['source_commit'] = 'not-a-commit'
     elif change == 'paths': value['files']['../private'] = '0' * 64
     path.write_text(json.dumps(value), encoding='utf-8')
@@ -179,7 +186,7 @@ def test_runtime_replaced_during_pack_fails_without_final(checkout, native, tmp_
     original = mod.inventory
     def stale(prefix):
         result = original(prefix)
-        (prefix / 'bin/postgres.exe').write_bytes(b'changed after hash')
+        (prefix / 'bin/postgres').write_bytes(b'changed after hash')
         return result
     monkeypatch.setattr(mod, 'inventory', stale)
     with pytest.raises(ProjectDatabaseError, match='runtime_changed'):
@@ -277,3 +284,69 @@ def test_reviewed_optional_public_tools_are_shipped_without_requiring_them_in_ol
         assert (installed / name).read_bytes() == b'# reviewed public entrypoint\n'
     assert not mod.selected_source('scripts/unreviewed-tool.ps1')
     mod.verify_distribution(installed)
+
+
+@pytest.mark.parametrize('os_name,sys_platform,machine,admitted', [
+    ('posix', 'linux', 'x86_64', True),
+    ('posix', 'linux', 'AMD64', True),
+    ('nt', 'win32', 'AMD64', False),       # a Windows host must be refused
+    ('posix', 'darwin', 'x86_64', False),  # so must another POSIX kernel
+    ('posix', 'linux', 'aarch64', False),  # and a wrong Linux architecture
+])
+def test_platform_admission_accepts_only_linux_x86_64(monkeypatch, os_name, sys_platform, machine, admitted):
+    monkeypatch.setattr(os, 'name', os_name)
+    monkeypatch.setattr(sys, 'platform', sys_platform)
+    monkeypatch.setattr(platform, 'machine', lambda: machine)
+    if admitted:
+        mod.require_linux()  # the section-61 release tuple host is admitted
+    else:
+        with pytest.raises(ProjectDatabaseError, match='linux_x64_required'):
+            mod.require_linux()
+
+
+def test_wrong_platform_host_blocks_build_before_any_output(checkout, native, tmp_path, monkeypatch):
+    def wrong():
+        raise ProjectDatabaseError('project_bundle_linux_x64_required')
+    monkeypatch.setattr(mod, 'require_linux', wrong)
+    with pytest.raises(ProjectDatabaseError, match='linux_x64_required'):
+        mod.build_distribution(checkout, native, tmp_path / 'kit.zip')
+    assert not (tmp_path / 'kit.zip').exists()
+
+
+def test_postgres_17_prefix_is_not_packed_into_linux_kit(checkout, native, tmp_path, monkeypatch):
+    monkeypatch.setattr(mod, 'runtime_version', lambda _: '17.11')
+    with pytest.raises(ProjectDatabaseError, match='requires_postgres_18'):
+        mod.build_distribution(checkout, native, tmp_path / 'kit.zip')
+    assert not (tmp_path / 'kit.zip').exists()
+
+
+def test_windows_targeted_kit_is_refused_on_the_linux_tuple(checkout, native, tmp_path):
+    _, installed, _ = kit(checkout, native, tmp_path)
+    path = installed / mod.MANIFEST
+    value = json.loads(path.read_bytes())
+    value['target'] = 'windows-x86_64'  # a historical Windows kit, not this platform
+    path.write_text(json.dumps(value), encoding='utf-8')
+    with pytest.raises(ProjectDatabaseError, match='invalid_or_changed'):
+        mod.verify_distribution(installed)
+
+
+def test_kit_entries_carry_posix_private_regular_modes(checkout, native, tmp_path):
+    """Inner ZIP semantics are unchanged: POSIX-created regular entries with
+    private 0o600 modes; the runtime importer restores executable modes."""
+    archive, _, _ = kit(checkout, native, tmp_path)
+    with zipfile.ZipFile(archive) as z:
+        members = z.infolist()
+    assert members
+    for item in members:
+        assert item.create_system == 3
+        mode = item.external_attr >> 16
+        assert stat.S_ISREG(mode)
+        assert stat.S_IMODE(mode) == 0o600
+    with zipfile.ZipFile(archive) as z:
+        seed = z.read(mod.TOP + '/' + mod.ENGINE)
+    with zipfile.ZipFile(io.BytesIO(seed)) as engine:
+        for item in engine.infolist():
+            assert item.create_system == 3
+            mode = item.external_attr >> 16
+            assert stat.S_ISREG(mode)
+            assert stat.S_IMODE(mode) == 0o600

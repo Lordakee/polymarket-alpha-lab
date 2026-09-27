@@ -1,4 +1,13 @@
-"""Build a clean Windows kit from committed code and trusted PostgreSQL 17 files."""
+"""Build a clean Linux kit from committed code and trusted PostgreSQL 18 files.
+
+The explicitly trusted native prefix is the qualified package-to-prefix
+assembly for the Ubuntu 26.04.1 x86_64 release tuple: bin/ and lib/ from the
+pinned apt PostgreSQL 18 build (for example /usr/lib/postgresql/18/{bin,lib}
+copied into <prefix>/bin and <prefix>/lib) and share/ from the matching
+/usr/share/postgresql/18 tree, plus its copyright notice at <prefix>/COPYRIGHT.
+The kit targets .venv/bin/python on Linux; the inner engine ZIP keeps POSIX
+private regular-file modes and the runtime importer restores executable modes.
+"""
 from pathlib import Path
 import argparse
 import json
@@ -13,7 +22,8 @@ from polymarket_alpha_lab.project_postgres.files import ProjectDatabaseError
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--native-prefix', required=True, type=Path, help='explicitly trusted native bin/lib/share prefix')
+    parser.add_argument('--native-prefix', required=True, type=Path,
+        help='explicitly trusted native bin/lib/share prefix for the Linux/PG18 tuple')
     parser.add_argument('--output', required=True, type=Path, help='new ZIP path; existing outputs are never overwritten')
     args = parser.parse_args(argv)
     try:

@@ -1,9 +1,12 @@
-"""Build a clean Windows source + native engine kit, never a database backup.
+"""Build a clean Linux source + native engine kit, never a database backup.
 
 Source bytes come from a committed Git tree. Only explicitly selected code and
 migration paths are shipped. The engine is an explicitly trusted native prefix;
 no downloads, installed clusters, credentials or arbitrary workspace files.
 Checksums detect changed bytes, not publisher identity or malicious source code.
+
+The sole delivered platform is the section-61 release tuple: Ubuntu 26.04.1
+x86_64 with a pinned PostgreSQL 18 build. Windows/PG17 kits are historical.
 """
 from __future__ import annotations
 
@@ -24,6 +27,8 @@ from .files import Layout, clean_environment, digest_file, fail, no_links
 from .runtime import MAX_RUNTIME_BYTES, inventory, runtime_version
 
 FORMAT = 'project-native-distribution-v1'
+TARGET = 'linux-x86_64'  # Sole delivered platform (Ubuntu 26.04.1 x86_64 release tuple).
+POSTGRES_MAJOR = '18'
 MANIFEST = 'PROJECT-BUNDLE.json'
 ENGINE = 'database/postgres-runtime.zip'
 TOP = 'polymarket-alpha-lab'
@@ -159,8 +164,8 @@ def _entry(name: str) -> zipfile.ZipInfo:
 def _native_seed(prefix: Path, output) -> str:
     """Caller has explicitly trusted the prefix before its version probes run."""
     version = runtime_version(prefix)
-    if version.split('.')[0] != '17':
-        fail('project_bundle_requires_postgres_17')
+    if version.split('.')[0] != POSTGRES_MAJOR:
+        fail('project_bundle_requires_postgres_' + POSTGRES_MAJOR)
     expected = inventory(prefix)
     # Preserve supplied root notices AND relevant notices under the documentation
     # directory, without shipping pgAdmin, examples, fonts or other applications.
@@ -206,19 +211,27 @@ def _native_seed(prefix: Path, output) -> str:
     return version
 
 
-def require_windows() -> None:
+def require_linux() -> None:
+    """Admit kit building and bundled first starts only on the Linux/x64 tuple.
+
+    A Windows host (or any non-Linux/wrong-architecture host) is refused: a
+    kit is built and imported only on the platform it targets.
+    """
     import platform
-    if os.name != 'nt' or platform.machine().upper() not in ('AMD64', 'X86_64'):
-        fail('project_bundle_windows_x64_required')
+    import sys
+    if (os.name != 'posix' or sys.platform != 'linux'
+            or platform.machine().lower() not in ('x86_64', 'amd64')):
+        fail('project_bundle_linux_x64_required')
 
 
 def build_distribution(root: Path, prefix: Path, destination: Path) -> dict:
     """Publish one new kit ZIP atomically; never overwrite a prior artifact.
 
-    Windows/x64 PostgreSQL 17 is the sole delivered binary target. Python and
-    the locked Python dependencies are NOT bundled. This is not an updater.
+    Linux/x64 (Ubuntu 26.04.1 release tuple) with PostgreSQL 18 is the sole
+    delivered binary target. Python and the locked Python dependencies are NOT
+    bundled. This is not an updater.
     """
-    require_windows()
+    require_linux()
     layout = Layout(root)
     prefix, destination = Path(prefix).absolute(), Path(destination).absolute()
     no_links(prefix)
@@ -238,7 +251,7 @@ def build_distribution(root: Path, prefix: Path, destination: Path) -> dict:
             engine_hash.update(chunk)
         seed.seek(0)
         manifest = dict(format=FORMAT, source_commit=commit, source_tree=tree,
-            target='windows-x86_64', postgres_version=version, python_requires='>=3.11',
+            target=TARGET, postgres_version=version, python_requires='>=3.11',
             files={name: sha256(raw).hexdigest() for name, raw in sorted(sources.items())})
         manifest['files'][ENGINE] = engine_hash.hexdigest()
         # EXCL plus atomic hard-link publication: interrupted builds never expose
@@ -278,8 +291,8 @@ def verify_distribution(root: Path) -> dict:
         manifest = strict_json(path.read_text(encoding='utf-8'))
         keys = {'format', 'source_commit', 'source_tree', 'target', 'postgres_version', 'python_requires', 'files'}
         if (type(manifest) is not dict or set(manifest) != keys or manifest['format'] != FORMAT
-                or manifest['target'] != 'windows-x86_64' or manifest['python_requires'] != '>=3.11'
-                or re.fullmatch(r'17\.\d+', manifest['postgres_version']) is None
+                or manifest['target'] != TARGET or manifest['python_requires'] != '>=3.11'
+                or re.fullmatch(POSTGRES_MAJOR + r'\.\d+', manifest['postgres_version']) is None
                 or any(re.fullmatch('[0-9a-f]{40}', manifest[k]) is None for k in ('source_commit', 'source_tree'))):
             raise ValueError
         values = manifest['files']

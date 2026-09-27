@@ -5,7 +5,7 @@ import importlib
 import importlib.util
 from pathlib import Path
 
-from .distribution import ENGINE, MANIFEST, require_windows, verify_distribution
+from .distribution import ENGINE, MANIFEST, require_linux, verify_distribution
 from .files import Layout, fail, no_links
 from .runtime import import_runtime_archive, verify_runtime
 from .server import ProjectPostgres
@@ -45,7 +45,7 @@ def prepare_project(root: Path, *, port: int | None = None) -> dict:
     manifest = None
     if manifest_path.exists() or seed.exists():
         manifest = verify_distribution(layout.root)
-        require_windows()
+        require_linux()
     # Validate actual import/native-library loading, not just package discovery.
     _require_postgres_driver()
     no_links(layout.runtime)

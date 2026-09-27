@@ -27,11 +27,15 @@ def test_windows_native_spawn_uses_only_private_and_system_search_paths(tmp_path
     assert not child.get('PG_RESTRICT_EXEC')  # Never disable PostgreSQL privilege dropping.
 
 
-def test_nonwindows_spawn_does_not_introduce_library_overrides(tmp_path):
+def test_linux_spawn_does_not_introduce_library_overrides(tmp_path):
+    """On the Linux release tuple a native child keeps its caller environment:
+    no PATH rewrite, cwd change or dynamic-loader overrides are injected."""
     env = {'PATH': '/usr/bin', 'PGPASSFILE': 'private'}
     settings = runtime.native_spawn_settings(str(tmp_path / 'bin/initdb'), env, windows=False)
     assert settings == {'env': env}
+    assert settings['env'] is env
     assert 'LD_LIBRARY_PATH' not in settings['env']
+    assert 'cwd' not in settings
 
 
 @pytest.mark.parametrize('name', ('other.exe', 'python.exe'))
@@ -78,8 +82,18 @@ def test_archive_directories_inherit_private_windows_acl_not_owner_alias(tmp_pat
             calls.append(kwargs.get('mode', 0o777))
         return original(path, *args, **kwargs)
     monkeypatch.setattr(Path, 'mkdir', mkdir)
+    # POSIX executable/private file modes are restored by the runtime importer:
+    # bin members become 0o700 executables, everything else private 0o600.
+    modes = {}
+    original_chmod = Path.chmod
+    def chmod(path, *args, **kwargs):
+        if path.parent.name in ('bin', 'lib', 'share') and path.parent.parent.name == 'postgres.installing':
+            modes.setdefault(path.parent.name, args[0] if args else kwargs.get('mode'))
+        return original_chmod(path, *args, **kwargs)
+    monkeypatch.setattr(Path, 'chmod', chmod)
     monkeypatch.setattr(runtime, 'os', SimpleNamespace(name='nt' if windows else 'posix'))
-    monkeypatch.setattr(runtime, 'runtime_version', lambda _: '17.11')
+    monkeypatch.setattr(runtime, 'runtime_version', lambda _: '18.5')
     runtime.import_runtime_archive(root, archive, expected_sha256=sha256(archive.read_bytes()).hexdigest())
     assert calls == ([0o777] * 3 if windows else [0o700] * 3)
+    assert modes == ({} if windows else {'bin': 0o700, 'lib': 0o600, 'share': 0o600})
     assert (root / 'runtime/postgres/bin/fixture').read_bytes() == b'Synthetic runtime fixture'

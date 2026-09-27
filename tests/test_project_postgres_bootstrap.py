@@ -15,15 +15,15 @@ def setup(tmp_path, monkeypatch):
     (root / 'pyproject.toml').write_text('[project]\nname="polymarket-alpha-lab"\n')
     (root / 'database/migrations.lock.json').write_text('{}')
     events = []
-    monkeypatch.setattr(mod, 'require_windows', lambda: None)
+    monkeypatch.setattr(mod, 'require_linux', lambda: None)
     monkeypatch.setattr(mod.importlib.util, 'find_spec', lambda _: object())
     def no_connection(*args, **kwargs):
         pytest.fail('driver preflight must not open a database connection')
     monkeypatch.setattr(mod.importlib, 'import_module',
                         lambda _: SimpleNamespace(connect=no_connection))
-    monkeypatch.setattr(mod, 'verify_runtime', lambda _: dict(version='17.11'))
+    monkeypatch.setattr(mod, 'verify_runtime', lambda _: dict(version='18.5'))
     monkeypatch.setattr(mod, 'verify_distribution', lambda _: dict(
-        files={mod.ENGINE: 'f' * 64}, postgres_version='17.11', source_commit='a' * 40))
+        files={mod.ENGINE: 'f' * 64}, postgres_version='18.5', source_commit='a' * 40))
     def imported(root, seed, *, expected_sha256):
         events.append(('import', expected_sha256))
         (root / 'runtime/postgres').mkdir(parents=True)
@@ -132,16 +132,16 @@ def test_invalid_port_precedes_io(setup, port):
 def test_runtime_version_mismatch_does_not_upgrade(setup, monkeypatch):
     root, events, _ = setup; seed(root)
     (root / 'runtime/postgres').mkdir(parents=True)
-    monkeypatch.setattr(mod, 'verify_runtime', lambda _: dict(version='17.12'))
+    monkeypatch.setattr(mod, 'verify_runtime', lambda _: dict(version='18.6'))
     with pytest.raises(ProjectDatabaseError, match='version_conflict'): mod.prepare_project(root)
     assert events == []
 
 
-def test_windows_kit_cannot_initialize_on_wrong_platform(setup, monkeypatch):
+def test_linux_kit_cannot_initialize_on_wrong_platform(setup, monkeypatch):
     root, events, _ = setup; seed(root)
-    def wrong(): raise ProjectDatabaseError('windows_x64_required')
-    monkeypatch.setattr(mod, 'require_windows', wrong)
-    with pytest.raises(ProjectDatabaseError, match='windows_x64_required'): mod.prepare_project(root)
+    def wrong(): raise ProjectDatabaseError('linux_x64_required')
+    monkeypatch.setattr(mod, 'require_linux', wrong)
+    with pytest.raises(ProjectDatabaseError, match='linux_x64_required'): mod.prepare_project(root)
     assert events == []
 
 

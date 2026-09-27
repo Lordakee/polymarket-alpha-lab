@@ -1,8 +1,28 @@
-"""Actual Windows kit build -> extraction -> first startup -> retained research.
+"""Actual Linux kit build -> extraction -> first startup -> retained research.
 
 Uses only a trusted runner binary prefix and fresh, owned disposable directories.
 The tested ZIP contains no pre-initialized instance or credentials. No Docker,
-Windows database service, paid models or public API calls are made by the proof.
+system PostgreSQL service, paid models or public API calls are made by the proof.
+
+Target tuple: Ubuntu 26.04.1 x86_64, Python 3.12.14, pinned PostgreSQL 18
+(section 61). The trusted prefix is the qualified package-to-prefix assembly
+(the server's ~/pg-runtime-src pattern):
+
+    mkdir -p ~/pg-runtime-src
+    cp -a /usr/lib/postgresql/18/bin ~/pg-runtime-src/bin    # apt PG18 programs
+    cp -a /usr/lib/postgresql/18/lib ~/pg-runtime-src/lib    # apt PG18 libraries
+    cp -a /usr/share/postgresql/18/. ~/pg-runtime-src/share/ # postgres.bki etc.
+    cp /usr/share/doc/postgresql-18/copyright ~/pg-runtime-src/COPYRIGHT
+
+Run on the Linux development host (ubuntu@166.1.232.93) with:
+
+    POLYMARKET_ALPHA_LAB_RUN_NATIVE_DISTRIBUTION=1 \\
+    POLYMARKET_ALPHA_LAB_NATIVE_PG_PREFIX=$HOME/pg-runtime-src \\
+    POLYMARKET_ALPHA_LAB_DISTRIBUTION_OUTPUT=/tmp/pal-kit-proof.zip \\
+    .venv/bin/python -m pytest -q tests/test_project_postgres_distribution_native.py
+
+RUNNER_TEMP (GitHub Actions) is used when present; otherwise the pytest tmp
+directory supplies the disposable proof root. The kit venv is .venv/bin/python.
 """
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
@@ -58,7 +78,7 @@ def install_environment(root):
         encoding='utf-8', check=False, shell=False)
     if result.returncode:
         pytest.fail('extracted dependency installation failed: ' + result.stderr[-3000:])
-    assert (root / '.venv/Scripts/python.exe').is_file()
+    assert (root / '.venv/bin/python').is_file()
 
 
 _SCOPE_BINDING_PROBE = r'''
@@ -141,7 +161,7 @@ runpy.run_path(sys.argv[0], run_name='__main__')
 def start(root, *args, expected=0):
     # The wrapper only diagnoses failed child commands in this synthetic project;
     # it runs the packaged entry point unchanged and never prints SQL/stdin/argv.
-    result = subprocess.run([str(root / '.venv/Scripts/python.exe'), '-I', '-c', _DIAGNOSTIC_START, str(root), *args],
+    result = subprocess.run([str(root / '.venv/bin/python'), '-I', '-c', _DIAGNOSTIC_START, str(root), *args],
         env=clean_environment(), stdin=subprocess.DEVNULL, capture_output=True,
         timeout=240, text=True, encoding='utf-8', check=False, shell=False)
     # Production startup emits only fixed public codes, never child stderr/DSNs.
@@ -175,14 +195,19 @@ def request():
         now + timedelta(hours=1), intake, required_source_ids=('s',))
 
 
-@pytest.mark.skipif(not ENABLED, reason='explicit native Windows distribution acceptance is opt-in')
-def test_build_and_run_actual_relocatable_kit(monkeypatch):
-    assert os.name == 'nt'
+@pytest.mark.skipif(not ENABLED, reason='explicit native Linux distribution acceptance is opt-in')
+def test_build_and_run_actual_relocatable_kit(monkeypatch, tmp_path):
+    import platform
+    assert os.name == 'posix' and sys.platform == 'linux'
+    assert platform.machine().lower() in ('x86_64', 'amd64'), 'Linux x86_64 release tuple required'
     prefix = Path(os.environ['POLYMARKET_ALPHA_LAB_NATIVE_PG_PREFIX'])
     output = Path(os.environ['POLYMARKET_ALPHA_LAB_DISTRIBUTION_OUTPUT'])
     for key in tuple(os.environ):
         if key.upper().startswith('PG'): monkeypatch.delenv(key)
-    proof = Path(os.environ['RUNNER_TEMP']) / ('pal-kit-' + uuid.uuid4().hex)
+    runner = os.environ.get('RUNNER_TEMP')
+    base = Path(runner) if runner else tmp_path
+    assert base.is_dir(), 'proof base directory must exist once the opt-in is enabled'
+    proof = base / ('pal-kit-' + uuid.uuid4().hex)
     private_directory(proof, create=True)
     print('native distribution: build clean committed source and native engine', flush=True)
     receipt = distribution.build_distribution(ROOT, prefix, output)
@@ -198,7 +223,7 @@ def test_build_and_run_actual_relocatable_kit(monkeypatch):
         # editable-path decoy; --help must not initialize either private root.
         from tests.project_entry_root_probe import ENTRYPOINTS, probe_entry
         for entry in ENTRYPOINTS:
-            own = probe_entry(root, root / '.venv/Scripts/python.exe',
+            own = probe_entry(root, root / '.venv/bin/python',
                 root.parent / ('source-probe-' + entry), script=entry)
             assert own.returncode == 0, own.stdout + own.stderr
             assert 'PROJECT_ENTRY_SOURCE_OK' in own.stderr and '--root' in own.stdout
@@ -206,11 +231,11 @@ def test_build_and_run_actual_relocatable_kit(monkeypatch):
         # The shipped operator CLI is inert without public opt-in and needs no DB.
         cli = root / 'scripts/discover_crypto_research.py'
         assert cli.is_file() and (root / 'scripts/download_handoff.ps1').is_file()
-        disabled = subprocess.run([str(root / '.venv/Scripts/python.exe'), '-I', str(cli),
+        disabled = subprocess.run([str(root / '.venv/bin/python'), '-I', str(cli),
             '--team', 'crypto_btc', '--preview'], capture_output=True, text=True,
             encoding='utf-8', timeout=30, check=True, env=clean_environment())
         assert json.loads(disabled.stdout)['status'] == 'disabled'
-        selected = subprocess.run([str(root / '.venv/Scripts/python.exe'), '-I', str(cli),
+        selected = subprocess.run([str(root / '.venv/bin/python'), '-I', str(cli),
             '--team', 'crypto_btc', '--select-supported', '--max-candidates', '2'],
             capture_output=True, text=True, encoding='utf-8', timeout=30, check=True, env=clean_environment())
         inert = json.loads(selected.stdout)
@@ -220,29 +245,30 @@ def test_build_and_run_actual_relocatable_kit(monkeypatch):
         assert not (root / '.local').exists()
         evaluation_cli = root / 'scripts/evaluate_project_research.py'
         assert evaluation_cli.is_file() and (root / 'docs/research-evaluation-console.md').is_file()
-        help_result = subprocess.run([str(root / '.venv/Scripts/python.exe'), '-I', str(evaluation_cli), '--help'],
+        help_result = subprocess.run([str(root / '.venv/bin/python'), '-I', str(evaluation_cli), '--help'],
             capture_output=True, text=True, encoding='utf-8', timeout=30, check=True, env=clean_environment())
         assert '--include-decisions' in help_result.stdout
         assert '--settled-paper' in help_result.stdout
         inspection_cli = root / 'scripts/inspect_project_research.py'
         assert inspection_cli.is_file() and (root / 'docs/research-execution-inspection.md').is_file()
-        inspection_help = subprocess.run([str(root / '.venv/Scripts/python.exe'), '-I', str(inspection_cli), '--help'],
+        inspection_help = subprocess.run([str(root / '.venv/bin/python'), '-I', str(inspection_cli), '--help'],
             capture_output=True, text=True, encoding='utf-8', timeout=30, check=True, env=clean_environment())
         assert '--record-id' in inspection_help.stdout
         inventory_cli = root / 'scripts/list_project_research.py'
         assert inventory_cli.is_file() and (root / 'docs/research-execution-inventory.md').is_file()
-        inventory_help = subprocess.run([str(root / '.venv/Scripts/python.exe'), '-I', str(inventory_cli), '--help'],
+        inventory_help = subprocess.run([str(root / '.venv/bin/python'), '-I', str(inventory_cli), '--help'],
             capture_output=True, text=True, encoding='utf-8', timeout=30, check=True, env=clean_environment())
         assert '--max-records' in inventory_help.stdout
         resolution_cli = root / 'scripts/inspect_project_resolution.py'
         assert resolution_cli.is_file() and (root / 'docs/research-resolution-inspection.md').is_file()
-        resolution_help = subprocess.run([str(root / '.venv/Scripts/python.exe'), '-I', str(resolution_cli), '--help'],
+        resolution_help = subprocess.run([str(root / '.venv/bin/python'), '-I', str(resolution_cli), '--help'],
             capture_output=True, text=True, encoding='utf-8', timeout=30, check=True, env=clean_environment())
         assert '--review-id' in resolution_help.stdout and '--confirm' not in resolution_help.stdout
 
-        # The extracted package owns its timezone dependency; this must work on
-        # Windows with no system IANA data and no source-worktree import fallback.
-        probe = subprocess.run([str(root / '.venv/Scripts/python.exe'), '-I', '-c',
+        # The extracted package owns its timezone dependency; this must work
+        # with no source-worktree import fallback, independent of any system
+        # IANA database the host happens to provide.
+        probe = subprocess.run([str(root / '.venv/bin/python'), '-I', '-c',
             'from datetime import datetime; '
             'from polymarket_alpha_lab.research_crypto_observation import _new_york; '
             'z, version = _new_york(); '
@@ -251,7 +277,7 @@ def test_build_and_run_actual_relocatable_kit(monkeypatch):
             'print("packaged timezone:", version)'], capture_output=True, text=True,
             encoding='utf-8', timeout=30, check=True, env=clean_environment())
         assert 'packaged timezone:' in probe.stdout
-        binding = subprocess.run([str(root / '.venv/Scripts/python.exe'), '-I', '-c',
+        binding = subprocess.run([str(root / '.venv/bin/python'), '-I', '-c',
             _SCOPE_BINDING_PROBE], capture_output=True, text=True, encoding='utf-8',
             timeout=30, check=True, env=clean_environment())
         assert 'packaged scope bindings: PASS' in binding.stdout
@@ -274,7 +300,7 @@ def test_build_and_run_actual_relocatable_kit(monkeypatch):
         assert repeated['instance_id'] == created['instance_id'] and repeated['recorded_attempts'] == 1
         assert sha256((db.layout.home / 'app.pgpass').read_bytes()).hexdigest() == credentials
         assert db.status()['status'] == 'stopped'
-        evaluation = subprocess.run([str(first / '.venv/Scripts/python.exe'), '-I',
+        evaluation = subprocess.run([str(first / '.venv/bin/python'), '-I',
             str(first / 'scripts/evaluate_project_research.py')], capture_output=True, text=True,
             encoding='utf-8', timeout=120, check=True, env=clean_environment())
         value = json.loads(evaluation.stdout)
@@ -283,7 +309,7 @@ def test_build_and_run_actual_relocatable_kit(monkeypatch):
         assert value['evaluation']['visible_attempt_count'] == 1
         assert value['evaluation']['decision_counts']['outcome_pending'] == 1
         assert db.status()['status'] == 'stopped'
-        inspection = subprocess.run([str(first / '.venv/Scripts/python.exe'), '-I',
+        inspection = subprocess.run([str(first / '.venv/bin/python'), '-I',
             str(first / 'scripts/inspect_project_research.py'), '--record-id', 'kit-record'],
             capture_output=True, text=True, encoding='utf-8', timeout=120, check=True, env=clean_environment())
         inspected = json.loads(inspection.stdout)
@@ -294,7 +320,7 @@ def test_build_and_run_actual_relocatable_kit(monkeypatch):
         assert 'Synthetic distribution acceptance only.' not in inspection.stdout
         assert db.status()['status'] == 'stopped'
 
-        inventory_read = subprocess.run([str(first / '.venv/Scripts/python.exe'), '-I',
+        inventory_read = subprocess.run([str(first / '.venv/bin/python'), '-I',
             str(first / 'scripts/list_project_research.py')], capture_output=True, text=True,
             encoding='utf-8', timeout=120, check=True, env=clean_environment())
         inventory_report = json.loads(inventory_read.stdout)
@@ -306,7 +332,7 @@ def test_build_and_run_actual_relocatable_kit(monkeypatch):
         assert listing['executions'][0]['recorded_at'] == captured.record.recorded_at.isoformat()
         assert 'Synthetic distribution acceptance only.' not in inventory_read.stdout
         assert db.status()['status'] == 'stopped'
-        resolution_read = subprocess.run([str(first / '.venv/Scripts/python.exe'), '-I',
+        resolution_read = subprocess.run([str(first / '.venv/bin/python'), '-I',
             str(first / 'scripts/inspect_project_resolution.py'), '--review-id', 'not-recorded'],
             capture_output=True, text=True, encoding='utf-8', timeout=120, check=False, env=clean_environment())
         assert resolution_read.returncode == 3, (resolution_read.stdout, resolution_read.stderr)
@@ -324,7 +350,7 @@ def test_build_and_run_actual_relocatable_kit(monkeypatch):
         assert other_db.status()['status'] == 'stopped'
         # Both extracted environments execute the new option, not just --help.
         for kit_root,expected_count in ((first,1),(second,0)):
-            child=subprocess.run([str(kit_root / '.venv/Scripts/python.exe'),'-I',
+            child=subprocess.run([str(kit_root / '.venv/bin/python'),'-I',
                 str(kit_root / 'scripts/evaluate_project_research.py'),'--settled-paper'],
                 cwd=proof,capture_output=True,text=True,encoding='utf-8',timeout=120,
                 check=True,env=clean_environment())
@@ -340,7 +366,7 @@ def test_build_and_run_actual_relocatable_kit(monkeypatch):
         # This reviewed recipe is test code only; application imports may NOT
         # come from this checkout. It waits for a real UTC observation close.
         from tests.packaged_research_flow import run_packaged_recipe
-        completed = run_packaged_recipe(second, second / '.venv/Scripts/python.exe', proof)
+        completed = run_packaged_recipe(second, second / '.venv/bin/python', proof)
         if completed.returncode != 0:
             # Keep the small synthetic child's actual diagnostic text readable;
             # pytest's tuple repr can truncate the nested failure and its clock.
@@ -365,7 +391,7 @@ def test_build_and_run_actual_relocatable_kit(monkeypatch):
         # Only the test's existing first kit: actual lock, PostgreSQL and
         # packaged source; inject a Python close exception, not an OS signal.
         from tests.packaged_session_drain import run_packaged_session_drain
-        drained = run_packaged_session_drain(first, first / '.venv/Scripts/python.exe', proof)
+        drained = run_packaged_session_drain(first, first / '.venv/bin/python', proof)
         assert drained.returncode == 0, (drained.stdout, drained.stderr)
         assert drained.stderr == ''
         drain_proof = json.loads(drained.stdout)
@@ -377,7 +403,7 @@ def test_build_and_run_actual_relocatable_kit(monkeypatch):
         # Extend this same disposable kit's completed business fixture through
         # its existing cold-backup/restore commands. Originals remain private.
         from tests.packaged_recovery_flow import run_recovery_recipe
-        recovery = run_recovery_recipe(second, second / '.venv/Scripts/python.exe', proof,
+        recovery = run_recovery_recipe(second, second / '.venv/bin/python', proof,
             historical_at=composed['historical_at'], expected_instance=composed['instance_id'])
         assert recovery.returncode == 0, (recovery.stdout, recovery.stderr)
         assert recovery.stderr == ''
@@ -403,7 +429,7 @@ def test_build_and_run_actual_relocatable_kit(monkeypatch):
             assert blocked['reason_code'] == 'project_bundle_invalid_or_changed'
             before_log = sha256((db.layout.home / 'server.log').read_bytes()).hexdigest()
             # The real operator command must not bypass startup's kit check.
-            denied = subprocess.run([str(first / '.venv/Scripts/python.exe'), '-I',
+            denied = subprocess.run([str(first / '.venv/bin/python'), '-I',
                 str(first / 'scripts/evaluate_project_research.py'), '--root', str(first)],
                 cwd=proof, env=clean_environment(), stdin=subprocess.DEVNULL,
                 capture_output=True, text=True, encoding='utf-8', timeout=60)
@@ -423,7 +449,7 @@ def test_build_and_run_actual_relocatable_kit(monkeypatch):
                 '    print("bundle session blocked before research")\n'
             )
             for data_root in (first, second):
-                denied = subprocess.run([str(first / '.venv/Scripts/python.exe'), '-I', '-c',
+                denied = subprocess.run([str(first / '.venv/bin/python'), '-I', '-c',
                     probe, str(data_root)], cwd=proof, env=clean_environment(),
                     stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding='utf-8', timeout=60)
                 assert denied.returncode == 0 and denied.stderr == ''

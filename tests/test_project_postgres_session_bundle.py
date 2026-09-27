@@ -25,7 +25,7 @@ def project(root, *, bundled=False):
         (root / distribution.ENGINE).write_bytes(b'synthetic seed; never executed')
         payloads[distribution.ENGINE] = (root / distribution.ENGINE).read_bytes()
         manifest = dict(format=distribution.FORMAT, source_commit='a'*40, source_tree='b'*40,
-            target='windows-x86_64', postgres_version='17.11', python_requires='>=3.11',
+            target=distribution.TARGET, postgres_version='18.5', python_requires='>=3.11',
             files={name: sha256(raw).hexdigest() for name, raw in payloads.items()})
         (root / distribution.MANIFEST).write_text(json.dumps(manifest), encoding='utf-8')
         distribution.verify_distribution(root)
@@ -49,11 +49,11 @@ def boundary(monkeypatch):
         monkeypatch.setattr(files.Layout, 'lock', lock)
         def runtime(layout):
             events.append('runtime')
-            return {'version': '17.11'}
+            return {'version': '18.5'}
         monkeypatch.setattr(server, 'verify_runtime', runtime)
         def info():
             events.append('state')
-            return {'version': '17.11'}
+            return {'version': '18.5'}
         monkeypatch.setattr(db, '_state', info)
         def start(info):
             events.append('start')
