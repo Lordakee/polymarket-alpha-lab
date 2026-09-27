@@ -142,6 +142,14 @@ class ProjectPostgres:
             self._server_identity(info)
             return False
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            # Match the engine's own bind semantics on POSIX: stale TIME_WAIT
+            # entries from this port's previous sessions must not read as
+            # occupied (Linux refuses the bind at port granularity without
+            # this), while a live listener still blocks it. Windows binds
+            # already conflict per connection tuple and SO_REUSEADDR there
+            # would also steal a live listener, so it stays unset.
+            if os.name == 'posix':
+                probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             try:
                 probe.bind(('127.0.0.1', info['port']))
             except OSError:
@@ -187,6 +195,9 @@ class ProjectPostgres:
             if layout.home.exists():
                 fail('project_postgres_existing_data_not_reinitialized')
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+                # Same POSIX TIME_WAIT tolerance as _start; see the note there.
+                if os.name == 'posix':
+                    probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 try:
                     probe.bind(('127.0.0.1', port))
                 except OSError:
