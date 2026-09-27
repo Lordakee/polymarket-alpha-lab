@@ -1,5 +1,18 @@
 # Project Instructions
 
+## Current owner override: Linux-only V1 platform (2026-09-27)
+
+Owner instruction (verbatim): "本机不能做虚拟架构，你就直接再linux开发不行么？为什么要在windows开发？以后也在linux用，不要管windows了". Linux is now the sole
+V1 development and delivery platform: development resumes on ubuntu@166.1.232.93;
+the release tuple is Ubuntu 26.04.1 x86_64 / Python 3.12.14 / a pinned PG18 build;
+the WP-02 probe boundary is a rootless Linux namespace environment (no Windows
+Sandbox, no Hyper-V, no OS upgrade); Windows-specific acceptance obligations are
+retired as active duties and frozen as historical evidence. See DELIVERY_PLAN.md
+section 61 for the rebaselined G2-G6 wording, the Windows asset disposition table,
+and the L0-L6 node plan. All other iron rules (PostgreSQL-only persistence,
+paper-only/report-only/readonly, independent review subagents, no live trading,
+no credential handling) are unchanged.
+
 ## Current owner instruction: freeze V1 and close six work packages (2026-09-14)
 
 The owner accepted a BTC/ETH research-and-paper first release. Read the root
