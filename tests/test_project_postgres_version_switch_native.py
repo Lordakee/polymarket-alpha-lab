@@ -783,7 +783,10 @@ def prepare_verified_archives_and_private_root(tmp_path, monkeypatch) -> _Rig:
                 old_source=old_source, candidate=candidate, original=original,
                 candidate_commit=candidate_commit, candidate_tree=candidate_tree,
                 candidate_fingerprint=candidate_fingerprint, port=port, prefix=prefix,
-                python=str(Path(sys.executable).resolve()), records={}, snapshot=None,
+                # Keep the venv interpreter path verbatim: on POSIX, resolving
+                # the .venv symlink selects the bare base interpreter, whose
+                # isolated mode has no psycopg for the OLD/CURRENT payloads.
+                python=sys.executable, records={}, snapshot=None,
                 identity=None, runtime=None, backup=None, phases=[])
 
 
