@@ -2198,3 +2198,73 @@ CodeGraph 工具不可用按先例如实记录。协调者单独自审（标注�
 
 官方用例执行：0/6；真实提供商调用：false；activation_authorized：false。
 **WP-02—WP-06 仍 PARTIAL，G2—G6 未关闭，V1 仍 1／6。**
+
+
+## 60. Owner 指示本机作探针宿主：裁决 C 路线（2026-09-27）
+
+### 指示与实测
+
+Owner 指示（2026-09-27）："本机就可以啊"——以本机为隔离宿主。随后实测
+（只读）：Windows 11 专业工作站版 22H2、build 22624.1680（与第 49 节相同）；
+`WindowsSandbox.exe` 不存在；`Containers-DisposableClientVM` DISM 报
+0x800f080c（功能未知）；HypervisorPresent=True；CurrentUser RemoteSigned；
+D: 空闲 228GB、C: 空闲 126.8GB、RAM 64GB、AMD64。SelfHost BranchName/Ring
+为空（未证明已转稳定渠道）。
+
+### 咨询裁决（常设规则）
+
+只读咨询（task local-unlock-consult-01；工件
+local-unlock-consult/codex-verdict.md）：**UNLOCK PATH: C** ——受支持的
+就地升级到含 Windows Sandbox 的现行稳定版 Windows，随后走既有原生
+Sandbox 探针管线（保留四映射与八项加固设置、固定 .wsb、guest 路径与
+六场景）。A（Hyper-V VM）被其内部独立评审否决：VM 不能以 .wsb 作其
+配置，拷贝四目录不能复现只读映射与 ProtectedClient 语义，需另行实现
+并评审等价隔离边界；第三路径（FoD 注入、复制 exe、注册表伪装）无
+支持证据、均不合规。本节仅取代第 57 节的宿主选择，不改隔离与安全
+要求，不构成对 OS 升级操作本身的批准。
+
+### C 路线 owner 前提（缺一不动 OS）
+
+1. 明确的受支持目标版本与途径（Windows Update 实际提供的稳定升级，
+   或官方安装助手／官方媒体，记录出处；22621 低于 22624 非通用升级
+   目标，旧 23H2 镜像不得假定仍受支持）。
+2. Setup 实际兼容性结果须提供"保留个人文件和应用"选项；仅重置／
+   净装／降级／绕过则停止。
+3. 对该 OS 升级、其正常重启、维护窗口与恢复计划的明确批准（不重开
+   已决 D1—D3 或 RemoteSigned）。
+4. Owner 管理的整机可恢复保护与恢复媒体先行落实。
+5. 系统卷容量／驱动／内存检查（已测 C: 126.8GB、RAM 64GB）。
+
+### 执行计划（咨询第 1—7 步摘要）
+
+一、本节记录 + 交接文档修正（碰撞规则承认本机既有已验证载荷、删除
+宿主侧 claude.exe --version 指示（版本核验属 guest 内）、以第 52 节
+实际接口与已生成启动器替换伴随 runbook 的过时 official-stage/verify/
+run 提案、写明启动器实际产出物与有界取证命令、统一失败处置：普通
+断言失败走单一固定批次保留、隔离／完整性／不安全输出事故立即中止、
+无自动重跑）。二、冻结来源并原位全量校验既有载荷（固定：main
+90aaad43…；handoff 07e469aa…；manifest 933,769 字节 sha256
+18a6d824…4321d9c；载荷 6,298 文件 390,248,079 字节；.wsb sha256
+eab52c0b…df0a0a；claude.exe 2.1.278／240,767,648 字节／39be063c…1067c；
+载荷声明来源 21d888a0… 树 5202e9a8…）。三、一次获准升级尝试（Setup
+仅提供重置／净装／移除应用／降级则装前停止；允许受控重启；失败回滚
+则保留结果、WP-02 保持受阻，不自动转 A 或其他宿主）。四、升级后主机
+复检（功能注册并 Enabled、exe 存在、PS5.1 与策略合格、全部 pin 复验；
+.wsb 逐字节不变且路径/设置仍按记录生效——不支持或被忽略的设置是
+阻断项而非修改理由）。五、一次性预备 guest 冒烟后弃置（不以外发测试
+冒充隔离证据）。六、既有授权核验后经 official-probe.wsb 单批执行六
+场景（success/rate_limit/server_error/invalid_action/tool_use/truncated
+各一次；保留既有逐操作时限与 15 分钟观察中止窗口；追踪受控 guest）。七、
+取证弃置并记录（exit 0、恰六例、零失败；输出按不可信处置、有界收集；
+首败/部分/重试/跳过/未执行分列；回收后复验输入哈希并确认 guest 弃置）。
+
+### 禁止事项
+
+不注入他构建 FoD/CAB/WinSXS 组件、不复制 WindowsSandbox.exe、不改
+注册表伪装稳定版、不对未知功能反复启用-重启、不削弱 .wsb、不清空已
+占用输出目录、不在宿主运行 Claude、不引入凭据／提供商调用／数据库／
+实盘。升级+六场景仅提供有限的探针证据：G2 仍开放，activation_authorized
+=false 不变。
+
+官方用例执行：0/6；真实提供商调用：false；activation_authorized：false。
+**WP-02—WP-06 仍 PARTIAL，G2—G6 未关闭，V1 仍 1／6。**
