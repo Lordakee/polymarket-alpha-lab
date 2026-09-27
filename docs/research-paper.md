@@ -323,29 +323,30 @@ BOMs, pretty printing, extra whitespace/objects/lines are rejected rather than
 normalized. The reader consumes no more than the cap+CRLF+one overflow byte.
 The supplied hash and original record ID are checked before opening the project.
 
-For modest-sized already-reviewed canonical input, no input file is needed:
+For modest-sized already-reviewed canonical input, no input file is needed.
+`printf '%s\n'` appends exactly the one permitted trailing newline:
 
-```powershell
-$recordId = Read-Host 'Original research record ID'
-$expectedHash = Read-Host 'SHA256 supplied with the reviewed canonical input'
-$payload = Read-Host 'Paste the complete canonical ASCII JSON'
-$payload | .\.venv\Scripts\python.exe scripts/manage_research_tasks.py capture-paper --record-id $recordId --input-sha256 $expectedHash --allow-paper-write
-$code = $LASTEXITCODE
-if ($code -ne 0) { throw 'Capture did not return a complete receipt; inspect the same record before explicit replay.' }
+```bash
+read -r -p 'Original research record ID: ' recordId
+read -r -p 'SHA256 supplied with the reviewed canonical input: ' expectedHash
+read -r -p 'Paste the complete canonical ASCII JSON: ' payload
+printf '%s\n' "$payload" | .venv/bin/python scripts/manage_research_tasks.py capture-paper --record-id "$recordId" --input-sha256 "$expectedHash" --allow-paper-write
+if [ $? -ne 0 ]; then echo 'Capture did not return a complete receipt; inspect the same record before explicit replay.' >&2; exit 1; fi
 ```
 
 Larger inputs can be sent by the approved producer over the same stdin protocol.
 Input preparation, source fetching and human approval are NOT supplied by this
 command. A digest proves matching bytes, not a signature or source/reviewer
 identity. Never compute a replacement hash from corrupted received text just to
-make it pass. Windows PowerShell encoding can differ from Python's; the canonical
+make it pass. Shell text conversion (Windows PowerShell encoding, or any
+locale-dependent shell pipeline) can differ from Python's; the canonical
 ASCII envelope avoids sending raw non-ASCII evidence through that conversion.
 
 Query without stdin or write permission:
 
-```powershell
-.\.venv\Scripts\python.exe scripts/manage_research_tasks.py inspect-paper --record-id $recordId
-$code = $LASTEXITCODE
+```bash
+.venv/bin/python scripts/manage_research_tasks.py inspect-paper --record-id "$recordId"
+code=$?
 ```
 
 `--root` remains a global option placed BEFORE the subcommand. It must identify

@@ -7,9 +7,12 @@ and supplies generated project-only credentials. A PostgreSQL process is still
 required; this is application-managed server software, not an in-process engine.
 
 
-A clean Windows source + PostgreSQL distribution and automatic first-start check
-are now available. See **[quickstart.md](quickstart.md)** for the two-command
-setup, kit checksums, and the boundary that Python/dependencies remain required.
+Linux is the sole V1 development and delivery platform (DELIVERY_PLAN.md
+section 61); the pinned release tuple is Ubuntu 26.04.1 x86_64, Python 3.12.14
+and an exactly pinned PostgreSQL 18 build. See **[quickstart.md](quickstart.md)**
+for the active Linux operating guide, kit verification and the boundary that
+Python/dependencies remain required. The historical Windows source kit and its
+first-start checks are frozen as evidence.
 
 ## Layout and one-time setup
 
@@ -28,30 +31,33 @@ logs/configuration and the cluster's own physical files are infrastructure.
 
 Install the existing project environment including its Postgres driver:
 
-```powershell
-uv sync --locked --extra dev --extra postgres
+```bash
+uv sync --locked --extra dev --extra postgres --python 3.12.14
 ```
 
 A source checkout does not include hundreds of megabytes of platform binaries.
-For Windows, obtain the official PostgreSQL binary ZIP from the PostgreSQL/EDB
-channel and approve its SHA256 independently before import. The importer does
-not silently download or execute software. Importing a trusted extracted prefix
-is also supported; it must contain `bin`, `lib`, and `share`. Do NOT point at an
-existing data directory. The importer copies only the runtime, never any source
-cluster, service configuration, account or credential.
+For Linux, assemble or obtain a trusted portable PostgreSQL 18 prefix containing
+`bin`, `lib` and `share` (the recorded development prefix merged the Ubuntu
+`postgresql-18` package's bin/lib with `/usr/share/postgresql/18` into a
+symlink-free real-file directory; see DELIVERY_PLAN.md section 50), or an
+official archive whose SHA256 you approve independently before import. The
+importer does not silently download or execute software. Importing a trusted
+extracted prefix is also supported; it must contain `bin`, `lib`, and `share`.
+Do NOT point at an existing data directory. The importer copies only the
+runtime, never any source cluster, service configuration, account or credential.
 
-```powershell
+```bash
 # Official binary archive; replace both arguments with the approved local file/hash.
-.\.venv\Scripts\python.exe scripts/project_database.py install-runtime --archive C:\Downloads\postgresql-binaries.zip --sha256 APPROVED_SHA256
+.venv/bin/python scripts/project_database.py install-runtime --archive /downloads/postgresql-binaries.zip --sha256 APPROVED_SHA256
 
 # Alternative: explicitly trusted, already extracted portable native prefix.
-.\.venv\Scripts\python.exe scripts/project_database.py install-runtime --from-directory C:\Downloads\pgsql
+.venv/bin/python scripts/project_database.py install-runtime --from-directory /home/example/pg-runtime-src
 
 # Use ONE import method. No PostgreSQL system installation or service registration.
-.\.venv\Scripts\python.exe scripts/project_database.py init
-.\.venv\Scripts\python.exe scripts/project_database.py up
-.\.venv\Scripts\python.exe scripts/project_database.py status
-.\.venv\Scripts\python.exe scripts/project_database.py down
+.venv/bin/python scripts/project_database.py init
+.venv/bin/python scripts/project_database.py up
+.venv/bin/python scripts/project_database.py status
+.venv/bin/python scripts/project_database.py down
 ```
 
 `init` creates a new cluster, installs all manifest-locked migrations, then
@@ -69,20 +75,26 @@ not an upgrade procedure. Keep a supported patched release and perform planned
 backup/restore or pg_upgrade outside this initial lifecycle implementation.
 The underlying platform's C/C++ runtime dependencies still apply.
 
-Paths containing spaces are included in the native proof. Windows ancestors
-must be accessible to the owning non-elevated account: PostgreSQL deliberately
-drops administrator privileges. The manager does not alter ancestor ACLs or
-disable that restriction; use a project directory owned by your ordinary account. Shell
+Paths containing spaces are included in the native proof. Use a project
+directory owned and operated by your ordinary non-root Linux user account
+(PostgreSQL's own tools refuse to initialize a cluster as root). The manager
+does not alter ancestor permissions or relax that restriction. Shell
 metacharacters and quotes in the project path are rejected. The project path is
 bound to its instance: copying/moving an initialized project is not an automatic
 migration procedure. Existing external/Supabase data is NEVER adopted or copied.
 
-## Windows runtime publication contention
+## Runtime publication contention
 
-Only the final `postgres.installing` -> `postgres` rename may be retried after a
-Windows access/share/lock error (codes 5, 32 or 33). There are at most seven
-attempts, with delays of 0.1, 0.2, 0.4, 0.8, 1.6 and 2.0 seconds. This caps the
-requested sleeps at 5.1 seconds, not total filesystem/validation elapsed time.
+On Linux the final `postgres.installing` -> `postgres` rename is a single
+non-retried atomic attempt with the same pre/post identity, permission,
+destination-absence and verification checks; any failure returns
+`project_postgres_runtime_publish_failed` and keeps the private staging
+for diagnosis. The retry ladder below is the retained Windows-specific
+behavior (frozen as historical). Only the final rename may be retried
+after a Windows access/share/lock error (codes 5, 32 or 33). There are at most
+seven attempts, with delays of 0.1, 0.2, 0.4, 0.8, 1.6 and 2.0 seconds. This
+caps the requested sleeps at 5.1 seconds, not total filesystem/validation
+elapsed time.
 The importer holds the same lifecycle lease throughout; it never repeats the
 copy, native version probes, database initialization or a research/model call.
 
@@ -192,8 +204,8 @@ or modified migrations block. The application cannot change the ledger.
 For an existing managed instance, `up` reports pending migrations and a research
 session refuses to run until explicitly upgraded:
 
-```powershell
-.\.venv\Scripts\python.exe scripts/project_database.py migrate
+```bash
+.venv/bin/python scripts/project_database.py migrate
 ```
 
 Review migration changes first. Adding a migration requires updating the manifest.
@@ -207,23 +219,25 @@ PostgreSQL backup/recovery procedure before real long-term data collection.
 
 ## Verification
 
-```powershell
-.\.venv\Scripts\python.exe -m pytest -q tests/test_project_postgres.py
-.\.venv\Scripts\python.exe scripts/verify_local.py --full
+```bash
+.venv/bin/python -m pytest -q tests/test_project_postgres.py
+.venv/bin/python scripts/verify_local.py --full
 ```
 
 The native integration test is separately opt-in and writes only to a new
-temporary project (an explicitly protected unique RUNNER_TEMP child on Windows,
+temporary project (on Windows an explicitly protected unique RUNNER_TEMP child,
 not pytest's potentially administrator-only ancestor). Its explicit prefix is a trusted binary source, not the database
 being tested. It exercises initialization of all migrations, private authentication,
 limited privileges, concurrent research capture, persisted readback after restart,
 instance mismatch rejection, port conflicts, config tampering and DDL rollback.
 It does not touch a user's installed DB or call a live model. The GitHub native
-workflow uses runner-provided Windows binaries solely as this source and never
-starts its installed Windows service. Default offline tests do not start servers.
+workflow historically used runner-provided Windows binaries solely as this
+source and never started its installed Windows service; the section 61 CI
+transition replaces required Windows contexts with verified Linux checks.
+Default offline tests do not start servers.
 
 Official deployment references:
-- https://www.postgresql.org/download/windows/
+- https://www.postgresql.org/download/linux/ubuntu/
 - https://www.postgresql.org/docs/16/app-initdb.html
 - https://www.postgresql.org/docs/16/app-pg-ctl.html
 - https://www.postgresql.org/docs/16/auth-pg-hba-conf.html
@@ -241,9 +255,9 @@ Stop research sessions and explicitly stop the database first. The backup
 command itself NEVER shuts down or interrupts a running server. Choose a NEW
 backup directory OUTSIDE the project, under an already existing parent:
 
-```powershell
-.\.venv\Scripts\python.exe scripts/project_database.py down
-.\.venv\Scripts\python.exe scripts/project_database.py backup --destination "D:\Backups\Polymarket-20260913"
+```bash
+.venv/bin/python scripts/project_database.py down
+.venv/bin/python scripts/project_database.py backup --destination '/backups/polymarket-20260913'
 ```
 
 The new directory is restricted to its owning account (and SYSTEM on Windows).
@@ -265,8 +279,8 @@ retained checksum; hashes alone cannot authenticate a malicious replacement.
 Restore only a backup of your OWN trusted database. Its catalogs/configuration
 can affect native server behavior on a later explicit start.
 
-```powershell
-.\.venv\Scripts\python.exe scripts/project_database.py verify-backup --archive "D:\Backups\Polymarket-20260913\snapshot.palpg.zip" --sha256 YOUR_RETAINED_SHA256 --trusted-backup
+```bash
+.venv/bin/python scripts/project_database.py verify-backup --archive '/backups/polymarket-20260913/snapshot.palpg.zip' --sha256 YOUR_RETAINED_SHA256 --trusted-backup
 ```
 
 Recovery is intentionally limited to the SAME project location with identical
@@ -278,10 +292,10 @@ will not rename, delete or overwrite existing data, even an empty/partial target
 Keep an existing damaged/original directory safely preserved through a separately
 reviewed operator recovery procedure; do not delete it to make this command pass.
 
-```powershell
+```bash
 # Disaster recovery only, after original files are safely preserved and the target is absent.
-.\.venv\Scripts\python.exe scripts/project_database.py restore --archive "D:\Backups\Polymarket-20260913\snapshot.palpg.zip" --sha256 YOUR_RETAINED_SHA256 --trusted-backup
-.\.venv\Scripts\python.exe scripts/start_project.py
+.venv/bin/python scripts/project_database.py restore --archive '/backups/polymarket-20260913/snapshot.palpg.zip' --sha256 YOUR_RETAINED_SHA256 --trusted-backup
+.venv/bin/python scripts/start_project.py
 ```
 
 Restore validates all archive content before creating its private staging tree,
@@ -360,10 +374,10 @@ not synchronization with out-of-band file edits by that owner.
 For an explicitly reviewed source installation at the ORIGINAL physical root,
 a private original backup and its independently retained checksum:
 
-```powershell
-.\.venv\Scripts\python.exe scripts/project_database.py verify-backup --archive "D:\Backups\Original\snapshot.palpg.zip" --sha256 YOUR_RETAINED_SHA256 --trusted-backup --allow-catalog-extension
+```bash
+.venv/bin/python scripts/project_database.py verify-backup --archive '/backups/original/snapshot.palpg.zip' --sha256 YOUR_RETAINED_SHA256 --trusted-backup --allow-catalog-extension
 # Restore only under an approved recovery procedure with originals preserved and target ABSENT:
-.\.venv\Scripts\python.exe scripts/project_database.py restore --archive "D:\Backups\Original\snapshot.palpg.zip" --sha256 YOUR_RETAINED_SHA256 --trusted-backup --allow-catalog-extension
+.venv/bin/python scripts/project_database.py restore --archive '/backups/original/snapshot.palpg.zip' --sha256 YOUR_RETAINED_SHA256 --trusted-backup --allow-catalog-extension
 ```
 
 Check each command's exit status and original JSON; do not chain blindly after a

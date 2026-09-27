@@ -9,16 +9,17 @@ No public API, model, operator confirmation, outcome fetch or business write is
 performed. No SQL migration or dependency change is required for this feature.
 
 Install the existing locked project environment with `uv sync --locked --extra
-postgres`, then run from an already initialized source or newly built kit:
+dev --extra postgres --python 3.12.14`, then run from an already initialized
+source or newly built kit:
 
-```powershell
-.\.venv\Scripts\python.exe scripts/evaluate_project_research.py
+```bash
+.venv/bin/python scripts/evaluate_project_research.py
 ```
 
 A new source checkout can explicitly point at an original initialized project:
 
-```powershell
-.\.venv\Scripts\python.exe scripts/evaluate_project_research.py --root "C:\path\to\actual-project"
+```bash
+.venv/bin/python scripts/evaluate_project_research.py --root '/path/to/actual-project'
 ```
 
 Use the actual root containing `pyproject.toml`, `database/migrations.lock.json`
@@ -35,8 +36,8 @@ role/migration/environment checks remain active; the console cannot bypass them.
 
 ## Historical views and configuration
 
-```powershell
-.\.venv\Scripts\python.exe scripts/evaluate_project_research.py --as-of "2026-09-12T12:00:00+08:00" --include-decisions
+```bash
+.venv/bin/python scripts/evaluate_project_research.py --as-of "2026-09-12T12:00:00+08:00" --include-decisions
 ```
 
 The timestamp is an explicitly zoned ISO value; a missing timezone or invalid
@@ -127,10 +128,10 @@ inputs, not a user's database or paid model. Final revision/counts belong in the
 
 The SAME command now exposes the existing one-snapshot settled-simulation API:
 
-```powershell
-.\.venv\Scripts\python.exe scripts/evaluate_project_research.py --settled-paper
-.\.venv\Scripts\python.exe scripts/evaluate_project_research.py --settled-paper --include-decisions
-.\.venv\Scripts\python.exe scripts/evaluate_project_research.py --settled-paper --as-of "2026-09-15T12:00:00+08:00"
+```bash
+.venv/bin/python scripts/evaluate_project_research.py --settled-paper
+.venv/bin/python scripts/evaluate_project_research.py --settled-paper --include-decisions
+.venv/bin/python scripts/evaluate_project_research.py --settled-paper --as-of "2026-09-15T12:00:00+08:00"
 ```
 
 The last timestamp is an example historical scope, not reusable authorization or
@@ -185,9 +186,10 @@ synthetic; no user's database or real provider is involved. Final source/CI
 identities and preserved first failures are recorded in the implementation PR.
 
 WP-05 remains PARTIAL, G5 open and V1 1/6. Real approved forecasts, input/fee
-evidence, remaining operator configuration (the exact executable/version/model
-setup and concrete execution authorization) and the existing PowerShell 5.1
-reliability issue remain open; D1-D3 are accepted and are not an open decision.
+evidence and remaining operator configuration (the exact executable/version/model
+setup and concrete execution authorization) remain open; the historical Windows
+PowerShell 5.1 item is frozen as closed-for-Windows history (DELIVERY_PLAN.md
+sections 57 and 61). D1-D3 are accepted and are not an open decision.
 No user-machine step or new migration is required by this change.
 
 

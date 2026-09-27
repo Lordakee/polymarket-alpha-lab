@@ -925,8 +925,12 @@ Run only the named file, with a unique previously nonexistent pytest base temp:
 python -m pytest -q -s --tb=short -o junit_family=legacy tests/test_research_claude_profile_native.py --junitxml=<outside-source proof path> --basetemp=<new disposable path>
 ```
 
-Use the retained handoff's concrete source commit, tree, checksums and ordered
-Windows commands. Do not run this template against user data or broad test
+Use the retained handoff's concrete source commit, tree and checksums. The
+retained handoff's ordered Windows commands are frozen historical evidence
+(DELIVERY_PLAN.md section 61): no further Windows probe preparation or
+execution is performed, and the active probe boundary is the qualified
+rootless Linux namespace environment whose preparation is tracked as a
+separate implementation node. Do not run this template against user data or broad test
 selection. Six cases must actually execute; skips are not acceptance. Stop after
 this one fixed batch, preserve first failures and return the metadata. Do not
 retry until green, update the image, relax an assertion, refresh an input or

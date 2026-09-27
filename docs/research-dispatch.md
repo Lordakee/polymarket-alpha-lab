@@ -297,10 +297,10 @@ with this schema; no command installs missing tables or adopts another database.
 
 From the fixed source/kit root, using that version's Python environment:
 
-```powershell
-.\.venv\Scripts\python.exe -I scripts/manage_research_tasks.py inspect-batch --batch-id approved-btc-batch
-.\.venv\Scripts\python.exe -I scripts/manage_research_tasks.py inspect-turn --rotation-id approved-roster-1 --turn-id turn-1
-.\.venv\Scripts\python.exe -I scripts/manage_research_tasks.py inspect-budget --budget-id approved-budget-1
+```bash
+.venv/bin/python -I scripts/manage_research_tasks.py inspect-batch --batch-id approved-btc-batch
+.venv/bin/python -I scripts/manage_research_tasks.py inspect-turn --rotation-id approved-roster-1 --turn-id turn-1
+.venv/bin/python -I scripts/manage_research_tasks.py inspect-budget --budget-id approved-budget-1
 ```
 
 Use `--root <actual-project-root>` BEFORE the subcommand only when the reviewed
@@ -539,7 +539,7 @@ from pathlib import Path
 import subprocess
 
 project = Path(actual_project_root)
-python = project / '.venv/Scripts/python.exe'
+python = project / '.venv/bin/python'
 script = project / 'scripts/manage_research_tasks.py'
 
 # This example performs ONLY the explicitly approved batch write.
@@ -555,7 +555,8 @@ result = subprocess.run([
 
 Budget creation follows the SAME byte transport with `create-budget`,
 `--budget-id reviewed_policy.budget_id`, the reviewed policy's digest and
-`--allow-budget-write`. Do not pipeline through PowerShell `Get-Content`, reformat
+`--allow-budget-write`. Do not pipeline through shell text processing (`cat`,
+`echo`, command substitution or PowerShell `Get-Content`), reformat
 JSON, discover a credential, or interpret an example amount as an approved budget.
 The producer must close stdin. The input byte bound does not promise a wall-clock
 deadline against a producer that never finishes; the caller owns transport/I/O

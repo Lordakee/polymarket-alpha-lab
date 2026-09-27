@@ -1,23 +1,33 @@
-# Native Windows project kit and operating guide
+# Native Linux project kit and operating guide
 
 Read [the operating path](#one-operating-path-discovery-to-retained-simulation-and-settlement)
 for discovery, approvals, tasks, simulation, settlement and restart.
 [Version changes](#preserving-data-while-selecting-another-version) have separate
 limits: do not treat this guide as an approved upgrade of an existing kit.
 
-This kit carries the project source, locked Python dependency metadata, all
-historical SQL migrations, and an approved PostgreSQL 17 engine archive. No
-Docker, Supabase service, shared database installation or Windows database
-service is needed. The engine is imported automatically on first explicit run.
+This is the active operating guide after the section 61 rebaseline (owner
+instruction, 2026-09-27): Linux is the sole V1 development and delivery
+platform, and the pinned release tuple is Ubuntu 26.04.1 x86_64, Python
+3.12.14 and an exactly pinned PostgreSQL 18 build (see DELIVERY_PLAN.md). The
+historical Windows x64/PostgreSQL 17 kit and its PowerShell guide are frozen
+as evidence: they are no longer built, verified, extended or accepted for V1.
+A packaged kit carries the project source, locked Python dependency metadata,
+all historical SQL migrations, and the reviewed PostgreSQL 18 engine archive
+for that tuple. No Docker, Supabase service, shared database installation or
+system database service is needed. The engine is imported automatically on
+first explicit run. Until the reviewed Linux build record publishes a tested
+kit ZIP with its SHA256 and byte size, the packaged-kit references below name
+that pending release; the operating path itself runs from a source
+installation on Linux today.
 
 **Python is still required.** This is a source + native database distribution,
 not a standalone executable, Python installer, prebuilt venv, or offline wheel
 collection. With an existing Python/uv environment, install the locked dependency
 set in the extracted project directory:
 
-```powershell
-uv sync --locked --extra postgres
-.\.venv\Scripts\python.exe scripts/start_project.py
+```bash
+uv sync --locked --extra dev --extra postgres --python 3.12.14
+.venv/bin/python scripts/start_project.py
 ```
 
 Startup imports the installed PostgreSQL driver before touching native runtime or
@@ -49,11 +59,11 @@ explicit input, model configuration and provider authorization.
 
 ## Obtain and verify a kit
 
-Use the outer ZIP SHA256 from a trusted build record before extracting into a
-**new directory owned by your normal Windows account**. The internal
-`PROJECT-BUNDLE.json` binds every selected code/migration file and the engine
-archive, but cannot authenticate a publisher or make malicious Python safe.
-Never run an untrusted archive merely because its internal hashes agree.
+Use the outer ZIP SHA256 and byte size from a trusted build record before
+extracting into a **new directory owned by your normal Linux user account**. The
+internal `PROJECT-BUNDLE.json` binds every selected code/migration file and the
+engine archive, but cannot authenticate a publisher or make malicious Python
+safe. Never run an untrusted archive merely because its internal hashes agree.
 
 The archive contains no `.local`, generated credentials, old cluster, `.env`,
 `.venv`, Git metadata, logs, captured evidence or test datasets. Each extraction
@@ -66,32 +76,50 @@ The compressed engine seed `database/postgres-runtime.zip` stays in the kit;
 first startup also creates a private expanded `runtime/postgres`. That consumes
 space for both the seed and active engine. The importer still refuses execution
 of changed runtime bytes and does not fall back to a system service or PATH.
-Windows/C-runtime platform dependencies still apply. Actual platform/version
-acceptance belongs in the build's test record; the kit targets Windows x64 and
-PostgreSQL 17 only. It is not a verified Linux/macOS release.
+The engine's ELF loader and required system libraries still apply; record the
+exact pinned PostgreSQL 18 build and its library requirements with the release.
+Actual platform/version acceptance belongs in the build's test record; the kit
+targets the pinned Ubuntu 26.04.1 x86_64 / Python 3.12.14 / PostgreSQL 18
+tuple only. It is not a verified release for another distribution or platform,
+and the frozen Windows kit is not a substitute for it.
 
 ## Maintainer build
 
-Build on Windows x64 from a committed source checkout, with a trusted native
-PostgreSQL 17 prefix and a new destination path:
+Build on the Linux x86_64 release tuple (Ubuntu 26.04.1) from a committed
+source checkout, with a trusted native PostgreSQL 18 prefix and a new
+destination path:
 
-```powershell
-.\.venv\Scripts\python.exe scripts/build_project_bundle.py --native-prefix C:\Approved\pgsql --output C:\Builds\polymarket-native.zip
+```bash
+.venv/bin/python scripts/build_project_bundle.py --native-prefix /approved/pg18-prefix --output /builds/polymarket-native.zip
 ```
+
+The builder admits only the Linux/x64 tuple and refuses any other host with
+`project_bundle_linux_x64_required`; the trusted prefix must report exactly
+PostgreSQL 18 (`project_bundle_requires_postgres_18`). The qualified prefix is
+the package-to-prefix assembly for the release tuple: `bin/` and `lib/` from
+the pinned apt PostgreSQL 18 build and `share/` from the matching
+`/usr/share/postgresql/18` tree, plus its copyright notice. The historical
+Windows x64/PostgreSQL 17 build path is frozen; do not run it or relabel a
+Windows kit as the Linux release.
 
 The builder reads only explicitly selected **committed Git blobs**, not arbitrary
 working-directory files. Dirty tracked source blocks a build; untracked files
 are not included. It copies only native bin/lib/share and supplied license
-notices, never the prefix's data, service settings or credentials. Bundled program
-files are not stored in Git. Checksums and version probes establish byte/version
-consistency, not a supply-chain security audit; the maintainer must approve the
-prefix and included source. Available upstream notices are retained in the seed.
+notices, never the prefix's data, service settings or credentials. Bundled
+program files are not stored in Git. Checksums and version probes establish
+byte/version consistency, not a supply-chain security audit; the maintainer
+must approve the prefix and included source. Available upstream notices are
+retained in the seed.
 
 A build writes a `.building` file and publishes a completed ZIP without overwrite.
 An interrupted/failed build can leave its owned partial file; it does not publish
 that partial as a valid kit or delete a prior output. The manifest identifies the
 source commit/tree, target, engine version and file digests. Neither a kit nor a
-passing synthetic test establishes real model forecasting performance.
+passing synthetic test establishes real model forecasting performance. Until the
+fixed Linux/PG18 kit passes its wrong-platform rejection, permissions,
+integrity, fresh-extraction and actual first-start tests on the exact release
+tuple, a built ZIP is not an approved release; durable publication with SHA256
+values and byte sizes is tracked separately in DELIVERY_PLAN.md.
 
 ## One operating path: discovery to retained simulation and settlement
 
@@ -101,9 +129,9 @@ decisions are already accepted: D1 permits the named local-agent choices (Codex,
 Claude Code, OpenCode, Grok CLI, ZCode CLI), D2 permits sending all needed
 research data, and D3 sets no first-round business-scale or monetary cap. Still
 pending and separate from those decisions: the exact executable/version/model
-configuration, an accepted isolation host and official binary probe, an approved
-finite in-memory key supplier with its concurrency conditions, and the concrete
-execution authorization for a real run.
+configuration, a qualified Linux isolation boundary and official binary probe,
+an approved finite in-memory key supplier with its concurrency conditions, and
+the concrete execution authorization for a real run.
 A ChatGPT/Codex login does not configure this application. Do not search for keys,
 copy an example into `.env`, or treat a synthetic test client as a real provider.
 
@@ -111,12 +139,12 @@ copy an example into `.env`, or treat a synthetic test client as a real provider
 
 After verifying and extracting a trusted kit as described above, select its
 existing absolute directory. Replace the illustrative path; do not paste it as
-an instruction to create or adopt another database. In PowerShell:
+an instruction to create or adopt another database. In Bash:
 
-```powershell
-$Project = 'C:\Research\polymarket-alpha-lab'
-$Python = Join-Path $Project '.venv\Scripts\python.exe'
-if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) { throw 'Install this version first' }
+```bash
+Project='/research/polymarket-alpha-lab'
+Python="$Project/.venv/bin/python"
+if [ ! -x "$Python" ]; then echo 'Install this version first' >&2; exit 1; fi
 ```
 
 Use this Python environment and these absolute script paths even when your shell
@@ -134,11 +162,11 @@ Do not mix code and data versions merely because a command accepts that flag.
 
 Inspect configuration without creating a database:
 
-```powershell
-& $Python -I "$Project/scripts/project_database.py" --root $Project status
-if ($LASTEXITCODE -ne 0) { throw 'Status failed; stop and preserve the error' }
-& $Python -I "$Project/scripts/discover_crypto_research.py" --team crypto_btc --team crypto_eth --select-supported --max-candidates 5 --attempts 1
-if ($LASTEXITCODE -ne 0) { throw 'Disabled discovery check failed' }
+```bash
+"$Python" -I "$Project/scripts/project_database.py" --root "$Project" status
+if [ $? -ne 0 ]; then echo 'Status failed; stop and preserve the error' >&2; exit 1; fi
+"$Python" -I "$Project/scripts/discover_crypto_research.py" --team crypto_btc --team crypto_eth --select-supported --max-candidates 5 --attempts 1
+if [ $? -ne 0 ]; then echo 'Disabled discovery check failed' >&2; exit 1; fi
 ```
 
 `not_initialized` from status is not an empty research history. Discovery without
@@ -153,9 +181,9 @@ An explicitly permitted public-input fetch uses the same command with one added
 permission. This performs network reads but no model call, research write or
 research approval:
 
-```powershell
-& $Python -I "$Project/scripts/discover_crypto_research.py" --team crypto_btc --team crypto_eth --select-supported --max-candidates 5 --attempts 1 --allow-public-fetch
-if ($LASTEXITCODE -ne 0) { throw 'Discovery incomplete or rejected; retain its status, do not retry silently' }
+```bash
+"$Python" -I "$Project/scripts/discover_crypto_research.py" --team crypto_btc --team crypto_eth --select-supported --max-candidates 5 --attempts 1 --allow-public-fetch
+if [ $? -ne 0 ]; then echo 'Discovery incomplete or rejected; retain its status, do not retry silently' >&2; exit 1; fi
 ```
 
 Read each team's result, rejection/failed-check trace, unchecked candidates and
@@ -173,9 +201,10 @@ application must prepare fresh reviewed requests using the existing
 [observation](../docs/research-crypto-observation-time.md) paths. No file queue or
 new loader is provided here. What gates live execution is no longer a D1-D3
 decision: the remaining prerequisites are the exact executable/version/model
-configuration, an accepted isolation host and official binary probe, an approved
-finite in-memory key supplier, and the concrete execution authorization recorded
-in the [local-agent integration](../docs/research-local-agent.md) contract.
+configuration, a qualified Linux isolation host and official binary probe, an
+approved finite in-memory key supplier, and the concrete execution authorization
+recorded in the [local-agent integration](../docs/research-local-agent.md)
+contract.
 
 ### 3. Admit reviewed work, run one turn, then inspect
 
@@ -210,13 +239,13 @@ The standalone `run-turn` script intentionally has **no model factory**. Even wi
 `--allow-model-calls`, it returns exit 2 before opening a managed session. These
 commands are for reading the existing approved identifiers, not for enrolling them:
 
-```powershell
-& $Python -I "$Project/scripts/manage_research_tasks.py" --root $Project inspect-batch --batch-id approved-btc-batch
-if ($LASTEXITCODE -ne 0) { throw 'Batch unavailable; inspect the error before proceeding' }
-& $Python -I "$Project/scripts/manage_research_tasks.py" --root $Project inspect-budget --budget-id approved-budget
-if ($LASTEXITCODE -ne 0) { throw 'Budget unavailable; do not run research' }
-& $Python -I "$Project/scripts/manage_research_tasks.py" --root $Project inspect-turn --rotation-id approved-roster --turn-id turn-1
-if ($LASTEXITCODE -ne 0) { throw 'Turn unavailable; do not infer that it never ran' }
+```bash
+"$Python" -I "$Project/scripts/manage_research_tasks.py" --root "$Project" inspect-batch --batch-id approved-btc-batch
+if [ $? -ne 0 ]; then echo 'Batch unavailable; inspect the error before proceeding' >&2; exit 1; fi
+"$Python" -I "$Project/scripts/manage_research_tasks.py" --root "$Project" inspect-budget --budget-id approved-budget
+if [ $? -ne 0 ]; then echo 'Budget unavailable; do not run research' >&2; exit 1; fi
+"$Python" -I "$Project/scripts/manage_research_tasks.py" --root "$Project" inspect-turn --rotation-id approved-roster --turn-id turn-1
+if [ $? -ne 0 ]; then echo 'Turn unavailable; do not infer that it never ran' >&2; exit 1; fi
 ```
 
 The application may invoke `research_dispatch_cli.main` with its approved
@@ -227,11 +256,11 @@ client. Exit 0 for a replay/no-work turn is not proof all research completed.
 
 After any run or interruption, list the ORIGINAL claims and results:
 
-```powershell
-& $Python -I "$Project/scripts/list_project_research.py" --root $Project --max-records 1000
-if ($LASTEXITCODE -ne 0) { throw 'Inventory failed; do not assume an empty or complete history' }
-& $Python -I "$Project/scripts/inspect_project_research.py" --root $Project --record-id original-record
-if ($LASTEXITCODE -ne 0) { throw 'Original record unavailable; do not create a replacement' }
+```bash
+"$Python" -I "$Project/scripts/list_project_research.py" --root "$Project" --max-records 1000
+if [ $? -ne 0 ]; then echo 'Inventory failed; do not assume an empty or complete history' >&2; exit 1; fi
+"$Python" -I "$Project/scripts/inspect_project_research.py" --root "$Project" --record-id original-record
+if [ $? -ne 0 ]; then echo 'Original record unavailable; do not create a replacement' >&2; exit 1; fi
 ```
 
 `captured` includes failed/blocked research, not only completed forecasts.
@@ -250,10 +279,10 @@ not proof of source authenticity, approval or real exchange fees.
 
 The existing `capture-paper` subcommand needs the original record ID,
 `--input-sha256` and `--allow-paper-write`, plus one canonical UTF-8 input on binary
-stdin. Do not use `Get-Content`, PowerShell's text pipeline, JSON reformatting or a
-new business file journal to transport it. An approved application can send the
-already-reviewed in-memory bytes directly (names below are supplied values, not
-file paths or discovered credentials):
+stdin. Do not use shell text pipelines (`cat`/`echo` re-encoding, command
+substitution), JSON reformatting or a new business file journal to transport it.
+An approved application can send the already-reviewed in-memory bytes directly
+(names below are supplied values, not file paths or discovered credentials):
 
 ```python
 from hashlib import sha256
@@ -264,7 +293,7 @@ project = Path(actual_project_root)
 assert type(reviewed_payload) is bytes
 assert sha256(reviewed_payload).hexdigest() == reviewed_input_sha256
 result = subprocess.run([
-    str(project / '.venv/Scripts/python.exe'), '-I',
+    str(project / '.venv/bin/python'), '-I',
     str(project / 'scripts/manage_research_tasks.py'), '--root', str(project),
     'capture-paper', '--record-id', original_record_id,
     '--input-sha256', reviewed_input_sha256, '--allow-paper-write',
@@ -281,18 +310,18 @@ saved rejection. If the command errors or output is lost, a commit may already
 have happened: inspect the SAME record first, then only explicitly replay the
 SAME reviewed input. The console will not refresh timestamps or costs.
 
-```powershell
-& $Python -I "$Project/scripts/manage_research_tasks.py" --root $Project inspect-paper --record-id original-record
-if ($LASTEXITCODE -ne 0) { throw 'Simulation receipt unavailable; inspect original state before any replay' }
+```bash
+"$Python" -I "$Project/scripts/manage_research_tasks.py" --root "$Project" inspect-paper --record-id original-record
+if [ $? -ne 0 ]; then echo 'Simulation receipt unavailable; inspect original state before any replay' >&2; exit 1; fi
 ```
 
 ### 5. Collect unconfirmed evidence, independently confirm, then evaluate
 
 Start with a read-only resolution worklist:
 
-```powershell
-& $Python -I "$Project/scripts/review_resolution_queue.py" --root $Project --max-markets 1000
-if ($LASTEXITCODE -ne 0) { throw 'Resolution listing failed; do not infer settlement' }
+```bash
+"$Python" -I "$Project/scripts/review_resolution_queue.py" --root "$Project" --max-markets 1000
+if [ $? -ne 0 ]; then echo 'Resolution listing failed; do not infer settlement' >&2; exit 1; fi
 ```
 
 Only when public collection AND unconfirmed-evidence storage are authorized, add
@@ -300,9 +329,9 @@ Only when public collection AND unconfirmed-evidence storage are authorized, add
 unconfirmed candidates; it is not a read-only fetch, outcome confirmation or model
 call. Review the exact retained candidate and original prediction privately.
 
-```powershell
-& $Python -I "$Project/scripts/inspect_project_resolution.py" --root $Project --review-id retained-candidate
-if ($LASTEXITCODE -ne 0) { throw 'Candidate unavailable; stop before confirmation' }
+```bash
+"$Python" -I "$Project/scripts/inspect_project_resolution.py" --root "$Project" --review-id retained-candidate
+if [ $? -ne 0 ]; then echo 'Candidate unavailable; stop before confirmation' >&2; exit 1; fi
 ```
 
 Independent human verification must match the original venue, pair, minute and
@@ -317,11 +346,11 @@ evidence, auto-approve a candidate, or substitute a legacy direct outcome write.
 
 Read probability diagnostics first, then the retained cost-aware settlement view:
 
-```powershell
-& $Python -I "$Project/scripts/evaluate_project_research.py" --root $Project
-if ($LASTEXITCODE -ne 0) { throw 'History evaluation blocked; retain incomplete and failed attempts' }
-& $Python -I "$Project/scripts/evaluate_project_research.py" --root $Project --settled-paper
-if ($LASTEXITCODE -ne 0) { throw 'Settled-paper evaluation blocked; do not use a partial substitute' }
+```bash
+"$Python" -I "$Project/scripts/evaluate_project_research.py" --root "$Project"
+if [ $? -ne 0 ]; then echo 'History evaluation blocked; retain incomplete and failed attempts' >&2; exit 1; fi
+"$Python" -I "$Project/scripts/evaluate_project_research.py" --root "$Project" --settled-paper
+if [ $? -ne 0 ]; then echo 'Settled-paper evaluation blocked; do not use a partial substitute' >&2; exit 1; fi
 ```
 
 Both reads may start/stop the private engine, but do not write business records.
@@ -348,11 +377,11 @@ cursor, but never restarts captured or incomplete tasks.
 After all managed sessions and admitted work have finished, explicit engine stop
 is available; it does not cancel research:
 
-```powershell
-& $Python -I "$Project/scripts/project_database.py" --root $Project down
-if ($LASTEXITCODE -ne 0) { throw 'Stop blocked; do not force-kill or delete lock/state files' }
-& $Python -I "$Project/scripts/project_database.py" --root $Project status
-if ($LASTEXITCODE -ne 0) { throw 'Could not verify stopped state' }
+```bash
+"$Python" -I "$Project/scripts/project_database.py" --root "$Project" down
+if [ $? -ne 0 ]; then echo 'Stop blocked; do not force-kill or delete lock/state files' >&2; exit 1; fi
+"$Python" -I "$Project/scripts/project_database.py" --root "$Project" status
+if [ $? -ne 0 ]; then echo 'Could not verify stopped state' >&2; exit 1; fi
 ```
 
 A managed command stops an engine it started and leaves an explicitly running
@@ -399,6 +428,8 @@ the project; never upload them as engineering evidence. Migration is append-only
 explicit and uses the catalog at the selected data root. A schema change is not
 undone by checking out old code. Restore refuses existing data; do not delete a
 working cluster to force it through. Cross-path restore/adoption is not promised.
+Moving an existing Windows cluster to Linux is outside this procedure; any later
+business-history transfer requires a separately reviewed migration task.
 
 ### Ordered source-switch procedure for a separately authorized release
 
@@ -420,15 +451,15 @@ the complete OLD kit and its environment in place as the rollback baseline.
 Pin the values from the reviewed release record, replacing every illustrative
 path:
 
-```powershell
-$OriginalRoot = 'C:\Example\Existing\polymarket-alpha-lab'
-$CandidateSource = 'C:\Example\NewKit\polymarket-alpha-lab'
-$CandidatePython = Join-Path $CandidateSource '.venv\Scripts\python.exe'
-$OldSource = 'C:\Example\RetainedOld\polymarket-alpha-lab'
-$OldPython = Join-Path $OldSource '.venv\Scripts\python.exe'
-if (-not (Test-Path -LiteralPath $OriginalRoot -PathType Container)) { throw 'Pin the reviewed original root; an illustrative path is not deployment approval' }
-if (-not (Test-Path -LiteralPath $CandidatePython -PathType Leaf)) { throw 'Reviewed candidate kit is not installed in its own directory; do not proceed' }
-if (-not (Test-Path -LiteralPath $OldPython -PathType Leaf)) { throw 'Complete retained old kit missing; there is no rollback baseline' }
+```bash
+OriginalRoot='/example/existing/polymarket-alpha-lab'
+CandidateSource='/example/new-kit/polymarket-alpha-lab'
+CandidatePython="$CandidateSource/.venv/bin/python"
+OldSource='/example/retained-old/polymarket-alpha-lab'
+OldPython="$OldSource/.venv/bin/python"
+if [ ! -d "$OriginalRoot" ]; then echo 'Pin the reviewed original root; an illustrative path is not deployment approval' >&2; exit 1; fi
+if [ ! -f "$CandidatePython" ]; then echo 'Reviewed candidate kit is not installed in its own directory; do not proceed' >&2; exit 1; fi
+if [ ! -f "$OldPython" ]; then echo 'Complete retained old kit missing; there is no rollback baseline' >&2; exit 1; fi
 ```
 
 When the original installation's own code is the reviewed OLD source, pin
@@ -475,11 +506,11 @@ work exactly as recorded. Only after the drain, stop the engine and verify
 the stopped state with the currently selected reviewed source (illustratively
 the retained OLD kit):
 
-```powershell
-& $OldPython -I "$OldSource/scripts/project_database.py" --root $OriginalRoot down
-if ($LASTEXITCODE -ne 0) { throw 'Stop blocked; do not force-kill or delete lock/state files' }
-& $OldPython -I "$OldSource/scripts/project_database.py" --root $OriginalRoot status
-if ($LASTEXITCODE -ne 0) { throw 'Could not verify stopped state' }
+```bash
+"$OldPython" -I "$OldSource/scripts/project_database.py" --root "$OriginalRoot" down
+if [ $? -ne 0 ]; then echo 'Stop blocked; do not force-kill or delete lock/state files' >&2; exit 1; fi
+"$OldPython" -I "$OldSource/scripts/project_database.py" --root "$OriginalRoot" status
+if [ $? -ne 0 ]; then echo 'Could not verify stopped state' >&2; exit 1; fi
 ```
 
 A busy engine or an active-connection failure never permits force-killing
@@ -496,11 +527,11 @@ directory OUTSIDE the project under an already existing parent. Backups
 contain private credentials: keep the directory private, never publish it,
 and retain the SHA256 independently of the backup media:
 
-```powershell
-& $OldPython -I "$OldSource/scripts/project_database.py" --root $OriginalRoot backup --destination 'D:\Example\Backups\PreSwitch'
-if ($LASTEXITCODE -ne 0) { throw 'Backup failed or was refused; the switch is blocked' }
-& $OldPython -I "$OldSource/scripts/project_database.py" --root $OriginalRoot verify-backup --archive 'D:\Example\Backups\PreSwitch\snapshot.palpg.zip' --sha256 YOUR_RETAINED_SHA256 --trusted-backup
-if ($LASTEXITCODE -ne 0) { throw 'Backup verification failed; the switch is blocked' }
+```bash
+"$OldPython" -I "$OldSource/scripts/project_database.py" --root "$OriginalRoot" backup --destination '/example/backups/pre-switch'
+if [ $? -ne 0 ]; then echo 'Backup failed or was refused; the switch is blocked' >&2; exit 1; fi
+"$OldPython" -I "$OldSource/scripts/project_database.py" --root "$OriginalRoot" verify-backup --archive '/example/backups/pre-switch/snapshot.palpg.zip' --sha256 YOUR_RETAINED_SHA256 --trusted-backup
+if [ $? -ne 0 ]; then echo 'Backup verification failed; the switch is blocked' >&2; exit 1; fi
 ```
 
 `--trusted-backup` approves a backup of your own trusted database; it is not
@@ -524,17 +555,17 @@ its own adjacent source, and the explicit `--root` selects the data target,
 overriding the script's adjacent default. Selection alone must not alter
 catalogs, runtime, identity, credentials or business records:
 
-```powershell
-& $CandidatePython -I "$CandidateSource/scripts/project_database.py" --root $OriginalRoot status
-if ($LASTEXITCODE -ne 0) { throw 'Candidate status failed; retain the error, do not force anything' }
+```bash
+"$CandidatePython" -I "$CandidateSource/scripts/project_database.py" --root "$OriginalRoot" status
+if [ $? -ne 0 ]; then echo 'Candidate status failed; retain the error, do not force anything' >&2; exit 1; fi
 ```
 
 Routine rollback selects the retained OLD kit and environment again with the
 same root:
 
-```powershell
-& $OldPython -I "$OldSource/scripts/project_database.py" --root $OriginalRoot status
-if ($LASTEXITCODE -ne 0) { throw 'Old-source status failed; retain the error' }
+```bash
+"$OldPython" -I "$OldSource/scripts/project_database.py" --root "$OriginalRoot" status
+if [ $? -ne 0 ]; then echo 'Old-source status failed; retain the error' >&2; exit 1; fi
 ```
 
 The direct OLD form above applies only when the retained OLD kit ships
@@ -552,22 +583,21 @@ the original schema and storage contract stay compatible; it cannot undo
 written records or schema changes, and any such requirement stops for a
 separate design and authorization.
 
-A release-specific reviewed procedure and final Windows end-to-end acceptance
-are still required before deploying a changed version to an existing user's data.
-This guide authorizes none of those user-machine writes. The recorded
-delivery-plan decision (`DELIVERY_PLAN.md` section 57) closes the intermittent
-PS5.1 first-invocation item for the supported environment: the owner-approved
-CurrentUser RemoteSigned policy change is executed, and the existing 96
-handoff/probe test passes stand as its evidence. The historical first-invocation
-evidence remains preserved unrevised: the three CI instances recorded in
-`docs/handoff-first-run.md` and the retained `scripts/download_handoff.ps1`
-helper. The item reopens only as a bounded repair if a reproducible failure
-occurs under the supported configuration, CurrentUser RemoteSigned on Windows
-PowerShell 5.1; no universal Windows runtime fix is claimed, and no further
-policy change, execution-policy bypass or ACL relaxation is authorized.
-WP-06/G6 remain open, as do real forecast/input/fee acceptance and
-the still-pending exact executable/version/model configuration and concrete
-execution authorization; the D1-D3 decisions themselves are accepted.
+A release-specific reviewed procedure and final Linux end-to-end acceptance
+are still required before deploying a changed version to an existing user's
+data. This guide authorizes none of those user-machine writes. Historical
+Windows first-invocation record: DELIVERY_PLAN.md section 57 closed the
+intermittent Windows PowerShell 5.1 first-invocation item for that supported
+Windows environment (the owner-approved CurrentUser RemoteSigned policy
+change, with the retained `scripts/download_handoff.ps1` helper and the
+`docs/handoff-first-run.md` evidence preserved unchanged), and section 61
+freezes that classification as history: no Windows policy change,
+execution-policy bypass or ACL relaxation is authorized, and Linux
+first-start acceptance replaces the retired Windows checks. The item reopens
+only if the owner explicitly reopens Windows support. WP-06/G6 remain open,
+as do real forecast/input/fee acceptance and the still-pending exact
+executable/version/model configuration and concrete execution authorization;
+the D1-D3 decisions themselves are accepted.
 
 ## Maintainer acceptance: one packaged research-to-settlement route
 
@@ -592,8 +622,10 @@ blocks while a pre-interruption historical view remains unchanged. The recipe
 also checks all loaded project modules and the unchanged kit manifest.
 
 This is isolated engineering evidence, not real source/fee verification, actual
-human review, real model use or account P&L. It does not close G2-G6, the old
-PS5.1 issue or release-specific upgrade acceptance; D1-D3 are accepted, and the
+human review, real model use or account P&L. It does not close G2-G6, the
+historical PS5.1 item (closed for its supported environment by DELIVERY_PLAN.md
+section 57; frozen as history by section 61) or release-specific upgrade
+acceptance; D1-D3 are accepted, and the
 exact executable/version/model configuration and concrete execution authorization
 under them remain pending. Existing component tests
 remain in place. The new recipe has its own bounded child execution; no existing
@@ -658,7 +690,9 @@ This is same-version, same-path cold recovery of synthetic data, not a version
 upgrade, rollback, cross-machine/path adoption, real disaster recovery or actual
 human/market acceptance. Existing cold-backup implementation and its component
 regressions are unchanged. No recipe or recovery archive is shipped in the kit.
-G2-G6, release-specific upgrade decisions and the PS5.1 issue remain open; D1-D3
+G2-G6 and release-specific upgrade decisions remain open; the historical PS5.1
+item is closed for its supported environment (DELIVERY_PLAN.md section 57) and
+frozen as history by section 61. D1-D3
 are accepted, and the exact executable/version/model configuration and concrete
 execution authorization under them remain pending.
 
@@ -712,7 +746,9 @@ the next entry, not used to drop the lease during admitted work. The combined
 tests use real Python Conditions/threads with synthetic lifecycle for unit checks;
 the existing packaged drain and cold-recovery scenarios provide separate real
 PostgreSQL coverage. All previous limits and failed-run evidence are retained.
-This integration is not a diagnosis or repair of the intermittent PS5.1 first run.
+This integration is not a diagnosis or repair of the intermittent PS5.1 first
+run (closed for its supported environment by DELIVERY_PLAN.md section 57; frozen
+as history by section 61).
 Python Condition semantics reference checked 2026-09-18:
 https://docs.python.org/3.12/library/threading.html#condition-objects
 

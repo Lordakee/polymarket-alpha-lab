@@ -2,6 +2,8 @@
 
 Parsing exits before the command's operation; no guide write/fetch is executed.
 This is a documentation test, not an application command interpreter or loader.
+The active quickstart is the Linux Bash guide (DELIVERY_PLAN.md section 61):
+invocations use .venv/bin/python-style Linux paths and quoted Bash variables.
 """
 import json
 from pathlib import Path
@@ -19,7 +21,11 @@ from polymarket_alpha_lab.project_postgres.files import clean_environment
 ROOT = Path(__file__).resolve().parents[1]
 GUIDE = ROOT / 'database/quickstart.md'
 TEXT = GUIDE.read_text(encoding='utf-8')
-COMMANDS = re.findall(r'^& \$Python -I "\$Project/scripts/([^"\r\n]+)"([^\r\n]*)$', TEXT, re.M)
+# Strict grammar: "$Python" -I "$Project/scripts/<script>" <args...>
+COMMANDS = re.findall(r'^"\$Python" -I "\$Project/scripts/([^"\r\n]+)"([^\r\n]*)$', TEXT, re.M)
+# Loose count: every line invoking $Python must match the strict grammar above,
+# so an extraction that silently misses command forms cannot pass vacuously.
+COMMAND_LINES = re.findall(r'^"\$Python" -I [^\r\n]*$', TEXT, re.M)
 _PARSE_ONLY = r'''
 import argparse, pathlib, runpy, sys
 root = pathlib.Path(sys.argv[1])
@@ -39,14 +45,15 @@ runpy.run_path(sys.argv[0], run_name='__main__')
 # the reviewed candidate ($CandidateSource/$CandidatePython) and the retained
 # old kit ($OldSource/$OldPython). Every switch invocation names the kit's own
 # absolute entrypoint and keeps --root on $OriginalRoot.
+# Strict grammar: "$<kit python>" -I "$<kit source>/scripts/<script>" <args...>
 SWITCH_COMMANDS = re.findall(
-    r'^& \$(?P<python>CandidatePython|OldPython) -I '
+    r'^"\$(?P<python>CandidatePython|OldPython)" -I '
     r'"\$(?P<source>CandidateSource|OldSource)/scripts/(?P<script>[^"\r\n]+)"'
     r'(?P<args>[^\r\n]*)$', TEXT, re.M)
 SWITCH_ASSIGNMENTS = dict(re.findall(
-    r'^\$(OriginalRoot|CandidateSource|CandidatePython|OldSource|OldPython) = ([^\r\n]+)$',
+    r'^(OriginalRoot|CandidateSource|CandidatePython|OldSource|OldPython)=([^\r\n]+)$',
     TEXT, re.M))
-SWITCH_INVOCATIONS = re.findall(r'^& \$(?:CandidatePython|OldPython)[^\r\n]*$', TEXT, re.M)
+SWITCH_INVOCATIONS = re.findall(r'^"\$(?:CandidatePython|OldPython)"[^\r\n]*$', TEXT, re.M)
 SWITCH_PARSE_ONLY = r'''
 import argparse, json, pathlib, runpy, sys
 kit = pathlib.Path(sys.argv[1])
@@ -104,13 +111,25 @@ def test_literal_operator_command_is_valid_before_any_operation(tmp_path, script
 
 
 def test_guide_contains_commands_and_they_never_enable_live_trading():
-    assert len(COMMANDS) >= 12  # An empty regex extraction must not pass vacuously.
+    # Non-vacuous extraction: the strict grammar must capture every invocation
+    # line, and an empty regex extraction must not pass.
+    assert len(COMMANDS) == len(COMMAND_LINES) >= 12
     for script, args in COMMANDS:
         assert selected_source('scripts/' + script)
         assert (ROOT / 'scripts' / script).is_file()
-        assert '--root $Project' in args or script == 'discover_crypto_research.py'
+        assert shlex.split(args)[:2] == ['--root', '$Project'] or script == 'discover_crypto_research.py'
     assert 'no `--root` option' in TEXT
     assert '**no model factory**' in TEXT and 'D1' in TEXT and 'D3' in TEXT
+
+
+def test_guide_uses_only_the_linux_command_surface():
+    # DELIVERY_PLAN.md section 61: the active quickstart is the Bash guide with
+    # .venv/bin/python paths; no Windows venv layout or PowerShell invocation
+    # form may remain anywhere in the guide.
+    assert '.venv/bin/python' in TEXT
+    for line in TEXT.splitlines():
+        assert 'Scripts' not in line, line
+        assert not line.lstrip().startswith('& $'), line
 
 
 def test_all_immediate_runbook_links_are_in_new_kits():
@@ -127,10 +146,11 @@ def test_version_switch_variables_pin_two_kits_and_one_original_root():
     assert set(SWITCH_ASSIGNMENTS) == {'OriginalRoot', 'CandidateSource',
                                        'CandidatePython', 'OldSource', 'OldPython'}
     for name in ('OriginalRoot', 'CandidateSource', 'OldSource'):
-        assert re.fullmatch(r"'[^']+'", SWITCH_ASSIGNMENTS[name]), name
-    assert re.fullmatch(r"Join-Path \$CandidateSource '[^']*'",
+        assert re.fullmatch(r"'/[^']+'", SWITCH_ASSIGNMENTS[name]), name
+    assert re.fullmatch(r'"\$CandidateSource/\.venv/bin/python"',
                         SWITCH_ASSIGNMENTS['CandidatePython'])
-    assert re.fullmatch(r"Join-Path \$OldSource '[^']*'", SWITCH_ASSIGNMENTS['OldPython'])
+    assert re.fullmatch(r'"\$OldSource/\.venv/bin/python"',
+                        SWITCH_ASSIGNMENTS['OldPython'])
     # The candidate is a separate reviewed kit; the original root stays unchanged.
     assert SWITCH_ASSIGNMENTS['CandidateSource'] != SWITCH_ASSIGNMENTS['OldSource']
     assert SWITCH_ASSIGNMENTS['CandidateSource'] != SWITCH_ASSIGNMENTS['OriginalRoot']

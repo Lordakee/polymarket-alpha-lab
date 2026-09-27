@@ -7,7 +7,7 @@ authoritative status and acceptance plan for V1-Research-Paper and its six work
 packages; see DELIVERY_PLAN.md for current acceptance counts and remaining gaps.
 V1 uses project-private native PostgreSQL; older capability notes below are historical where they conflict with the plan.
 
-For local development on Windows, start with the [Windows local setup guide](docs/development/windows-local-setup.md) for locked installation, PowerShell/Git Bash commands, and offline verification.
+Linux is the sole V1 development and delivery platform (DELIVERY_PLAN.md section 61; pinned release tuple: Ubuntu 26.04.1 x86_64, Python 3.12.14, an exactly pinned PostgreSQL 18 build). For local development, start with the [Linux local setup guide](docs/development/linux-local-setup.md) for locked installation, Bash commands, and offline verification. The historical [Windows local setup guide](docs/development/windows-local-setup.md) is retained unchanged for reference; Windows setup, verification and acceptance are no longer active V1 obligations.
 
 The long-term research direction is a system that can screen markets, research candidates, and prepare proposals while treating execution as a later, separately validated phase. The first version is intentionally not a trading bot. It is a planning and research workspace for:
 
@@ -217,7 +217,7 @@ The strongest first product is a market-quality and edge-scanning system:
 
 ## Level 0 Usage
 
-Start with the [Windows local setup guide](docs/development/windows-local-setup.md) to install from `uv.lock` and verify the editable package, CLI entrypoints, tests, and compilation. Onboarding uses only CLI help and `report-discovery`; it does not require market-data access or a database.
+Start with the [Linux local setup guide](docs/development/linux-local-setup.md) to install from `uv.lock` and verify the editable package, CLI entrypoints, tests, and compilation. Onboarding uses only CLI help and `report-discovery`; it does not require market-data access or a database.
 
 ### Legacy Scanner Example
 
@@ -1634,14 +1634,14 @@ See:
 
 ## Useful Commands
 
-For PowerShell commands and setup details, see the [Windows local setup guide](docs/development/windows-local-setup.md). From the repository root in Git Bash:
+For Bash commands and setup details, see the [Linux local setup guide](docs/development/linux-local-setup.md). From the repository root:
 
 ```bash
-uv sync --locked --extra dev --extra postgres --python 3.12
-uv pip check --python .venv/Scripts/python.exe
-.venv/Scripts/python.exe -I -m polymarket_alpha_lab --help
-.venv/Scripts/polymarket-alpha-lab.exe report-discovery --category readiness
-.venv/Scripts/python.exe scripts/verify_local.py --quick
+uv sync --locked --extra dev --extra postgres --python 3.12.14
+uv pip check --python .venv/bin/python
+.venv/bin/python -I -m polymarket_alpha_lab --help
+.venv/bin/polymarket-alpha-lab report-discovery --category readiness
+.venv/bin/python scripts/verify_local.py --quick
 ```
 
 Use `--full` instead of `--quick` for the complete offline pytest suite. The `postgres` extra is optional for offline setup; the reference environment includes it. Real database smoke stays disabled during verification.
