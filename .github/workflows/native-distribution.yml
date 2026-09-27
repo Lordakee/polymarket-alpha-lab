@@ -82,7 +82,14 @@ concurrency:
   group: native-distribution-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  # Section 61 controlled CI transition (2026-09-28): the windows-kit proof
+  # tested the retired Windows/PG17 distribution contract. Since the L2 Linux
+  # port (c832569c) the native distribution test asserts the Linux tuple and
+  # fails closed on Windows runners, so this job is disabled as a retired
+  # active duty and kept as frozen history. Windows obligations are not
+  # reasserted; the Linux kit proof below is the live acceptance.
   windows-kit:
+    if: false  # retired 2026-09-28 per DELIVERY_PLAN.md section 61
     runs-on: windows-2025
     timeout-minutes: 20
     steps:
@@ -129,9 +136,10 @@ jobs:
           if-no-files-found: error
 
   # Section 61 (2026-09-27): Linux is the sole V1 platform. This job builds and
-  # proves the actual Linux kit on the pinned PG18 tuple. The frozen windows-kit
-  # job above stays byte-identical as history; required contexts are replaced
-  # only through the coordinator's controlled settings step, never here. The
+  # proves the actual Linux kit on the pinned PG18 tuple. The windows-kit job
+  # above is disabled as retired history (2026-09-28); required contexts are
+  # replaced only through the coordinator's controlled settings step, never
+  # here. The
   # seven-day Actions artifact below is not the durable release surface; the
   # tested Linux kit bytes are published to a durable Release by the L6 node.
   linux-kit:
