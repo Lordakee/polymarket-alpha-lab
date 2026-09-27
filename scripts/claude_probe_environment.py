@@ -3,8 +3,22 @@
 Preparation modes (build/stage/verify/selftest) keep their reviewed behavior
 and never launch a vendor CLI. The official-control/official-config generators
 likewise execute no program: they only validate reviewed inputs and write the
-control launcher and a separate four-mapping .wsb. OPENING that generated
-configuration is what runs the official launcher inside Windows Sandbox.
+control launcher plus the platform's configuration file. For Windows (frozen
+historical behavior) the configuration is a four-mapping .wsb that, once
+OPENED, runs the official launcher inside Windows Sandbox. For Linux the
+configuration is a rootless namespace plan plus launcher companion covering
+user/mount/PID/net/IPC/UTS namespaces, loopback-only networking, read-only
+INPUT/IMAGE/CONTROL, one writable bounded OUTPUT and tmpfs scratch. This node
+GENERATES configurations only; executing an official binary is a separately
+qualified step that nothing here performs.
+
+The Linux artifact identity is OWNER-MEASURED: the pinned official Linux x86_64
+Claude artifact's SHA256 and byte size are unmeasured upstream and enter only
+through the reviewed image manifest. No digest, size or library closure value
+is defaulted, embedded or invented by this generator; ELF structure, x86-64
+architecture and the runtime library closure are derived from the image bytes.
+Windows generation (claude.exe, .cmd, .wsb, Windows path validation) is frozen
+history; pass --platform linux explicitly to select the Linux flavor.
 Build only on a disposable Windows CI host. Stage/verify use stdlib and never
 modify global tools, OS features, firewall or project business installations.
 Generated Sandboxes have no network/clipboard and map only the reviewed
@@ -92,6 +106,68 @@ OFFICIAL_LAUNCHER_TEMPLATE = (
     b"receipt.write(str(code)+'\\n'); receipt.close(); raise SystemExit(code)\" "
     b'>"C:\\pal-output\\pytest.log" 2>&1\r\n'
     b'exit /b %ERRORLEVEL%\r\n'
+)
+
+# --- Linux official-probe preparation (config generation only) -------------
+# The pinned official Linux x86_64 artifact identity (SHA256, byte size) is
+# unmeasured upstream. It is a required owner-supplied parameter via the image
+# manifest; this module defines NO digest/size defaults and invents no values.
+LINUX_IMAGE_MEMBER = 'claude'
+LINUX_IMAGE_SCHEMA = 'claude-probe-image-linux-v1'
+LINUX_IMAGE_PLATFORM = 'linux-x86_64'
+LINUX_IMAGE_KEYS = OFFICIAL_IMAGE_KEYS | {'platform'}
+LINUX_LAUNCHER_NAME = 'official-probe.sh'
+LINUX_CONTROL_INVENTORY = [LINUX_LAUNCHER_NAME]
+LINUX_PLAN_SCHEMA = 'claude-probe-namespace-linux-v1'
+LINUX_NAMESPACES = ('user', 'mount', 'pid', 'network', 'ipc', 'uts')
+LINUX_GUESTS = {'input': '/pal-input', 'image': '/pal-claude-image',
+                'control': '/pal-control', 'output': '/pal-output',
+                'scratch': '/pal-scratch'}
+LINUX_EXCLUDED_SURFACES = ('agent_sockets', 'authentication_state',
+                           'database_directories', 'dot_local', 'dot_ssh',
+                           'host_root', 'unrelated_configuration', 'user_home')
+LINUX_CHILD_ENVIRONMENT = {'PATH': '/usr/bin:/bin'}
+LINUX_SCRATCH_BYTES = 1073741824
+LINUX_TMP_BYTES = 536870912
+LINUX_MEMORY_MB = 4096
+ELF_MAGIC = b'\x7fELF'
+ELF_MAX_PHDRS = 1024
+ELF_MAX_INTERP_BYTES = 4096
+ELF_MAX_DYNAMIC_BYTES = 131072
+ELF_MAX_STRTAB_BYTES = 1048576
+ELF_MAX_NEEDED = 1024
+ELF_MAX_SONAME = 4096
+# The executable bit only exists on POSIX hosts; elsewhere mode checks no-op.
+_LINUX_MODE_MEANINGFUL = os.name == 'posix'
+LINUX_LAUNCHER_TEMPLATE = (
+    b'#!/bin/sh\n'
+    b'set -eu\n'
+    b'if [ "${1-}" != "--isolated-host-attested" ]; then exit 2; fi\n'
+    b'if [ "$#" -ne 1 ]; then exit 2; fi\n'
+    b'cd /pal-output || exit 2\n'
+    b'if [ ! -d /pal-output ]; then exit 2; fi\n'
+    b'for name in launcher-tmp pytest-tmp pytest.log junit.xml exit-code.txt; do\n'
+    b'  if [ -e "/pal-output/$name" ]; then exit 2; fi\n'
+    b'done\n'
+    b'mkdir /pal-output/launcher-tmp || exit 2\n'
+    b'export POLYMARKET_ALPHA_LAB_CLAUDE_PROBE=1\n'
+    b'export POLYMARKET_ALPHA_LAB_CLAUDE_PROBE_IMAGE=/pal-claude-image/claude\n'
+    b'export POLYMARKET_ALPHA_LAB_CLAUDE_PROBE_SHA256={image_sha256}\n'
+    b'export POLYMARKET_ALPHA_LAB_CLAUDE_PROBE_BYTES={image_bytes}\n'
+    b'export POLYMARKET_ALPHA_LAB_CLAUDE_PROBE_ISOLATED_HOST=1\n'
+    b'export PYTEST_DISABLE_PLUGIN_AUTOLOAD=1\n'
+    b'unset PYTEST_ADDOPTS PYTEST_PLUGINS\n'
+    b'export TMPDIR=/pal-output/launcher-tmp\n'
+    b'exec /pal-input/python/bin/python3 -I -S -B -c "import sys; '
+    b"sys.path[:0]=['/pal-input/source','/pal-input/source/src',"
+    b"'/pal-input/python/lib/python3.12/site-packages']; import pytest; "
+    b"code=int(pytest.main(['-q','-s','--tb=short','-o','junit_family=legacy',"
+    b"'-p','no:cacheprovider','--basetemp=/pal-output/pytest-tmp',"
+    b"'--junitxml=/pal-output/junit.xml',"
+    b"'/pal-input/source/tests/test_research_claude_profile_native.py'])); "
+    b"receipt=open('/pal-output/exit-code.txt','x',encoding='ascii'); "
+    b"receipt.write(str(code)+'\\n'); receipt.close(); raise SystemExit(code)\" "
+    b'> /pal-output/pytest.log 2>&1\n'
 )
 
 
@@ -456,10 +532,24 @@ def _windows_local_drive(text):
         return False
 
 
-def _official_path_argument(value, *, file=False):
+def _official_platform(value=None):
+    """Validate an explicit preparation flavor token.
+
+    None keeps the frozen host-dispatched historical behavior (Windows flavor
+    with host-appropriate path spelling); 'windows'/'linux' select a flavor
+    explicitly on any host.
+    """
+    if value is not None and value not in ('windows', 'linux'):
+        fail('official_platform_unsupported')
+    return value
+
+
+def _official_path_argument(value, *, file=False, platform=None):
     """Lexically classify a supplied official path before any filesystem access."""
+    _official_platform(platform)
     text = str(value)
-    if os.name == 'nt':
+    use_windows_lexical = platform == 'windows' or (platform is None and os.name == 'nt')
+    if use_windows_lexical:
         if _windows_path_problem(text) is not None:
             fail('official_path_invalid')
         if not _windows_local_drive(text):
@@ -469,9 +559,11 @@ def _official_path_argument(value, *, file=False):
             or any(part in ('', '.', '..') for part in text.split('/')[1:])):
         fail('official_path_invalid')
     path = Path(text)
-    if not path.is_absolute():
+    # The posix lexical branch above is already sufficient; the redundant host
+    # backstop stays for the historical flavors exactly as reviewed.
+    if platform != 'linux' and not path.is_absolute():
         fail('official_path_invalid')
-    if file and path.suffix != '.wsb':
+    if file and path.suffix != ('.json' if platform == 'linux' else '.wsb'):
         fail('destination_suffix_invalid')
     return path
 
@@ -550,14 +642,138 @@ def _bounded_image_digest(path, expected_bytes):
     return digest.hexdigest(), _identity(after)
 
 
-def _official_image(image_dir):
-    """Exact inventory, bounded strict manifest, stable streamed hash/size."""
+def _elf_read(stream, offset, size, limit):
+    """One bounded seek/read; every span must fit inside the verified image."""
+    if not 0 <= offset or not 1 <= size or offset + size > limit:
+        fail('image_elf_invalid')
+    if stream.seek(offset) != offset:
+        fail('image_elf_invalid')
+    data = stream.read(size)
+    if len(data) != size:
+        fail('image_elf_invalid')
+    return data
+
+
+def _elf_facts(path, size):
+    """Bounded seek-based ELF identity parse of an already-verified image.
+
+    Returns the interpreter and the deduplicated sorted DT_NEEDED closure,
+    both derived from the image bytes. Nothing is resolved against host
+    libraries here; host closure qualification is a separate later step.
+    """
+    before = plain(path)
+    with path.open('rb') as stream:
+        header = _elf_read(stream, 0, 64, size)
+        if header[:4] != ELF_MAGIC or header[6] != 1:
+            fail('image_elf_invalid')
+        if header[4] != 2 or header[5] != 1:
+            fail('image_arch_unsupported')
+        (e_type, e_machine, _version, _entry, phoff, _shoff, _flags, _ehsize,
+         phentsize, phnum) = struct.unpack_from('<HHIQQQIHHH', header, 16)
+        if e_machine != 62:
+            fail('image_arch_unsupported')
+        if e_type not in (2, 3):
+            fail('image_elf_invalid')
+        if (phentsize != 56 or not 1 <= phnum <= ELF_MAX_PHDRS or phoff < 64
+                or phoff + 56*phnum > size):
+            fail('image_elf_invalid')
+        phdrs = _elf_read(stream, phoff, 56*phnum, size)
+        loads, interp, dynamic = [], None, None
+        for index in range(phnum):
+            (p_type, _p_flags, p_offset, p_vaddr, _p_paddr, p_filesz,
+             _p_memsz, _p_align) = struct.unpack_from('<IIQQQQQQ', phdrs, 56*index)
+            if p_offset > size or p_filesz > size or p_offset + p_filesz > size:
+                fail('image_elf_invalid')
+            if p_type == 1:
+                loads.append((p_vaddr, p_offset, p_filesz))
+            elif p_type == 3:
+                if interp is not None or not 1 <= p_filesz <= ELF_MAX_INTERP_BYTES:
+                    fail('image_elf_invalid')
+                raw = _elf_read(stream, p_offset, p_filesz, size)
+                if not raw.endswith(b'\0'):
+                    fail('image_elf_invalid')
+                try:
+                    text = raw[:-1].decode('ascii')
+                except UnicodeDecodeError:
+                    fail('image_elf_invalid')
+                if any(ord(c) < 33 or ord(c) > 126 for c in text):
+                    fail('image_elf_invalid')
+                interp = text
+            elif p_type == 2:
+                if (dynamic is not None or p_filesz == 0 or p_filesz % 16
+                        or p_filesz > ELF_MAX_DYNAMIC_BYTES):
+                    fail('image_elf_invalid')
+                dynamic = (p_offset, p_filesz, p_vaddr)
+        if interp is None or not interp.startswith('/'):
+            fail('image_elf_invalid')
+        needed_offsets, strtab_vaddr = [], None
+        if dynamic is not None:
+            raw = _elf_read(stream, dynamic[0], dynamic[1], size)
+            for offset in range(0, len(raw) - 15, 16):
+                tag, value = struct.unpack_from('<QQ', raw, offset)
+                if tag == 0:
+                    break
+                if tag == 1:
+                    needed_offsets.append(value)
+                    if len(needed_offsets) > ELF_MAX_NEEDED:
+                        fail('image_elf_invalid')
+                elif tag == 5 and strtab_vaddr is None:
+                    strtab_vaddr = value
+                elif tag == 5:
+                    fail('image_elf_invalid')
+        needed = []
+        if needed_offsets:
+            if strtab_vaddr is None:
+                fail('image_elf_invalid')
+            span = next(((vaddr, offset, filesz) for vaddr, offset, filesz in loads
+                         if vaddr <= strtab_vaddr < vaddr + filesz), None)
+            if span is None:
+                fail('image_elf_invalid')
+            vaddr, offset, filesz = span
+            start = offset + (strtab_vaddr - vaddr)
+            limit = min(offset + filesz, start + ELF_MAX_STRTAB_BYTES)
+            table = _elf_read(stream, start, limit - start, size)
+            if not table.startswith(b'\0'):
+                fail('image_elf_invalid')
+            for position in needed_offsets:
+                # DT_NEEDED holds an offset into the DT_STRTAB table itself.
+                relative = position
+                if not 0 < relative < len(table):
+                    fail('image_elf_invalid')
+                end = table.find(b'\0', relative)
+                if end < 0 or end - relative > ELF_MAX_SONAME:
+                    fail('image_elf_invalid')
+                try:
+                    name = table[relative:end].decode('ascii')
+                except UnicodeDecodeError:
+                    fail('image_elf_invalid')
+                if any(ord(c) < 33 or ord(c) > 126 for c in name):
+                    fail('image_elf_invalid')
+                needed.append(name)
+        after = os.fstat(stream.fileno())
+    if (_identity(before) != _identity(after)
+            or _identity(before) != _identity(plain(path))):
+        fail('image_changed')
+    return dict(interp=interp, needed=sorted(set(needed)))
+
+
+def _load_official_image(image_dir, platform):
+    """Exact inventory, bounded strict manifest, stable streamed hash/size.
+
+    The Linux flavor additionally checks ELF/x86-64 structure and derives the
+    runtime interpreter/library closure from the image bytes. sha256/bytes are
+    always owner-supplied manifest values; this generator defaults nothing.
+    """
+    linux = platform == 'linux'
+    member = LINUX_IMAGE_MEMBER if linux else OFFICIAL_IMAGE_MEMBER
+    keys = LINUX_IMAGE_KEYS if linux else OFFICIAL_IMAGE_KEYS
+    schema = LINUX_IMAGE_SCHEMA if linux else 'claude-probe-image-v1'
     try:
         plain(image_dir, directory=True)
         entries = sorted(os.listdir(image_dir))
     except OSError:
         fail('image_unavailable')
-    if entries != sorted(OFFICIAL_IMAGE_INVENTORY):
+    if entries != sorted([member, OFFICIAL_MANIFEST_NAME]):
         fail('image_inventory_invalid')
     manifest_path = image_dir/OFFICIAL_MANIFEST_NAME
     if plain(manifest_path).st_size > OFFICIAL_MANIFEST_MAX_BYTES:
@@ -570,16 +786,17 @@ def _official_image(image_dir):
         value = strict_json(text)
     except ValueError:
         fail('image_manifest_invalid')
-    if (type(value) is not dict or set(value) != OFFICIAL_IMAGE_KEYS
-            or value['schema'] != 'claude-probe-image-v1'
-            or value['path'] != OFFICIAL_IMAGE_MEMBER
+    if (type(value) is not dict or set(value) != keys
+            or value['schema'] != schema
+            or value['path'] != member
             or type(value['sha256']) is not str
             or re.fullmatch('[0-9a-f]{64}', value['sha256']) is None
             or type(value['bytes']) is not int
             or not 1 <= value['bytes'] <= OFFICIAL_IMAGE_MAX_BYTES
-            or type(value['version']) is not str or value['version'] != OFFICIAL_IMAGE_VERSION):
+            or type(value['version']) is not str or value['version'] != OFFICIAL_IMAGE_VERSION
+            or linux and value['platform'] != LINUX_IMAGE_PLATFORM):
         fail('image_manifest_invalid')
-    image_path = image_dir/OFFICIAL_IMAGE_MEMBER
+    image_path = image_dir/member
     before = plain(image_path)
     if before.st_size != value['bytes']:
         fail('image_size_mismatch')
@@ -588,17 +805,35 @@ def _official_image(image_dir):
         fail('image_hash_mismatch')
     if _identity(before) != after or _identity(before) != _identity(plain(image_path)):
         fail('image_changed')
-    return value
+    if not linux:
+        return value, {}
+    return value, _elf_facts(image_path, value['bytes'])
 
 
-def official_launcher(image_manifest):
-    """Pure deterministic ASCII/CRLF launcher; only digest and size vary."""
+def _official_image(image_dir):
+    """Frozen historical Windows-image verification entry point."""
+    return _load_official_image(image_dir, 'windows')[0]
+
+
+def official_launcher(image_manifest, platform=None):
+    """Pure deterministic launcher bytes; only digest and size vary."""
     if type(image_manifest) is not dict:
         fail('launcher_manifest_invalid')
     digest, size = image_manifest.get('sha256'), image_manifest.get('bytes')
     if (type(digest) is not str or re.fullmatch('[0-9a-f]{64}', digest) is None
             or type(size) is not int or not 1 <= size <= OFFICIAL_IMAGE_MAX_BYTES):
         fail('launcher_manifest_invalid')
+    if platform == 'linux':
+        data = (LINUX_LAUNCHER_TEMPLATE
+                .replace(b'{image_sha256}', digest.encode('ascii'))
+                .replace(b'{image_bytes}', str(size).encode('ascii')))
+        # POSIX sh legitimately uses ${...} expansion; only unfilled
+        # substitution placeholders are refused.
+        if (b'{image_sha256}' in data or b'{image_bytes}' in data or b'\r' in data
+                or not data.startswith(b'#!/bin/sh\n')
+                or any(len(line) >= 4096 for line in data.split(b'\n'))):
+            fail('launcher_invalid')
+        return data
     data = (OFFICIAL_LAUNCHER_TEMPLATE
             .replace(b'{image_sha256}', digest.encode('ascii'))
             .replace(b'{image_bytes}', str(size).encode('ascii')))
@@ -607,29 +842,64 @@ def official_launcher(image_manifest):
     return data
 
 
-def _official_control(control_dir, image_manifest):
+def _linux_launcher_mode_problem(mode):
+    """The generated launcher carries exactly the reviewed 0755 mode bits."""
+    if (mode & 0o7777) != 0o755:
+        return 'launcher_mode_invalid'
+    return None
+
+
+def _linux_exclusive_write(path, data, mode):
+    """Exclusive creation with an explicit POSIX mode; attempts are preserved."""
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_BINARY', 0)
+    descriptor = os.open(path, flags, mode)
+    try:
+        view = memoryview(data)
+        while view:
+            view = view[os.write(descriptor, view):]
+    finally:
+        os.close(descriptor)
+    if _LINUX_MODE_MEANINGFUL:
+        os.chmod(path, mode)
+
+
+def _official_control(control_dir, image_manifest, platform=None):
     """CONTROL must be exactly the generated launcher; anything else is refused."""
+    linux = (platform or 'windows') == 'linux'
+    name = LINUX_LAUNCHER_NAME if linux else OFFICIAL_LAUNCHER_NAME
+    inventory = LINUX_CONTROL_INVENTORY if linux else OFFICIAL_CONTROL_INVENTORY
     try:
         plain(control_dir, directory=True)
         entries = sorted(os.listdir(control_dir))
     except OSError:
         fail('control_invalid')
-    if entries != sorted(OFFICIAL_CONTROL_INVENTORY):
+    if entries != sorted(inventory):
         fail('control_invalid')
-    data = file_bytes(control_dir/OFFICIAL_LAUNCHER_NAME)
-    if not data or data != official_launcher(image_manifest):
+    launcher = control_dir/name
+    data = file_bytes(launcher)
+    if not data or data != official_launcher(image_manifest, platform='linux' if linux else None):
         fail('control_mismatch')
+    if linux and _LINUX_MODE_MEANINGFUL:
+        problem = _linux_launcher_mode_problem(stat.S_IMODE(plain(launcher).st_mode))
+        if problem is not None:
+            fail(problem)
     return data
 
 
-def _official_payload_ready(value):
+def _official_payload_ready(value, platform=None):
     """The launcher needs manifest-inventoried payload layout members."""
     names = {entry['path'] for entry in value['files']}
-    required = {'python/python.exe',
-                'source/tests/test_research_claude_profile_native.py'}
+    if (platform or 'windows') == 'linux':
+        required = {'python/bin/python3',
+                    'source/tests/test_research_claude_profile_native.py'}
+        prefixes = ('source/', 'source/src/', 'python/lib/python3.12/site-packages/')
+    else:
+        required = {'python/python.exe',
+                    'source/tests/test_research_claude_profile_native.py'}
+        prefixes = ('source/', 'source/src/', 'python/Lib/site-packages/')
     if not required <= names:
         fail('payload_layout_unsupported')
-    for prefix in ('source/', 'source/src/', 'python/Lib/site-packages/'):
+    for prefix in prefixes:
         if not any(name.startswith(prefix) for name in names):
             fail('payload_layout_unsupported')
 
@@ -659,23 +929,226 @@ def official_sandbox_xml(input_dir, image_dir, control_dir, output_dir):
     return ET.tostring(root, encoding='ascii', xml_declaration=True)
 
 
-def official_control(image_dir, destination):
+def _linux_plan_flag_pairs(argv, flag):
+    """(host, guest) pairs of a two-argument bind-style flag."""
+    return {(argv[index+1], argv[index+2]) for index in range(len(argv) - 2)
+            if argv[index] == flag}
+
+
+def _linux_namespace_plan_problem(plan):
+    """Self-check the generated namespace plan before it is ever written.
+
+    A tampered or weakened plan (missing namespace, writable INPUT/IMAGE/
+    CONTROL, shared networking, dropped cleanup flags, invented closure,
+    execution claims) is refused instead of emitted.
+    """
+    if (type(plan) is not dict or plan.get('schema') != LINUX_PLAN_SCHEMA
+            or plan.get('generation') != 'config_only_not_executed'):
+        return 'namespace_plan_invalid'
+    if sorted(plan.get('namespaces') or ()) != sorted(LINUX_NAMESPACES):
+        return 'namespace_plan_invalid'
+    network = plan.get('network')
+    if (type(network) is not dict
+            or sorted(network) != ['address', 'external_egress', 'mode']
+            or network.get('mode') != 'loopback_only'
+            or network.get('external_egress') != 'unavailable'
+            or network.get('address') != '127.0.0.1'):
+        return 'namespace_plan_invalid'
+    image = plan.get('image')
+    if (type(image) is not dict or sorted(image) != ['bytes', 'closure_derived_from',
+            'member', 'platform', 'runtime_interp', 'runtime_needed', 'sha256',
+            'version'] or image.get('closure_derived_from') != 'image_bytes'
+            or image.get('member') != LINUX_IMAGE_MEMBER
+            or image.get('platform') != LINUX_IMAGE_PLATFORM
+            or image.get('version') != OFFICIAL_IMAGE_VERSION
+            or type(image.get('sha256')) is not str
+            or re.fullmatch('[0-9a-f]{64}', image.get('sha256') or '') is None
+            or type(image.get('bytes')) is not int
+            or not 1 <= image['bytes'] <= OFFICIAL_IMAGE_MAX_BYTES
+            or type(image.get('runtime_interp')) is not str
+            or not image['runtime_interp'].startswith('/')
+            or any(ord(c) < 33 or ord(c) > 126 for c in image['runtime_interp'])):
+        return 'namespace_plan_invalid'
+    needed = image.get('runtime_needed')
+    if type(needed) is not list or not 0 <= len(needed) <= ELF_MAX_NEEDED:
+        return 'namespace_plan_invalid'
+    for name in needed:
+        if (type(name) is not str or not name or len(name) > ELF_MAX_SONAME
+                or any(ord(c) < 33 or ord(c) > 126 for c in name)):
+            return 'namespace_plan_invalid'
+    if needed != sorted(set(needed)):
+        return 'namespace_plan_invalid'
+    argv = plan.get('argv')
+    if (type(argv) is not list or len(argv) < 8 or argv[0] != 'bwrap'
+            or any(type(item) is not str or not item for item in argv)):
+        return 'namespace_plan_invalid'
+    # No flag outside the approved set may appear anywhere in argv; unknown
+    # spellings (--dev-bind, --bind-try, --ro-bind-try, ...) are refused even
+    # when the approved flag counts stay intact.
+    approved = {'--unshare-user', '--unshare-ipc', '--unshare-pid',
+                '--unshare-net', '--unshare-uts', '--die-with-parent',
+                '--new-session', '--clearenv', '--cap-drop', '--dev', '--proc',
+                '--ro-bind', '--bind', '--tmpfs', '--sizelimit'}
+    if any(item.startswith('--') and item not in approved for item in argv):
+        return 'namespace_plan_invalid'
+    for flag in ('--unshare-user', '--unshare-ipc', '--unshare-pid',
+                 '--unshare-net', '--unshare-uts', '--die-with-parent',
+                 '--new-session', '--clearenv', '--dev', '--proc'):
+        if argv.count(flag) != 1:
+            return 'namespace_plan_invalid'
+    for flag, operand in (('--dev', '/dev'), ('--proc', '/proc')):
+        if not any(argv[index:index+2] == [flag, operand]
+                   for index in range(len(argv) - 1)):
+            return 'namespace_plan_invalid'
+    if argv.count('--ro-bind') != 3 or argv.count('--bind') != 1:
+        return 'namespace_plan_invalid'
+    if ('--cap-drop' not in argv
+            or any(argv[index] == '--cap-drop' and argv[index+1] != 'ALL'
+                   for index in range(len(argv) - 1))):
+        return 'namespace_plan_invalid'
+    mounts = plan.get('mounts')
+    if type(mounts) is not list or len(mounts) != 5:
+        return 'namespace_plan_invalid'
+    guests = {'INPUT': 'input', 'IMAGE': 'image', 'CONTROL': 'control',
+              'OUTPUT': 'output', 'SCRATCH': 'scratch'}
+    readonlys = {'INPUT': True, 'IMAGE': True, 'CONTROL': True,
+                 'OUTPUT': False, 'SCRATCH': False}
+    hosts = {}
+    for mount in mounts:
+        if type(mount) is not dict or type(mount.get('role')) is not str:
+            return 'namespace_plan_invalid'
+        role = mount['role']
+        keys = {'role', 'host', 'guest', 'readonly', 'kind'}
+        if role == 'SCRATCH':
+            keys.add('size_limit_bytes')
+        if role not in guests or set(mount) != keys:
+            return 'namespace_plan_invalid'
+        if mount['kind'] != ('tmpfs' if role == 'SCRATCH' else 'bind'):
+            return 'namespace_plan_invalid'
+        if (mount['guest'] != LINUX_GUESTS[guests[role]]
+                or mount['readonly'] is not readonlys[role]):
+            return 'namespace_plan_invalid'
+        if role == 'SCRATCH':
+            if mount['host'] is not None or mount['size_limit_bytes'] != LINUX_SCRATCH_BYTES:
+                return 'namespace_plan_invalid'
+        elif (type(mount['host']) is not str or not mount['host']
+                or '\0' in mount['host']):
+            return 'namespace_plan_invalid'
+        hosts[role] = mount['host']
+    if len(hosts) != 5:
+        return 'namespace_plan_invalid'
+    if _linux_plan_flag_pairs(argv, '--ro-bind') != {
+            (hosts['INPUT'], LINUX_GUESTS['input']),
+            (hosts['IMAGE'], LINUX_GUESTS['image']),
+            (hosts['CONTROL'], LINUX_GUESTS['control'])}:
+        return 'namespace_plan_invalid'
+    if _linux_plan_flag_pairs(argv, '--bind') != {(hosts['OUTPUT'], LINUX_GUESTS['output'])}:
+        return 'namespace_plan_invalid'
+    if argv.count('--tmpfs') != 2:
+        return 'namespace_plan_invalid'
+    # Each tmpfs must be immediately followed by its reviewed sizelimit; a
+    # dropped, moved, inflated or detached size bound is refused.
+    for sequence in (('--tmpfs', LINUX_GUESTS['scratch'], '--sizelimit',
+                      str(LINUX_SCRATCH_BYTES)),
+                     ('--tmpfs', '/tmp', '--sizelimit', str(LINUX_TMP_BYTES))):
+        if not any(tuple(argv[index:index+4]) == sequence
+                   for index in range(len(argv) - 3)):
+            return 'namespace_plan_invalid'
+    if (argv[-3:] != ['/bin/sh', '-c', argv[-1]]
+            or 'ip link set lo up' not in argv[-1]
+            or not argv[-1].endswith(
+                '/pal-control/official-probe.sh --isolated-host-attested')):
+        return 'namespace_plan_invalid'
+    if plan.get('child_environment') != {'PATH': '/usr/bin:/bin'}:
+        return 'namespace_plan_invalid'
+    if sorted(plan.get('excluded_host_surfaces') or ()) != sorted(LINUX_EXCLUDED_SURFACES):
+        return 'namespace_plan_invalid'
+    bounds = plan.get('bounds')
+    if (type(bounds) is not dict or bounds.get('memory_mb') != LINUX_MEMORY_MB
+            or bounds.get('cgroup_controls') != 'require_qualification_before_run'):
+        return 'namespace_plan_invalid'
+    if (plan.get('official_cli_executed') is not False
+            or plan.get('activation_authorized') is not False):
+        return 'namespace_plan_invalid'
+    return None
+
+
+def _linux_namespace_plan(payload_root, image_dir, control_dir, output_dir, value, facts):
+    """Deterministic rootless namespace plan; generation output, never run here."""
+    argv = ['bwrap', '--unshare-user', '--unshare-ipc', '--unshare-pid',
+            '--unshare-net', '--unshare-uts', '--die-with-parent', '--new-session',
+            '--cap-drop', 'ALL', '--clearenv', '--dev', '/dev', '--proc', '/proc',
+            '--ro-bind', str(payload_root), LINUX_GUESTS['input'],
+            '--ro-bind', str(image_dir), LINUX_GUESTS['image'],
+            '--ro-bind', str(control_dir), LINUX_GUESTS['control'],
+            '--bind', str(output_dir), LINUX_GUESTS['output'],
+            '--tmpfs', LINUX_GUESTS['scratch'], '--sizelimit', str(LINUX_SCRATCH_BYTES),
+            '--tmpfs', '/tmp', '--sizelimit', str(LINUX_TMP_BYTES),
+            '/bin/sh', '-c',
+            'ip link set lo up && exec /pal-control/official-probe.sh'
+            ' --isolated-host-attested']
+    plan = dict(
+        schema=LINUX_PLAN_SCHEMA, generation='config_only_not_executed',
+        image=dict(sha256=value['sha256'], bytes=value['bytes'],
+                   version=value['version'], platform=LINUX_IMAGE_PLATFORM,
+                   member=LINUX_IMAGE_MEMBER, runtime_interp=facts['interp'],
+                   runtime_needed=list(facts['needed']),
+                   closure_derived_from='image_bytes'),
+        namespaces=list(LINUX_NAMESPACES),
+        network=dict(mode='loopback_only', external_egress='unavailable',
+                     address='127.0.0.1'),
+        mounts=[dict(role='INPUT', host=str(payload_root), guest=LINUX_GUESTS['input'],
+                     readonly=True, kind='bind'),
+                dict(role='IMAGE', host=str(image_dir), guest=LINUX_GUESTS['image'],
+                     readonly=True, kind='bind'),
+                dict(role='CONTROL', host=str(control_dir), guest=LINUX_GUESTS['control'],
+                     readonly=True, kind='bind'),
+                dict(role='OUTPUT', host=str(output_dir), guest=LINUX_GUESTS['output'],
+                     readonly=False, kind='bind'),
+                dict(role='SCRATCH', host=None, guest=LINUX_GUESTS['scratch'],
+                     readonly=False, kind='tmpfs', size_limit_bytes=LINUX_SCRATCH_BYTES)],
+        excluded_host_surfaces=list(LINUX_EXCLUDED_SURFACES),
+        argv=argv, child_environment=dict(LINUX_CHILD_ENVIRONMENT),
+        bounds=dict(memory_mb=LINUX_MEMORY_MB,
+                    cgroup_controls='require_qualification_before_run'),
+        official_cli_executed=False, activation_authorized=False)
+    problem = _linux_namespace_plan_problem(plan)
+    if problem is not None:
+        fail(problem)
+    return plan
+
+
+def official_control(image_dir, destination, *, platform=None):
     """Validate IMAGE, exclusively create CONTROL, write the launcher; no launch."""
-    image_dir = _official_path_argument(image_dir)
-    destination = _official_path_argument(destination)
+    _official_platform(platform)
+    return _official_control_generate(
+        _official_path_argument(image_dir, platform=platform),
+        _official_path_argument(destination, platform=platform), platform)
+
+
+def _official_control_generate(image_dir, destination, platform):
+    """Generation core operating on already-classified path arguments."""
+    linux = (platform or 'windows') == 'linux'
     _plain_ancestry(image_dir)
-    value = _official_image(image_dir)
+    value, facts = _load_official_image(image_dir, 'linux' if linux else 'windows')
     _plain_ancestry(destination)
     if os.path.lexists(destination):
         fail('destination_exists')
     _reject_mapping_overlap(image_dir, destination)
-    launcher = official_launcher(value)
+    launcher = official_launcher(value, platform='linux' if linux else None)
     try:
         destination.mkdir()
     except FileExistsError:
         fail('destination_exists')
     plain(destination, directory=True)
     _reject_mapping_overlap(image_dir, destination)
+    if linux:
+        _linux_exclusive_write(destination/LINUX_LAUNCHER_NAME, launcher, 0o755)
+        return dict(status='official_control_generated_not_launched',
+                    image_sha256=value['sha256'], image_bytes=value['bytes'],
+                    image_version=value['version'], image_platform=LINUX_IMAGE_PLATFORM,
+                    runtime_interp=facts['interp'], runtime_needed=facts['needed'],
+                    official_cli_executed=False, activation_authorized=False)
     _exclusive_write(destination/OFFICIAL_LAUNCHER_NAME, launcher)
     return dict(status='official_control_generated_not_launched',
                 image_sha256=value['sha256'], image_bytes=value['bytes'],
@@ -684,22 +1157,32 @@ def official_control(image_dir, destination):
 
 
 def official_config(payload_root, image_dir, control_dir, output_dir, destination,
-                    *, isolated_host_attested=False):
-    """Coordinate validations, then exclusively create OUTPUT and the .wsb."""
+                    *, isolated_host_attested=False, platform=None):
+    """Coordinate validations, then exclusively create OUTPUT and the config."""
     if isolated_host_attested is not True:
         fail('isolated_host_attestation_required')
-    payload_root = _official_path_argument(payload_root)
-    image_dir = _official_path_argument(image_dir)
-    control_dir = _official_path_argument(control_dir)
-    output_dir = _official_path_argument(output_dir)
-    destination = _official_path_argument(destination, file=True)
+    _official_platform(platform)
+    payload_root = _official_path_argument(payload_root, platform=platform)
+    image_dir = _official_path_argument(image_dir, platform=platform)
+    control_dir = _official_path_argument(control_dir, platform=platform)
+    output_dir = _official_path_argument(output_dir, platform=platform)
+    destination = _official_path_argument(destination, file=True, platform=platform)
+    return _official_config_generate(payload_root, image_dir, control_dir,
+                                     output_dir, destination, platform)
+
+
+def _official_config_generate(payload_root, image_dir, control_dir, output_dir,
+                              destination, platform):
+    """Generation core operating on already-classified path arguments."""
+    linux = (platform or 'windows') == 'linux'
+    flavor = 'linux' if linux else 'windows'
     _plain_ancestry(payload_root)
-    _official_payload_ready(verify(payload_root))
+    _official_payload_ready(verify(payload_root), platform=flavor)
     _plain_ancestry(image_dir)
-    value = _official_image(image_dir)
-    launcher = official_launcher(value)
+    value, facts = _load_official_image(image_dir, flavor)
+    launcher = official_launcher(value, platform=flavor)
     _plain_ancestry(control_dir)
-    _official_control(control_dir, value)
+    _official_control(control_dir, value, platform=flavor)
     _plain_ancestry(output_dir)
     if os.path.lexists(output_dir):
         fail('output_dir_exists')
@@ -715,6 +1198,17 @@ def official_config(payload_root, image_dir, control_dir, output_dir, destinatio
     plain(output_dir, directory=True)
     _reject_mapping_overlap(payload_root, image_dir, control_dir, output_dir)
     _reject_mapping_overlap(output_dir, destination)
+    if linux:
+        plan = _linux_namespace_plan(payload_root, image_dir, control_dir,
+                                     output_dir, value, facts)
+        data = (json.dumps(plan, indent=2, sort_keys=True) + '\n').encode('ascii')
+        _exclusive_write(destination, data)
+        return dict(status='official_config_generated_not_launched',
+                    image_sha256=value['sha256'], image_bytes=value['bytes'],
+                    image_version=value['version'], image_platform=LINUX_IMAGE_PLATFORM,
+                    runtime_interp=facts['interp'], runtime_needed=facts['needed'],
+                    namespaces=list(LINUX_NAMESPACES),
+                    official_cli_executed=False, activation_authorized=False)
     _exclusive_write(destination, official_sandbox_xml(payload_root, image_dir,
                                                        control_dir, output_dir))
     return dict(status='official_config_generated_not_launched',
@@ -736,6 +1230,7 @@ def main():
     p = sub.add_parser('official-control', allow_abbrev=False)
     p.add_argument('--image-dir', type=Path, required=True)
     p.add_argument('--destination', type=Path, required=True)
+    p.add_argument('--platform', choices=('windows', 'linux'))
     p = sub.add_parser('official-config', allow_abbrev=False)
     p.add_argument('--payload-root', type=Path, required=True)
     p.add_argument('--image-dir', type=Path, required=True)
@@ -743,17 +1238,20 @@ def main():
     p.add_argument('--output-dir', type=Path, required=True)
     p.add_argument('--destination', type=Path, required=True)
     p.add_argument('--isolated-host-attested', action='store_true')
+    p.add_argument('--platform', choices=('windows', 'linux'))
     args = parser.parse_args()
     try:
         if args.command == 'build': result = build(args.source, args.output, args.allow_ci_build)
         elif args.command == 'stage': result = stage(args.archive, args.sha256, args.destination)
         elif args.command == 'selftest': result = selftest(args.root, args.receipt)
         elif args.command == 'official-control':
-            result = official_control(args.image_dir, args.destination)
+            result = official_control(args.image_dir, args.destination,
+                                      platform=args.platform)
         elif args.command == 'official-config':
             result = official_config(args.payload_root, args.image_dir, args.control_dir,
                                      args.output_dir, args.destination,
-                                     isolated_host_attested=args.isolated_host_attested)
+                                     isolated_host_attested=args.isolated_host_attested,
+                                     platform=args.platform)
         else:
             value = verify(args.root)
             result = dict(status='verified_not_activated', source_commit=value['source_commit'])
