@@ -174,6 +174,25 @@ def run_recovery(root, historical_at, expected_instance):
         archive_uploaded=False, synthetic_inputs=True, project_modules_checked=count)
 
 
+def _packaged_recipe_timeout(default):
+    """Parent-side bound only (this whole file is inlined into the child but
+    the helper is never called there; note files.clean_environment() would
+    inherit the variable, so scope the export to the parent-side run). The
+    reviewed CI default stands unless a slower designated release host
+    explicitly raises it; weakening is refused."""
+    import os
+    raw = os.environ.get('POLYMARKET_ALPHA_LAB_PACKAGED_RECIPE_TIMEOUT')
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        raise RuntimeError('packaged recipe timeout override is not an integer') from None
+    if value < default:
+        raise RuntimeError('packaged recipe timeout override is below the reviewed floor')
+    return value
+
+
 def run_recovery_recipe(root, python, cwd, *, historical_at, expected_instance):
     """Inject this fixed TEST recipe, with a separate bounded child, no retry."""
     prefix = ('import sys\nfrom pathlib import Path\nroot=Path(sys.argv[1]).resolve()\n'
@@ -184,4 +203,4 @@ def run_recovery_recipe(root, python, cwd, *, historical_at, expected_instance):
         '\nprint(json.dumps(run_recovery(root, sys.argv[2], sys.argv[3]),sort_keys=True))\n',
         str(root), historical_at, expected_instance], cwd=cwd, env=files.clean_environment(),
         stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding='utf-8',
-        timeout=180, check=False, shell=False)
+        timeout=_packaged_recipe_timeout(180), check=False, shell=False)

@@ -97,7 +97,24 @@ print(json.dumps(dict(status='packaged_session_drain_verified', cases=proof,
 '''
 
 
+def _packaged_recipe_timeout(default):
+    """Parent-side bound only. The reviewed CI default stands unless a slower
+    designated release host explicitly raises it; weakening is refused."""
+    import os
+    raw = os.environ.get('POLYMARKET_ALPHA_LAB_PACKAGED_RECIPE_TIMEOUT')
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        raise RuntimeError('packaged recipe timeout override is not an integer') from None
+    if value < default:
+        raise RuntimeError('packaged recipe timeout override is below the reviewed floor')
+    return value
+
+
 def run_packaged_session_drain(root, python, cwd):
     return subprocess.run([str(python), '-I', '-c', RECIPE, str(root)], cwd=cwd,
         env=clean_environment(), stdin=subprocess.DEVNULL, capture_output=True,
-        text=True, encoding='utf-8', timeout=180, check=False, shell=False)
+        text=True, encoding='utf-8', timeout=_packaged_recipe_timeout(180),
+        check=False, shell=False)

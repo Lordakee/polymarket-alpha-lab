@@ -540,6 +540,22 @@ raise SystemExit(99)
         _stage('cleanup_done')
 
 
+def _packaged_recipe_timeout(default):
+    """Parent-side bound only. The reviewed CI default stands unless a slower
+    designated release host explicitly raises it; weakening is refused."""
+    import os
+    raw = os.environ.get('POLYMARKET_ALPHA_LAB_PACKAGED_RECIPE_TIMEOUT')
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        raise RuntimeError('packaged recipe timeout override is not an integer') from None
+    if value < default:
+        raise RuntimeError('packaged recipe timeout override is below the reviewed floor')
+    return value
+
+
 def run_packaged_recipe(root, python, cwd):
     """Inject only this reviewed TEST recipe; never import checkout application code."""
     prefix = ('import sys\nfrom pathlib import Path\nroot=Path(sys.argv[1]).resolve()\n'
@@ -562,7 +578,8 @@ def run_packaged_recipe(root, python, cwd):
             result = subprocess.run([str(python), '-I', '-c', prefix + recipe +
                 '\nprint(json.dumps(run_packaged_flow(root),sort_keys=True))\n', str(root)],
                 cwd=cwd, env=files.clean_environment(), stdin=subprocess.DEVNULL,
-                capture_output=True, text=True, encoding='utf-8', timeout=420, check=False, shell=False)
+                capture_output=True, text=True, encoding='utf-8',
+                timeout=_packaged_recipe_timeout(420), check=False, shell=False)
         except BaseException:
             _safe_report_stages(stage_path, 'raised_after_run_cleanup')
             raise
