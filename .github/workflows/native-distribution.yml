@@ -126,3 +126,78 @@ jobs:
           compression-level: 0
           retention-days: 7
           if-no-files-found: error
+
+  # Section 61 (2026-09-27): Linux is the sole V1 platform. This job builds and
+  # proves the actual Linux kit on the pinned PG18 tuple. The frozen windows-kit
+  # job above stays byte-identical as history; required contexts are replaced
+  # only through the coordinator's controlled settings step, never here. The
+  # seven-day Actions artifact below is not the durable release surface; the
+  # tested Linux kit bytes are published to a durable Release by the L6 node.
+  linux-kit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e
+        with:
+          version: '0.10.0'
+          enable-cache: false
+      - name: Install locked test environment
+        # The postgres extra is required on Linux so the native distribution
+        # acceptance (kit build -> extraction -> first startup) runs for real
+        # instead of skipping for a missing psycopg driver.
+        run: uv sync --locked --extra dev --extra postgres --python 3.12
+      - name: Assemble the qualified PG18 portable prefix
+        # Qualified package-to-prefix assembly (section 50/61 pattern): the
+        # pinned apt postgresql-18 package supplies binaries ONLY. No installed
+        # cluster, data directory, role or password from the package is used.
+        run: |
+          set -euo pipefail
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl --fail --silent --show-error -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt noble-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-18
+          PREFIX="$RUNNER_TEMP/pg18-portable-prefix"
+          mkdir -p "$PREFIX"
+          cp -a /usr/lib/postgresql/18/bin "$PREFIX/bin"
+          cp -a /usr/lib/postgresql/18/lib "$PREFIX/lib"
+          cp -a /usr/share/postgresql/18 "$PREFIX/share"
+          cp /usr/share/doc/postgresql-18/copyright "$PREFIX/COPYRIGHT"
+          test "$(find "$PREFIX" -type l | wc -l)" -eq 0
+          test -x "$PREFIX/bin/postgres" && test -f "$PREFIX/share/postgres.bki"
+          "$PREFIX/bin/postgres" --version
+      - name: Build and prove the actual Linux distribution
+        run: |
+          set -euo pipefail
+          export POLYMARKET_ALPHA_LAB_NATIVE_PG_PREFIX="$RUNNER_TEMP/pg18-portable-prefix"
+          export POLYMARKET_ALPHA_LAB_RUN_NATIVE_DISTRIBUTION=1
+          export POLYMARKET_ALPHA_LAB_DISTRIBUTION_OUTPUT="$RUNNER_TEMP/polymarket-linux-native.zip"
+          export PYTEST_DISABLE_PLUGIN_AUTOLOAD=1
+          export PYTHONUTF8=1
+          for variable in $(compgen -e PG); do unset "$variable"; done
+          .venv/bin/python -u -m pytest -p no:faulthandler -p tests.ci_thread_dump -q -s -o faulthandler_timeout=180 tests/test_project_postgres_distribution.py tests/test_project_postgres_bootstrap.py tests/test_project_postgres_native_spawn.py tests/test_project_postgres_distribution_native.py tests/test_project_entry_roots.py tests/test_project_entry_roots_review.py tests/test_project_quickstart.py tests/test_packaged_research_flow.py tests/test_packaged_research_flow_review.py tests/test_project_postgres_session_drain.py tests/test_project_postgres_session_drain_review.py tests/test_research_dispatch_cli_admission.py tests/test_research_dispatch_cli_admission_review.py tests/test_packaged_recovery_flow.py tests/test_packaged_recovery_flow_review.py tests/test_project_postgres_session_bundle.py tests/test_project_postgres_session_bundle_review.py --junitxml="$RUNNER_TEMP/distribution-proof.xml" 2>&1 | tee "$RUNNER_TEMP/distribution-proof.log"
+          test ${PIPESTATUS[0]} -eq 0
+      - name: Confirm tracked source unchanged
+        run: |
+          git diff --check
+          git diff --exit-code
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: distribution-linux-proof-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/distribution-proof.log
+            ${{ runner.temp }}/distribution-proof.xml
+          retention-days: 7
+          if-no-files-found: ignore
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: success()
+        with:
+          name: linux-native-kit-${{ github.sha }}
+          path: ${{ runner.temp }}/polymarket-linux-native.zip
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: error

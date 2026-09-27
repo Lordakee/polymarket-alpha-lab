@@ -1,5 +1,26 @@
 """Real same-root OLD->CURRENT source switch, rollback and refusals (class 3).
 
+Section 61 (2026-09-27) pins this proof to the Linux tuple: the OLD and
+CANDIDATE sources must share ONE exact PostgreSQL 18 runtime inventory — the
+qualified portable prefix assembled from the pinned package (the server's
+~/pg-runtime-src pattern, DELIVERY_PLAN §50/§61). The earlier Windows/PG17
+execution of the same seven-stage shape stays frozen historical evidence
+(§55), and the §51 Windows asset comparison is equally historical. Nothing
+here relabels that evidence as Linux: Linux acceptance requires this proof to
+actually run on Linux against the pinned PG18 prefix.
+
+Exact server run (ubuntu@166.1.232.93, repository at ~/polymarket-alpha-lab,
+prefix assembled once and reused verbatim by every stage):
+
+    cd ~/polymarket-alpha-lab
+    for variable in $(compgen -e PG); do unset "$variable"; done
+    env -u PYTEST_ADDOPTS -u PYTEST_PLUGINS -u PYTHONPATH -u PYTHONHOME \\
+      PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTHONUTF8=1 \\
+      POLYMARKET_ALPHA_LAB_NATIVE_PG_PREFIX="$HOME/pg-runtime-src" \\
+      POLYMARKET_ALPHA_LAB_RUN_NATIVE_PROJECT_POSTGRES=1 \\
+      .venv/bin/python -u -m pytest -q -s -o junit_family=legacy \\
+      tests/test_project_postgres_version_switch_native.py
+
 Everything runs on ONE disposable synthetic 'Original Project' root inside a
 fresh private proof directory. The OLD source and the executed candidate
 source are verified binary `git archive` extractions of pinned commits; the
@@ -53,12 +74,18 @@ _select_adjacent_worktree_source()
 
 from polymarket_alpha_lab.project_postgres import backup_format as fmt
 from polymarket_alpha_lab.project_postgres import distribution, files, sql
-from polymarket_alpha_lab.project_postgres.runtime import verify_runtime
+from polymarket_alpha_lab.project_postgres.runtime import runtime_version, verify_runtime
 from polymarket_alpha_lab.project_postgres.server import ProjectPostgres
 
 ENABLED = os.environ.get('POLYMARKET_ALPHA_LAB_RUN_NATIVE_PROJECT_POSTGRES') == '1'
+# The pinned source pair. The OLD side is the tagged v0.1.0-native-preview.1
+# source whose offline pair comparison is §51 history; section 61 re-pins the
+# SAME source pair as a NEW Linux execution expectation — the CANDIDATE side
+# is the integrated HEAD at run time and both sides must install from ONE
+# exact PG18 runtime inventory (see LINUX_RUNTIME_MAJOR below).
 OLD_COMMIT = '2b20002c83ee33acb95fb2ca3de841f3e883ebbf'
 OLD_TREE = 'd6f6750b1068a3c75ab6249d5ca4f1ef7e010ee4'
+LINUX_RUNTIME_MAJOR = '18'
 OLD_CATALOG_ENTRIES = 63
 OLD_CATALOG_FINGERPRINT = '3e8c813dcb7ce2389f11aa7aebba03819392f014e1208910c75d70bf709ccee5'
 CANDIDATE_CATALOG_ENTRIES = 68
@@ -539,32 +566,53 @@ def _stderr_text(result: subprocess.CompletedProcess) -> str:
 
 
 def test_version_switch_native_ci_is_required():
-    """The dedicated storage-partition workflow step and its gates are wired."""
+    """The dedicated Linux storage-partition workflow step and its gate are wired."""
     text = WORKFLOW.read_text(encoding='utf-8').replace('\r\n', '\n')
-    worker, gate = text.split('  windows-native:\n')
-    checkout = worker.split('      - uses: actions/checkout@', 1)[1].split('      - uses:', 1)[0]
+    worker, gate = text.split('  linux-native:\n')
+    linux_worker = worker.split('  linux-native-part:\n', 1)[1]
+    checkout = linux_worker.split('      - uses: actions/checkout@', 1)[1].split('      - uses:', 1)[0]
     assert 'fetch-depth: 0\n' in checkout
     assert 'persist-credentials: false\n' in checkout
-    assert '      fail-fast: false\n' in worker and '    timeout-minutes: 20\n' in worker
+    assert '      fail-fast: false\n' in linux_worker and '    timeout-minutes: 40\n' in linux_worker
     assert 'continue-on-error' not in text
-    partition = worker.split('      - name: Prove isolated native partition\n', 1)[1]
+    partition = linux_worker.split('      - name: Prove isolated native partition\n', 1)[1]
     switch = partition.split('      - name: Verify tracked source unchanged\n', 1)[0]
     assert '      - name: Prove native version switch\n' in switch
     assert "if: matrix.partition == 'storage'" in switch
     assert 'tests/test_project_postgres_version_switch_native.py' in switch
-    assert "POLYMARKET_ALPHA_LAB_NATIVE_PG_PREFIX: 'C:\\Program Files\\PostgreSQL\\17'" in switch
-    assert "$env:POLYMARKET_ALPHA_LAB_RUN_NATIVE_PROJECT_POSTGRES = '1'" in switch
-    assert "$env:PYTEST_DISABLE_PLUGIN_AUTOLOAD = '1'" in switch
-    assert "$env:PYTHONUTF8 = '1'" in switch
-    assert 'Tee-Object -FilePath "$env:RUNNER_TEMP/version-switch-proof.log"' in switch
-    assert 'junitxml="$env:RUNNER_TEMP/version-switch-proof.xml"' in switch
-    assert '$code = $LASTEXITCODE\n' in switch and 'exit $code\n' in switch
-    upload = worker.split('      - uses: actions/upload-artifact@', 1)[1]
+    assert 'POLYMARKET_ALPHA_LAB_NATIVE_PG_PREFIX="$RUNNER_TEMP/pg18-portable-prefix"' in switch
+    assert 'export POLYMARKET_ALPHA_LAB_RUN_NATIVE_PROJECT_POSTGRES=1' in switch
+    assert 'export PYTEST_DISABLE_PLUGIN_AUTOLOAD=1' in switch
+    assert 'export PYTHONUTF8=1' in switch
+    assert 'tee "$RUNNER_TEMP/version-switch-proof.log"' in switch
+    assert '--junitxml="$RUNNER_TEMP/version-switch-proof.xml"' in switch
+    assert 'test ${PIPESTATUS[0]} -eq 0' in switch
+    upload = linux_worker.split('      - uses: actions/upload-artifact@', 1)[1]
     assert '${{ runner.temp }}/version-switch-proof.log' in upload
     assert '${{ runner.temp }}/version-switch-proof.xml' in upload
     assert 'if-no-files-found: error' in upload and 'if: always()' in upload
-    assert 'needs: [windows-native-part]' in gate
+    assert 'needs: [linux-native-part]' in gate
     assert 'test "$NATIVE_RESULT" = success' in gate
+    # The frozen Windows/PG17 step (section 55 history) stays present verbatim
+    # until the coordinator's controlled required-context replacement; this
+    # file never rewires GitHub settings.
+    windows_worker = text.split('  windows-native-part:\n', 1)[1].split('  windows-native:\n', 1)[0]
+    assert "POLYMARKET_ALPHA_LAB_NATIVE_PG_PREFIX: 'C:\\Program Files\\PostgreSQL\\17'" in windows_worker
+    assert '      - name: Prove native version switch\n' in windows_worker
+    assert 'tests/test_project_postgres_version_switch_native.py' in windows_worker
+
+
+def test_bundle_admission_interface_pins_linux_pg18():
+    """L2's public admission constants must stay on the section-61 tuple.
+
+    The synthetic-bundle marker set below is assembled exclusively through
+    distribution.py's public constants/functions; this pins that interface to
+    the selected Linux x86_64 / PostgreSQL 18 admission contract.
+    """
+    assert distribution.TARGET == 'linux-x86_64'
+    assert distribution.POSTGRES_MAJOR == LINUX_RUNTIME_MAJOR
+    assert re.fullmatch(LINUX_RUNTIME_MAJOR + r'\.\d+',
+                        distribution.POSTGRES_MAJOR + '.0')
 
 
 def _plain(value):
@@ -619,11 +667,26 @@ def _physical_counts(db: ProjectPostgres, info: dict) -> dict:
     }
 
 
-def _write_synthetic_bundle(root: Path) -> None:
+def _require_linux_pg18_admission(admitted: dict) -> None:
+    """Pin the qualified package admission to the section-61 Linux/PG18 tuple.
+
+    Both sides are checked: the shipped verifier's public constants (L2's
+    interface, imported — never a divergent copy) AND the literal selected
+    tuple, so neither this proof nor distribution.py can silently drift off
+    the sole delivered platform.
+    """
+    assert distribution.TARGET == 'linux-x86_64' == admitted['target']
+    assert distribution.POSTGRES_MAJOR == LINUX_RUNTIME_MAJOR
+    assert admitted['postgres_version'].split('.')[0] == LINUX_RUNTIME_MAJOR
+
+
+def _write_synthetic_bundle(root: Path) -> dict:
     """A complete, well-shaped synthetic kit marker set that the verifier passes.
 
     The engine member is inert bytes; only its manifest hash is ever consulted.
-    It is never executed, imported or described as a released kit.
+    It is never executed, imported or described as a released kit. Admission
+    fields come exclusively from distribution.py's public constants (L2's
+    Linux/PG18 contract); this file never edits that module.
     """
     actual = set(distribution.FIXED)
     for name in distribution.PUBLIC_ENTRYPOINTS:
@@ -639,10 +702,13 @@ def _write_synthetic_bundle(root: Path) -> None:
     seed.write_bytes(b'synthetic inert engine seed; never executed or imported\n')
     manifest_files[distribution.ENGINE] = files.digest_file(seed)
     manifest = dict(format=distribution.FORMAT, source_commit='c' * 40, source_tree='d' * 40,
-                    target='windows-x86_64', postgres_version='17.11',
+                    target=distribution.TARGET,
+                    postgres_version=distribution.POSTGRES_MAJOR + '.0',
                     python_requires='>=3.11', files=manifest_files)
     (root / distribution.MANIFEST).write_text(json.dumps(manifest, sort_keys=True), encoding='utf-8')
-    distribution.verify_distribution(root)
+    admitted = distribution.verify_distribution(root)
+    _require_linux_pg18_admission(admitted)
+    return admitted
 
 
 def _remove_bundle_markers(root: Path) -> None:
@@ -659,6 +725,13 @@ def prepare_verified_archives_and_private_root(tmp_path, monkeypatch) -> _Rig:
     prefix = Path(os.environ['POLYMARKET_ALPHA_LAB_NATIVE_PG_PREFIX'])
     assert prefix.is_absolute() and all((prefix / part).is_dir() for part in ('bin', 'lib', 'share')), \
         'native PostgreSQL prefix binaries are required once the opt-in is enabled'
+    if os.name != 'nt':
+        # Section 61 Linux tuple pin: every stage below installs its runtime
+        # from this one prefix, so OLD and CANDIDATE share a single exact PG18
+        # runtime inventory. A Windows/PG17 run is frozen history (section 55),
+        # never counted as the Linux version-pair evidence.
+        assert runtime_version(prefix).split('.')[0] == LINUX_RUNTIME_MAJOR, \
+            'the Linux version-switch proof requires the pinned PG18 portable prefix'
     for key in tuple(os.environ):
         if key.upper().startswith('PG'):
             monkeypatch.delenv(key)
@@ -947,7 +1020,9 @@ def prove_bundle_integrity_refusals(rig) -> None:
     candidate_damaged = rig['base'] / 'candidate-source-damaged'
     shutil.copytree(rig['candidate'], candidate_damaged)
     try:
-        _write_synthetic_bundle(candidate_damaged)
+        admitted = _write_synthetic_bundle(candidate_damaged)
+        print('version-switch kit admission contract:', admitted['target'],
+              admitted['postgres_version'])
         victim = candidate_damaged / 'src/polymarket_alpha_lab/analytics.py'
         victim_bytes = victim.read_bytes()
         probe = _current_payload(rig, 'bundle-source.py', _BUNDLE_PROBE_PAYLOAD, str(original),
