@@ -5,12 +5,22 @@ and never launch a vendor CLI. The official-control/official-config generators
 likewise execute no program: they only validate reviewed inputs and write the
 control launcher plus the platform's configuration file. For Windows (frozen
 historical behavior) the configuration is a four-mapping .wsb that, once
-OPENED, runs the official launcher inside Windows Sandbox. For Linux the
-configuration is a rootless namespace plan plus launcher companion covering
-user/mount/PID/net/IPC/UTS namespaces, loopback-only networking, read-only
-INPUT/IMAGE/CONTROL, one writable bounded OUTPUT and tmpfs scratch. This node
-GENERATES configurations only; executing an official binary is a separately
-qualified step that nothing here performs.
+OPENED, runs the official launcher inside Windows Sandbox. For Linux a
+build-linux preparation subcommand assembles the real INPUT payload (base
+CPython 3.12.14 binary, complete standard library with extension modules,
+lock-matched test dependencies, committed source/tests), and the
+configuration is a rootless bwrap launch plan plus launcher companion
+covering user/mount/PID/net/IPC/UTS namespaces, a fresh tmpfs guest root
+with the measured recursive loader/library closure bound read-only at
+canonical paths, loopback-only networking (automatic under --unshare-net,
+no ip command), explicit clean environment, read-only INPUT/IMAGE/CONTROL,
+sized tmpfs scratch, /tmp and /pal-output. The --output-dir argument is the
+HOST EXPORT DESTINATION: bounded 64 MiB, never mounted writable into the
+namespace; output crosses only through the /pal-output tmpfs. The plan pins
+two fixed launcher modes (qualify-version, official-six) as data for the
+separately owned outer runner. This node GENERATES configurations only;
+executing an official binary is a separately qualified step that nothing
+here performs.
 
 The Linux artifact identity is OWNER-MEASURED: the pinned official Linux x86_64
 Claude artifact's SHA256 and byte size are unmeasured upstream and enter only
@@ -118,18 +128,35 @@ LINUX_IMAGE_PLATFORM = 'linux-x86_64'
 LINUX_IMAGE_KEYS = OFFICIAL_IMAGE_KEYS | {'platform'}
 LINUX_LAUNCHER_NAME = 'official-probe.sh'
 LINUX_CONTROL_INVENTORY = [LINUX_LAUNCHER_NAME]
-LINUX_PLAN_SCHEMA = 'claude-probe-namespace-linux-v1'
+# v1 was a generation-only document and is now executor-rejected; v2 is the
+# executor-facing launch configuration consumed by the separately owned outer
+# runner (the plan stays configuration; execution lives in that outer runner).
+LINUX_PLAN_SCHEMA_V1 = 'claude-probe-namespace-linux-v1'
+LINUX_PLAN_SCHEMA = 'research-linux-launch-v2'
+LINUX_BWRAP_VERSION = '0.11.1'
 LINUX_NAMESPACES = ('user', 'mount', 'pid', 'network', 'ipc', 'uts')
 LINUX_GUESTS = {'input': '/pal-input', 'image': '/pal-claude-image',
                 'control': '/pal-control', 'output': '/pal-output',
-                'scratch': '/pal-scratch'}
+                'scratch': '/pal-scratch', 'tmp': '/tmp'}
 LINUX_EXCLUDED_SURFACES = ('agent_sockets', 'authentication_state',
                            'database_directories', 'dot_local', 'dot_ssh',
                            'host_root', 'unrelated_configuration', 'user_home')
 LINUX_CHILD_ENVIRONMENT = {'PATH': '/usr/bin:/bin'}
 LINUX_SCRATCH_BYTES = 1073741824
 LINUX_TMP_BYTES = 536870912
+LINUX_EXPORT_BYTES = 67108864
 LINUX_MEMORY_MB = 4096
+LINUX_PIDS_MAX = 64
+LINUX_DEADLINE_SECONDS = 900
+LINUX_LOOPBACK_MODE = 'automatic_under_unshare_net_no_ip_command'
+# A2 record: canonical ld.so search order. A soname resolves to the FIRST
+# directory of this order providing it, and the resolved file is bound
+# read-only at exactly that canonical guest path; LD_LIBRARY_PATH is NOT used.
+LINUX_RUNTIME_LIBRARY_DIRS = ('/lib/x86_64-linux-gnu', '/usr/lib/x86_64-linux-gnu',
+                              '/lib64', '/usr/lib64', '/usr/lib', '/lib')
+LINUX_GUEST_SHELL = '/bin/sh'
+LINUX_SHELL_HOST_PATH = '/bin/sh'
+LINUX_MAX_RUNTIME_BINDS = 512
 ELF_MAGIC = b'\x7fELF'
 ELF_MAX_PHDRS = 1024
 ELF_MAX_INTERP_BYTES = 4096
@@ -139,6 +166,13 @@ ELF_MAX_NEEDED = 1024
 ELF_MAX_SONAME = 4096
 # The executable bit only exists on POSIX hosts; elsewhere mode checks no-op.
 _LINUX_MODE_MEANINGFUL = os.name == 'posix'
+# A1 record: the v2 launcher is constrained to /bin/sh BUILTINS plus the
+# payload Python interpreter, and invokes NO external command - mkdir was
+# removed and the payload Python creates the output directory before pytest
+# runs. The measured runtime closure therefore only needs /bin/sh itself,
+# python/bin/python3 and every packaged *.so (their loader dependencies), and
+# the official image ELF closure; no coreutils binary is invoked by the
+# launcher inside the namespace. Recorded here for the handoff.
 LINUX_LAUNCHER_TEMPLATE = (
     b'#!/bin/sh\n'
     b'set -eu\n'
@@ -149,7 +183,6 @@ LINUX_LAUNCHER_TEMPLATE = (
     b'for name in launcher-tmp pytest-tmp pytest.log junit.xml exit-code.txt; do\n'
     b'  if [ -e "/pal-output/$name" ]; then exit 2; fi\n'
     b'done\n'
-    b'mkdir /pal-output/launcher-tmp || exit 2\n'
     b'export POLYMARKET_ALPHA_LAB_CLAUDE_PROBE=1\n'
     b'export POLYMARKET_ALPHA_LAB_CLAUDE_PROBE_IMAGE=/pal-claude-image/claude\n'
     b'export POLYMARKET_ALPHA_LAB_CLAUDE_PROBE_SHA256={image_sha256}\n'
@@ -158,7 +191,8 @@ LINUX_LAUNCHER_TEMPLATE = (
     b'export PYTEST_DISABLE_PLUGIN_AUTOLOAD=1\n'
     b'unset PYTEST_ADDOPTS PYTEST_PLUGINS\n'
     b'export TMPDIR=/pal-output/launcher-tmp\n'
-    b'exec /pal-input/python/bin/python3 -I -S -B -c "import sys; '
+    b'exec /pal-input/python/bin/python3 -I -S -B -c "import os; '
+    b"os.makedirs('/pal-output/launcher-tmp'); import sys; "
     b"sys.path[:0]=['/pal-input/source','/pal-input/source/src',"
     b"'/pal-input/python/lib/python3.12/site-packages']; import pytest; "
     b"code=int(pytest.main(['-q','-s','--tb=short','-o','junit_family=legacy',"
@@ -492,6 +526,142 @@ def build(source, output, allow_ci_build=False):
                 source_commit=commit, source_tree=tree, official_cli_included=False)
 
 
+# --- Real Linux INPUT preparation (payload assembly; nothing executes) ------
+_LINUX_BUILD_READY = (os.name == 'posix' and sys.version_info[:3] == (3, 12, 14)
+                      and struct.calcsize('P') == 8)
+LINUX_STDLIB_SKIP_DIRS = ('__pycache__', 'site-packages', 'dist-packages')
+
+
+def _linux_measure_file(path):
+    """Bounded read of a host source file; hardlinks allowed, links refused."""
+    try:
+        info = path.lstat()
+    except OSError:
+        fail('runtime_file_unavailable')
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+        fail('payload_source_invalid')
+    if info.st_size > MAX_FILE:
+        fail('file_too_large')
+    with path.open('rb') as stream:
+        data = stream.read(MAX_FILE + 1)
+        after = os.fstat(stream.fileno())
+    if len(data) != info.st_size or _identity(info) != _identity(after):
+        fail('source_changed')
+    return data
+
+
+def _linux_dependency_distributions():
+    """Installed lock-candidate distributions visible to this interpreter."""
+    for name in DEPS:
+        try:
+            dist = metadata.distribution(name)
+        except metadata.PackageNotFoundError:
+            fail('dependency_missing')
+        yield name, dist
+
+
+def _linux_interpreter_layout():
+    """Base CPython binary and stdlib of the running pinned interpreter.
+
+    A virtualenv's own entry is never packaged: the base installation under
+    sys.base_prefix is measured instead, so no venv link, pyvenv.cfg or host
+    relative path can enter the payload.
+    """
+    import sysconfig
+    binary = None
+    for name in ('python3.12', 'python3'):
+        candidate = Path(sys.base_prefix, 'bin', name)
+        if candidate.is_file():
+            binary = candidate.resolve()
+            break
+    if binary is None:
+        binary = Path(sys.executable).resolve()
+    return binary, Path(sysconfig.get_paths()['stdlib'])
+
+
+def build_linux(source, destination):
+    """Assemble a fresh symlink-free Linux INPUT payload; nothing executes.
+
+    The payload contains python/bin/python3 (the pinned base CPython 3.12.14
+    binary, mode 0755), the complete standard library including extension
+    modules under python/lib/python3.12 (host caches and site/dist-packages
+    excluded), lock-matched test dependencies under
+    python/lib/python3.12/site-packages, and the committed source/tests the
+    probe needs. No virtualenv metadata, editable install, HOME, .env,
+    project .local, database or unrelated configuration is copied: the input
+    set is exactly those closed lists. The environment manifest inventory
+    (source commit/tree plus every payload file's hash and size) is generated
+    and verified before returning.
+    """
+    if not _LINUX_BUILD_READY:
+        fail('linux_build_host_unsupported')
+    source = source.resolve()
+    def git(*args):
+        return subprocess.check_output(['git', '-C', str(source), *args])
+    if git('status', '--porcelain', '--untracked-files=all').strip():
+        fail('dirty_source')
+    commit = git('rev-parse', 'HEAD').decode().strip()
+    tree = git('rev-parse', 'HEAD^{tree}').decode().strip()
+    lock = tomllib.loads((source/'uv.lock').read_text(encoding='utf-8'))
+    locked = {p['name']: p['version'] for p in lock['package'] if 'version' in p}
+    distributions = list(_linux_dependency_distributions())
+    versions = {name: dist.version for name, dist in distributions}
+    if any(name not in locked or versions[name] != locked[name] for name in DEPS):
+        fail('unlocked_dependency')
+    destination = destination.absolute()
+    for parent in (destination.parent, *destination.parent.parents):
+        plain(parent, directory=True)
+    if os.path.lexists(destination):
+        fail('destination_exists')
+    binary, stdlib = _linux_interpreter_layout()
+    if (not binary.is_file() or not stdlib.is_dir() or binary == source
+            or binary.is_relative_to(source) or stdlib == source
+            or stdlib.is_relative_to(source)):
+        fail('runtime_home_invalid')
+    destination.mkdir()
+    (destination/'python/bin').mkdir(parents=True)
+    _linux_exclusive_write(destination/'python/bin/python3',
+                           _linux_measure_file(binary), 0o755)
+    for name, path in sorted(walk(stdlib).items()):
+        parts = PurePosixPath(name).parts
+        if (any(part in LINUX_STDLIB_SKIP_DIRS for part in parts)
+                or name.endswith('.pyc')):
+            continue
+        target = destination.joinpath('python', 'lib', 'python3.12', *parts)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with target.open('xb') as stream:
+            stream.write(_linux_measure_file(path))
+    for name, dist in distributions:
+        for entry in dist.files or ():
+            rel = str(entry).replace('\\', '/')
+            # Launcher-style entry points, caches and any link back to this
+            # host (pth, direct_url) never enter the payload.
+            if (rel.startswith('../') or '__pycache__' in PurePosixPath(rel).parts
+                    or rel.endswith('.pyc')):
+                continue
+            clean_name(rel)
+            if rel.endswith('.pth') or rel.endswith('direct_url.json'):
+                fail('unexpected_dependency_path')
+            target = destination.joinpath('python', 'lib', 'python3.12',
+                                          'site-packages', *PurePosixPath(rel).parts)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with target.open('xb') as stream:
+                stream.write(_linux_measure_file(Path(dist.locate_file(entry))))
+    for name, data in committed_source_files(git):
+        target = destination/'source'/name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+    value = manifest(destination, commit, tree, versions)
+    (destination/'environment-manifest.json').write_text(
+        json.dumps(value, indent=2)+'\n', encoding='utf-8')
+    verify(destination)
+    return dict(status='linux_input_built_not_executed', source_commit=commit,
+                source_tree=tree, python=sys.version.split()[0],
+                dependencies=versions, files=len(value['files']),
+                official_cli_included=False, official_cli_executed=False,
+                activation_authorized=False)
+
+
 def _identity(info):
     """Identity tuple used by every official-generation boundary comparison."""
     return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns)
@@ -654,11 +824,12 @@ def _elf_read(stream, offset, size, limit):
     return data
 
 
-def _elf_facts(path, size):
+def _elf_facts(path, size, require_interp=True):
     """Bounded seek-based ELF identity parse of an already-verified image.
 
-    Returns the interpreter and the deduplicated sorted DT_NEEDED closure,
-    both derived from the image bytes. Nothing is resolved against host
+    Returns the interpreter (None is permitted for shared objects when
+    require_interp is False) and the deduplicated sorted DT_NEEDED closure,
+    both derived from the file bytes. Nothing is resolved against host
     libraries here; host closure qualification is a separate later step.
     """
     before = plain(path)
@@ -704,7 +875,9 @@ def _elf_facts(path, size):
                         or p_filesz > ELF_MAX_DYNAMIC_BYTES):
                     fail('image_elf_invalid')
                 dynamic = (p_offset, p_filesz, p_vaddr)
-        if interp is None or not interp.startswith('/'):
+        if interp is None and require_interp:
+            fail('image_elf_invalid')
+        if interp is not None and not interp.startswith('/'):
             fail('image_elf_invalid')
         needed_offsets, strtab_vaddr = [], None
         if dynamic is not None:
@@ -935,24 +1108,109 @@ def _linux_plan_flag_pairs(argv, flag):
             if argv[index] == flag}
 
 
-def _linux_namespace_plan_problem(plan):
-    """Self-check the generated namespace plan before it is ever written.
+def _linux_runtime_source(name):
+    """Resolve an absolute interpreter path to its host location."""
+    if os.path.isabs(name) and os.path.lexists(name):
+        return Path(name)
+    for directory in LINUX_RUNTIME_LIBRARY_DIRS:
+        candidate = Path(directory, os.path.basename(name))
+        if os.path.lexists(candidate):
+            return candidate
+    fail('runtime_closure_incomplete')
 
-    A tampered or weakened plan (missing namespace, writable INPUT/IMAGE/
-    CONTROL, shared networking, dropped cleanup flags, invented closure,
-    execution claims) is refused instead of emitted.
+
+def _linux_soname_location(name):
+    """First canonical directory of the pinned search order providing name."""
+    for directory in LINUX_RUNTIME_LIBRARY_DIRS:
+        if os.path.lexists(Path(directory, name)):
+            return f'{directory}/{name}'
+    fail('runtime_closure_incomplete')
+
+
+def _linux_runtime_closure(payload_root, payload_names, facts):
+    """Resolve, measure and pin the recursive guest runtime closure.
+
+    A1 record: the v2 launcher invokes no external command, so the closure
+    roots are exactly the official image ELF (interpreter plus DT_NEEDED
+    derived from the verified image bytes), host /bin/sh, the payload
+    interpreter python/bin/python3, and every packaged *.so (their loader
+    dependencies). Each resolved file is bound read-only at its canonical
+    guest path - ld.so at its PT_INTERP path, sonames at the first directory
+    of the pinned search order providing them, /bin/sh at /bin/sh - and
+    LD_LIBRARY_PATH is not used. Every hash and size is measured from the
+    host bytes; nothing is defaulted or invented.
+    """
+    binds, parsed, pending = {}, set(), []
+    def bind(guest, source):
+        real = Path(os.path.realpath(str(source)))
+        data = _linux_measure_file(real)
+        digest = sha256(data).hexdigest()
+        previous = binds.get(guest)
+        if previous is not None:
+            if previous['source'] != str(real) or previous['sha256'] != digest:
+                fail('runtime_bind_conflict')
+            return
+        if len(binds) >= LINUX_MAX_RUNTIME_BINDS:
+            fail('runtime_closure_unbounded')
+        binds[guest] = dict(guest=guest, mode='ro', source=str(real),
+                            sha256=digest, bytes=len(data))
+        pending.append(real)
+    def parse(real):
+        if str(real) in parsed:
+            return
+        parsed.add(str(real))
+        data = _linux_measure_file(real)
+        facts_here = _elf_facts(real, len(data), require_interp=False)
+        if facts_here['interp'] is not None:
+            bind(facts_here['interp'], _linux_runtime_source(facts_here['interp']))
+        for name in facts_here['needed']:
+            location = _linux_soname_location(name)
+            bind(location, Path(location))
+    bind(facts['interp'], _linux_runtime_source(facts['interp']))
+    for name in facts['needed']:
+        location = _linux_soname_location(name)
+        bind(location, Path(location))
+    bind(LINUX_GUEST_SHELL, LINUX_SHELL_HOST_PATH)
+    bind(LINUX_GUESTS['input']+'/python/bin/python3', payload_root/'python/bin/python3')
+    for name in sorted(payload_names):
+        if name.startswith('python/') and name.endswith('.so'):
+            pending.append(payload_root.joinpath(*PurePosixPath(name).parts))
+    while pending:
+        parse(pending.pop())
+    return [binds[guest] for guest in sorted(binds)]
+
+
+def _linux_namespace_plan_problem(plan):
+    """Self-check the generated v2 launch plan before it is ever written.
+
+    Executor-facing invariants: v1 generation-only schemas are rejected;
+    bwrap 0.11.1 --size/--tmpfs spelling (no --sizelimit); every runtime bind
+    enumerated, measured and consistent with argv; NO writable host bind
+    anywhere (the OUTPUT argument is a host export destination crossed only
+    through the bounded /pal-output tmpfs); explicit clean environment, not a
+    bare --clearenv; no ip command (loopback is automatic under --unshare-net);
+    pinned two-mode launcher contract; pinned resource bounds; no execution
+    claims. A tampered or weakened plan is refused instead of emitted.
     """
     if (type(plan) is not dict or plan.get('schema') != LINUX_PLAN_SCHEMA
             or plan.get('generation') != 'config_only_not_executed'):
         return 'namespace_plan_invalid'
     if sorted(plan.get('namespaces') or ()) != sorted(LINUX_NAMESPACES):
         return 'namespace_plan_invalid'
+    runner = plan.get('runner')
+    if (type(runner) is not dict
+            or sorted(runner) != ['bwrap_version', 'execution', 'supervision']
+            or runner.get('bwrap_version') != LINUX_BWRAP_VERSION
+            or runner.get('execution') != 'outer_runner_owned_separately'
+            or runner.get('supervision') != 'outside_workload_cgroup'):
+        return 'namespace_plan_invalid'
     network = plan.get('network')
     if (type(network) is not dict
-            or sorted(network) != ['address', 'external_egress', 'mode']
+            or sorted(network) != ['address', 'external_egress', 'loopback', 'mode']
             or network.get('mode') != 'loopback_only'
             or network.get('external_egress') != 'unavailable'
-            or network.get('address') != '127.0.0.1'):
+            or network.get('address') != '127.0.0.1'
+            or network.get('loopback') != LINUX_LOOPBACK_MODE):
         return 'namespace_plan_invalid'
     image = plan.get('image')
     if (type(image) is not dict or sorted(image) != ['bytes', 'closure_derived_from',
@@ -982,14 +1240,14 @@ def _linux_namespace_plan_problem(plan):
     if (type(argv) is not list or len(argv) < 8 or argv[0] != 'bwrap'
             or any(type(item) is not str or not item for item in argv)):
         return 'namespace_plan_invalid'
-    # No flag outside the approved set may appear anywhere in argv; unknown
-    # spellings (--dev-bind, --bind-try, --ro-bind-try, ...) are refused even
-    # when the approved flag counts stay intact.
+    # No flag outside the approved v2 set may appear before the final command.
+    # Writable host binds (--bind/--dev-bind/--bind-try/...) and the removed
+    # --sizelimit spelling are refused even when flag counts stay intact.
     approved = {'--unshare-user', '--unshare-ipc', '--unshare-pid',
                 '--unshare-net', '--unshare-uts', '--die-with-parent',
-                '--new-session', '--clearenv', '--cap-drop', '--dev', '--proc',
-                '--ro-bind', '--bind', '--tmpfs', '--sizelimit'}
-    if any(item.startswith('--') and item not in approved for item in argv):
+                '--new-session', '--cap-drop', '--clearenv', '--setenv',
+                '--dev', '--proc', '--ro-bind', '--tmpfs', '--size'}
+    if any(item.startswith('--') and item not in approved for item in argv[:-2]):
         return 'namespace_plan_invalid'
     for flag in ('--unshare-user', '--unshare-ipc', '--unshare-pid',
                  '--unshare-net', '--unshare-uts', '--die-with-parent',
@@ -1000,71 +1258,170 @@ def _linux_namespace_plan_problem(plan):
         if not any(argv[index:index+2] == [flag, operand]
                    for index in range(len(argv) - 1)):
             return 'namespace_plan_invalid'
-    if argv.count('--ro-bind') != 3 or argv.count('--bind') != 1:
-        return 'namespace_plan_invalid'
     if ('--cap-drop' not in argv
             or any(argv[index] == '--cap-drop' and argv[index+1] != 'ALL'
                    for index in range(len(argv) - 1))):
         return 'namespace_plan_invalid'
-    mounts = plan.get('mounts')
-    if type(mounts) is not list or len(mounts) != 5:
+    environment = plan.get('environment')
+    if (type(environment) is not dict
+            or sorted(environment) != ['clearenv', 'setenv']
+            or environment.get('clearenv') is not True
+            or environment.get('setenv') != LINUX_CHILD_ENVIRONMENT):
         return 'namespace_plan_invalid'
-    guests = {'INPUT': 'input', 'IMAGE': 'image', 'CONTROL': 'control',
-              'OUTPUT': 'output', 'SCRATCH': 'scratch'}
+    if _linux_plan_flag_pairs(argv, '--setenv') != set(LINUX_CHILD_ENVIRONMENT.items()):
+        return 'namespace_plan_invalid'
+    if argv.count('--tmpfs') != 4 or argv.count('--size') != 3:
+        return 'namespace_plan_invalid'
+    if not any(argv[index:index+2] == ['--tmpfs', '/']
+               for index in range(len(argv) - 1)):
+        return 'namespace_plan_invalid'
+    # Every sized tmpfs must spell bwrap 0.11.1's --size N --tmpfs PATH; a
+    # dropped, moved, inflated or detached size bound is refused.
+    for sequence in (('--size', str(LINUX_SCRATCH_BYTES), '--tmpfs', LINUX_GUESTS['scratch']),
+                     ('--size', str(LINUX_TMP_BYTES), '--tmpfs', LINUX_GUESTS['tmp']),
+                     ('--size', str(LINUX_EXPORT_BYTES), '--tmpfs', LINUX_GUESTS['output'])):
+        if not any(tuple(argv[index:index+4]) == sequence
+                   for index in range(len(argv) - 3)):
+            return 'namespace_plan_invalid'
+    mounts = plan.get('mounts')
+    if type(mounts) is not list or len(mounts) != 6:
+        return 'namespace_plan_invalid'
+    order = ('INPUT', 'IMAGE', 'CONTROL', 'OUTPUT', 'SCRATCH', 'TMP')
     readonlys = {'INPUT': True, 'IMAGE': True, 'CONTROL': True,
-                 'OUTPUT': False, 'SCRATCH': False}
+                 'OUTPUT': False, 'SCRATCH': False, 'TMP': False}
+    kinds = {'INPUT': 'bind', 'IMAGE': 'bind', 'CONTROL': 'bind',
+             'OUTPUT': 'tmpfs', 'SCRATCH': 'tmpfs', 'TMP': 'tmpfs'}
+    sizes = {'OUTPUT': LINUX_EXPORT_BYTES, 'SCRATCH': LINUX_SCRATCH_BYTES,
+             'TMP': LINUX_TMP_BYTES}
     hosts = {}
-    for mount in mounts:
-        if type(mount) is not dict or type(mount.get('role')) is not str:
+    for index, mount in enumerate(mounts):
+        if type(mount) is not dict or mount.get('role') != order[index]:
             return 'namespace_plan_invalid'
         role = mount['role']
         keys = {'role', 'host', 'guest', 'readonly', 'kind'}
-        if role == 'SCRATCH':
+        if role in sizes:
             keys.add('size_limit_bytes')
-        if role not in guests or set(mount) != keys:
+        if role == 'OUTPUT':
+            keys.add('host_role')
+        if (set(mount) != keys or mount['kind'] != kinds[role]
+                or mount['readonly'] is not readonlys[role]
+                or mount['guest'] != LINUX_GUESTS[role.lower()]):
             return 'namespace_plan_invalid'
-        if mount['kind'] != ('tmpfs' if role == 'SCRATCH' else 'bind'):
-            return 'namespace_plan_invalid'
-        if (mount['guest'] != LINUX_GUESTS[guests[role]]
-                or mount['readonly'] is not readonlys[role]):
-            return 'namespace_plan_invalid'
-        if role == 'SCRATCH':
-            if mount['host'] is not None or mount['size_limit_bytes'] != LINUX_SCRATCH_BYTES:
+        if role == 'OUTPUT':
+            if (mount['host_role'] != 'export_destination'
+                    or mount['size_limit_bytes'] != sizes[role]
+                    or type(mount['host']) is not str or not mount['host']):
+                return 'namespace_plan_invalid'
+        elif role in sizes:
+            if mount['host'] is not None or mount['size_limit_bytes'] != sizes[role]:
                 return 'namespace_plan_invalid'
         elif (type(mount['host']) is not str or not mount['host']
                 or '\0' in mount['host']):
             return 'namespace_plan_invalid'
         hosts[role] = mount['host']
-    if len(hosts) != 5:
+    export = plan.get('export')
+    if (type(export) is not dict
+            or sorted(export) != ['bounded_bytes', 'creation', 'destination',
+                                  'mounted_writable_in_namespace']
+            or export.get('destination') != hosts.get('OUTPUT')
+            or export.get('bounded_bytes') != LINUX_EXPORT_BYTES
+            or export.get('creation') != 'exclusive_no_follow'
+            or export.get('mounted_writable_in_namespace') is not False):
         return 'namespace_plan_invalid'
-    if _linux_plan_flag_pairs(argv, '--ro-bind') != {
-            (hosts['INPUT'], LINUX_GUESTS['input']),
-            (hosts['IMAGE'], LINUX_GUESTS['image']),
-            (hosts['CONTROL'], LINUX_GUESTS['control'])}:
+    # The CONTROL launcher identity is REQUIRED and must match the
+    # deterministic launcher recomputed from the already-validated image
+    # identity (pure derivation, no filesystem access); an absent, altered
+    # or misdirected block is refused so a host-level launcher swap between
+    # generation and execution is detectable at admission.
+    launcher = plan.get('launcher')
+    if type(launcher) is not dict or sorted(launcher) != ['bytes', 'path', 'sha256']:
         return 'namespace_plan_invalid'
-    if _linux_plan_flag_pairs(argv, '--bind') != {(hosts['OUTPUT'], LINUX_GUESTS['output'])}:
+    expected_launcher = official_launcher(dict(sha256=image.get('sha256'),
+                                               bytes=image.get('bytes')), platform='linux')
+    if (launcher.get('path') != hosts.get('CONTROL')+'/'+LINUX_LAUNCHER_NAME
+            or launcher.get('sha256') != sha256(expected_launcher).hexdigest()
+            or launcher.get('bytes') != len(expected_launcher)):
         return 'namespace_plan_invalid'
-    if argv.count('--tmpfs') != 2:
+    binds = plan.get('runtime_binds')
+    if type(binds) is not list or not 1 <= len(binds) <= LINUX_MAX_RUNTIME_BINDS:
         return 'namespace_plan_invalid'
-    # Each tmpfs must be immediately followed by its reviewed sizelimit; a
-    # dropped, moved, inflated or detached size bound is refused.
-    for sequence in (('--tmpfs', LINUX_GUESTS['scratch'], '--sizelimit',
-                      str(LINUX_SCRATCH_BYTES)),
-                     ('--tmpfs', '/tmp', '--sizelimit', str(LINUX_TMP_BYTES))):
-        if not any(tuple(argv[index:index+4]) == sequence
-                   for index in range(len(argv) - 3)):
+    seen_guests, seen_sources, pairs = set(), set(), set()
+    for bind in binds:
+        if (type(bind) is not dict
+                or sorted(bind) != ['bytes', 'guest', 'mode', 'sha256', 'source']
+                or bind.get('mode') != 'ro'
+                or type(bind.get('guest')) is not str or not bind['guest']
+                or type(bind.get('source')) is not str or not bind['source']
+                or '\0' in bind['guest'] or '\0' in bind['source']
+                or type(bind.get('sha256')) is not str
+                or re.fullmatch('[0-9a-f]{64}', bind['sha256']) is None
+                or type(bind.get('bytes')) is not int
+                or not 1 <= bind['bytes'] <= MAX_FILE):
             return 'namespace_plan_invalid'
-    if (argv[-3:] != ['/bin/sh', '-c', argv[-1]]
-            or 'ip link set lo up' not in argv[-1]
-            or not argv[-1].endswith(
-                '/pal-control/official-probe.sh --isolated-host-attested')):
+        if bind['guest'] in seen_guests or bind['source'] in seen_sources:
+            return 'namespace_plan_invalid'
+        seen_guests.add(bind['guest'])
+        seen_sources.add(bind['source'])
+        pairs.add((bind['source'], bind['guest']))
+    layout = plan.get('runtime_layout')
+    if (type(layout) is not dict
+            or sorted(layout) != ['guest_paths', 'launcher_externals',
+                                  'ld_library_path', 'library_search',
+                                  'shell_guest', 'shell_source']
+            or layout.get('guest_paths') != 'canonical'
+            or layout.get('ld_library_path') != 'not_used'
+            or layout.get('launcher_externals') != 'shell_builtins_and_payload_python_only'
+            or layout.get('library_search') != list(LINUX_RUNTIME_LIBRARY_DIRS)
+            or layout.get('shell_guest') != LINUX_GUEST_SHELL
+            or type(layout.get('shell_source')) is not str):
         return 'namespace_plan_invalid'
-    if plan.get('child_environment') != {'PATH': '/usr/bin:/bin'}:
+    shell = next((bind for bind in binds if bind['guest'] == LINUX_GUEST_SHELL), None)
+    if shell is None or shell['source'] != layout['shell_source']:
+        return 'namespace_plan_invalid'
+    expected = {(hosts['INPUT'], LINUX_GUESTS['input']),
+                (hosts['IMAGE'], LINUX_GUESTS['image']),
+                (hosts['CONTROL'], LINUX_GUESTS['control'])} | pairs
+    if _linux_plan_flag_pairs(argv, '--ro-bind') != expected:
+        return 'namespace_plan_invalid'
+    if argv.count('--ro-bind') != 3 + len(binds):
+        return 'namespace_plan_invalid'
+    modes = plan.get('modes')
+    if type(modes) is not list or len(modes) != 2:
+        return 'namespace_plan_invalid'
+    qualify, batch = modes
+    mode_keys = ['command', 'depends_on', 'expected_banner', 'mode',
+                 'selection', 'synthetic_request']
+    if (type(qualify) is not dict or sorted(qualify) != mode_keys
+            or qualify != dict(mode='qualify-version',
+                               selection='outer_runner_final_command_replacement',
+                               command=[LINUX_GUESTS['image']+'/'+LINUX_IMAGE_MEMBER,
+                                        '--version'],
+                               expected_banner=image.get('version')+' (Claude Code)',
+                               synthetic_request=False, depends_on=[])):
+        return 'namespace_plan_invalid'
+    if (type(batch) is not dict or sorted(batch) != mode_keys
+            or batch != dict(mode='official-six', selection='plan_argv_final_command',
+                             command=[LINUX_GUESTS['control']+'/'+LINUX_LAUNCHER_NAME,
+                                      '--isolated-host-attested'],
+                             expected_banner=None, synthetic_request=True,
+                             depends_on=['qualify-version'])):
+        return 'namespace_plan_invalid'
+    if argv[-2:] != batch['command']:
+        return 'namespace_plan_invalid'
+    # Loopback comes up automatically under --unshare-net; the ip command is
+    # neither bound nor invoked anywhere in the launch plan.
+    if any(item == 'ip' or item.startswith('ip ') for item in argv):
         return 'namespace_plan_invalid'
     if sorted(plan.get('excluded_host_surfaces') or ()) != sorted(LINUX_EXCLUDED_SURFACES):
         return 'namespace_plan_invalid'
     bounds = plan.get('bounds')
-    if (type(bounds) is not dict or bounds.get('memory_mb') != LINUX_MEMORY_MB
+    if (type(bounds) is not dict
+            or sorted(bounds) != ['cgroup_controls', 'deadline_seconds', 'memory_mb',
+                                  'memory_swap_max', 'pids_max']
+            or bounds.get('memory_mb') != LINUX_MEMORY_MB
+            or bounds.get('memory_swap_max') != 0
+            or bounds.get('pids_max') != LINUX_PIDS_MAX
+            or bounds.get('deadline_seconds') != LINUX_DEADLINE_SECONDS
             or bounds.get('cgroup_controls') != 'require_qualification_before_run'):
         return 'namespace_plan_invalid'
     if (plan.get('official_cli_executed') is not False
@@ -1073,22 +1430,51 @@ def _linux_namespace_plan_problem(plan):
     return None
 
 
-def _linux_namespace_plan(payload_root, image_dir, control_dir, output_dir, value, facts):
-    """Deterministic rootless namespace plan; generation output, never run here."""
+def _linux_namespace_plan(payload_root, payload_value, image_dir, control_dir,
+                          output_dir, value, facts):
+    """Deterministic rootless bwrap launch plan; generation output, never run.
+
+    A2 record: --tmpfs / gives a fresh empty guest root (the host root is
+    excluded, not merely unlisted); INPUT/IMAGE/CONTROL are read-only binds;
+    /pal-scratch, /tmp and /pal-output are sized tmpfs mounts using bwrap
+    0.11.1's --size N --tmpfs PATH spelling; every runtime file (ld.so,
+    DT_NEEDED closures, /bin/sh, the payload interpreter's loader needs) is
+    enumerated as a measured read-only bind at its canonical guest path. The
+    --output-dir argument is the HOST EXPORT DESTINATION: bounded 64 MiB,
+    created exclusively without following symlinks by the outer runner, and
+    NEVER mounted writable into the namespace - output crosses only through
+    the bounded /pal-output tmpfs. A3 record: the two fixed launcher modes
+    are pinned below as plan data read by the separately owned outer runner;
+    the launcher file itself is mode-independent. qualify-version replaces
+    the final argv command with one official --version invocation before the
+    pytest entry and gates official-six, which uses the generated final
+    command unchanged. The launcher identity block pins the deterministic
+    CONTROL launcher by the exact bytes written (their on-disk equality was
+    verified by _official_control at generation time), so a host-level swap
+    between generation and execution is detectable at admission.
+    """
+    payload_names = [entry['path'] for entry in payload_value['files']]
+    runtime_binds = _linux_runtime_closure(payload_root, payload_names, facts)
+    launcher_data = official_launcher(value, platform='linux')
     argv = ['bwrap', '--unshare-user', '--unshare-ipc', '--unshare-pid',
             '--unshare-net', '--unshare-uts', '--die-with-parent', '--new-session',
-            '--cap-drop', 'ALL', '--clearenv', '--dev', '/dev', '--proc', '/proc',
+            '--cap-drop', 'ALL', '--clearenv',
+            '--setenv', 'PATH', LINUX_CHILD_ENVIRONMENT['PATH'],
+            '--tmpfs', '/', '--dev', '/dev', '--proc', '/proc',
             '--ro-bind', str(payload_root), LINUX_GUESTS['input'],
             '--ro-bind', str(image_dir), LINUX_GUESTS['image'],
             '--ro-bind', str(control_dir), LINUX_GUESTS['control'],
-            '--bind', str(output_dir), LINUX_GUESTS['output'],
-            '--tmpfs', LINUX_GUESTS['scratch'], '--sizelimit', str(LINUX_SCRATCH_BYTES),
-            '--tmpfs', '/tmp', '--sizelimit', str(LINUX_TMP_BYTES),
-            '/bin/sh', '-c',
-            'ip link set lo up && exec /pal-control/official-probe.sh'
-            ' --isolated-host-attested']
+            '--size', str(LINUX_SCRATCH_BYTES), '--tmpfs', LINUX_GUESTS['scratch'],
+            '--size', str(LINUX_TMP_BYTES), '--tmpfs', LINUX_GUESTS['tmp'],
+            '--size', str(LINUX_EXPORT_BYTES), '--tmpfs', LINUX_GUESTS['output'],
+            *(part for entry in runtime_binds
+              for part in ('--ro-bind', entry['source'], entry['guest'])),
+            LINUX_GUESTS['control']+'/'+LINUX_LAUNCHER_NAME, '--isolated-host-attested']
     plan = dict(
         schema=LINUX_PLAN_SCHEMA, generation='config_only_not_executed',
+        runner=dict(bwrap_version=LINUX_BWRAP_VERSION,
+                    execution='outer_runner_owned_separately',
+                    supervision='outside_workload_cgroup'),
         image=dict(sha256=value['sha256'], bytes=value['bytes'],
                    version=value['version'], platform=LINUX_IMAGE_PLATFORM,
                    member=LINUX_IMAGE_MEMBER, runtime_interp=facts['interp'],
@@ -1096,7 +1482,7 @@ def _linux_namespace_plan(payload_root, image_dir, control_dir, output_dir, valu
                    closure_derived_from='image_bytes'),
         namespaces=list(LINUX_NAMESPACES),
         network=dict(mode='loopback_only', external_egress='unavailable',
-                     address='127.0.0.1'),
+                     address='127.0.0.1', loopback=LINUX_LOOPBACK_MODE),
         mounts=[dict(role='INPUT', host=str(payload_root), guest=LINUX_GUESTS['input'],
                      readonly=True, kind='bind'),
                 dict(role='IMAGE', host=str(image_dir), guest=LINUX_GUESTS['image'],
@@ -1104,12 +1490,39 @@ def _linux_namespace_plan(payload_root, image_dir, control_dir, output_dir, valu
                 dict(role='CONTROL', host=str(control_dir), guest=LINUX_GUESTS['control'],
                      readonly=True, kind='bind'),
                 dict(role='OUTPUT', host=str(output_dir), guest=LINUX_GUESTS['output'],
-                     readonly=False, kind='bind'),
+                     readonly=False, kind='tmpfs', size_limit_bytes=LINUX_EXPORT_BYTES,
+                     host_role='export_destination'),
                 dict(role='SCRATCH', host=None, guest=LINUX_GUESTS['scratch'],
-                     readonly=False, kind='tmpfs', size_limit_bytes=LINUX_SCRATCH_BYTES)],
+                     readonly=False, kind='tmpfs', size_limit_bytes=LINUX_SCRATCH_BYTES),
+                dict(role='TMP', host=None, guest=LINUX_GUESTS['tmp'],
+                     readonly=False, kind='tmpfs', size_limit_bytes=LINUX_TMP_BYTES)],
+        export=dict(destination=str(output_dir), bounded_bytes=LINUX_EXPORT_BYTES,
+                    creation='exclusive_no_follow',
+                    mounted_writable_in_namespace=False),
+        launcher=dict(path=str(control_dir)+'/'+LINUX_LAUNCHER_NAME,
+                      sha256=sha256(launcher_data).hexdigest(), bytes=len(launcher_data)),
+        runtime_binds=runtime_binds,
+        runtime_layout=dict(guest_paths='canonical', ld_library_path='not_used',
+                            library_search=list(LINUX_RUNTIME_LIBRARY_DIRS),
+                            launcher_externals='shell_builtins_and_payload_python_only',
+                            shell_guest=LINUX_GUEST_SHELL,
+                            shell_source=next(entry['source'] for entry in runtime_binds
+                                              if entry['guest'] == LINUX_GUEST_SHELL)),
+        environment=dict(clearenv=True, setenv=dict(LINUX_CHILD_ENVIRONMENT)),
+        modes=[dict(mode='qualify-version',
+                    selection='outer_runner_final_command_replacement',
+                    command=[LINUX_GUESTS['image']+'/'+LINUX_IMAGE_MEMBER, '--version'],
+                    expected_banner=value['version']+' (Claude Code)',
+                    synthetic_request=False, depends_on=[]),
+               dict(mode='official-six', selection='plan_argv_final_command',
+                    command=[LINUX_GUESTS['control']+'/'+LINUX_LAUNCHER_NAME,
+                             '--isolated-host-attested'],
+                    expected_banner=None, synthetic_request=True,
+                    depends_on=['qualify-version'])],
         excluded_host_surfaces=list(LINUX_EXCLUDED_SURFACES),
-        argv=argv, child_environment=dict(LINUX_CHILD_ENVIRONMENT),
-        bounds=dict(memory_mb=LINUX_MEMORY_MB,
+        argv=argv,
+        bounds=dict(memory_mb=LINUX_MEMORY_MB, memory_swap_max=0,
+                    pids_max=LINUX_PIDS_MAX, deadline_seconds=LINUX_DEADLINE_SECONDS,
                     cgroup_controls='require_qualification_before_run'),
         official_cli_executed=False, activation_authorized=False)
     problem = _linux_namespace_plan_problem(plan)
@@ -1177,7 +1590,8 @@ def _official_config_generate(payload_root, image_dir, control_dir, output_dir,
     linux = (platform or 'windows') == 'linux'
     flavor = 'linux' if linux else 'windows'
     _plain_ancestry(payload_root)
-    _official_payload_ready(verify(payload_root), platform=flavor)
+    payload_value = verify(payload_root)
+    _official_payload_ready(payload_value, platform=flavor)
     _plain_ancestry(image_dir)
     value, facts = _load_official_image(image_dir, flavor)
     launcher = official_launcher(value, platform=flavor)
@@ -1191,6 +1605,12 @@ def _official_config_generate(payload_root, image_dir, control_dir, output_dir,
         fail('destination_exists')
     _reject_mapping_overlap(payload_root, image_dir, control_dir, output_dir,
                             destination)
+    # The Linux launch plan (including the measured runtime closure) is fully
+    # self-validated before the export destination directory is created.
+    if linux:
+        plan = _linux_namespace_plan(payload_root, payload_value, image_dir,
+                                     control_dir, output_dir, value, facts)
+        data = (json.dumps(plan, indent=2, sort_keys=True) + '\n').encode('ascii')
     try:
         output_dir.mkdir()
     except FileExistsError:
@@ -1199,11 +1619,11 @@ def _official_config_generate(payload_root, image_dir, control_dir, output_dir,
     _reject_mapping_overlap(payload_root, image_dir, control_dir, output_dir)
     _reject_mapping_overlap(output_dir, destination)
     if linux:
-        plan = _linux_namespace_plan(payload_root, image_dir, control_dir,
-                                     output_dir, value, facts)
-        data = (json.dumps(plan, indent=2, sort_keys=True) + '\n').encode('ascii')
         _exclusive_write(destination, data)
         return dict(status='official_config_generated_not_launched',
+                    schema=LINUX_PLAN_SCHEMA,
+                    modes=[mode['mode'] for mode in plan['modes']],
+                    runtime_binds=len(plan['runtime_binds']),
                     image_sha256=value['sha256'], image_bytes=value['bytes'],
                     image_version=value['version'], image_platform=LINUX_IMAGE_PLATFORM,
                     runtime_interp=facts['interp'], runtime_needed=facts['needed'],
@@ -1227,6 +1647,9 @@ def main():
     p.add_argument('--sha256', required=True); p.add_argument('--destination', type=Path, required=True)
     p = sub.add_parser('build'); p.add_argument('--source', type=Path, required=True)
     p.add_argument('--output', type=Path, required=True); p.add_argument('--allow-ci-build', action='store_true')
+    p = sub.add_parser('build-linux', allow_abbrev=False)
+    p.add_argument('--source', type=Path, required=True)
+    p.add_argument('--destination', type=Path, required=True)
     p = sub.add_parser('official-control', allow_abbrev=False)
     p.add_argument('--image-dir', type=Path, required=True)
     p.add_argument('--destination', type=Path, required=True)
@@ -1242,6 +1665,7 @@ def main():
     args = parser.parse_args()
     try:
         if args.command == 'build': result = build(args.source, args.output, args.allow_ci_build)
+        elif args.command == 'build-linux': result = build_linux(args.source, args.destination)
         elif args.command == 'stage': result = stage(args.archive, args.sha256, args.destination)
         elif args.command == 'selftest': result = selftest(args.root, args.receipt)
         elif args.command == 'official-control':

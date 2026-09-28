@@ -2,8 +2,10 @@
 
 No official binary, network, credential or namespace is used or executed here:
 every ELF is a locally built stand-in, every identity value is computed from
-those synthetic bytes, and the namespace plan is validated as a generated
-document. The six official cases are NOT this node's completion condition.
+those synthetic bytes, and the executor-facing v2 launch plan is validated as
+a generated document. The real Linux INPUT builder is exercised against a
+synthetic pinned interpreter, synthetic distributions and a synthetic git
+checkout. The six official cases are NOT this node's completion condition.
 """
 from hashlib import sha256
 import importlib.util
@@ -14,6 +16,7 @@ import re
 import struct
 import subprocess
 import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -69,6 +72,38 @@ def build_elf(needed=('libc.so.6', 'libgcc_s.so.1'),
 
 
 ELF = build_elf()
+# Stand-in ELF shapes of the real Linux INPUT runtime members: the payload
+# interpreter, a packaged extension module, the dynamic loader, the shell and
+# a leaf shared library. Never executed by anything.
+PYTHON3_ELF = build_elf(needed=('libc.so.6', 'libz.so.1'),
+                        interp='/lib64/ld-linux-x86-64.so.2')
+EXTENSION_ELF = build_elf(needed=('libc.so.6',), interp=None)
+LD_ELF = build_elf(needed=('libc.so.6',), interp=None)
+SHELL_ELF = build_elf(needed=('libc.so.6',), interp='/lib64/ld-linux-x86-64.so.2')
+LIBC_ELF = build_elf(needed=(), interp=None)
+
+
+@pytest.fixture(autouse=True)
+def synthetic_host_runtime(tmp_path, monkeypatch):
+    """Synthetic measured host runtime: soname directories, ld.so and /bin/sh.
+
+    The generator resolves and measures loader/library files on the Linux
+    host; these synthetic plain stand-ins make that resolution testable here
+    without any host library, real binary or execution.
+    """
+    root = tmp_path/'host-runtime'
+    lib = root/'lib'/'x86_64-linux-gnu'
+    lib.mkdir(parents=True)
+    lib64 = root/'lib64'
+    lib64.mkdir()
+    for name in ('libc.so.6', 'libgcc_s.so.1', 'libz.so.1'):
+        (lib/name).write_bytes(LIBC_ELF)
+    (lib64/'ld-linux-x86-64.so.2').write_bytes(LD_ELF)
+    shell = root/'bin-sh'
+    shell.write_bytes(SHELL_ELF)
+    monkeypatch.setattr(e, 'LINUX_RUNTIME_LIBRARY_DIRS', (str(lib), str(lib64)))
+    monkeypatch.setattr(e, 'LINUX_SHELL_HOST_PATH', str(shell))
+    return root
 
 
 def valid_linux_manifest(data=ELF):
@@ -101,11 +136,21 @@ def linux_payload(parent, name='payload', complete=True):
     if complete:
         (root/'python/lib/python3.12/site-packages').mkdir(parents=True)
         (root/'python/lib/python3.12/site-packages/pytest-stub.py').write_bytes(b'# pytest stand-in\n')
+        (root/'python/lib/python3.12/lib-dynload').mkdir(parents=True)
+        (root/'python/lib/python3.12/lib-dynload/'
+               '_ext.cpython-312-x86_64-linux-gnu.so').write_bytes(EXTENSION_ELF)
         (root/'python/bin').mkdir(parents=True)
-        (root/'python/bin/python3').write_bytes(b'#!/bin/sh\nsynthetic bundled python; never executed\n')
+        (root/'python/bin/python3').write_bytes(PYTHON3_ELF)
     m = e.manifest(root, 'a'*40, 'b'*40, {'pytest': '9.0.2'})
     (root/'environment-manifest.json').write_text(json.dumps(m), encoding='utf-8')
     return root, m
+
+
+def refresh_manifest(root):
+    (root/'environment-manifest.json').unlink()
+    m = e.manifest(root, 'a'*40, 'b'*40, {'pytest': '9.0.2'})
+    (root/'environment-manifest.json').write_text(json.dumps(m), encoding='utf-8')
+    return m
 
 
 def linux_setup(tmp_path):
@@ -303,9 +348,9 @@ def test_linux_launcher_exact_contract():
     guard_region = '\n'.join(lines[:exec_index])
     assert 'for name in launcher-tmp pytest-tmp pytest.log junit.xml exit-code.txt; do' in guard_region
     assert 'if [ -e "/pal-output/$name" ]; then exit 2; fi' in guard_region
-    assert 'mkdir /pal-output/launcher-tmp || exit 2' in guard_region
     exec_line = lines[exec_index]
-    for fragment in ("sys.path[:0]=['/pal-input/source','/pal-input/source/src',",
+    for fragment in ("import os; os.makedirs('/pal-output/launcher-tmp'); ",
+                     "sys.path[:0]=['/pal-input/source','/pal-input/source/src',",
                      "'/pal-input/python/lib/python3.12/site-packages']",
                      "'--basetemp=/pal-output/pytest-tmp'",
                      "'--junitxml=/pal-output/junit.xml'",
@@ -316,6 +361,23 @@ def test_linux_launcher_exact_contract():
     assert exec_line.endswith('> /pal-output/pytest.log 2>&1')
     assert max(len(line) for line in lines) < 4096
     assert 'HTTP_PROXY' not in text and 'HTTPS_PROXY' not in text and 'HOME=' not in text
+
+
+def test_linux_launcher_uses_shell_builtins_and_payload_python_only():
+    # A1 choice: mkdir was removed (the payload Python creates output
+    # directories), so no coreutils or other external command is invoked.
+    text = e.official_launcher(valid_linux_manifest(), platform='linux').decode('ascii')
+    for external in ('mkdir /pal-output', 'rm ', 'cp ', 'ln ', 'touch ', 'chmod ',
+                     'ip link', '/usr/bin/', 'command ', 'env '):
+        assert external not in text, external
+    assert "os.makedirs('/pal-output/launcher-tmp')" in text
+    assert 'qualify-version' not in text and 'official-six' not in text
+
+
+def test_linux_a1_a2_a3_choices_are_recorded_in_source():
+    source = (ROOT/'scripts/claude_probe_environment.py').read_text(encoding='utf-8')
+    for marker in ('A1 record:', 'A2 record:', 'A3 record:'):
+        assert marker in source, marker
 
 
 @pytest.mark.parametrize('fault', [{'sha256': 'A'*64}, {'sha256': 'a'*63},
@@ -456,13 +518,16 @@ def test_linux_control_rejects_image_overlap_before_creation(tmp_path, kind, exp
         assert not destination.exists()
 
 
-# --- Namespace plan: synthetic namespace/networking/cleanup proofs ---------
+# --- Namespace plan v2: synthetic namespace/networking/cleanup proofs -----
 
-def test_linux_official_config_writes_reviewed_namespace_plan(tmp_path):
+def test_linux_official_config_writes_reviewed_launch_plan(tmp_path):
     root, image, control = linux_setup(tmp_path)
     output = tmp_path/'official-output'; destination = tmp_path/'official-probe.json'
     result = e._official_config_generate(root, image, control, output, destination, 'linux')
     assert result['status'] == 'official_config_generated_not_launched'
+    assert result['schema'] == 'research-linux-launch-v2'
+    assert result['modes'] == ['qualify-version', 'official-six']
+    assert result['runtime_binds'] >= 1
     assert result['namespaces'] == list(e.LINUX_NAMESPACES)
     assert result['runtime_needed'] == ['libc.so.6', 'libgcc_s.so.1']
     assert result['official_cli_executed'] is False and result['activation_authorized'] is False
@@ -470,45 +535,101 @@ def test_linux_official_config_writes_reviewed_namespace_plan(tmp_path):
     raw = destination.read_bytes()
     assert all(byte < 128 for byte in raw)
     plan = json.loads(raw)
-    assert plan['schema'] == 'claude-probe-namespace-linux-v1'
+    assert plan['schema'] == e.LINUX_PLAN_SCHEMA == 'research-linux-launch-v2'
     assert plan['generation'] == 'config_only_not_executed'
+    assert plan['runner'] == {'bwrap_version': '0.11.1',
+                              'execution': 'outer_runner_owned_separately',
+                              'supervision': 'outside_workload_cgroup'}
     assert sorted(plan['namespaces']) == sorted(e.LINUX_NAMESPACES)
     assert plan['network'] == {'mode': 'loopback_only',
-                               'external_egress': 'unavailable', 'address': '127.0.0.1'}
-    mounts = {m['role']: m for m in plan['mounts']}
-    assert [m['role'] for m in plan['mounts']] == ['INPUT', 'IMAGE', 'CONTROL', 'OUTPUT', 'SCRATCH']
-    assert [m['readonly'] for m in plan['mounts']] == [True, True, True, False, False]
-    assert mounts['INPUT'] == {'role': 'INPUT', 'host': str(root), 'guest': '/pal-input',
-                               'readonly': True, 'kind': 'bind'}
-    assert mounts['OUTPUT']['host'] == str(output) and mounts['OUTPUT']['guest'] == '/pal-output'
-    assert mounts['SCRATCH'] == {'role': 'SCRATCH', 'host': None, 'guest': '/pal-scratch',
+                               'external_egress': 'unavailable', 'address': '127.0.0.1',
+                               'loopback': 'automatic_under_unshare_net_no_ip_command'}
+    mounts = plan['mounts']
+    assert [m['role'] for m in mounts] == ['INPUT', 'IMAGE', 'CONTROL', 'OUTPUT', 'SCRATCH', 'TMP']
+    assert [m['readonly'] for m in mounts] == [True, True, True, False, False, False]
+    assert [m['kind'] for m in mounts] == ['bind', 'bind', 'bind', 'tmpfs', 'tmpfs', 'tmpfs']
+    by_role = {m['role']: m for m in mounts}
+    assert by_role['INPUT'] == {'role': 'INPUT', 'host': str(root), 'guest': '/pal-input',
+                                'readonly': True, 'kind': 'bind'}
+    assert by_role['IMAGE']['host'] == str(image) and by_role['IMAGE']['guest'] == '/pal-claude-image'
+    assert by_role['CONTROL']['host'] == str(control)
+    assert by_role['OUTPUT'] == {'role': 'OUTPUT', 'host': str(output), 'guest': '/pal-output',
                                  'readonly': False, 'kind': 'tmpfs',
-                                 'size_limit_bytes': e.LINUX_SCRATCH_BYTES}
+                                 'size_limit_bytes': e.LINUX_EXPORT_BYTES,
+                                 'host_role': 'export_destination'}
+    assert by_role['SCRATCH'] == {'role': 'SCRATCH', 'host': None, 'guest': '/pal-scratch',
+                                  'readonly': False, 'kind': 'tmpfs',
+                                  'size_limit_bytes': e.LINUX_SCRATCH_BYTES}
+    assert by_role['TMP'] == {'role': 'TMP', 'host': None, 'guest': '/tmp',
+                              'readonly': False, 'kind': 'tmpfs',
+                              'size_limit_bytes': e.LINUX_TMP_BYTES}
+    assert plan['export'] == {'destination': str(output),
+                              'bounded_bytes': e.LINUX_EXPORT_BYTES,
+                              'creation': 'exclusive_no_follow',
+                              'mounted_writable_in_namespace': False}
+    launcher_bytes = e.official_launcher(valid_linux_manifest(), platform='linux')
+    assert plan['launcher'] == {'path': str(control)+'/official-probe.sh',
+                                'sha256': sha256(launcher_bytes).hexdigest(),
+                                'bytes': len(launcher_bytes)}
+    binds = plan['runtime_binds']
+    by_guest = {b['guest']: b for b in binds}
+    assert [b['guest'] for b in binds] == sorted(by_guest)
+    library = e.LINUX_RUNTIME_LIBRARY_DIRS[0]
+    for guest in ('/bin/sh', '/pal-input/python/bin/python3',
+                  '/lib64/ld-linux-x86-64.so.2', f'{library}/libc.so.6',
+                  f'{library}/libgcc_s.so.1', f'{library}/libz.so.1'):
+        assert guest in by_guest, guest
+    assert by_guest['/bin/sh']['sha256'] == sha256(SHELL_ELF).hexdigest()
+    assert by_guest['/lib64/ld-linux-x86-64.so.2']['sha256'] == sha256(LD_ELF).hexdigest()
+    assert by_guest['/pal-input/python/bin/python3']['sha256'] == sha256(PYTHON3_ELF).hexdigest()
+    assert by_guest[f'{library}/libc.so.6']['bytes'] == len(LIBC_ELF)
+    for entry in binds:
+        assert entry['mode'] == 'ro'
+        data = Path(entry['source']).read_bytes()
+        assert entry['sha256'] == sha256(data).hexdigest() and entry['bytes'] == len(data)
+    assert plan['runtime_layout'] == {'guest_paths': 'canonical',
+                                      'ld_library_path': 'not_used',
+                                      'library_search': list(e.LINUX_RUNTIME_LIBRARY_DIRS),
+                                      'launcher_externals': 'shell_builtins_and_payload_python_only',
+                                      'shell_guest': '/bin/sh',
+                                      'shell_source': by_guest['/bin/sh']['source']}
+    assert plan['environment'] == {'clearenv': True, 'setenv': {'PATH': '/usr/bin:/bin'}}
+    assert plan['modes'] == [
+        {'mode': 'qualify-version',
+         'selection': 'outer_runner_final_command_replacement',
+         'command': ['/pal-claude-image/claude', '--version'],
+         'expected_banner': '2.1.278 (Claude Code)',
+         'synthetic_request': False, 'depends_on': []},
+        {'mode': 'official-six', 'selection': 'plan_argv_final_command',
+         'command': ['/pal-control/official-probe.sh', '--isolated-host-attested'],
+         'expected_banner': None, 'synthetic_request': True,
+         'depends_on': ['qualify-version']}]
     argv = plan['argv']
     assert argv[0] == 'bwrap'
     for flag in ('--unshare-user', '--unshare-ipc', '--unshare-pid', '--unshare-net',
                  '--unshare-uts', '--die-with-parent', '--new-session', '--clearenv',
                  '--dev', '/dev', '--proc', '/proc', '--cap-drop', 'ALL'):
         assert argv.count(flag) == 1, flag
-    for pair in (('--dev', '/dev'), ('--proc', '/proc')):
-        index = argv.index(pair[0])
-        assert tuple(argv[index:index+2]) == pair
-    for sequence in (('--tmpfs', e.LINUX_GUESTS['scratch'], '--sizelimit',
-                      str(e.LINUX_SCRATCH_BYTES)),
-                     ('--tmpfs', '/tmp', '--sizelimit', str(e.LINUX_TMP_BYTES))):
-        index = argv.index(sequence[1])
-        assert tuple(argv[index-1:index+3]) == sequence
-    assert argv.count('--ro-bind') == 3 and argv.count('--bind') == 1
-    ro_hosts = {argv[i+1] for i in range(len(argv)-2) if argv[i] == '--ro-bind'}
-    rw_hosts = {argv[i+1] for i in range(len(argv)-2) if argv[i] == '--bind'}
-    assert ro_hosts == {str(root), str(image), str(control)}
-    assert rw_hosts == {str(output)}
-    assert argv[-3:] == ['/bin/sh', '-c',
-                         'ip link set lo up && exec /pal-control/official-probe.sh'
-                         ' --isolated-host-attested']
-    assert plan['child_environment'] == {'PATH': '/usr/bin:/bin'}
+    index = argv.index('--clearenv')
+    assert argv[index+1:index+4] == ['--setenv', 'PATH', '/usr/bin:/bin']
+    assert argv.count('--setenv') == 1
+    assert any(argv[i:i+2] == ['--tmpfs', '/'] for i in range(len(argv)-1))
+    for sequence in (('--size', str(e.LINUX_SCRATCH_BYTES), '--tmpfs', e.LINUX_GUESTS['scratch']),
+                     ('--size', str(e.LINUX_TMP_BYTES), '--tmpfs', '/tmp'),
+                     ('--size', str(e.LINUX_EXPORT_BYTES), '--tmpfs', '/pal-output')):
+        assert any(tuple(argv[i:i+4]) == sequence for i in range(len(argv)-3)), sequence
+    assert argv.count('--tmpfs') == 4 and argv.count('--size') == 3
+    assert '--sizelimit' not in argv and '--bind' not in argv
+    assert not any(item == 'ip' or item.startswith('ip ') for item in argv)
+    pairs = {(argv[i+1], argv[i+2]) for i in range(len(argv)-2) if argv[i] == '--ro-bind'}
+    assert pairs == ({(str(root), '/pal-input'), (str(image), '/pal-claude-image'),
+                      (str(control), '/pal-control')}
+                     | {(b['source'], b['guest']) for b in binds})
+    assert argv.count('--ro-bind') == 3 + len(binds)
+    assert argv[-2:] == ['/pal-control/official-probe.sh', '--isolated-host-attested']
     assert sorted(plan['excluded_host_surfaces']) == sorted(e.LINUX_EXCLUDED_SURFACES)
-    assert plan['bounds'] == {'memory_mb': 4096,
+    assert plan['bounds'] == {'memory_mb': 4096, 'memory_swap_max': 0, 'pids_max': 64,
+                              'deadline_seconds': 900,
                               'cgroup_controls': 'require_qualification_before_run'}
     assert plan['image']['runtime_needed'] == ['libc.so.6', 'libgcc_s.so.1']
     assert plan['image']['runtime_interp'] == '/lib64/ld-linux-x86-64.so.2'
@@ -522,26 +643,172 @@ def test_linux_official_config_writes_reviewed_namespace_plan(tmp_path):
     assert destination.read_bytes() == raw
 
 
+def test_linux_v1_generation_only_plans_are_executor_rejected():
+    assert e.LINUX_PLAN_SCHEMA == 'research-linux-launch-v2'
+    assert e.LINUX_PLAN_SCHEMA_V1 == 'claude-probe-namespace-linux-v1'
+    legacy = dict(schema=e.LINUX_PLAN_SCHEMA_V1, generation='config_only_not_executed',
+                  argv=['bwrap'], namespaces=list(e.LINUX_NAMESPACES))
+    assert e._linux_namespace_plan_problem(legacy) == 'namespace_plan_invalid'
+
+
+def test_linux_plan_launcher_identity_pins_written_control_bytes(tmp_path):
+    # The emitted launcher block is MEASURED from the exact launcher bytes on
+    # disk in CONTROL, so a host-level swap between generation and execution
+    # is detectable by the outer runner's admission.
+    root, image, control = linux_setup(tmp_path)
+    destination = tmp_path/'official-probe.json'
+    e._official_config_generate(root, image, control, tmp_path/'out', destination, 'linux')
+    plan = json.loads(destination.read_bytes())
+    written = (control/'official-probe.sh').read_bytes()
+    assert plan['launcher'] == {'path': str(control)+'/official-probe.sh',
+                                'sha256': sha256(written).hexdigest(),
+                                'bytes': len(written)}
+    assert Path(plan['launcher']['path']).read_bytes() == written
+    # a host-level edit after generation no longer matches the pinned block:
+    # the admission comparison is on-disk digest vs plan launcher sha256
+    (control/'official-probe.sh').write_bytes(written + b'# swapped\n')
+    swapped = (control/'official-probe.sh').read_bytes()
+    assert swapped != written
+    assert sha256(swapped).hexdigest() != plan['launcher']['sha256']
+
+
+def test_linux_output_is_export_destination_never_writable_mount(tmp_path):
+    root, image, control = linux_setup(tmp_path)
+    output = tmp_path/'official-output'; destination = tmp_path/'official-probe.json'
+    e._official_config_generate(root, image, control, output, destination, 'linux')
+    plan = json.loads(destination.read_bytes())
+    by_role = {m['role']: m for m in plan['mounts']}
+    assert by_role['OUTPUT']['kind'] == 'tmpfs'
+    assert by_role['OUTPUT']['host_role'] == 'export_destination'
+    assert by_role['OUTPUT']['size_limit_bytes'] == e.LINUX_EXPORT_BYTES == 67108864
+    assert plan['export'] == {'destination': str(output),
+                              'bounded_bytes': 67108864,
+                              'creation': 'exclusive_no_follow',
+                              'mounted_writable_in_namespace': False}
+    argv = plan['argv']
+    assert not any(flag in argv for flag in ('--bind', '--dev-bind', '--bind-try',
+                                             '--ro-bind-try', '--dev-bind-try'))
+    # the host export destination path appears in no bind operand at all
+    operands = {argv[i+1] for i in range(len(argv)-1) if argv[i].endswith('bind')}
+    assert str(output) not in operands
+
+
+def test_linux_environment_is_explicitly_set_not_bare_cleared(tmp_path):
+    root, image, control = linux_setup(tmp_path)
+    destination = tmp_path/'official-probe.json'
+    e._official_config_generate(root, image, control, tmp_path/'out', destination, 'linux')
+    plan = json.loads(destination.read_bytes())
+    argv = plan['argv']
+    index = argv.index('--clearenv')
+    assert argv[index+1:index+4] == ['--setenv', 'PATH', '/usr/bin:/bin']
+    assert argv.count('--setenv') == len(plan['environment']['setenv']) == 1
+    assert plan['environment'] == {'clearenv': True, 'setenv': {'PATH': '/usr/bin:/bin'}}
+
+
+def test_linux_qualify_version_mode_pins_one_version_invocation(tmp_path):
+    root, image, control = linux_setup(tmp_path)
+    destination = tmp_path/'official-probe.json'
+    e._official_config_generate(root, image, control, tmp_path/'out', destination, 'linux')
+    plan = json.loads(destination.read_bytes())
+    qualify, batch = plan['modes']
+    assert qualify['mode'] == 'qualify-version'
+    assert qualify['command'] == ['/pal-claude-image/claude', '--version']
+    assert qualify['synthetic_request'] is False and qualify['depends_on'] == []
+    assert qualify['expected_banner'] == '2.1.278 (Claude Code)'
+    assert batch['mode'] == 'official-six'
+    assert batch['command'] == plan['argv'][-2:]
+    assert batch['expected_banner'] is None and batch['synthetic_request'] is True
+    assert batch['depends_on'] == ['qualify-version']
+    assert [mode['mode'] for mode in plan['modes']] == ['qualify-version', 'official-six']
+
+
+def test_linux_runtime_closure_is_measured_recursive_and_deterministic(tmp_path):
+    root, _ = linux_payload(tmp_path)
+    image = write_linux_image(tmp_path)
+    payload_value = e.verify(root)
+    value, facts = e._load_official_image(image, 'linux')
+    names = [entry['path'] for entry in payload_value['files']]
+    binds = e._linux_runtime_closure(root, names, facts)
+    assert binds == e._linux_runtime_closure(root, names, facts)
+    by_guest = {b['guest']: b for b in binds}
+    library = e.LINUX_RUNTIME_LIBRARY_DIRS[0]
+    expected = {'/lib64/ld-linux-x86-64.so.2', '/bin/sh',
+                '/pal-input/python/bin/python3', f'{library}/libc.so.6',
+                f'{library}/libgcc_s.so.1', f'{library}/libz.so.1'}
+    assert expected <= set(by_guest)
+    for entry in binds:
+        data = Path(entry['source']).read_bytes()
+        assert entry['sha256'] == sha256(data).hexdigest()
+        assert entry['bytes'] == len(data) and entry['mode'] == 'ro'
+    assert by_guest['/bin/sh']['sha256'] == sha256(SHELL_ELF).hexdigest()
+    assert by_guest['/lib64/ld-linux-x86-64.so.2']['sha256'] == sha256(LD_ELF).hexdigest()
+    assert by_guest['/pal-input/python/bin/python3']['sha256'] == sha256(PYTHON3_ELF).hexdigest()
+
+
+def test_linux_runtime_closure_fails_closed_on_gaps(tmp_path, monkeypatch):
+    root, _ = linux_payload(tmp_path)
+    image = write_linux_image(tmp_path)
+    payload_value = e.verify(root)
+    value, facts = e._load_official_image(image, 'linux')
+    names = [entry['path'] for entry in payload_value['files']]
+    real_cap = e.LINUX_MAX_RUNTIME_BINDS
+    monkeypatch.setattr(e, 'LINUX_MAX_RUNTIME_BINDS', 3)
+    with pytest.raises(ValueError, match='runtime_closure_unbounded'):
+        e._linux_runtime_closure(root, names, facts)
+    monkeypatch.setattr(e, 'LINUX_MAX_RUNTIME_BINDS', real_cap)
+    (root/'python/bin/python3').write_bytes(
+        build_elf(needed=('libmissing.so.9',), interp='/lib64/ld-linux-x86-64.so.2'))
+    with pytest.raises(ValueError, match='runtime_closure_incomplete'):
+        e._linux_runtime_closure(root, names, facts)
+
+
+def test_linux_config_requires_real_elf_payload_interpreter(tmp_path):
+    root, _ = linux_payload(tmp_path)
+    (root/'python/bin/python3').write_bytes(b'#!/bin/sh\nnot an ELF interpreter\n')
+    refresh_manifest(root)
+    image = write_linux_image(tmp_path)
+    control = tmp_path/'control'
+    e._official_control_generate(image, control, 'linux')
+    with pytest.raises(ValueError, match='image_elf_invalid'):
+        e._official_config_generate(root, image, control, tmp_path/'out',
+                                    tmp_path/'plan.json', 'linux')
+    assert not (tmp_path/'out').exists() and not (tmp_path/'plan.json').exists()
+
+
 @pytest.mark.parametrize('mutation', [
-    'schema', 'generation', 'drop-namespace', 'extra-namespace', 'network-shared',
-    'network-egress', 'writable-input', 'writable-image', 'guest-swap',
+    'schema', 'schema-v1', 'generation', 'runner-version', 'runner-supervision',
+    'drop-namespace', 'extra-namespace', 'network-shared', 'network-egress',
+    'network-ip-mode', 'writable-input', 'writable-image', 'guest-swap',
     'no-die-with-parent', 'no-new-session', 'no-clearenv', 'cap-drop-partial',
-    'bind-image-writable', 'argv-prefix', 'inner-no-loopback', 'inner-no-attest',
-    'child-env-home', 'excluded-empty', 'bounds-memory', 'bounds-cgroup',
+    'setenv-extra', 'setenv-missing', 'bind-image-writable', 'argv-prefix',
+    'inner-no-attest', 'ip-wrapper', 'ip-element', 'child-env-home',
+    'excluded-empty', 'bounds-memory', 'bounds-pids', 'bounds-deadline',
     'executed-true', 'authorized-true', 'closure-interp-relative',
     'closure-unsorted', 'closure-invented-member', 'mounts-count',
-    'scratch-size', 'tmpfs-count', 'no-proc', 'unknown-flag-dev-bind',
-    'unknown-flag-bind-try', 'unknown-flag-ro-bind-try', 'dev-proc-swap',
-    'sizelimit-scratch-drop', 'sizelimit-scratch-inflate', 'sizelimit-tmp-drop',
-    'sizelimit-tmp-inflate', 'tmpfs-operand-drop'])
-def test_linux_namespace_plan_self_check_rejects_tampering(tmp_path, mutation):
+    'mounts-reorder', 'scratch-size', 'tmp-size', 'export-size', 'export-role',
+    'export-destination-swap', 'output-kind-bind', 'launcher-drop',
+    'launcher-sha', 'launcher-bytes', 'launcher-path', 'runtime-bind-drop',
+    'runtime-bind-guest-duplicate', 'runtime-bind-source-forged',
+    'runtime-bind-mode-rw', 'layout-ld-path', 'layout-externals',
+    'modes-count', 'mode-banner', 'mode-selection', 'mode-command',
+    'tmpfs-count', 'size-tmp-detach', 'size-tmp-inflate',
+    'size-syntax-sizelimit', 'tmpfs-root-drop', 'no-proc',
+    'unknown-flag-dev-bind', 'unknown-flag-bind-try'])
+def test_linux_launch_plan_self_check_rejects_tampering(tmp_path, mutation):
     root, image, control = linux_setup(tmp_path)
+    payload_value = e.verify(root)
     value, facts = e._load_official_image(image, 'linux')
-    plan = e._linux_namespace_plan(root, image, control, tmp_path/'out', value, facts)
+    plan = e._linux_namespace_plan(root, payload_value, image, control,
+                                   tmp_path/'out', value, facts)
+    argv = plan['argv']; binds = plan['runtime_binds']; modes = plan['modes']
     if mutation == 'schema':
         plan['schema'] = 'other'
+    elif mutation == 'schema-v1':
+        plan['schema'] = e.LINUX_PLAN_SCHEMA_V1
     elif mutation == 'generation':
         plan['generation'] = 'executed'
+    elif mutation == 'runner-version':
+        plan['runner']['bwrap_version'] = '0.10.0'
     elif mutation == 'drop-namespace':
         plan['namespaces'].remove('pid')
     elif mutation == 'extra-namespace':
@@ -550,34 +817,46 @@ def test_linux_namespace_plan_self_check_rejects_tampering(tmp_path, mutation):
         plan['network']['mode'] = 'shared'
     elif mutation == 'network-egress':
         plan['network']['external_egress'] = 'available'
+    elif mutation == 'network-ip-mode':
+        plan['network']['loopback'] = 'ip_link_command'
     elif mutation in ('writable-input', 'writable-image'):
         plan['mounts'][0 if mutation == 'writable-input' else 1]['readonly'] = False
     elif mutation == 'guest-swap':
         plan['mounts'][0]['guest'], plan['mounts'][3]['guest'] = \
             plan['mounts'][3]['guest'], plan['mounts'][0]['guest']
     elif mutation in ('no-die-with-parent', 'no-new-session', 'no-clearenv'):
-        plan['argv'].remove('--'+mutation.removeprefix('no-'))
+        argv.remove('--'+mutation.removeprefix('no-'))
     elif mutation == 'cap-drop-partial':
-        index = plan['argv'].index('--cap-drop')
-        plan['argv'][index+1] = 'NET_RAW'
+        index = argv.index('--cap-drop')
+        argv[index+1] = 'NET_RAW'
+    elif mutation == 'setenv-extra':
+        plan['environment']['setenv']['HOME'] = '/root'
+    elif mutation == 'setenv-missing':
+        plan['environment']['setenv'].pop('PATH')
     elif mutation == 'bind-image-writable':
-        index = next(i for i in range(len(plan['argv'])-2)
-                     if plan['argv'][i] == '--ro-bind' and plan['argv'][i+1] == str(image))
-        plan['argv'][index] = '--bind'
+        index = next(i for i in range(len(argv)-2)
+                     if argv[i] == '--ro-bind' and argv[i+1] == str(image))
+        argv[index] = '--bind'
     elif mutation == 'argv-prefix':
-        plan['argv'][0] = 'docker'
-    elif mutation == 'inner-no-loopback':
-        plan['argv'][-1] = 'exec /pal-control/official-probe.sh --isolated-host-attested'
+        argv[0] = 'docker'
     elif mutation == 'inner-no-attest':
-        plan['argv'][-1] = 'ip link set lo up && exec /pal-control/official-probe.sh'
+        argv[-1] = '--attested'
+    elif mutation == 'ip-wrapper':
+        argv[-2:] = ['/bin/sh', '-c',
+                     'ip link set lo up && exec /pal-control/official-probe.sh'
+                     ' --isolated-host-attested']
+    elif mutation == 'ip-element':
+        argv.insert(1, 'ip')
     elif mutation == 'child-env-home':
-        plan['child_environment'] = {'PATH': '/usr/bin:/bin', 'HOME': '/root'}
+        plan['environment']['setenv'] = {'PATH': '/usr/bin:/bin', 'HOME': '/root'}
     elif mutation == 'excluded-empty':
         plan['excluded_host_surfaces'] = []
     elif mutation == 'bounds-memory':
         plan['bounds']['memory_mb'] = 8192
-    elif mutation == 'bounds-cgroup':
-        plan['bounds']['cgroup_controls'] = 'qualified'
+    elif mutation == 'bounds-pids':
+        plan['bounds']['pids_max'] = 128
+    elif mutation == 'bounds-deadline':
+        plan['bounds']['deadline_seconds'] = 300
     elif mutation == 'executed-true':
         plan['official_cli_executed'] = True
     elif mutation == 'authorized-true':
@@ -590,37 +869,71 @@ def test_linux_namespace_plan_self_check_rejects_tampering(tmp_path, mutation):
         plan['image']['member'] = 'claude.exe'
     elif mutation == 'mounts-count':
         plan['mounts'].pop()
+    elif mutation == 'mounts-reorder':
+        plan['mounts'][3], plan['mounts'][4] = plan['mounts'][4], plan['mounts'][3]
     elif mutation == 'scratch-size':
         plan['mounts'][4]['size_limit_bytes'] = 0
+    elif mutation == 'tmp-size':
+        plan['mounts'][5]['size_limit_bytes'] = 0
+    elif mutation == 'export-size':
+        plan['export']['bounded_bytes'] = 1
+    elif mutation == 'export-role':
+        plan['mounts'][3]['host_role'] = 'writable_mount'
+    elif mutation == 'export-destination-swap':
+        plan['export']['destination'] = '/elsewhere'
+    elif mutation == 'output-kind-bind':
+        plan['mounts'][3]['kind'] = 'bind'
+    elif mutation == 'launcher-drop':
+        plan.pop('launcher')
+    elif mutation == 'launcher-sha':
+        plan['launcher']['sha256'] = '0'*64
+    elif mutation == 'launcher-bytes':
+        plan['launcher']['bytes'] = plan['launcher']['bytes'] + 1
+    elif mutation == 'launcher-path':
+        plan['launcher']['path'] = '/elsewhere/official-probe.sh'
+    elif mutation == 'runtime-bind-drop':
+        binds.pop()
+    elif mutation == 'runtime-bind-guest-duplicate':
+        binds[1]['guest'] = binds[0]['guest']
+    elif mutation == 'runtime-bind-source-forged':
+        binds[0]['source'] = '/forged-source'
+    elif mutation == 'runtime-bind-mode-rw':
+        binds[0]['mode'] = 'rw'
+    elif mutation == 'layout-ld-path':
+        plan['runtime_layout']['ld_library_path'] = '/opt/libs'
+    elif mutation == 'layout-externals':
+        plan['runtime_layout']['launcher_externals'] = 'mkdir_and_coreutils'
+    elif mutation == 'modes-count':
+        modes.pop()
+    elif mutation == 'mode-banner':
+        modes[0]['expected_banner'] = '2.1.277 (Claude Code)'
+    elif mutation == 'mode-selection':
+        modes[0]['selection'] = 'launcher_argument'
+    elif mutation == 'mode-command':
+        modes[0]['command'] = ['/pal-claude-image/claude', '--version', '--extra']
     elif mutation == 'tmpfs-count':
-        index = plan['argv'].index('/tmp')
-        plan['argv'].remove('/tmp')
+        argv.remove('/tmp')
+    elif mutation == 'size-tmp-detach':
+        index = argv.index('/tmp')
+        del argv[index-3:index-1]
+    elif mutation == 'size-tmp-inflate':
+        index = argv.index('/tmp')
+        argv[index-2] = '999'
+    elif mutation == 'size-syntax-sizelimit':
+        index = argv.index('/tmp')
+        argv[index-3] = '--sizelimit'
+    elif mutation == 'tmpfs-root-drop':
+        index = argv.index('/')
+        del argv[index-1:index+1]
+    elif mutation == 'no-proc':
+        argv.remove('--proc')
     elif mutation == 'unknown-flag-dev-bind':
-        index = plan['argv'].index('--ro-bind')
-        plan['argv'][index:index] = ['--dev-bind', '/etc']
-    elif mutation in ('unknown-flag-bind-try', 'unknown-flag-ro-bind-try'):
-        plan['argv'].append('--'+mutation.removeprefix('unknown-flag-'))
-    elif mutation == 'dev-proc-swap':
-        dev_index = plan['argv'].index('--dev')
-        proc_index = plan['argv'].index('--proc')
-        plan['argv'][dev_index+1] = '/proc'
-        plan['argv'][proc_index+1] = '/dev'
-    elif mutation in ('sizelimit-scratch-drop', 'sizelimit-scratch-inflate'):
-        index = plan['argv'].index(e.LINUX_GUESTS['scratch'])
-        if mutation.endswith('drop'):
-            del plan['argv'][index+1:index+3]
-        else:
-            plan['argv'][index+2] = '999'
-    elif mutation in ('sizelimit-tmp-drop', 'sizelimit-tmp-inflate'):
-        index = plan['argv'].index('/tmp')
-        if mutation.endswith('drop'):
-            del plan['argv'][index+1:index+3]
-        else:
-            plan['argv'][index+2] = '999'
-    elif mutation == 'tmpfs-operand-drop':
-        plan['argv'].remove(e.LINUX_GUESTS['scratch'])
+        index = argv.index('--ro-bind')
+        argv[index:index] = ['--dev-bind', '/etc']
+    elif mutation == 'unknown-flag-bind-try':
+        argv.insert(len(argv)-2, '--bind-try')
     else:
-        plan['argv'].remove('--proc')
+        plan['runner']['supervision'] = 'inside_workload_cgroup'
     assert e._linux_namespace_plan_problem(plan) == 'namespace_plan_invalid'
 
 
@@ -676,7 +989,8 @@ def test_linux_partial_io_failure_preserves_attempt(tmp_path, monkeypatch):
     with pytest.raises(OSError):
         e._official_control_generate(image, control, 'linux')
     assert control.is_dir() and list(control.iterdir()) == []
-    monkeypatch.undo()
+    # Restore only the patched write (not the shared autouse runtime patches).
+    monkeypatch.setattr(e, '_linux_exclusive_write', real)
     shutil.rmtree(control)
     e._official_control_generate(image, control, 'linux')
     root, _ = linux_payload(tmp_path)
@@ -690,9 +1004,218 @@ def test_linux_partial_io_failure_preserves_attempt(tmp_path, monkeypatch):
     with pytest.raises(OSError):
         e._official_config_generate(root, image, control, output, plan, 'linux')
     assert output.is_dir() and list(output.iterdir()) == [] and not plan.exists()
-    monkeypatch.undo()
+    monkeypatch.setattr(e, '_exclusive_write', real_write)
     with pytest.raises(ValueError, match='output_dir_exists'):
         e._official_config_generate(root, image, control, output, plan, 'linux')
+
+
+# --- Real Linux INPUT payload builder (synthetic stand-ins only) ------------
+
+LINUX_DEP_VERSIONS = {name: f'1.{index}.0' for index, name in enumerate(e.DEPS)}
+
+
+class SyntheticDistribution:
+    """A fake installed distribution whose files live in a synthetic tree."""
+
+    def __init__(self, root, name, version, extra_files=()):
+        self.version = version
+        self._home = root/name
+        (self._home/name).mkdir(parents=True, exist_ok=True)
+        (self._home/name/'__init__.py').write_bytes(f'# synthetic {name}\n'.encode())
+        info = self._home/f'{name}-{version}.dist-info'
+        info.mkdir(parents=True, exist_ok=True)
+        (info/'METADATA').write_bytes(b'Metadata-Version: 2.1\n')
+        self.files = [f'{name}/__init__.py',
+                      f'{name}-{version}.dist-info/METADATA', *extra_files]
+        for extra in extra_files:
+            target = self._home/extra
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(b'payload file\n')
+
+    def locate_file(self, entry):
+        return self._home/str(entry)
+
+
+def synthetic_build_env(parent, *, pth=False):
+    """Synthetic pinned interpreter, distributions and committed git source."""
+    home = parent/'build-env'
+    installed = []
+    for name in e.DEPS:
+        extra = (f'{name}/evil.pth',) if pth and name == 'pytest' else ()
+        installed.append(SyntheticDistribution(
+            home/'dists', name, LINUX_DEP_VERSIONS[name], extra))
+    base = home/'cpython-3.12.14'
+    stdlib = base/'lib'/'python3.12'
+    stdlib.mkdir(parents=True)
+    (base/'bin').mkdir(parents=True)
+    (base/'bin'/'python3.12').write_bytes(
+        b'PAL synthetic CPython 3.12.14 binary; never executed\n')
+    (stdlib/'os.py').write_bytes(b'# stdlib stand-in\n')
+    (stdlib/'encodings').mkdir(parents=True)
+    (stdlib/'encodings'/'__init__.py').write_bytes(b'# encodings stand-in\n')
+    dyn = stdlib/'lib-dynload'; dyn.mkdir()
+    (dyn/'_ext.cpython-312-x86_64-linux-gnu.so').write_bytes(b'\x7fELF synthetic\n')
+    cache = stdlib/'__pycache__'; cache.mkdir()
+    (cache/'os.cpython-312.pyc').write_bytes(b'host cache never enters')
+    site = stdlib/'site-packages'; site.mkdir()
+    (site/'host-junk.py').write_bytes(b'host site-packages never enters\n')
+    repository = parent/'git-source'; repository.mkdir()
+    def git(*args):
+        return subprocess.check_output(['git', '-C', str(repository), *args],
+                                       stderr=subprocess.PIPE)
+    git('init')
+    for name in ('src/sample.py', *e.SOURCE_EXTRA):
+        target = repository/name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b'# committed linux payload source\n')
+    (repository/'uv.lock').write_text(
+        ''.join(f'[[package]]\nname = "{name}"\n'
+                f'version = "{LINUX_DEP_VERSIONS[name]}"\n\n' for name in e.DEPS),
+        encoding='utf-8')
+    git('add', '.')
+    git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@invalid',
+        'commit', '-m', 'synthetic linux payload source')
+    def distributions():
+        yield from zip(e.DEPS, installed)
+    return base, stdlib, distributions, repository
+
+
+def linux_build_setup(parent, monkeypatch, *, pth=False):
+    monkeypatch.setattr(e, '_LINUX_BUILD_READY', True)
+    base, stdlib, distributions, repository = synthetic_build_env(parent, pth=pth)
+    monkeypatch.setattr(e, '_linux_dependency_distributions', distributions)
+    monkeypatch.setattr(e, '_linux_interpreter_layout',
+                        lambda: (base/'bin'/'python3.12', stdlib))
+    return base, stdlib, repository
+
+
+def test_linux_build_assembles_fresh_symlink_free_input(tmp_path, monkeypatch):
+    base, stdlib, repository = linux_build_setup(tmp_path, monkeypatch)
+    calls = []
+    real_chmod = os.chmod
+    def recording(path, mode):
+        calls.append((Path(path).name, mode))
+        return real_chmod(path, mode)
+    monkeypatch.setattr(e, '_LINUX_MODE_MEANINGFUL', True)
+    monkeypatch.setattr(e.os, 'chmod', recording)
+    destination = tmp_path/'linux-input'
+    result = e.build_linux(repository, destination)
+    assert result['status'] == 'linux_input_built_not_executed'
+    assert result['python'] == sys.version.split()[0]
+    assert result['dependencies'] == LINUX_DEP_VERSIONS
+    assert result['official_cli_included'] is False
+    assert result['official_cli_executed'] is False
+    assert result['activation_authorized'] is False
+    assert calls == [('python3', 0o755)]
+    assert (destination/'python/bin/python3').read_bytes() == \
+        (base/'bin'/'python3.12').read_bytes()
+    names = {p.relative_to(destination).as_posix()
+             for p in destination.rglob('*') if p.is_file()}
+    for included in ('python/lib/python3.12/os.py',
+                     'python/lib/python3.12/encodings/__init__.py',
+                     'python/lib/python3.12/lib-dynload/_ext.cpython-312-x86_64-linux-gnu.so',
+                     'environment-manifest.json', 'source/src/sample.py',
+                     'source/pyproject.toml', 'source/uv.lock',
+                     'source/tests/__init__.py',
+                     'source/tests/claude_cli_probe.py',
+                     'source/tests/test_research_claude_profile_native.py'):
+        assert included in names, included
+    for name in e.DEPS:
+        version = LINUX_DEP_VERSIONS[name]
+        assert f'python/lib/python3.12/site-packages/{name}/__init__.py' in names
+        assert (f'python/lib/python3.12/site-packages/'
+                f'{name}-{version}.dist-info/METADATA') in names
+    # Host caches, bytecode files and the interpreter's own site-packages
+    # never enter the payload.
+    assert not any('__pycache__' in name or name.endswith('.pyc') for name in names)
+    assert 'python/lib/python3.12/site-packages/host-junk.py' not in names
+    value = e.verify(destination)
+    assert value['source_commit'] == result['source_commit']
+    assert re.fullmatch('[0-9a-f]{40}', result['source_commit'])
+    assert len(value['files']) == result['files']
+    e._official_payload_ready(value, platform='linux')
+
+
+@pytest.mark.parametrize('fault,expected', [
+    ('host', 'linux_build_host_unsupported'),
+    ('dirty', 'dirty_source'),
+    ('unlocked', 'unlocked_dependency'),
+    ('missing-dep', 'dependency_missing'),
+    ('destination-exists', 'destination_exists'),
+    ('runtime-inside-source', 'runtime_home_invalid'),
+    ('pth', 'unexpected_dependency_path'),
+])
+def test_linux_build_refusals(tmp_path, monkeypatch, fault, expected):
+    base, stdlib, repository = linux_build_setup(
+        tmp_path, monkeypatch, pth=fault == 'pth')
+    destination = tmp_path/'linux-input'
+    if fault == 'host':
+        monkeypatch.setattr(e, '_LINUX_BUILD_READY', False)
+    elif fault == 'dirty':
+        (repository/'uncommitted.txt').write_bytes(b'local edit')
+    elif fault == 'unlocked':
+        # installed versions that match no locked version (the lock itself
+        # must stay committed and the checkout clean)
+        def wrong_versions():
+            for name in e.DEPS:
+                stub = SimpleNamespace(version='0.0.0', files=(),
+                                       locate_file=lambda entry: tmp_path/'nowhere')
+                yield name, stub
+        monkeypatch.setattr(e, '_linux_dependency_distributions', wrong_versions)
+    elif fault == 'missing-dep':
+        def missing():
+            e.fail('dependency_missing')
+            yield
+        monkeypatch.setattr(e, '_linux_dependency_distributions', missing)
+    elif fault == 'destination-exists':
+        destination.mkdir(); (destination/'kept').write_bytes(b'marker')
+    elif fault == 'runtime-inside-source':
+        monkeypatch.setattr(e, '_linux_interpreter_layout', lambda: (
+            repository/'nested-runtime/bin/python3.12',
+            repository/'nested-runtime/lib/python3.12'))
+    with pytest.raises(ValueError, match=expected):
+        e.build_linux(repository, destination)
+    if fault == 'destination-exists':
+        assert (destination/'kept').read_bytes() == b'marker'
+    elif fault == 'pth':
+        # the failed attempt is preserved, never deleted or reused
+        assert destination.is_dir()
+    else:
+        assert not destination.exists()
+
+
+def test_linux_build_refuses_host_symlinks(tmp_path, monkeypatch):
+    base, stdlib, repository = linux_build_setup(tmp_path, monkeypatch)
+    try:
+        (stdlib/'os.py').unlink()
+        os.symlink(base/'bin'/'python3.12', stdlib/'os.py')
+    except OSError:
+        pytest.skip('symlink permission unavailable on this host')
+    with pytest.raises(ValueError):
+        e.build_linux(repository, tmp_path/'linux-input')
+    # the failed attempt is preserved, never deleted or reused
+    assert (tmp_path/'linux-input'/'python/bin/python3').is_file()
+
+
+def test_linux_build_cli_surface(monkeypatch, capsys, tmp_path):
+    base, stdlib, distributions, repository = synthetic_build_env(tmp_path)
+    monkeypatch.setattr(e, '_LINUX_BUILD_READY', False)
+    monkeypatch.setattr(sys, 'argv', ['probe', 'build-linux', '--source', str(repository),
+                                      '--destination', str(tmp_path/'input')])
+    assert e.main() == 1
+    assert json.loads(capsys.readouterr().out)['reason'] == 'linux_build_host_unsupported'
+    assert not (tmp_path/'input').exists()
+    monkeypatch.setattr(e, '_LINUX_BUILD_READY', True)
+    monkeypatch.setattr(e, '_linux_dependency_distributions', distributions)
+    monkeypatch.setattr(e, '_linux_interpreter_layout',
+                        lambda: (base/'bin'/'python3.12', stdlib))
+    monkeypatch.setattr(sys, 'argv', ['probe', 'build-linux', '--source', str(repository),
+                                      '--destination', str(tmp_path/'input')])
+    assert e.main() == 0
+    status = json.loads(capsys.readouterr().out)
+    assert status['status'] == 'linux_input_built_not_executed'
+    assert status['activation_authorized'] is False
+    assert (tmp_path/'input'/'environment-manifest.json').is_file()
 
 
 # --- Platform selection and CLI surface -------------------------------------
