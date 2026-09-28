@@ -1033,7 +1033,20 @@ def test_linux_partial_io_failure_preserves_attempt(tmp_path, monkeypatch):
 
 # --- Real Linux INPUT payload builder (synthetic stand-ins only) ------------
 
-LINUX_DEP_VERSIONS = {name: f'1.{index}.0' for index, name in enumerate(e.DEPS)}
+LINUX_DEP_VERSIONS = {name: f'1.{index}.0' for index, name in enumerate(e.DEPS_LINUX)}
+
+
+def test_linux_dependency_tuple_is_the_linux_payload_closure():
+    # Platform rationale: colorama reaches the payload only through pytest's
+    # win32 marker, so a correctly synced Linux venv (and lock view) never
+    # has it; tzdata must be carried because the namespace has NO system
+    # timezone data. The Windows DEPS tuple stays frozen and separate.
+    assert e.DEPS_LINUX == ('pytest', 'tzdata', 'iniconfig', 'packaging',
+                            'pluggy', 'pygments')
+    assert 'colorama' not in e.DEPS_LINUX
+    assert 'tzdata' in e.DEPS_LINUX
+    assert 'colorama' in e.DEPS and 'tzdata' in e.DEPS  # frozen Windows tuple
+    assert set(e.DEPS_LINUX) < set(e.DEPS)
 
 
 class SyntheticDistribution:
@@ -1062,7 +1075,7 @@ def synthetic_build_env(parent, *, pth=False):
     """Synthetic pinned interpreter, distributions and committed git source."""
     home = parent/'build-env'
     installed = []
-    for name in e.DEPS:
+    for name in e.DEPS_LINUX:
         extra = (f'{name}/evil.pth',) if pth and name == 'pytest' else ()
         installed.append(SyntheticDistribution(
             home/'dists', name, LINUX_DEP_VERSIONS[name], extra))
@@ -1092,13 +1105,13 @@ def synthetic_build_env(parent, *, pth=False):
         target.write_bytes(b'# committed linux payload source\n')
     (repository/'uv.lock').write_text(
         ''.join(f'[[package]]\nname = "{name}"\n'
-                f'version = "{LINUX_DEP_VERSIONS[name]}"\n\n' for name in e.DEPS),
+                f'version = "{LINUX_DEP_VERSIONS[name]}"\n\n' for name in e.DEPS_LINUX),
         encoding='utf-8')
     git('add', '.')
     git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@invalid',
         'commit', '-m', 'synthetic linux payload source')
     def distributions():
-        yield from zip(e.DEPS, installed)
+        yield from zip(e.DEPS_LINUX, installed)
     return base, stdlib, distributions, repository
 
 
@@ -1142,11 +1155,14 @@ def test_linux_build_assembles_fresh_symlink_free_input(tmp_path, monkeypatch):
                      'source/tests/claude_cli_probe.py',
                      'source/tests/test_research_claude_profile_native.py'):
         assert included in names, included
-    for name in e.DEPS:
+    for name in e.DEPS_LINUX:
         version = LINUX_DEP_VERSIONS[name]
         assert f'python/lib/python3.12/site-packages/{name}/__init__.py' in names
         assert (f'python/lib/python3.12/site-packages/'
                 f'{name}-{version}.dist-info/METADATA') in names
+    # colorama is a win32-marker dependency and never enters the Linux payload
+    assert 'python/lib/python3.12/site-packages/colorama/__init__.py' not in names
+    assert 'python/lib/python3.12/site-packages/tzdata/__init__.py' in names
     # Host caches, bytecode files and the interpreter's own site-packages
     # never enter the payload.
     assert not any('__pycache__' in name or name.endswith('.pyc') for name in names)
@@ -1179,7 +1195,7 @@ def test_linux_build_refusals(tmp_path, monkeypatch, fault, expected):
         # installed versions that match no locked version (the lock itself
         # must stay committed and the checkout clean)
         def wrong_versions():
-            for name in e.DEPS:
+            for name in e.DEPS_LINUX:
                 stub = SimpleNamespace(version='0.0.0', files=(),
                                        locate_file=lambda entry: tmp_path/'nowhere')
                 yield name, stub

@@ -58,7 +58,12 @@ import xml.etree.ElementTree as ET
 import zipfile
 
 MAX_FILES, MAX_BYTES, MAX_FILE = 25000, 1500000000, 150000000
+# DEPS is the frozen Windows build tuple (colorama is pytest's win32-marker
+# dependency there). The Linux payload tuple drops colorama - a correctly
+# synced Linux venv never has it - and keeps tzdata, because the namespace
+# has NO system timezone data and the payload must carry its own.
 DEPS = ('pytest', 'tzdata', 'colorama', 'iniconfig', 'packaging', 'pluggy', 'pygments')
+DEPS_LINUX = ('pytest', 'tzdata', 'iniconfig', 'packaging', 'pluggy', 'pygments')
 SOURCE_EXTRA = ('tests/__init__.py', 'tests/claude_cli_probe.py',
                 'tests/test_research_claude_profile_native.py', 'pyproject.toml', 'uv.lock')
 SMOKE_CMD = (b'@echo off\r\nC:\\pal-input\\python\\python.exe -I -S -B '
@@ -551,8 +556,13 @@ def _linux_measure_file(path):
 
 
 def _linux_dependency_distributions():
-    """Installed lock-candidate distributions visible to this interpreter."""
-    for name in DEPS:
+    """Installed lock-candidate distributions visible to this interpreter.
+
+    Linux tuple: pytest's Linux-available closure plus tzdata (no system
+    timezone data exists inside the namespace); colorama is a win32-marker
+    dependency a correctly synced Linux venv never has.
+    """
+    for name in DEPS_LINUX:
         try:
             dist = metadata.distribution(name)
         except metadata.PackageNotFoundError:
@@ -606,7 +616,7 @@ def build_linux(source, destination):
     locked = {p['name']: p['version'] for p in lock['package'] if 'version' in p}
     distributions = list(_linux_dependency_distributions())
     versions = {name: dist.version for name, dist in distributions}
-    if any(name not in locked or versions[name] != locked[name] for name in DEPS):
+    if any(name not in locked or versions[name] != locked[name] for name in DEPS_LINUX):
         fail('unlocked_dependency')
     destination = destination.absolute()
     for parent in (destination.parent, *destination.parent.parents):
