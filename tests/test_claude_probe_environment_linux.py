@@ -276,6 +276,69 @@ def test_linux_elf_streaming_digest_keeps_separate_bound(tmp_path, monkeypatch):
     assert facts['needed'] == ['libc.so.6', 'libgcc_s.so.1']
 
 
+def build_elf_split_dynstr(needed=('libpthread.so.0', 'libdl.so.2', 'libutil.so.1',
+                                   'libm.so.6', 'librt.so.1', 'libc.so.6'),
+                           interp='/lib64/ld-linux-x86-64.so.2', strsz=None):
+    """Real-linker layout: DT_STRSZ is recorded and .dynstr starts near the
+    end of one LOAD segment and continues into the next contiguous one (the
+    exact shape of the pinned CPython binary that broke single-segment
+    reading). Never executed by anything."""
+    base = 0x3ff000
+    phoff, phnum = 64, 4
+    interp_bytes = interp.encode('ascii') + b'\0'
+    interp_off = phoff + 56*phnum
+    dyn_off = interp_off + len(interp_bytes)
+    strtab_off = 0xfe0                       # 32 bytes before the LOAD1 end
+    strtab = b'\0' + b''.join(n.encode('ascii') + b'\0' for n in needed)
+    total = strtab_off + len(strtab)
+    image = bytearray(total)
+    image[:16] = b'\x7fELF' + bytes([2, 1, 1, 0]) + b'\0'*8
+    struct.pack_into('<HHIQQQIHHHHHH', image, 16, 2, 62, 1, 0x19b1200, phoff,
+                     0, 0, 64, 56, phnum, 64, 0, 0)
+    image[phoff:phoff+56*phnum] = b''.join((
+        # LOAD1: file [0, 0x1000) at vaddr base; LOAD2 continues at 0x1000.
+        struct.pack('<IIQQQQQQ', 1, 5, 0, base, 0, 0x1000, 0x1000, 0x1000),
+        struct.pack('<IIQQQQQQ', 3, 4, interp_off, base + interp_off, 0,
+                    len(interp_bytes), len(interp_bytes), 0x1),
+        struct.pack('<IIQQQQQQ', 2, 6, dyn_off, base + dyn_off, 0, 16*(len(needed)+3),
+                    16*(len(needed)+3), 0x8),
+        struct.pack('<IIQQQQQQ', 1, 5, 0x1000, base + 0x1000, 0,
+                    total - 0x1000, total - 0x1000, 0x1000)))
+    image[interp_off:interp_off+len(interp_bytes)] = interp_bytes
+    offsets = []
+    position = 1
+    for name in needed:
+        offsets.append(position)
+        position += len(name) + 1
+    dynamic = b''.join(struct.pack('<QQ', 1, offset) for offset in offsets)
+    dynamic += struct.pack('<QQ', 10, len(strtab) if strsz is None else strsz)
+    dynamic += struct.pack('<QQ', 5, base + strtab_off)  # DT_STRTAB
+    dynamic += struct.pack('<QQ', 0, 0)
+    image[dyn_off:dyn_off+len(dynamic)] = dynamic
+    image[strtab_off:strtab_off+len(strtab)] = strtab
+    return bytes(image)
+
+
+def test_linux_elf_dynstr_spanning_loads_is_parsed(tmp_path):
+    # Regression for the real pinned CPython binary: its .dynstr crosses a
+    # LOAD-segment boundary with DT_STRSZ recorded, which single-segment
+    # strtab reading rejected as image_elf_invalid.
+    elf = build_elf_split_dynstr()
+    binary = tmp_path/'python3'
+    binary.write_bytes(elf)
+    facts = e._elf_facts(binary, len(elf), require_interp=False)
+    assert facts['interp'] == '/lib64/ld-linux-x86-64.so.2'
+    assert facts['needed'] == sorted(set(('libpthread.so.0', 'libdl.so.2',
+                                          'libutil.so.1', 'libm.so.6',
+                                          'librt.so.1', 'libc.so.6')))
+    assert e._elf_facts(binary, len(elf)) == facts  # interp requirement met
+    # A DT_STRSZ that outruns the LOAD map is still refused, bounded.
+    (tmp_path/'broken').write_bytes(build_elf_split_dynstr(strsz=1 << 30))
+    with pytest.raises(ValueError, match='image_elf_invalid'):
+        e._elf_facts(tmp_path/'broken', (tmp_path/'broken').stat().st_size,
+                     require_interp=False)
+
+
 @pytest.mark.parametrize('fault', ['malformed', 'duplicate-key', 'nonfinite',
     'wrong-root', 'wrong-schema', 'missing-platform', 'extra-key', 'wrong-path',
     'wrong-version', 'wrong-platform', 'digest-uppercase', 'digest-short',
@@ -767,6 +830,52 @@ def test_linux_runtime_closure_is_measured_recursive_and_deterministic(tmp_path)
     assert by_guest['/pal-input/python/bin/python3']['sha256'] == sha256(PYTHON3_ELF).hexdigest()
 
 
+def test_linux_runtime_closure_binds_ld_at_both_canonical_guests(tmp_path):
+    # The real official ELF lists ld-linux-x86-64.so.2 among its DT_NEEDED
+    # while its PT_INTERP names /lib64/ld-linux-x86-64.so.2, and usr-merged
+    # hosts realpath both onto one file: one measured source may back both
+    # canonical guest paths - but only ever with a single identity.
+    elf = build_elf(needed=('ld-linux-x86-64.so.2', 'libc.so.6'))
+    image = write_linux_image(tmp_path, data=elf)
+    root, _ = linux_payload(tmp_path)
+    payload_value = e.verify(root)
+    value, facts = e._load_official_image(image, 'linux')
+    names = [entry['path'] for entry in payload_value['files']]
+    binds = e._linux_runtime_closure(root, names, facts)
+    by_guest = {b['guest']: b for b in binds}
+    soname = by_guest[f'{e.LINUX_RUNTIME_LIBRARY_DIRS[1]}/ld-linux-x86-64.so.2']
+    # Platform truth: the canonical /lib64 interp path is measured from the
+    # real host ld.so where it exists (Linux); the soname guest always
+    # resolves through the fixture. Where the canonical path is absent, both
+    # guests resolve onto ONE measured source - the duplicate-source shape.
+    assert_measured_interp_bind(by_guest, '/lib64/ld-linux-x86-64.so.2')
+    interp = by_guest['/lib64/ld-linux-x86-64.so.2']
+    if os.path.lexists('/lib64/ld-linux-x86-64.so.2'):
+        assert soname['source'] != interp['source']
+    else:
+        assert soname['source'] == interp['source']
+        assert soname['sha256'] == interp['sha256']
+        assert soname['bytes'] == interp['bytes']
+    plan = e._linux_namespace_plan(root, payload_value, image, tmp_path/'control',
+                                   tmp_path/'out', value, facts)
+    assert e._linux_namespace_plan_problem(plan) is None
+    # One source, two identities is refused - grafted here so the invariant
+    # is exercised identically on every host, regardless of how the closure
+    # resolved the canonical interp path.
+    grafted = json.loads(json.dumps(plan))
+    interp_bind = next(b for b in grafted['runtime_binds']
+                       if b['guest'] == '/lib64/ld-linux-x86-64.so.2')
+    extra = dict(interp_bind, guest='/synthetic/second-guest', sha256='f'*64)
+    grafted['runtime_binds'].append(extra)
+    grafted['argv'] = (grafted['argv'][:-2]
+                       + ['--ro-bind', extra['source'], extra['guest']]
+                       + grafted['argv'][-2:])
+    assert e._linux_namespace_plan_problem(grafted) == 'namespace_plan_invalid'
+    # The same graft with the SAME identity is the legitimate shape.
+    grafted['runtime_binds'][-1]['sha256'] = interp_bind['sha256']
+    assert e._linux_namespace_plan_problem(grafted) is None
+
+
 def test_linux_runtime_closure_fails_closed_on_gaps(tmp_path, monkeypatch):
     root, _ = linux_payload(tmp_path)
     image = write_linux_image(tmp_path)
@@ -1049,6 +1158,27 @@ def test_linux_dependency_tuple_is_the_linux_payload_closure():
     assert set(e.DEPS_LINUX) < set(e.DEPS)
 
 
+def test_linux_stdlib_headless_exclusion_surface_is_pinned():
+    # Headless namespace, no display: the tkinter surface (the _tkinter
+    # extension with its unresolvable Tcl9/Tk9 DT_NEEDED chain, the tkinter
+    # package and its turtle.py front end) never enters the payload; pure
+    # Python surfaces that merely import tkinter (idlelib, turtledemo) stay,
+    # complete and inert, as does every other extension module whose
+    # DT_NEEDED the pinned host directories do provide.
+    excluded = ('tkinter/__init__.py', 'tkinter/test/support.py', 'turtle.py',
+                'lib-dynload/_tkinter.cpython-312-x86_64-linux-gnu.so')
+    kept = ('os.py', 'encodings/__init__.py', 'encodings/turtle.py',
+            'lib-dynload/zlib.cpython-312-x86_64-linux-gnu.so',
+            'idlelib/debugger.py', 'turtledemo/__main__.py')
+    for name in excluded:
+        assert e._linux_stdlib_excluded(name) is True, name
+    for name in kept:
+        assert e._linux_stdlib_excluded(name) is False, name
+    assert e.LINUX_STDLIB_EXCLUDED_PACKAGES == ('tkinter',)
+    assert e.LINUX_STDLIB_EXCLUDED_MODULES == ('turtle.py',)
+    assert e.LINUX_STDLIB_EXCLUDED_EXTENSIONS == ('_tkinter',)
+
+
 class SyntheticDistribution:
     """A fake installed distribution whose files live in a synthetic tree."""
 
@@ -1090,6 +1220,13 @@ def synthetic_build_env(parent, *, pth=False):
     (stdlib/'encodings'/'__init__.py').write_bytes(b'# encodings stand-in\n')
     dyn = stdlib/'lib-dynload'; dyn.mkdir()
     (dyn/'_ext.cpython-312-x86_64-linux-gnu.so').write_bytes(b'\x7fELF synthetic\n')
+    # The real host defect: _tkinter links Tcl9/Tk9, which no pinned host
+    # library directory provides (and a headless probe wants no GUI stack).
+    (dyn/'_tkinter.cpython-312-x86_64-linux-gnu.so').write_bytes(
+        build_elf(needed=('libtcl9.0.so', 'libtk9.0.so'), interp=None))
+    (stdlib/'tkinter').mkdir()
+    (stdlib/'tkinter'/'__init__.py').write_bytes(b'# tkinter stand-in\n')
+    (stdlib/'turtle.py').write_bytes(b'# turtle stand-in\n')
     cache = stdlib/'__pycache__'; cache.mkdir()
     (cache/'os.cpython-312.pyc').write_bytes(b'host cache never enters')
     site = stdlib/'site-packages'; site.mkdir()
@@ -1167,6 +1304,12 @@ def test_linux_build_assembles_fresh_symlink_free_input(tmp_path, monkeypatch):
     # never enter the payload.
     assert not any('__pycache__' in name or name.endswith('.pyc') for name in names)
     assert 'python/lib/python3.12/site-packages/host-junk.py' not in names
+    # The headless tkinter surface is excluded while the rest stays complete.
+    for excluded in ('python/lib/python3.12/tkinter/__init__.py',
+                     'python/lib/python3.12/turtle.py',
+                     'python/lib/python3.12/lib-dynload/'
+                     '_tkinter.cpython-312-x86_64-linux-gnu.so'):
+        assert excluded not in names, excluded
     value = e.verify(destination)
     assert value['source_commit'] == result['source_commit']
     assert re.fullmatch('[0-9a-f]{40}', result['source_commit'])

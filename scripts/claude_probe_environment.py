@@ -535,6 +535,29 @@ def build(source, output, allow_ci_build=False):
 _LINUX_BUILD_READY = (os.name == 'posix' and sys.version_info[:3] == (3, 12, 14)
                       and struct.calcsize('P') == 8)
 LINUX_STDLIB_SKIP_DIRS = ('__pycache__', 'site-packages', 'dist-packages')
+# Headless exclusion: the probe namespace has NO display and must not carry a
+# GUI/X stack. CPython's own embedded distributions exclude _tkinter for the
+# same reason, and closure completeness demands every packaged .so's
+# DT_NEEDED be resolvable in the pinned host directories - the _tkinter
+# chain would drag Tcl9/Tk9/X11 into the probe (the pinned Ubuntu 26.04
+# library directories ship no libtcl9.0.so/libtk9.0.so). turtle.py is
+# tkinter's standard-library front end and leaves with it. Every other
+# standard-library file and extension module stays complete; host libraries
+# that DO exist in the pinned directories (readline/tinfo/ncursesw/gdbm)
+# are resolved and bound by the closure automatically.
+LINUX_STDLIB_EXCLUDED_PACKAGES = ('tkinter',)
+LINUX_STDLIB_EXCLUDED_MODULES = ('turtle.py',)
+LINUX_STDLIB_EXCLUDED_EXTENSIONS = ('_tkinter',)
+
+
+def _linux_stdlib_excluded(name):
+    """True for the headless-excluded tkinter surface of a stdlib member."""
+    parts = PurePosixPath(name).parts
+    if (any(package in parts for package in LINUX_STDLIB_EXCLUDED_PACKAGES)
+            or name in LINUX_STDLIB_EXCLUDED_MODULES):
+        return True
+    return (parts[0] == 'lib-dynload' and parts[-1].endswith('.so')
+            and parts[-1].startswith(LINUX_STDLIB_EXCLUDED_EXTENSIONS))
 
 
 def _linux_measure_file(path):
@@ -595,7 +618,8 @@ def build_linux(source, destination):
     The payload contains python/bin/python3 (the pinned base CPython 3.12.14
     binary, mode 0755), the complete standard library including extension
     modules under python/lib/python3.12 (host caches and site/dist-packages
-    excluded), lock-matched test dependencies under
+    excluded, plus ONLY the headless tkinter surface - see
+    LINUX_STDLIB_EXCLUDED_*), lock-matched test dependencies under
     python/lib/python3.12/site-packages, and the committed source/tests the
     probe needs. No virtualenv metadata, editable install, HOME, .env,
     project .local, database or unrelated configuration is copied: the input
@@ -633,6 +657,8 @@ def build_linux(source, destination):
     _linux_exclusive_write(destination/'python/bin/python3',
                            _linux_measure_file(binary), 0o755)
     for name, path in sorted(walk(stdlib).items()):
+        if _linux_stdlib_excluded(name):
+            continue
         parts = PurePosixPath(name).parts
         if (any(part in LINUX_STDLIB_SKIP_DIRS for part in parts)
                 or name.endswith('.pyc')):
@@ -889,7 +915,7 @@ def _elf_facts(path, size, require_interp=True):
             fail('image_elf_invalid')
         if interp is not None and not interp.startswith('/'):
             fail('image_elf_invalid')
-        needed_offsets, strtab_vaddr = [], None
+        needed_offsets, strtab_vaddr, strtab_size = [], None, None
         if dynamic is not None:
             raw = _elf_read(stream, dynamic[0], dynamic[1], size)
             for offset in range(0, len(raw) - 15, 16):
@@ -900,22 +926,48 @@ def _elf_facts(path, size, require_interp=True):
                     needed_offsets.append(value)
                     if len(needed_offsets) > ELF_MAX_NEEDED:
                         fail('image_elf_invalid')
-                elif tag == 5 and strtab_vaddr is None:
-                    strtab_vaddr = value
-                elif tag == 5:
-                    fail('image_elf_invalid')
+                elif tag in (5, 10):
+                    # DT_STRTAB / DT_STRSZ: first occurrence wins; a second
+                    # would be ambiguous and is refused.
+                    if tag == 5 and strtab_vaddr is None:
+                        strtab_vaddr = value
+                    elif tag == 10 and strtab_size is None:
+                        strtab_size = value
+                    else:
+                        fail('image_elf_invalid')
         needed = []
         if needed_offsets:
             if strtab_vaddr is None:
                 fail('image_elf_invalid')
-            span = next(((vaddr, offset, filesz) for vaddr, offset, filesz in loads
-                         if vaddr <= strtab_vaddr < vaddr + filesz), None)
-            if span is None:
-                fail('image_elf_invalid')
-            vaddr, offset, filesz = span
-            start = offset + (strtab_vaddr - vaddr)
-            limit = min(offset + filesz, start + ELF_MAX_STRTAB_BYTES)
-            table = _elf_read(stream, start, limit - start, size)
+            if strtab_size is not None:
+                # A known DT_STRSZ may legitimately span several contiguous
+                # LOAD segments (real linkers place .dynstr across segment
+                # boundaries, as ld.so's page-wise translation expects), so
+                # the table is read by walking the LOAD map - still bounded
+                # by ELF_MAX_STRTAB_BYTES - instead of one segment.
+                remaining = min(strtab_size, ELF_MAX_STRTAB_BYTES)
+                table = bytearray()
+                cursor = strtab_vaddr
+                while remaining > 0:
+                    span = next(((vaddr, offset, filesz) for vaddr, offset, filesz in loads
+                                 if vaddr <= cursor < vaddr + filesz), None)
+                    if span is None:
+                        fail('image_elf_invalid')
+                    vaddr, offset, filesz = span
+                    chunk = min(remaining, filesz - (cursor - vaddr))
+                    table += _elf_read(stream, offset + (cursor - vaddr), chunk, size)
+                    cursor += chunk
+                    remaining -= chunk
+                table = bytes(table)
+            else:
+                span = next(((vaddr, offset, filesz) for vaddr, offset, filesz in loads
+                             if vaddr <= strtab_vaddr < vaddr + filesz), None)
+                if span is None:
+                    fail('image_elf_invalid')
+                vaddr, offset, filesz = span
+                start = offset + (strtab_vaddr - vaddr)
+                limit = min(offset + filesz, start + ELF_MAX_STRTAB_BYTES)
+                table = _elf_read(stream, start, limit - start, size)
             if not table.startswith(b'\0'):
                 fail('image_elf_invalid')
             for position in needed_offsets:
@@ -1355,7 +1407,7 @@ def _linux_namespace_plan_problem(plan):
     binds = plan.get('runtime_binds')
     if type(binds) is not list or not 1 <= len(binds) <= LINUX_MAX_RUNTIME_BINDS:
         return 'namespace_plan_invalid'
-    seen_guests, seen_sources, pairs = set(), set(), set()
+    seen_guests, identities, pairs = set(), {}, set()
     for bind in binds:
         if (type(bind) is not dict
                 or sorted(bind) != ['bytes', 'guest', 'mode', 'sha256', 'source']
@@ -1368,10 +1420,17 @@ def _linux_namespace_plan_problem(plan):
                 or type(bind.get('bytes')) is not int
                 or not 1 <= bind['bytes'] <= MAX_FILE):
             return 'namespace_plan_invalid'
-        if bind['guest'] in seen_guests or bind['source'] in seen_sources:
+        if bind['guest'] in seen_guests:
+            return 'namespace_plan_invalid'
+        # Guests must be unique; one measured source may legitimately back
+        # several canonical guest paths (the official ELF needs ld.so at its
+        # PT_INTERP path AND as a DT_NEEDED soname, and usr-merged hosts
+        # realpath both onto one file) - but only ever with one identity.
+        previous = identities.get(bind['source'])
+        if previous is not None and previous != (bind['sha256'], bind['bytes']):
             return 'namespace_plan_invalid'
         seen_guests.add(bind['guest'])
-        seen_sources.add(bind['source'])
+        identities[bind['source']] = (bind['sha256'], bind['bytes'])
         pairs.add((bind['source'], bind['guest']))
     layout = plan.get('runtime_layout')
     if (type(layout) is not dict
