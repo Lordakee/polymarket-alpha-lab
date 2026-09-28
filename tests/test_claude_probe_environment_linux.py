@@ -106,6 +106,28 @@ def synthetic_host_runtime(tmp_path, monkeypatch):
     return root
 
 
+def assert_measured_interp_bind(by_guest, interp):
+    """Assert an interpreter bind carries the platform-truth measurement.
+
+    Soname resolution is owned by the synthetic fixture, but an absolute
+    interpreter path that genuinely exists on the host (the real
+    /lib64/ld-linux-x86-64.so.2 on Linux) is deliberately measured from that
+    host file - that is the production behavior under test; only where the
+    canonical path is absent does resolution fall through to the fixture
+    stand-in. The bind must pin exactly the file resolution chose, with
+    sha256 and size measured from those very bytes.
+    """
+    entry = by_guest[interp]
+    source = Path(os.path.realpath(str(e._linux_runtime_source(interp))))
+    data = source.read_bytes()
+    assert entry['source'] == str(source)
+    assert entry['sha256'] == sha256(data).hexdigest()
+    assert entry['bytes'] == len(data)
+    if not os.path.lexists(interp):
+        assert data == LD_ELF  # the fixture stand-in was the resolution result
+    return data
+
+
 def valid_linux_manifest(data=ELF):
     return dict(schema='claude-probe-image-linux-v1', path='claude',
                 sha256=sha256(data).hexdigest(), bytes=len(data),
@@ -580,7 +602,7 @@ def test_linux_official_config_writes_reviewed_launch_plan(tmp_path):
                   f'{library}/libgcc_s.so.1', f'{library}/libz.so.1'):
         assert guest in by_guest, guest
     assert by_guest['/bin/sh']['sha256'] == sha256(SHELL_ELF).hexdigest()
-    assert by_guest['/lib64/ld-linux-x86-64.so.2']['sha256'] == sha256(LD_ELF).hexdigest()
+    assert_measured_interp_bind(by_guest, '/lib64/ld-linux-x86-64.so.2')
     assert by_guest['/pal-input/python/bin/python3']['sha256'] == sha256(PYTHON3_ELF).hexdigest()
     assert by_guest[f'{library}/libc.so.6']['bytes'] == len(LIBC_ELF)
     for entry in binds:
@@ -741,7 +763,7 @@ def test_linux_runtime_closure_is_measured_recursive_and_deterministic(tmp_path)
         assert entry['sha256'] == sha256(data).hexdigest()
         assert entry['bytes'] == len(data) and entry['mode'] == 'ro'
     assert by_guest['/bin/sh']['sha256'] == sha256(SHELL_ELF).hexdigest()
-    assert by_guest['/lib64/ld-linux-x86-64.so.2']['sha256'] == sha256(LD_ELF).hexdigest()
+    assert_measured_interp_bind(by_guest, '/lib64/ld-linux-x86-64.so.2')
     assert by_guest['/pal-input/python/bin/python3']['sha256'] == sha256(PYTHON3_ELF).hexdigest()
 
 

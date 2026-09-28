@@ -1140,9 +1140,16 @@ def _clean_export_name(name):
 
 
 def _export_tree(source_dir, prefix, dest_dir, cap, state):
-    """Depth-bounded no-follow copy; regular files only, exclusive creation."""
+    """Depth-bounded no-follow copy; regular files only, exclusive creation.
+
+    Directory entries are visited in sorted name order so the exported
+    manifest, the unsafe-entry list and every cap decision are deterministic
+    across platforms and runs (scandir order is filesystem-dependent:
+    alphabetical on some, creation/inode order on others). Evidence must be
+    reproducible, never a directory-order artifact.
+    """
     with os.scandir(source_dir) as stream:
-        for entry in stream:
+        for entry in sorted(stream, key=lambda item: item.name):
             name = entry.name
             if not _clean_export_name(name):
                 state['unsafe'].append(prefix + name)
