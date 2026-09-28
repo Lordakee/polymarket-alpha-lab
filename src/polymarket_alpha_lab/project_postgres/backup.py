@@ -224,6 +224,16 @@ def restore_cold_backup(root: Path, *, archive: Path, expected_sha256: str,
             if layout.home.exists() or staged.layout.home.exists():
                 fail('project_postgres_restore_existing_data_refused')
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+                # Same POSIX TIME_WAIT tolerance as the engine probes in
+                # server.py (see its _start note): the restored engine re-runs
+                # on this same 127.0.0.1 fixed port, so TIME_WAIT entries left
+                # by its own prior sessions must not read as occupied (Linux
+                # refuses the bind at port granularity without this), while a
+                # live listener still blocks it. Windows binds already conflict
+                # per connection tuple and SO_REUSEADDR there would also steal
+                # a live listener, so it stays unset.
+                if os.name == 'posix':
+                    probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 try:
                     probe.bind(('127.0.0.1', data['instance']['port']))
                 except OSError:
