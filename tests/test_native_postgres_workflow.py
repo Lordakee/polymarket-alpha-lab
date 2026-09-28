@@ -185,7 +185,12 @@ def test_native_partition_limits_and_failure_policy_are_explicit():
     assert '    timeout-minutes: 20\n' in worker
     assert '    runs-on: windows-2025\n' in worker
     assert 'continue-on-error' not in text
-    assert '    if: ${{ always() }}\n' in gate
+    # Section 61 controlled CI transition (2026-09-28): the Windows matrix and
+    # its summary gate are retired as visible frozen history; a skipped input
+    # would fail an always() gate, so both carry if: false.
+    assert "if: false  # retired 2026-09-28 per DELIVERY_PLAN.md section 61" in worker
+    assert gate.startswith(
+        '    if: false  # retired 2026-09-28 with windows-native-part')
     assert '    needs: [windows-native-part]\n' in gate
     assert 'NATIVE_RESULT: ${{ needs.windows-native-part.result }}' in gate
     assert '    timeout-minutes: 2\n' in gate

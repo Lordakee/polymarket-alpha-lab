@@ -100,7 +100,15 @@ concurrency:
   group: native-project-postgres-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  # Section 61 controlled CI transition (2026-09-28): the windows-native
+  # matrix proved the platform-neutral storage/research/dispatch surface on
+  # Windows/PG17. It is retired as an active duty and kept as frozen history
+  # (visible skipped jobs, steps byte-identical) in the same push as the L5
+  # Linux-only operator admission; the linux-native lanes are the live
+  # acceptance. The windows-native summary gate below is retired with it —
+  # leaving it enabled would turn the skipped partitions into a red gate.
   windows-native-part:
+    if: false  # retired 2026-09-28 per DELIVERY_PLAN.md section 61
     name: windows-native-${{ matrix.partition }}
     strategy:
       # All partitions must run; failure never cancels sibling evidence.
@@ -261,7 +269,7 @@ jobs:
   # Preserve the original required-check name, but never accept a skipped,
   # cancelled or failed matrix. There is no success fallback.
   windows-native:
-    if: ${{ always() }}
+    if: false  # retired 2026-09-28 with windows-native-part (skipped input fails an always() gate)
     needs: [windows-native-part]
     runs-on: ubuntu-latest
     timeout-minutes: 2
