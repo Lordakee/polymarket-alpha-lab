@@ -2367,3 +2367,101 @@ G2—G6 PARTIAL。实际执行证据待后续按精确修订／命令／结果�
 
 官方用例执行：0/6；真实提供商调用：false；activation_authorized：false。
 **WP-02—WP-06 仍 PARTIAL，G2—G6 未关闭，V1 仍 1／6。**
+
+## 62. §61 节点 L1—L6 执行与 Linux 工程预发布（2026-09-28）
+
+本节记录 §61 Linux 转向 L0—L6 节点的实际执行、C 修订的验收证据，与
+v0.1.0-linux-preview.1 预发布的待定状态。发布回执在发布完成后由 E 提交
+补充；在此之前所有发布相关值以下文实测为准，不虚构。
+
+### L1—L5 节点交付（均已合入 main）
+
+- **L1 探针准备**（d39366a9）：scripts/claude_probe_environment.py 增
+  --platform {windows,linux}；冻结 Windows 路径字节不变（119 项冻结测试
+  零改动通过）；Linux 路径：操作者实测工件身份（claude-probe-image-linux-v1，
+  模块内无任何 sha256/尺寸常量并有测试证明）、有界 ELF64 解析、O_EXCL
+  0o755 启动器、bwrap 式命名空间计划（加固校验器：旗标白名单、
+  --dev/--proc 操作数窗口、连续 tmpfs+sizelimit 窗口）；纯生成零执行。
+  评审 PASS＋修复增量复审 PASS。
+- **L2 分发移植**（c832569c）：require_linux() 准入（posix/linux/x86_64）、
+  TARGET=linux-x86_64、POSTGRES_MAJOR=18、跨平台双向拒收、PG18 前缀门、
+  引擎 ZIP 语义不变。评审 PASS；真实元组验收（166 主机，Ubuntu 26.04.1/
+  Python 3.12.14/PG 18.6）：native distribution 1 passed 1108s，证明 ZIP
+  保全（sha256 b2647773…，40,790,654 B）。
+- **L3 CI+切换**（4a7422dd）：两条 workflow 纯新增 Linux lane（冻结
+  Windows 作业字节不变）；version-switch 重定版 OLD=v0.1.0-native-preview.1
+  （2b20002c，目录 63）→CANDIDATE=HEAD（目录 68，5 条追加迁移严格前缀）；
+  准入经 distribution.TARGET 公共接口交叉钉定。评审 PASS（6 NOTE）。
+- **L4 操作文档**（0faa7def）：活跃指南 Linux 化（Bash、.venv/bin/python、
+  §61 元组），§58 八步切换过程语义保留（Bash 五变量、同六调用多重集），
+  历史保留。评审 PASS＋MINOR 修复。
+- **L5 受控真实客户端装配**（49d4996d）：组合式 LinuxLaunchSpec（供应商
+  身份恒在 spec.argv[0]/sha；密封 memfd 快照经 /proc/self/fd 绑定执行；
+  bwrap 0.11 --ro-bind-data+seek 复位；包装器从其实际执行路径重验证）；
+  两阶段生命周期（无凭据版本执行→拆除验证→模型命名空间；监督者在
+  vendor cgroup 之外，bootstrap 闸门至 cgroup 放置+读回）；提示词字节
+  守恒（EOF 仅关提示信道；排空方关 guest stdin；EPIPE/未投递失败为
+  research_process_input_incomplete；中继失败独立为
+  research_process_relay_failed；父侧提示管道保持阻塞——pass_fds 共享
+  open file description，O_NONBLOCK 会泄漏进监督者阻塞读）；一次性匿名
+  凭据管道（fd 3、仅模型阶段、不入 argv/env/监督者内存）；离线唯一出口；
+  FiniteInMemoryApiKeySupplier 构造期绑定停止令牌（A1，操作员拒绝身份
+  不匹配）；research-claude-profile-linux-v2 摘要（Claude 与 Codex 的 v1
+  字节不变，四个金摘要钉定）；操作员准入守卫先于任何会话写入。
+  设计门：Codex 计划＋A1—A5 修正附录＋复审 PASS。实现评审两轮修复后
+  PASS；终轮评审 PASS（处方 MINOR 落实，其一按共享 O_NONBLOCK 理由回退
+  并记录）。合成原生验收（166，bwrap 0.11.1、委派 cgroup、
+  systemd-run --user --scope）：封闭性 122 passed/4 预期跳过；PG 2/2
+  停止/重启/重放与驱动丢失双 PASS（精确计数 4 槽/4 版本/4 模型；BTC
+  供应器余 0、ETH 余 2）。记录：**L5 合成装配已验收；真实客户端资格/
+  激活待定。**
+- **过渡修订**（06e4996d…06e49d0f 链）：windows-kit（4b5dc672）与
+  windows-native 矩阵+汇总门（06e49d0f）按 §61 处置退役为可见冻结历史
+  （if: false、步骤字节不变、契约测试钉定退役态）；windows-native 与
+  L5 同推满足 A2 时序。
+- **基础设施修复**（各经独立增量评审 PASS）：打包配方超时只可上调
+  （72271108）；workflow_dispatch 触发（bbd06898）；PGDG 符号链接
+  cp -aL 解引用（b692e2d0）；原生测试端口改选临时区外 [20000,32767]
+  （9988f26e，tests/native_port_selection.py）；POSIX SO_REUSEADDR 端口
+  探测（6326101c server.py、e8d2457e backup.py）修复 Linux 端口粒度
+  TIME_WAIT 误报；version-switch rig 保留 venv 解释器路径（f35093c2）；
+  L6 准备件（ef01a9c0：runbook、quickstart 预览措辞、cp -aL 文档示例）。
+
+### C 修订验收（C=06e49d0f，tree 027996b0）
+
+- 服务器全量：verify_local --full PASS，**40015 passed / 80 skipped /
+  0 failed**（1901.52s；日志 ~/pal-artifacts/verify-full-C-06e49d0f.log）。
+- CI at C 全绿：Offline verification（run 36403256602，9m37s）；Native
+  project PostgreSQL（36406813585，Linux 三分区+汇总门 success，Windows
+  腿按退役跳过）；Native project distribution（36406819949，linux-kit
+  success）。仓库无 rulesets、main 无分支保护（§61 预设的"换必需上下文"
+  步骤经查证为空操作，已如实记录）。
+- 固定对切换：OLD 2b20002c（目录 63）↔C（目录 68），3 passed（455.21s），
+  同一合格 PG18 前缀。表述为**"一个固定源版本对加一个已发布候选 kit"**。
+
+### v0.1.0-linux-preview.1 预发布（待定：发布回执未记）
+
+- 构建与验收在指定主机完成（元组与前缀溯源见
+  acceptance-evidence.zip 内 tuple-prefix-measurements.txt）。第二次尝试
+  1 passed 1066.10s；**首次尝试失败已保全**（attempt1-FAILED-timing：
+  全量套件后 IO 压力使捕获子进程变慢、越过市场开市 8 秒——C 上 CI
+  linux-kit 同测试绿，判环境性非代码回归）。
+- 资产（本地与服务器端哈希一致）：kit ZIP sha256
+  a0c9a014e4efdfa5215843af84120831457e27e9e319045b5e365e660aea6ce9
+  （40,813,935 B，2,944 文件，目标 linux-x86_64，PG 18.6，不含数据库
+  与 Python）；PROJECT-BUNDLE.json 字节副本（12594f09…，424,902 B）；
+  acceptance-evidence.zip（72fb6612…）；release-manifest.json
+  （6ce67bb0…）；release-notes.md（817e0840…）；SHA256SUMS（432ef1f3…，
+  自排除）。标签与 Release 缺席已以真实 API 404 确认。
+- 独立冻结资产评审进行中；其后按 runbook 核验不可变性前提并执行
+  tag→draft→verify→publish→公开回读。**发布未完成前本小节为待定；
+  回执（标签对象/Release 与资产 ID/下载 URL/公开回读/外部终审裁决）
+  由 E 提交补记。**
+
+### 状态判定
+
+**L6 耐久发布：待定（资产就绪、评审与发布序列进行中）。G6 与 WP-06
+维持 PARTIAL：G2—G5 未关闭（官方 Linux Claude 工件未实测、官方用例
+0/6、真实研究/结算/样本证据未采、activation_authorized=false、真实
+提供商调用 false）。本预发布不是 V1 完成、不是统计策略验证、不是执行
+授权。Windows 保持退役冻结。**
