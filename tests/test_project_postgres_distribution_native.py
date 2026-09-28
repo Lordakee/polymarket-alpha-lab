@@ -9,10 +9,14 @@ Target tuple: Ubuntu 26.04.1 x86_64, Python 3.12.14, pinned PostgreSQL 18
 (the server's ~/pg-runtime-src pattern):
 
     mkdir -p ~/pg-runtime-src
-    cp -a /usr/lib/postgresql/18/bin ~/pg-runtime-src/bin    # apt PG18 programs
-    cp -a /usr/lib/postgresql/18/lib ~/pg-runtime-src/lib    # apt PG18 libraries
-    cp -a /usr/share/postgresql/18/. ~/pg-runtime-src/share/ # postgres.bki etc.
+    # -L dereferences: PGDG layouts ship development symlinks the
+    # symlink-free prefix contract must not contain (commit b692e2d0).
+    cp -aL /usr/lib/postgresql/18/bin ~/pg-runtime-src/bin    # apt PG18 programs
+    cp -aL /usr/lib/postgresql/18/lib ~/pg-runtime-src/lib    # apt PG18 libraries
+    cp -aL /usr/share/postgresql/18/. ~/pg-runtime-src/share/ # postgres.bki etc.
     cp /usr/share/doc/postgresql-18/copyright ~/pg-runtime-src/COPYRIGHT
+    find ~/pg-runtime-src -type l -ls    # evidence line; must print nothing
+    test "$(find ~/pg-runtime-src -type l | wc -l)" -eq 0
 
 Run on the Linux development host (ubuntu@166.1.232.93) with:
 

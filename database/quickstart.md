@@ -15,10 +15,14 @@ A packaged kit carries the project source, locked Python dependency metadata,
 all historical SQL migrations, and the reviewed PostgreSQL 18 engine archive
 for that tuple. No Docker, Supabase service, shared database installation or
 system database service is needed. The engine is imported automatically on
-first explicit run. Until the reviewed Linux build record publishes a tested
-kit ZIP with its SHA256 and byte size, the packaged-kit references below name
-that pending release; the operating path itself runs from a source
-installation on Linux today.
+first explicit run. The packaged-kit path is delivered as a specifically
+identified engineering preview: the immutable GitHub prerelease tagged
+`v0.1.0-linux-preview.1`. That preview is published only by its release
+record — the maintainer runbook `docs/releases/linux-preview-release.md`, the
+retained release metadata under `docs/releases/`, and DELIVERY_PLAN.md
+section 62 — and by no other party or URL. Until that record exists the
+preview is pending and there is no kit download to trust; the operating path
+itself runs from a source installation on Linux today.
 
 **Python is still required.** This is a source + native database distribution,
 not a standalone executable, Python installer, prebuilt venv, or offline wheel
@@ -64,6 +68,37 @@ extracting into a **new directory owned by your normal Linux user account**. The
 internal `PROJECT-BUNDLE.json` binds every selected code/migration file and the
 engine archive, but cannot authenticate a publisher or make malicious Python
 safe. Never run an untrusted archive merely because its internal hashes agree.
+
+### The identified engineering preview
+
+The specifically identified engineering preview is the immutable GitHub
+prerelease tagged `v0.1.0-linux-preview.1` in `Lordakee/polymarket-alpha-lab`.
+Its kit asset has one fixed download URL pattern, valid only once the release
+record exists:
+
+```text
+https://github.com/Lordakee/polymarket-alpha-lab/releases/download/v0.1.0-linux-preview.1/polymarket-alpha-lab-v0.1.0-linux-preview.1-linux-x86_64.zip
+```
+
+Take the trusted outer SHA256 and byte size only from that preview's release
+record — the release's own `SHA256SUMS` and `release-manifest.json` assets,
+the retained metadata under `docs/releases/`, and DELIVERY_PLAN.md section 62 —
+never from the download location itself. Those recorded values are
+`<to-be-recorded-at-publication>` until the release record exists; until then
+the preview is pending and no archive claiming to be it may be downloaded,
+trusted or extracted. Once recorded, verify both values before extraction:
+
+```bash
+sha256sum polymarket-alpha-lab-v0.1.0-linux-preview.1-linux-x86_64.zip
+stat --printf='%s\n' polymarket-alpha-lab-v0.1.0-linux-preview.1-linux-x86_64.zip
+```
+
+Both printed values must equal the recorded pair exactly; a mismatch on
+either stops use of that copy. Obtaining and verifying the archive is not
+first-start authorization: only the separate explicit authorization in
+operating-path step 1 below creates a NEW project, and the existing-root and
+source-switch restrictions in the version-change section apply unchanged to
+any installation made from this preview.
 
 The archive contains no `.local`, generated credentials, old cluster, `.env`,
 `.venv`, Git metadata, logs, captured evidence or test datasets. Each extraction
@@ -115,11 +150,14 @@ A build writes a `.building` file and publishes a completed ZIP without overwrit
 An interrupted/failed build can leave its owned partial file; it does not publish
 that partial as a valid kit or delete a prior output. The manifest identifies the
 source commit/tree, target, engine version and file digests. Neither a kit nor a
-passing synthetic test establishes real model forecasting performance. Until the
-fixed Linux/PG18 kit passes its wrong-platform rejection, permissions,
-integrity, fresh-extraction and actual first-start tests on the exact release
-tuple, a built ZIP is not an approved release; durable publication with SHA256
-values and byte sizes is tracked separately in DELIVERY_PLAN.md.
+passing synthetic test establishes real model forecasting performance. The kit's
+wrong-platform rejection, permissions, integrity, fresh-extraction and actual
+first-start checks are exercised by the existing native distribution acceptance;
+a built ZIP is still not an approved release until that acceptance passes on the
+exact release tuple and the unchanged accepted ZIP is published through the
+maintainer runbook `docs/releases/linux-preview-release.md`. Durable publication
+with SHA256 values and byte sizes is recorded in DELIVERY_PLAN.md section 62 and
+the retained release metadata under `docs/releases/`.
 
 ## One operating path: discovery to retained simulation and settlement
 
