@@ -2371,8 +2371,7 @@ G2—G6 PARTIAL。实际执行证据待后续按精确修订／命令／结果�
 ## 62. §61 节点 L1—L6 执行与 Linux 工程预发布（2026-09-28）
 
 本节记录 §61 Linux 转向 L0—L6 节点的实际执行、C 修订的验收证据，与
-v0.1.0-linux-preview.1 预发布的待定状态。发布回执在发布完成后由 E 提交
-补充；在此之前所有发布相关值以下文实测为准，不虚构。
+v0.1.0-linux-preview.1 的发布记录（回执已由 E=a1128a65 补记）。
 
 ### L1—L5 节点交付（均已合入 main）
 
@@ -2439,20 +2438,24 @@ v0.1.0-linux-preview.1 预发布的待定状态。发布回执在发布完成后
 - 固定对切换：OLD 2b20002c（目录 63）↔C（目录 68），3 passed（455.21s），
   同一合格 PG18 前缀。表述为**"一个固定源版本对加一个已发布候选 kit"**。
 
-### v0.1.0-linux-preview.1 预发布（待定：发布回执未记）
+### v0.1.0-linux-preview.1 预发布（发布回执已由 E 补记）
 
 - 构建与验收在指定主机完成（元组与前缀溯源见
   acceptance-evidence.zip 内 tuple-prefix-measurements.txt）。第二次尝试
   1 passed 1066.10s；**首次尝试失败已保全**（attempt1-FAILED-timing：
   全量套件后 IO 压力使捕获子进程变慢、越过市场开市 8 秒——C 上 CI
   linux-kit 同测试绿，判环境性非代码回归）。
-- 资产（本地与服务器端哈希一致）：kit ZIP sha256
+- 资产（本地与服务器端哈希一致；下表为发布前首次组装值——四份派生
+  资产经评审修复后重组，最终发布值见回执：evidence 9825a482…、manifest
+  f2a97656…、notes c2ebe66b…、SHA256SUMS 427e527a…）：kit ZIP sha256
   a0c9a014e4efdfa5215843af84120831457e27e9e319045b5e365e660aea6ce9
   （40,813,935 B，2,944 文件，目标 linux-x86_64，PG 18.6，不含数据库
-  与 Python）；PROJECT-BUNDLE.json 字节副本（12594f09…，424,902 B）；
-  acceptance-evidence.zip（72fb6612…）；release-manifest.json
-  （6ce67bb0…）；release-notes.md（817e0840…）；SHA256SUMS（432ef1f3…，
-  自排除）。标签与 Release 缺席已以真实 API 404 确认。
+  与 Python，内嵌 PG 引擎）；PROJECT-BUNDLE.json 字节副本（12594f09…，
+  424,902 B）；acceptance-evidence.zip（72fb6612…→9825a482…）；
+  release-manifest.json（6ce67bb0…→f2a97656…）；release-notes.md
+  （817e0840…→c2ebe66b…）；SHA256SUMS（432ef1f3…→427e527a…，自排除）。
+  标签与 Release 缺席已以真实 API 404 确认（发布前状态，发布后由回执
+  取代）。
 - 独立冻结资产评审三轮：第一轮 FAIL（前缀溯源集缺失、§3 双处事实
   欠缺）→ 补采 tuple-provenance.txt（1,468 行）与 kit-measurement.txt
   并重组派生资产；第二轮 FAIL（engine_binaries_included 事实错误——
