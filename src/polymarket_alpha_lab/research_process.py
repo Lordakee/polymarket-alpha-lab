@@ -253,6 +253,12 @@ def _drain(owned, descriptors, stdin, spec, deadline, stop):
                 stderr_bytes += len(block)
         code = owned.poll()
         if code is not None and source is None and out is None and err is None:
+            # A negative status is a Linux signal death (_LinuxProcess.poll
+            # negates si_status for non-CLD_EXITED terminations). Windows
+            # poll() returns a DWORD exit code >= 0, so this branch cannot
+            # fire there; an ordinary nonzero exit keeps its own fixed code.
+            if code < 0:
+                raise ResearchProcessError('research_process_signaled')
             if code != 0:
                 raise ResearchProcessError('research_process_nonzero_exit')
             return bytes(collected), stderr_bytes
@@ -364,7 +370,7 @@ def run_research_process(*, spec, stdin, allow_process_start=False, stop=None,
         reasons = ('research_process_stopped', 'research_process_timeout',
                    'research_process_not_started', 'research_process_output_limit',
                    'research_process_input_incomplete', 'research_process_nonzero_exit',
-                   'research_process_cleanup_failed',
+                   'research_process_signaled', 'research_process_cleanup_failed',
                    # Contained-Linux fixed codes; unreachable on the legacy path.
                    'research_process_platform_unsupported',
                    'research_process_version_mismatch',

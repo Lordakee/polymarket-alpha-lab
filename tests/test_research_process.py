@@ -4,11 +4,13 @@ from hashlib import sha256
 import json
 import os
 from pathlib import Path
+import signal
 import subprocess
 import sys
 import threading
 import time
 import traceback
+from types import SimpleNamespace
 
 import pytest
 
@@ -146,6 +148,61 @@ def test_failure_is_redacted_and_not_success(executable,tmp_path,code):
     with pytest.raises(core.ResearchProcessError) as error: run(spec(executable,tmp_path,code),b'x'*500000)
     assert 'PRIVATE-SENTINEL' not in str(error.value)
     assert str(tmp_path) not in ''.join(traceback.format_exception(error.value))
+
+
+@pytest.mark.parametrize('status,expected', [
+    (-9, 'research_process_signaled'),
+    (-15, 'research_process_signaled'),
+    (-128, 'research_process_signaled'),
+    (1, 'research_process_nonzero_exit'),
+    (19, 'research_process_nonzero_exit'),
+    (256, 'research_process_nonzero_exit'),
+])
+def test_drain_distinguishes_signal_death_from_ordinary_nonzero_exit(
+        monkeypatch, executable, tmp_path, status, expected):
+    """Synthetic owner: only a NEGATIVE child status is signal death.
+
+    _LinuxProcess.poll() negates si_status for non-CLD_EXITED terminations,
+    while the Windows owner returns DWORD exit codes >= 0, so a negative
+    value can only describe a Linux signal death. The two fixed codes must
+    stay distinct through final normalization as well.
+    """
+    owner = SimpleNamespace(poll=lambda: status, terminate=lambda: None,
+                            is_closed=lambda: True, close=lambda: None)
+    monkeypatch.setattr(core, '_verify_executable', lambda _: None)
+    monkeypatch.setattr(core, '_spawn', lambda _: (owner, (None, None, None)))
+    with pytest.raises(core.ResearchProcessError, match=f'^{expected}$'):
+        run(spec(executable, tmp_path))
+
+
+def test_synthetic_owner_zero_status_is_still_an_ordinary_success(
+        monkeypatch, executable, tmp_path):
+    owner = SimpleNamespace(poll=lambda: 0, terminate=lambda: None,
+                            is_closed=lambda: True, close=lambda: None)
+    monkeypatch.setattr(core, '_verify_executable', lambda _: None)
+    monkeypatch.setattr(core, '_spawn', lambda _: (owner, (None, None, None)))
+    assert run(spec(executable, tmp_path), b'').stdout == b''
+
+
+def test_ordinary_nonzero_exit_keeps_its_distinct_fixed_code(executable, tmp_path):
+    with pytest.raises(core.ResearchProcessError, match='^research_process_nonzero_exit$'):
+        run(spec(executable, tmp_path, 'import sys;sys.exit(19)'))
+
+
+@pytest.mark.skipif(sys.platform != 'linux', reason='only a Linux signal death produces a negative wait status')
+def test_actual_linux_signal_death_reports_research_process_signaled(executable, tmp_path):
+    code = 'import os,signal;os.kill(os.getpid(),signal.SIGKILL)'
+    with pytest.raises(core.ResearchProcessError, match='^research_process_signaled$'):
+        run(spec(executable, tmp_path, code))
+
+
+@pytest.mark.skipif(sys.platform != 'linux', reason='only a Linux signal death produces a negative wait status')
+def test_actual_linux_signal_death_is_not_an_ordinary_nonzero_exit(executable, tmp_path):
+    code = 'import os,signal;os.kill(os.getpid(),signal.SIGTERM)'
+    with pytest.raises(core.ResearchProcessError) as error:
+        run(spec(executable, tmp_path, code))
+    assert str(error.value) == 'research_process_signaled'
+    assert error.value.args != ('research_process_nonzero_exit',)
 
 
 def test_inflight_stop_terminates_only_the_owned_domain(executable,tmp_path):

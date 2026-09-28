@@ -5,6 +5,12 @@ Use only a disposable host with external egress denied. The test endpoint is
 HTTP on numeric loopback: the sole deliberate override of the production HTTPS
 profile. This does not test TLS, outside-root writes, or transient/deleted files.
 Observations are metadata only, never an activation authorization.
+
+v2 observation semantics: a negative scenario passes ONLY after its one
+matching request/response AND either an ordinary nonzero child exit or a
+returned result rejected by the strict decoder. Signal death, timeout, stop,
+failed startup, output limit, incomplete input, cleanup failure and generic
+infrastructure failure fail the case even when the response preceded them.
 """
 from contextlib import contextmanager
 from dataclasses import replace
@@ -31,8 +37,24 @@ UNRELATED = 'SYNTHETIC-PAL-UNRELATED-CONTEXT'
 RESPONSE = 'SYNTHETIC-PAL-MOCK-RESPONSE'
 MAX_FILE_BYTES, MAX_STATE_BYTES, MAX_ENTRIES = 65536, 4194304, 256
 MAX_HTTP_BYTES, MAX_REQUESTS = 1048576, 8
+# Fixed process-failure codes the v2 observation may carry; anything else is
+# recorded as None and can never satisfy a negative case.
+PROCESS_ERROR_CODES = frozenset((
+    'research_process_nonzero_exit', 'research_process_signaled',
+    'research_process_timeout', 'research_process_stopped',
+    'research_process_not_started', 'research_process_output_limit',
+    'research_process_input_incomplete', 'research_process_cleanup_failed',
+    'research_process_failed'))
 _ENV = ('POLYMARKET_ALPHA_LAB_CLAUDE_PROBE', 'POLYMARKET_ALPHA_LAB_CLAUDE_PROBE_IMAGE', 'POLYMARKET_ALPHA_LAB_CLAUDE_PROBE_SHA256',
         'POLYMARKET_ALPHA_LAB_CLAUDE_PROBE_BYTES', 'POLYMARKET_ALPHA_LAB_CLAUDE_PROBE_ISOLATED_HOST')
+
+
+def _process_error_code(error):
+    """Allowlisted fixed code only; never echo a foreign message or diagnostic."""
+    if (type(error) is process.ResearchProcessError and len(error.args) == 1
+            and type(error.args[0]) is str and error.args[0] in PROCESS_ERROR_CODES):
+        return error.args[0]
+    return None
 
 
 def _image_values(image, digest, size):
@@ -356,9 +378,10 @@ def run_probe(image, digest, size, *, root, mode, allow_probe=False, process_run
     except Exception:
         raise ValueError('probe_image_unavailable') from None
     runner = process.run_research_process if process_runner is None else process_runner
-    result = dict(schema_version='claude-cli-probe-v1', mode=mode, image_sha256=digest,
+    result = dict(schema_version='claude-cli-probe-v2', mode=mode, image_sha256=digest,
         image_bytes=size, cli_version=CLAUDE_VERSION, version_matches=False,
-        version_status='not_started', process_status='not_started', decoder_status='not_attempted',
+        version_status='not_started', version_error_code=None,
+        process_status='not_started', process_error_code=None, decoder_status='not_attempted',
         reported_tokens=None, response_matches=False, test_endpoint_override='numeric-loopback-http',
         activation_authorized=False, external_egress_verified=False, outside_root_verified=False,
         transient_writes_verified=False, vendor_provenance_verified=False)
@@ -378,8 +401,9 @@ def run_probe(image, digest, size, *, root, mode, allow_probe=False, process_run
             result['version_status'] = 'returned'
             result['version_matches'] = (type(version) is process.ResearchProcessResult
                 and version.stderr_bytes == 0 and version.stdout in (VERSION_OUTPUT.encode(), VERSION_OUTPUT.replace('\n', '\r\n').encode()))
-        except process.ResearchProcessError:
+        except process.ResearchProcessError as error:
             result['version_status'] = 'failed'
+            result['version_error_code'] = _process_error_code(error)
         if result['version_matches'] and server.count == server.unexpected == server.faults == 0:
             try:
                 raw = runner(spec=selected, stdin=request.prompt_json.encode(), allow_process_start=True)
@@ -393,8 +417,9 @@ def run_probe(image, digest, size, *, root, mode, allow_probe=False, process_run
                         and strict_json(reply.calls[0].arguments_json) == {'query': RESPONSE})
                 except ValueError:
                     result['decoder_status'] = 'rejected'
-            except process.ResearchProcessError:
+            except process.ResearchProcessError as error:
                 result['process_status'] = 'failed'
+                result['process_error_code'] = _process_error_code(error)
     result.update(request_count=server.count, unexpected_requests=server.unexpected,
                   request_contract_matches=server.matches and server.count == 1,
                   server_faults=server.faults, responses_sent=server.responses)
@@ -413,5 +438,13 @@ def observation_passed(value):
     if value['mode'] == 'success':
         return (common and value['decoder_status'] == 'accepted' and value['reported_tokens'] == 26
                 and value['response_matches'] is True)
-    return common and value['mode'] in MODES and (value['process_status'] == 'failed'
-        or value['process_status'] == 'returned' and value['decoder_status'] == 'rejected')
+    if value['mode'] not in MODES:
+        return False
+    # A negative case passes only after its one matching request/response AND
+    # either an ordinary nonzero child exit or a returned result rejected by
+    # the strict decoder. Signal death, timeout, stop, failed startup, output
+    # limit, incomplete input, cleanup failure, a non-allowlisted code and
+    # generic infrastructure failure all fail the case.
+    if value['process_status'] == 'failed':
+        return common and value['process_error_code'] == 'research_process_nonzero_exit'
+    return common and value['process_status'] == 'returned' and value['decoder_status'] == 'rejected'

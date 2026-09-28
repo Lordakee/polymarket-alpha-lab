@@ -25,6 +25,91 @@ def test_valid_but_changed_reply_does_not_pass_exact_mock_roundtrip(tmp_path):
     assert probe.observation_passed(result) is False
 
 
+def test_v2_error_code_allowlist_is_exactly_the_fixed_codes():
+    assert probe.PROCESS_ERROR_CODES == frozenset((
+        'research_process_nonzero_exit', 'research_process_signaled',
+        'research_process_timeout', 'research_process_stopped',
+        'research_process_not_started', 'research_process_output_limit',
+        'research_process_input_incomplete', 'research_process_cleanup_failed',
+        'research_process_failed'))
+
+
+def _v2_observation(**overrides):
+    value = dict(schema_version='claude-cli-probe-v2', mode='rate_limit',
+        version_matches=True, request_count=1, unexpected_requests=0, server_faults=0,
+        request_contract_matches=True, responses_sent=1, process_status='failed',
+        process_error_code='research_process_nonzero_exit', decoder_status='not_attempted',
+        state=dict(complete=True, changed_entries=0, unsafe_entries=0,
+                   sentinel_files=0, limit_reached=False))
+    value.update(overrides)
+    return value
+
+
+def test_v2_negative_predicate_accepts_only_its_two_fixed_pass_paths():
+    assert probe.observation_passed(_v2_observation()) is True
+    for code in ('research_process_signaled', 'research_process_timeout',
+                 'research_process_stopped', 'research_process_not_started',
+                 'research_process_output_limit', 'research_process_input_incomplete',
+                 'research_process_cleanup_failed', 'research_process_failed', None):
+        assert probe.observation_passed(_v2_observation(process_error_code=code)) is False, code
+    assert probe.observation_passed(_v2_observation(process_status='returned',
+        process_error_code=None, decoder_status='rejected')) is True
+    assert probe.observation_passed(_v2_observation(process_status='returned',
+        process_error_code=None, decoder_status='accepted')) is False
+    assert probe.observation_passed(_v2_observation(process_status='not_started',
+        process_error_code=None)) is False
+    # The one matching request/response must have preceded the outcome.
+    assert probe.observation_passed(_v2_observation(request_count=0, responses_sent=0)) is False
+    assert probe.observation_passed(_v2_observation(request_count=2, responses_sent=2)) is False
+
+
+def test_signal_death_after_a_full_matching_roundtrip_is_recorded_and_fails(tmp_path):
+    result = probe.run_probe(*image(), root=tmp_path/'probe', mode='truncated',
+        allow_probe=True, process_runner=simulated_runner([], outcome='research_process_signaled'))
+    assert result['schema_version'] == 'claude-cli-probe-v2'
+    assert result['request_count'] == result['responses_sent'] == 1
+    assert result['request_contract_matches'] is True
+    assert result['process_error_code'] == 'research_process_signaled'
+    assert probe.observation_passed(result) is False
+
+
+def test_non_allowlisted_error_code_is_redacted_and_fails(tmp_path):
+    result = probe.run_probe(*image(), root=tmp_path/'probe', mode='server_error',
+        allow_probe=True, process_runner=simulated_runner([], outcome='PRIVATE-SENTINEL-CODE'))
+    text = json.dumps(result)
+    assert result['process_status'] == 'failed' and result['process_error_code'] is None
+    assert 'PRIVATE-SENTINEL-CODE' not in text
+    assert probe.observation_passed(result) is False
+
+
+def test_negative_mode_with_a_decoder_accepted_result_does_not_pass(tmp_path):
+    def run(**kwargs):
+        if kwargs['spec'].argv[1:] == ('--version',):
+            return core.ResearchProcessResult(probe.VERSION_OUTPUT.encode(), 0, 1)
+        env = dict(kwargs['spec'].environment)
+        conn = http.client.HTTPConnection(env['ANTHROPIC_BASE_URL'].removeprefix('http://'), timeout=2)
+        body = json.dumps({'model': probe.MODEL_ID, 'max_tokens': 1024, 'stream': True,
+                           'tools': [], 'messages': [{'role': 'user', 'content': kwargs['stdin'].decode()}]})
+        conn.request('POST', '/v1/messages?beta=true', body,
+                     {'x-api-key': probe.TEST_KEY, 'Content-Type': 'application/json'})
+        conn.getresponse().read(); conn.close()
+        value = envelope(); value['result'] = probe.response_text('success')
+        return core.ResearchProcessResult(json.dumps(value).encode(), 0, 1)
+    result = probe.run_probe(*image(), root=tmp_path/'probe', mode='tool_use',
+        allow_probe=True, process_runner=run)
+    assert result['request_count'] == result['responses_sent'] == 1
+    assert result['process_status'] == 'returned' and result['decoder_status'] == 'accepted'
+    assert probe.observation_passed(result) is False
+
+
+def test_ordinary_nonzero_exit_before_any_request_does_not_pass(tmp_path):
+    result = probe.run_probe(*image(), root=tmp_path/'probe', mode='invalid_action',
+        allow_probe=True, process_runner=simulated_runner([], outcome='before_request'))
+    assert result['request_count'] == result['responses_sent'] == 0
+    assert result['process_error_code'] == 'research_process_nonzero_exit'
+    assert probe.observation_passed(result) is False
+
+
 def test_expected_image_size_is_exact_not_only_an_upper_bound(tmp_path):
     binary, digest, size = image()
     with pytest.raises(ValueError, match='probe_image_unavailable'):

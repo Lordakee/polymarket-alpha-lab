@@ -19,12 +19,22 @@ def image():
     return str(path), sha256(path.read_bytes()).hexdigest(), path.stat().st_size
 
 
-def simulated_runner(events, *, version=None, fault=None):
+def simulated_runner(events, *, version=None, fault=None, outcome=None, rejected_result=False,
+                     version_outcome=None):
+    """Synthetic stand-in CLI.
+
+    ``outcome`` raises that fixed process code AFTER the one matching
+    request/response ('before_request' raises an ordinary nonzero exit before
+    any request). ``rejected_result`` returns a CLI result the strict decoder
+    must reject. ``version_outcome`` fails the --version invocation.
+    """
     def run(*, spec, stdin, allow_process_start, **kwargs):
         assert allow_process_start is True
         assert set(dict(spec.environment)).isdisjoint({'PATH', 'HTTP_PROXY', 'HTTPS_PROXY'})
         if spec.argv[1:] == ('--version',):
             events.append('version')
+            if version_outcome is not None:
+                raise core.ResearchProcessError(version_outcome)
             return core.ResearchProcessResult((version or probe.VERSION_OUTPUT).encode(), 0, 1)
         events.append('message')
         env = dict(spec.environment)
@@ -32,6 +42,8 @@ def simulated_runner(events, *, version=None, fault=None):
         assert env['ANTHROPIC_BASE_URL'].startswith('http://127.0.0.1:')
         assert '--no-session-persistence' in spec.argv and '--restricted' in spec.argv
         assert stdin.decode() == probe.test_input().prompt_json
+        if outcome == 'before_request':
+            raise core.ResearchProcessError('research_process_nonzero_exit')
         address = env['ANTHROPIC_BASE_URL'].removeprefix('http://')
         conn = http.client.HTTPConnection(address, timeout=2)
         body = {'model': probe.MODEL_ID, 'max_tokens': 1024, 'stream': True,
@@ -53,6 +65,11 @@ def simulated_runner(events, *, version=None, fault=None):
         if fault == 'write': (Path(spec.cwd)/'new-state.sqlite').write_bytes(b'SQLite format 3\x00')
         if fault == 'persist_prompt': (Path(env['HOME'])/'transcript').write_bytes(stdin)
         if fault == 'persist_response': (Path(env['CLAUDE_CONFIG_DIR'])/'response').write_text(probe.response_text('success'))
+        if rejected_result:
+            value = envelope(); value['result'] = '{invalid'
+            return core.ResearchProcessResult(json.dumps(value).encode(), 0, 1)
+        if outcome is not None:
+            raise core.ResearchProcessError(outcome)
         if status != 200: raise core.ResearchProcessError('research_process_nonzero_exit')
         if b'"name": "Read"' in raw or raw.endswith(b'event: message_delta\n'):
             raise core.ResearchProcessError('research_process_nonzero_exit')
@@ -75,6 +92,94 @@ def test_each_scenario_observes_actual_mock_request_and_fixed_response(tmp_path,
     assert result['activation_authorized'] is False
     assert result['outside_root_verified'] is result['external_egress_verified'] is False
     assert probe.TEST_KEY not in json.dumps(result) and probe.APPROVED not in json.dumps(result)
+    # v2 observation: fixed allowlisted process codes, none for clean phases.
+    assert result['schema_version'] == 'claude-cli-probe-v2'
+    assert result['version_error_code'] is None
+    expected = ('research_process_nonzero_exit'
+                if mode in ('rate_limit', 'server_error', 'tool_use', 'truncated') else None)
+    assert result['process_error_code'] == expected
+
+
+NEGATIVE_MODES = tuple(mode for mode in probe.MODES if mode != 'success')
+# Fixed process codes that are NOT an ordinary nonzero exit; each must fail a
+# negative case even when its one matching request/response already happened.
+FAILING_OUTCOMES = (
+    'research_process_signaled', 'research_process_timeout',
+    'research_process_stopped', 'research_process_not_started',
+    'research_process_output_limit', 'research_process_input_incomplete',
+    'research_process_cleanup_failed', 'research_process_failed')
+
+
+@pytest.mark.parametrize('mode', NEGATIVE_MODES)
+def test_negative_mode_passes_on_ordinary_nonzero_exit_after_matching_response(tmp_path, mode):
+    result = probe.run_probe(*image(), root=tmp_path/'probe', mode=mode,
+        allow_probe=True, process_runner=simulated_runner([], outcome='research_process_nonzero_exit'))
+    assert result['request_count'] == result['responses_sent'] == 1
+    assert result['request_contract_matches'] is True
+    assert result['process_status'] == 'failed'
+    assert result['process_error_code'] == 'research_process_nonzero_exit'
+    assert probe.observation_passed(result) is True
+
+
+@pytest.mark.parametrize('mode', NEGATIVE_MODES)
+def test_negative_mode_passes_on_a_decoder_rejected_returned_result(tmp_path, mode):
+    result = probe.run_probe(*image(), root=tmp_path/'probe', mode=mode,
+        allow_probe=True, process_runner=simulated_runner([], rejected_result=True))
+    assert result['request_count'] == result['responses_sent'] == 1
+    assert result['request_contract_matches'] is True
+    assert result['process_status'] == 'returned' and result['process_error_code'] is None
+    assert result['decoder_status'] == 'rejected'
+    assert probe.observation_passed(result) is True
+
+
+@pytest.mark.parametrize('mode', NEGATIVE_MODES)
+def test_signal_death_after_the_matching_response_still_fails(tmp_path, mode):
+    result = probe.run_probe(*image(), root=tmp_path/'probe', mode=mode,
+        allow_probe=True, process_runner=simulated_runner([], outcome='research_process_signaled'))
+    # The observation shows the one matching response preceded the signal death.
+    assert result['request_count'] == result['responses_sent'] == 1
+    assert result['request_contract_matches'] is True
+    assert result['process_status'] == 'failed'
+    assert result['process_error_code'] == 'research_process_signaled'
+    assert probe.observation_passed(result) is False
+
+
+@pytest.mark.parametrize('outcome', FAILING_OUTCOMES)
+@pytest.mark.parametrize('mode', ('rate_limit', 'invalid_action'))
+def test_infrastructure_failure_after_the_matching_response_still_fails(tmp_path, mode, outcome):
+    result = probe.run_probe(*image(), root=tmp_path/'probe', mode=mode,
+        allow_probe=True, process_runner=simulated_runner([], outcome=outcome))
+    assert result['request_count'] == result['responses_sent'] == 1
+    assert result['request_contract_matches'] is True
+    assert result['process_error_code'] == outcome
+    assert probe.observation_passed(result) is False
+
+
+def test_ordinary_nonzero_exit_without_any_matching_request_still_fails(tmp_path):
+    result = probe.run_probe(*image(), root=tmp_path/'probe', mode='rate_limit',
+        allow_probe=True, process_runner=simulated_runner([], outcome='before_request'))
+    assert result['request_count'] == result['responses_sent'] == 0
+    assert result['process_error_code'] == 'research_process_nonzero_exit'
+    assert probe.observation_passed(result) is False
+
+
+def test_success_mode_requires_an_accepted_result_not_a_process_failure(tmp_path):
+    result = probe.run_probe(*image(), root=tmp_path/'probe', mode='success',
+        allow_probe=True, process_runner=simulated_runner([], outcome='research_process_nonzero_exit'))
+    assert result['process_error_code'] == 'research_process_nonzero_exit'
+    assert probe.observation_passed(result) is False
+
+
+@pytest.mark.parametrize('code', ('research_process_signaled', 'research_process_failed'))
+def test_failed_version_phase_records_its_fixed_code_and_never_reaches_the_message(
+        tmp_path, code):
+    events = []
+    result = probe.run_probe(*image(), root=tmp_path/'probe', mode='success',
+        allow_probe=True, process_runner=simulated_runner(events, version_outcome=code))
+    assert events == ['version']
+    assert result['version_status'] == 'failed' and result['version_error_code'] == code
+    assert result['version_matches'] is False and result['process_status'] == 'not_started'
+    assert result['request_count'] == 0 and probe.observation_passed(result) is False
 
 
 @pytest.mark.parametrize('fault', ['context', 'tools', 'output_cap', 'key_body', 'auth', 'retry',
