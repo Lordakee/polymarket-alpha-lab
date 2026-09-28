@@ -2453,14 +2453,32 @@ v0.1.0-linux-preview.1 预发布的待定状态。发布回执在发布完成后
   acceptance-evidence.zip（72fb6612…）；release-manifest.json
   （6ce67bb0…）；release-notes.md（817e0840…）；SHA256SUMS（432ef1f3…，
   自排除）。标签与 Release 缺席已以真实 API 404 确认。
-- 独立冻结资产评审进行中；其后按 runbook 核验不可变性前提并执行
-  tag→draft→verify→publish→公开回读。**发布未完成前本小节为待定；
-  回执（标签对象/Release 与资产 ID/下载 URL/公开回读/外部终审裁决）
-  由 E 提交补记。**
+- 独立冻结资产评审三轮：第一轮 FAIL（前缀溯源集缺失、§3 双处事实
+  欠缺）→ 补采 tuple-provenance.txt（1,468 行）与 kit-measurement.txt
+  并重组派生资产；第二轮 FAIL（engine_binaries_included 事实错误——
+  kit 实际内嵌 PG 18.6 引擎 database/postgres-runtime.zip，引擎摘要
+  d7c09eeb…；L5 行尾差异措辞；2,944 条目精确表述）→ 再重组；第三轮
+  VERDICT: PASS（全部哈希/CI/提交/计数独立复算核验；三轮裁决均保持
+  于资产之外，按计划不在证据包内）。
+- **发布回执（E 提交补记）**：注解标签 v0.1.0-linux-preview.1（对象
+  d9fc6e0131da8499bed2eb4959ea3cd7d1b90b71，剥皮核验指向 C=
+  06e49d0f，消息含 source/tree/kit_sha256）。Release ID 398244797，
+  https://github.com/Lordakee/polymarket-alpha-lab/releases/tag/v0.1.0-linux-preview.1。
+  不可变性前提：所有者于发布前在仓库 Settings→Releases 开启
+  "Enforce immutable releases"（REST/GraphQL 均无该设置面，UI-only，
+  已如实记录；draft 态 isImmutable=false 为草稿语义）。发布回读：
+  **isDraft=false、isImmutable=true、isPrerelease=true**，六资产公开
+  下载回读与冻结评审件逐字节一致（kit a0c9a014…/40,813,935 B——
+  首次公开下载遭网络截断得 a46c347f…，干净重下后精确匹配，截断记录
+  保全于 pal-artifacts）；资产 ID RA_kwDOS5cE1s4jfQ_J…k（六件）。
+  发布元数据三份冻结副本入库 docs/releases/v0.1.0-linux-preview.1/
+  （release-manifest.json f2a97656…、release-notes.md c2ebe66b…、
+  SHA256SUMS 427e527a…，与 Release 资产字节一致）。
 
 ### 状态判定
 
-**L6 耐久发布：待定（资产就绪、评审与发布序列进行中）。G6 与 WP-06
+**L6 耐久发布：耐久发布与固定版本工程子条件已达成**（不可变预发布
+  v0.1.0-linux-preview.1 已发布并公开回读核验）。**G6 与 WP-06
 维持 PARTIAL：G2—G5 未关闭（官方 Linux Claude 工件未实测、官方用例
 0/6、真实研究/结算/样本证据未采、activation_authorized=false、真实
 提供商调用 false）。本预发布不是 V1 完成、不是统计策略验证、不是执行

@@ -1,0 +1,99 @@
+{
+  "acceptance": {
+    "containment": "122 passed, 4 expected skips (L5 synthetic)",
+    "distribution_native": "1 passed in 1066.10s at C (attempt 2; attempt 1 failed on host IO timing, preserved in evidence zip)",
+    "full_suite": "verify_local --full PASS; 40015 passed, 80 skipped, 0 failed in 1901.52s",
+    "l5_evidence_revision": "produced at verify-branch commit 6cfd5ec4 (content-identical to the L5 files merged at C via 49d4996d, modulo CR-at-EOL line endings on 5 files)",
+    "official_probe_scenarios": "0/6 (not run; official Linux artifact unmeasured)",
+    "pg_contained": "2/2 stop/restart/replay and driver-loss PASS (L5 synthetic)"
+  },
+  "assets": {
+    "PROJECT-BUNDLE.json": {
+      "bytes": 424902,
+      "sha256": "12594f09e5149c91c7132eed7191ed6060baf8615683aaf52fcde53ccd5f396c"
+    },
+    "acceptance-evidence.zip": {
+      "bytes": 25419,
+      "sha256": "9825a48273b8e8d3687cf6c819cd3ec86b6d8514436a6dc038da177b37328558"
+    },
+    "polymarket-alpha-lab-v0.1.0-linux-preview.1-linux-x86_64.zip": {
+      "bytes": 40813935,
+      "sha256": "a0c9a014e4efdfa5215843af84120831457e27e9e319045b5e365e660aea6ce9"
+    }
+  },
+  "ci_at_C": [
+    {
+      "attempt": 1,
+      "conclusion": "success",
+      "jobs": [
+        "offline"
+      ],
+      "run": 36403256602,
+      "url": "https://github.com/Lordakee/polymarket-alpha-lab/actions/runs/36403256602",
+      "workflow": "Offline verification"
+    },
+    {
+      "attempt": 1,
+      "conclusion": "success",
+      "jobs": [
+        "linux-native-storage",
+        "linux-native-dispatch",
+        "linux-native-research",
+        "linux-native"
+      ],
+      "note": "windows legs retired/skipped by design",
+      "run": 36406813585,
+      "url": "https://github.com/Lordakee/polymarket-alpha-lab/actions/runs/36406813585",
+      "workflow": "Native project PostgreSQL"
+    },
+    {
+      "attempt": 1,
+      "conclusion": "success",
+      "jobs": [
+        "linux-kit"
+      ],
+      "run": 36406819949,
+      "url": "https://github.com/Lordakee/polymarket-alpha-lab/actions/runs/36406819949",
+      "workflow": "Native project distribution"
+    }
+  ],
+  "classification": "linux-engineering-prerelease",
+  "dependencies": {
+    "locked": "uv.lock from source_commit is bundled in the kit; Python, a venv and the offline dependency collection are not bundled (kit installs via uv sync --locked --offline)",
+    "migrations": "catalog 68 at C; old-pair catalog 63"
+  },
+  "engine": {
+    "archive_bytes": 40813935,
+    "archive_sha256": "a0c9a014e4efdfa5215843af84120831457e27e9e319045b5e365e660aea6ce9",
+    "database_included": false,
+    "engine_binaries_included": true,
+    "file_count": 2944,
+    "note": "archive_sha256 is the whole-kit digest. The kit EMBEDS the PostgreSQL 18.6 engine as database/postgres-runtime.zip (engine digest d7c09eebab2a27f33f677452447e28cc928c42b88467af73295b939d0ac418e4, per the published PROJECT-BUNDLE.json), built from the qualified runtime prefix whose provenance is recorded in tuple-provenance.txt inside acceptance-evidence.zip. A database cluster, Python, a venv and the offline dependency collection are not bundled.",
+    "postgres_version": "18.6",
+    "python_included": false,
+    "target": "linux-x86_64"
+  },
+  "fixed_pair": {
+    "candidate_catalog": 68,
+    "framing": "a fixed source-version pair plus one released candidate kit",
+    "limits": "the switch test uses verified Git archives; its synthetic bundle markers are integrity-test fixtures; it does not prove a pair of published Linux kits",
+    "old_catalog": 63,
+    "old_commit": "2b20002c83ee33acb95fb2ca3de841f3e883ebbf",
+    "old_tree": "d6f6750b1068a3c75ab6249d5ca4f1ef7e010ee4",
+    "result": "3 passed in 455.21s at C on the same qualified PG18 prefix"
+  },
+  "host": "ubuntu@166.1.232.93 (designated dev/acceptance host)",
+  "limits": "Engineering prerelease. G2-G6 open; official Claude Linux artifact unmeasured; six official probe scenarios 0/6; activation_authorized=false; real provider execution false; not V1 completion, not statistical validation, not execution authorization. Windows retired-frozen.",
+  "release": "v0.1.0-linux-preview.1",
+  "repository": "Lordakee/polymarket-alpha-lab",
+  "source_commit": "06e49d0fde20c837cda80f0b3e61fcb1f3806ca2",
+  "source_tree": "027996b04f44c0340deb8e73fcf9825ad061c657",
+  "tag": "v0.1.0-linux-preview.1 (annotated, targets source commit below)",
+  "tuple": {
+    "arch": "x86_64",
+    "kernel": "7.0.0-34-generic",
+    "os": "Ubuntu 26.04.1 LTS",
+    "postgres": "18.6 (Ubuntu 18.6-0ubuntu0.26.04.1)",
+    "python": "3.12.14"
+  }
+}
