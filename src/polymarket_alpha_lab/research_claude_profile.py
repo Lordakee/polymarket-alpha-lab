@@ -9,11 +9,13 @@ from dataclasses import asdict, dataclass, field, replace
 from hashlib import sha256
 import json
 from pathlib import Path
+from threading import Lock
 from urllib.parse import urlsplit
 
 from polymarket_alpha_lab.research_claude_exec import CLAUDE_VERSION, ClaudeExecInput, ClaudeProcessModel
 from polymarket_alpha_lab.research_dispatch_runner import ResearchDispatchStop
 from polymarket_alpha_lab.research_process import ResearchProcessSpec
+from polymarket_alpha_lab.research_process_linux import LinuxLaunchSpec
 from polymarket_alpha_lab.research_uncapped import copy_authorization
 
 MODEL_ID = 'claude-opus-5'
@@ -32,6 +34,12 @@ _FIXED_ENV = {
 }
 # Immutable public configuration: callers cannot modify a returned settings map.
 _FIXED_ENV = tuple(sorted(_FIXED_ENV.items()))
+# Keys a contained launch must accept for the prepared vendor environment
+# (the credential itself arrives by one-use pipe, never the launcher env).
+_CONTAINED_ENV_KEYS = frozenset(key for key, _ in _FIXED_ENV) | frozenset((
+    'ANTHROPIC_API_KEY', 'ANTHROPIC_BASE_URL', 'CLAUDE_CODE_MAX_OUTPUT_TOKENS',
+    'CLAUDE_CONFIG_DIR', 'HOME'))
+_LINUX_TEAMS = ('crypto_btc', 'crypto_eth')
 
 
 def _json(value):
@@ -56,6 +64,7 @@ class ClaudeExecProfile:
     endpoint_url: str = field(repr=False)
     model_id: str = MODEL_ID
     cli_version: str = CLAUDE_VERSION
+    linux_launch: LinuxLaunchSpec | None = None
 
     def __post_init__(self):
         try:
@@ -63,6 +72,16 @@ class ClaudeExecProfile:
                     or self.model_id != MODEL_ID or type(self.cli_version) is not str
                     or self.cli_version != CLAUDE_VERSION):
                 raise ValueError
+            if self.linux_launch is not None:
+                # Declaration-only containment binding: no filesystem access,
+                # hashing or I/O happens here (inert v2 profiles construct on
+                # any host); the launch's identity pins live in its digest.
+                if type(self.linux_launch) is not LinuxLaunchSpec:
+                    raise ValueError
+                if self.linux_launch.expected_version_output != self.cli_version + '\n':
+                    raise ValueError
+                if not _CONTAINED_ENV_KEYS <= set(self.linux_launch.allowed_guest_env):
+                    raise ValueError
             process = replace(self.process)
             if len(process.argv) != 1:
                 raise ValueError
@@ -98,12 +117,30 @@ class ClaudeExecProfile:
     def contract_sha256(self):
         # Public declarations only. The exact output request is in the original
         # task and per-call audit; credential material is NEVER a hash input.
+        # The v1 branch is byte-identical to the historical uncontained digest.
         value = dict(schema_version='research-claude-profile-v1', cli_version=self.cli_version,
             model_id=self.model_id, process=asdict(self.process), endpoint_url=self.endpoint_url,
             command_template=asdict(self._spec(8192, None)),
             output_limit_policy='original-call-cap', authentication='explicit-api-key-callback',
             prompt_protocol=ClaudeExecInput(self.model_id, '[{}]', 8192).prompt_json)
-        return sha256(_json(value).encode('utf-8')).hexdigest()
+        if self.linux_launch is None:
+            return sha256(_json(value).encode('utf-8')).hexdigest()
+        # Contained v2 binds every new public policy: separate wrapper/helper/
+        # interpreter/runtime pins, namespace/mount policy and guest layout,
+        # environment/descriptor rules, resource bounds, the two-phase
+        # version/model protocol, offline egress, and the finite team-scoped
+        # supplier and stop-admission policy. Credentials, prompt/transcript
+        # contents, random allocation names, descriptor numbers, PIDs and
+        # ephemeral ports are never inputs.
+        contained = dict(value, schema_version='research-claude-profile-linux-v2',
+            authentication='delayed-one-use-pipe-after-readiness',
+            linux_launch=self.linux_launch.policy_dict(),
+            supplier_policy=dict(type='finite-in-memory-team-scoped',
+                construction='explicit-slots-only-no-env-file-or-network-lookup',
+                stop_binding='identity-at-construction-required',
+                admission='supplier-lock-then-stop-admission-then-permanent-consume',
+                recycling='none', sharing='one-supplier-across-both-team-clients'))
+        return sha256(_json(contained).encode('utf-8')).hexdigest()
 
     def prepare(self, request, *, api_key):
         """Build only; provided key goes to child env, not argv/prompt/digest.
@@ -126,6 +163,65 @@ class ClaudeExecProfile:
             raise ValueError('research_claude_profile_unavailable') from None
 
 
+class FiniteInMemoryApiKeySupplier:
+    """Explicitly supplied finite per-team credential slots; nothing else.
+
+    Construction binds the rotation's stop token by identity (a REQUIRED
+    argument, stored immutably, checked with ``is`` by the operator). There is
+    no environment, file, login, keychain or network lookup anywhere. One
+    shared lock covers both team clients; admission is always: acquire the
+    supplier lock, call the bound stop token's admission operation, and only
+    then remove one team slot permanently. A later stop, verification failure
+    or process failure never returns a consumed slot. An exhausted supplier
+    still permits inert replays that never call it.
+    """
+
+    __slots__ = ('_lock', '_stop', '_slots')
+
+    def __init__(self, *, stop, crypto_btc=(), crypto_eth=()):
+        if type(stop) is not ResearchDispatchStop:
+            raise ValueError('research_claude_supplier_stop_invalid')
+        slots = {}
+        for team, values in (('crypto_btc', crypto_btc), ('crypto_eth', crypto_eth)):
+            if type(values) is not tuple or len(values) > 4096:
+                raise ValueError('research_claude_supplier_slots_invalid')
+            for value in values:
+                if (type(value) is not str or not 1 <= len(value) <= 4096
+                        or any(not 33 <= ord(character) <= 126 for character in value)):
+                    raise ValueError('research_claude_supplier_slots_invalid')
+            slots[team] = list(values)
+        self._lock = Lock()
+        self._stop = stop
+        self._slots = slots
+
+    def __repr__(self):
+        remaining = {team: len(values) for team, values in self._slots.items()}
+        return 'FiniteInMemoryApiKeySupplier(remaining=%r)' % (remaining,)
+
+    def bound_stop_is(self, stop):
+        """Identity check against the construction-time stop token (``is``)."""
+        return stop is self._stop
+
+    @property
+    def bound_stop(self):
+        """The construction-bound stop token (identity only; no secret)."""
+        return self._stop
+
+    def acquire(self, team_id):
+        if team_id not in _LINUX_TEAMS:
+            raise ValueError('research_claude_supplier_team_invalid')
+        with self._lock:
+            if not self._stop._admit():
+                raise ValueError('research_claude_supplier_stopped')
+            if not self._slots[team_id]:
+                raise ValueError('research_claude_supplier_exhausted')
+            return self._slots[team_id].pop(0)
+
+    def remaining(self, team_id):
+        with self._lock:
+            return len(self._slots.get(team_id, ()))
+
+
 def claude_profile_factory(*, profile, authorization, api_key_supplier,
                            allow_process_start=False, allow_api_key_use=False, stop=None):
     """Inert opt-in binding. No key supplier call until the audited model call.
@@ -133,18 +229,30 @@ def claude_profile_factory(*, profile, authorization, api_key_supplier,
     Select this factory explicitly; it never replaces a failed Codex client.
     The caller must use the SAME authorization on require_durable_audit=True.
     Approval/profile binding is not a proof of actual CLI state or model identity.
+
+    A contained (``linux_launch``) profile additionally requires the EXACT
+    ``FiniteInMemoryApiKeySupplier`` type bound by identity to ``stop``; each
+    factory-created client admits through its own team's scope. Binding
+    validates type and immutable scope, never mutable remaining capacity.
     """
     if (type(profile) is not ClaudeExecProfile or allow_process_start is not True
-            or allow_api_key_use is not True or not callable(api_key_supplier)):
+            or allow_api_key_use is not True):
         raise ValueError('research_claude_profile_opt_in_required')
     if stop is not None and type(stop) is not ResearchDispatchStop:
         raise ValueError('research_claude_stop_invalid')
+    if profile.linux_launch is not None:
+        if type(api_key_supplier) is not FiniteInMemoryApiKeySupplier:
+            raise ValueError('research_claude_profile_supplier_invalid')
+        if stop is None or not api_key_supplier.bound_stop_is(stop):
+            raise ValueError('research_claude_profile_supplier_stop_mismatch')
+    elif not callable(api_key_supplier):
+        raise ValueError('research_claude_profile_opt_in_required')
     profile, authorization = replace(profile), copy_authorization(authorization)
     if (profile.model_id != authorization.model_id
             or profile.contract_sha256 != authorization.adapter_contract_sha256):
         raise ValueError('research_claude_profile_authorization_mismatch')
     digest = profile.contract_sha256
-    def prepare(request):
+    def checked(request, supply):
         if type(request) is not ClaudeExecInput:
             raise ValueError('research_claude_input_invalid')
         request = replace(request)
@@ -158,10 +266,20 @@ def claude_profile_factory(*, profile, authorization, api_key_supplier,
             raise ValueError('research_claude_profile_stopped')
         # No stored credential lookup here. The owning local application chooses
         # its explicit supplier; supplier exceptions are fixed-code upstream.
-        return profile.prepare(request, api_key=api_key_supplier())
+        return profile.prepare(request, api_key=supply())
+    def prepare(request):
+        return checked(request, api_key_supplier)
     def factory(team_id):
-        if team_id not in ('crypto_btc', 'crypto_eth'):
+        if team_id not in _LINUX_TEAMS:
             raise ValueError('research_claude_profile_team_invalid')
-        return ClaudeProcessModel(model_id=profile.model_id, prepare_command=prepare,
-                                  allow_process_start=True, stop=stop)
+        if profile.linux_launch is None:
+            return ClaudeProcessModel(model_id=profile.model_id, prepare_command=prepare,
+                                      allow_process_start=True, stop=stop)
+        # Each admission belongs to its original team: the per-team closure
+        # routes the shared finite supplier through the team scope.
+        def team_prepare(request):
+            return checked(request, lambda: api_key_supplier.acquire(team_id))
+        return ClaudeProcessModel(model_id=profile.model_id, prepare_command=team_prepare,
+                                  allow_process_start=True, stop=stop,
+                                  linux_launch=profile.linux_launch)
     return factory

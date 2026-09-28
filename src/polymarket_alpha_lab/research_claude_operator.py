@@ -12,10 +12,12 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
+import sys
 from typing import TYPE_CHECKING
 
 from polymarket_alpha_lab.research_claude_profile import (
     ClaudeExecProfile,
+    FiniteInMemoryApiKeySupplier,
     claude_profile_factory,
 )
 from polymarket_alpha_lab.research_dispatch import (
@@ -45,6 +47,9 @@ if TYPE_CHECKING:
 ApiKeySupplier = Callable[[], str]
 
 _ASSEMBLY_TEAMS = ('crypto_btc', 'crypto_eth')
+# Session platform captured once at import: the admission guard must see the
+# real host platform without tests rewriting the global interpreter view.
+_SESSION_PLATFORM = sys.platform
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,6 +68,27 @@ class ClaudeResearchOperatorResult:
     rotation_id: str
     turn_id: str
     audit_handles: tuple[ClaudeResearchAuditHandle, ...]
+
+
+def _admit_linux_session(profile, api_key_supplier, stop):
+    """Session-write admission guard; runs before any session I/O.
+
+    Requires Linux, a contained v2 profile (an immutable offline launch
+    specification), the EXACT finite in-memory supplier type, and that the
+    supplier's construction-bound stop token is the identical object (``is``)
+    supplied for this session. A supplier bound to a different or absent stop
+    object is rejected here, never at credential time.
+    """
+    if _SESSION_PLATFORM != 'linux':
+        raise ValueError('research_claude_operator_linux_required')
+    if type(profile) is not ClaudeExecProfile or profile.linux_launch is None:
+        raise ValueError('research_claude_operator_profile_uncontained')
+    if profile.linux_launch.egress_policy != 'offline':
+        raise ValueError('research_claude_operator_egress_unsupported')
+    if type(api_key_supplier) is not FiniteInMemoryApiKeySupplier:
+        raise ValueError('research_claude_operator_supplier_invalid')
+    if not api_key_supplier.bound_stop_is(stop):
+        raise ValueError('research_claude_operator_supplier_stop_mismatch')
 
 
 def _canonical_reviewed_inputs(reviewed_batches, profile, authorization,
@@ -99,7 +125,7 @@ def _canonical_reviewed_inputs(reviewed_batches, profile, authorization,
         raise ValueError('research_claude_operator_authorization_binding_invalid')
     identifier('rotation_id', rotation_id)
     identifier('turn_id', turn_id)
-    if not callable(api_key_supplier):
+    if type(api_key_supplier) is not FiniteInMemoryApiKeySupplier:
         raise ValueError('research_claude_operator_supplier_invalid')
     if type(stop) is not ResearchDispatchStop:
         raise ValueError('research_claude_operator_stop_invalid')
@@ -129,9 +155,10 @@ def run_claude_research_rotation(
     supplies reviewed immutable BTC/ETH requests, a reviewed Claude profile,
     and the existing typed authorization containing the approved ID and fields.
 
-    The supplier is an explicitly approved synchronous, finite, nonblocking,
-    in-memory callable, safe for the selected concurrency. This function
-    checks callability and forwards it without invoking it.
+    The supplier must be the exact ``FiniteInMemoryApiKeySupplier`` type whose
+    construction-bound stop token is this call's stop token (identity check).
+    It is forwarded without invoking it; binding validates type and immutable
+    scope, never mutable remaining capacity.
 
     Construction/import performs no activation. Invoking this function with
     a real session is side-effecting and requires the separately approved
@@ -144,9 +171,14 @@ def run_claude_research_rotation(
     Stop is cooperative. Preserve original IDs and inspect durable state
     after failure or interruption; never retry or replace identities here.
 
+    Before any session write, the Linux session admission guard requires a
+    contained v2 profile with offline egress and the exact finite supplier
+    type whose construction-bound stop token is this call's stop token.
+
     Return the exact runner report object, preserving any pending_run.
     Audit handles are lookup references, not reconciled provenance.
     """
+    _admit_linux_session(profile, api_key_supplier, stop)
     permission, batches, requests, candidate = _canonical_reviewed_inputs(
         reviewed_batches, profile, authorization, api_key_supplier,
         rotation_id, turn_id, stop, max_tasks, max_workers)

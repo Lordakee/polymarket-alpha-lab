@@ -195,3 +195,32 @@ def test_explicit_native_image_limit_boundary(executable, tmp_path, monkeypatch)
 
 def test_default_image_limit_is_not_silently_expanded(executable, tmp_path):
     assert spec(executable, tmp_path).max_executable_bytes == 268435456
+
+
+def test_linux_launch_kwarg_preserves_the_legacy_call_shape(executable, tmp_path):
+    """None keeps the exact legacy behavior; an invalid launch object is a
+    fixed-code failure; a valid launch is forwarded to the contained runner."""
+    import polymarket_alpha_lab.research_process_linux as linux_module
+    from tests.test_research_process_linux import synthetic_launch
+    value = spec(executable, tmp_path)
+    captured = {}
+
+    def fake_runner(*, spec, launch, stdin, stop):
+        captured.update(spec=spec, launch=launch, stdin=stdin, stop=stop)
+        return core.ResearchProcessResult(b'', 0, 1)
+
+    original = linux_module.run_linux_contained_process
+    core_run = core.run_research_process
+    try:
+        linux_module.run_linux_contained_process = fake_runner
+        with pytest.raises(core.ResearchProcessError, match='research_process_failed'):
+            core.run_research_process(spec=value, stdin=b'', allow_process_start=True,
+                                      linux_launch=object())
+        result = core.run_research_process(spec=value, stdin=b'payload',
+                                           allow_process_start=True,
+                                           linux_launch=synthetic_launch())
+        assert result.stdout == b'' and result.stderr_bytes == 0
+        assert captured['launch'].launch_schema == 'research-linux-launch-v1'
+        assert captured['stdin'] == b'payload' and captured['spec'] == value
+    finally:
+        linux_module.run_linux_contained_process = original

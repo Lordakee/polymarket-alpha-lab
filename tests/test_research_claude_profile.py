@@ -209,3 +209,60 @@ def test_profile_and_authorization_copies_cannot_be_rebound_by_caller(monkeypatc
     monkeypatch.setattr(cli,'run_research_process',process)
     assert factory('crypto_eth').complete(messages_json='[{}]',max_output_tokens=100).total_tokens==26
     assert dict(seen[0].environment)['ANTHROPIC_BASE_URL']=='https://gateway.example.invalid'
+
+
+def contained(tmp_path, **changes):
+    from tests.test_research_process_linux import fixed_launch
+    values = dict(linux_launch=fixed_launch())
+    values.update(changes)
+    return candidate(tmp_path, **values)
+
+
+def test_contained_profile_construction_is_declaration_only(monkeypatch, tmp_path):
+    def forbidden(*args, **kwargs):
+        pytest.fail('contained construction performed I/O')
+    monkeypatch.setattr(os, 'open', forbidden)
+    monkeypatch.setattr(Path, 'read_bytes', forbidden)
+    p = contained(tmp_path)
+    assert p.linux_launch is not None
+    assert p.contract_sha256 != candidate(tmp_path).contract_sha256
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_contained_version_output_is_bound_to_the_pinned_cli_version(tmp_path):
+    from polymarket_alpha_lab.research_process_linux import LinuxLaunchSpec
+    from tests.test_research_process_linux import fixed_launch
+    with pytest.raises(ValueError, match='profile_invalid'):
+        candidate(tmp_path, linux_launch=replace(fixed_launch(),
+                                                 expected_version_output='0.0.0\n'))
+
+
+@pytest.mark.parametrize('field', ['launch_object', 'launch_env_allowlist'])
+def test_contained_profile_rejects_incompatible_launch_bindings(tmp_path, field):
+    from tests.test_research_process_linux import fixed_launch, relaunch
+    if field == 'launch_object':
+        launch = object()
+    else:
+        launch = relaunch(fixed_launch(), allowed_guest_env=tuple(sorted(
+            set(fixed_launch().allowed_guest_env) - {'DISABLE_TELEMETRY'})))
+    with pytest.raises(ValueError, match='profile_invalid'):
+        candidate(tmp_path, linux_launch=launch)
+
+
+def test_contained_prepare_keeps_credential_only_in_parent_memory(tmp_path):
+    p = contained(tmp_path)
+    out = p.prepare(cli.ClaudeExecInput(MODEL, '[{}]', 137), api_key=SENTINEL)
+    env = dict(out.environment)
+    assert env['ANTHROPIC_API_KEY'] == SENTINEL  # parent memory; extracted by the launcher
+    assert SENTINEL not in p.contract_sha256 and SENTINEL not in repr(out)
+    assert out.argv[0] == p.process.argv[0]
+
+
+def test_contained_authorization_binds_the_v2_digest(tmp_path):
+    from polymarket_alpha_lab.research_claude_profile import FiniteInMemoryApiKeySupplier
+    stop = ResearchDispatchStop()
+    supplier = FiniteInMemoryApiKeySupplier(stop=stop)
+    v1 = candidate(tmp_path)
+    v2 = contained(tmp_path)
+    with pytest.raises(ValueError, match='authorization_mismatch'):
+        bound(v2, permission(v1), api_key_supplier=supplier, stop=stop)

@@ -18,7 +18,10 @@ from polymarket_alpha_lab import research_dispatch_rotation as turn_core
 from polymarket_alpha_lab import research_dispatch_rotation_runner as rotation
 from polymarket_alpha_lab import research_dispatch_store as dispatch_store
 from polymarket_alpha_lab import research_uncapped_runner as uncapped_runner
-from polymarket_alpha_lab.research_claude_profile import ClaudeExecProfile
+from polymarket_alpha_lab.research_claude_profile import (
+    ClaudeExecProfile, FiniteInMemoryApiKeySupplier,
+)
+from tests.test_research_process_linux import fixed_launch
 from polymarket_alpha_lab.research_dispatch import (
     ResearchBatch, ResearchBatchSnapshot, StoredResearchBatch,
 )
@@ -44,13 +47,22 @@ ROTATE = 'run_research_rotation'
 BUILDER = 'claude_profile_factory'
 
 
-class ForbiddenSupplier:
-    def __init__(self):
-        self.calls = 0
+def silent_supplier(stop=None, *, slots=1):
+    """Finite supplier bound to the rotation's stop; never invoked here.
 
-    def __call__(self):
-        self.calls += 1
-        raise AssertionError('api key supplier must not be invoked')
+    Consumption is observable through remaining(): every test asserts the
+    slot counts are unchanged, proving no admission ever reached the supplier.
+    """
+    stop = ResearchDispatchStop() if stop is None else stop
+    return FiniteInMemoryApiKeySupplier(
+        stop=stop,
+        crypto_btc=tuple('SYNTHETIC-BTC-%d' % index for index in range(slots)),
+        crypto_eth=tuple('SYNTHETIC-ETH-%d' % index for index in range(slots)))
+
+
+def unconsumed(supplier, slots=1):
+    return (supplier.remaining('crypto_btc') == slots
+            and supplier.remaining('crypto_eth') == slots)
 
 
 class ForbiddenSession:
@@ -223,6 +235,13 @@ class Bridge(AuditHarness):
         return self.factory
 
 
+@pytest.fixture(autouse=True)
+def linux_session_guard(monkeypatch):
+    # The admission guard requires a Linux session; these are pure wiring
+    # tests, so only the guard's captured platform predicate is pinned.
+    monkeypatch.setattr(operator, '_SESSION_PLATFORM', 'linux')
+
+
 @pytest.fixture
 def no_external_io(monkeypatch):
     monkeypatch.setattr('subprocess.Popen', lambda *a, **k: pytest.fail('process spawned'))
@@ -235,7 +254,8 @@ def claude_profile(tmp_path, **changes):
     process = ResearchProcessSpec((str(tmp_path / 'claude-native'),), str(tmp_path / 'work'),
         (('HOME', str(tmp_path / 'home')), ('CLAUDE_CONFIG_DIR', str(tmp_path / 'config'))),
         'a' * 64, 15000)
-    values = dict(process=process, endpoint_url='https://gateway.example.invalid')
+    values = dict(process=process, endpoint_url='https://gateway.example.invalid',
+                  linux_launch=fixed_launch())
     values.update(changes)
     return ClaudeExecProfile(**values)
 
@@ -255,12 +275,14 @@ def reviewed(tmp_path):
     return profile_obj, batches, permission
 
 
-def invoke(session, *, profile_obj, batches, permission, supplier,
+def invoke(session, *, profile_obj, batches, permission, supplier=None,
            rotation_id='rotation-1', turn_id='turn-1', stop=None, **kw):
+    if stop is None:
+        stop = supplier.bound_stop if supplier is not None else ResearchDispatchStop()
     return operator.run_claude_research_rotation(
         session, reviewed_batches=batches, profile=profile_obj, authorization=permission,
-        api_key_supplier=supplier, rotation_id=rotation_id, turn_id=turn_id,
-        stop=ResearchDispatchStop() if stop is None else stop, **kw)
+        api_key_supplier=silent_supplier(stop) if supplier is None else supplier,
+        rotation_id=rotation_id, turn_id=turn_id, stop=stop, **kw)
 
 
 def batch_row(batch):
@@ -269,7 +291,7 @@ def batch_row(batch):
 
 
 def test_import_is_inert(monkeypatch):
-    supplier = ForbiddenSupplier()
+    supplier = silent_supplier()
     monkeypatch.setattr('subprocess.Popen', lambda *a, **k: pytest.fail('process spawned'))
     monkeypatch.setattr('socket.socket', lambda *a, **k: pytest.fail('network entered'))
     monkeypatch.setattr('polymarket_alpha_lab.research_claude_exec.run_research_process',
@@ -279,7 +301,7 @@ def test_import_is_inert(monkeypatch):
     assert callable(module.run_claude_research_rotation)
     assert module.ClaudeResearchAuditHandle.__slots__ is not None
     assert module.ClaudeResearchOperatorResult.__slots__ is not None
-    assert supplier.calls == 0
+    assert unconsumed(supplier)
 
 
 def test_assembly_wires_one_audited_uncapped_two_team_rotation(no_external_io, monkeypatch, tmp_path):
@@ -290,8 +312,8 @@ def test_assembly_wires_one_audited_uncapped_two_team_rotation(no_external_io, m
     factory = lambda team: pytest.fail('factory entered')
     builder = BuilderSpy(factory, log=session.calls)
     monkeypatch.setattr(operator, BUILDER, builder)
-    supplier = ForbiddenSupplier()
     stop = ResearchDispatchStop()
+    supplier = silent_supplier(stop)
     result = invoke(session, profile_obj=profile_obj, batches=batches,
                     permission=permission, supplier=supplier, stop=stop)
     assert session.names() == [CREATE, INSPECT, ENQUEUE, ENQUEUE, BUILDER, ROTATE]
@@ -320,7 +342,7 @@ def test_assembly_wires_one_audited_uncapped_two_team_rotation(no_external_io, m
     assert rotation_kwargs['stop'] is stop
     assert 'model_budget_id' not in rotation_kwargs
     assert result.report is report
-    assert supplier.calls == 0
+    assert unconsumed(supplier)
 
 
 def test_factory_and_runner_receive_same_stored_authorization(no_external_io, monkeypatch, tmp_path):
@@ -329,7 +351,7 @@ def test_factory_and_runner_receive_same_stored_authorization(no_external_io, mo
     session = RecordingSession(stored, object())
     builder = BuilderSpy(lambda team: pytest.fail('factory entered'))
     monkeypatch.setattr(operator, BUILDER, builder)
-    supplier = ForbiddenSupplier()
+    supplier = silent_supplier()
     result = invoke(session, profile_obj=profile_obj, batches=batches,
                     permission=permission, supplier=supplier)
     bound = stored.authorization
@@ -338,7 +360,7 @@ def test_factory_and_runner_receive_same_stored_authorization(no_external_io, mo
     assert bound is not permission and bound == permission
     assert result.authorization_receipt is stored
     assert result.authorization_receipt.authorization is bound
-    assert supplier.calls == 0
+    assert unconsumed(supplier)
 
 
 def test_factory_and_runner_share_stop_token(no_external_io, monkeypatch, tmp_path):
@@ -348,11 +370,11 @@ def test_factory_and_runner_share_stop_token(no_external_io, monkeypatch, tmp_pa
     builder = BuilderSpy(lambda team: pytest.fail('factory entered'))
     monkeypatch.setattr(operator, BUILDER, builder)
     stop = ResearchDispatchStop()
-    supplier = ForbiddenSupplier()
+    supplier = silent_supplier(stop)
     invoke(session, profile_obj=profile_obj, batches=batches, permission=permission,
            supplier=supplier, stop=stop)
     assert builder.calls[0]['stop'] is session.calls[-1][1]['stop'] is stop
-    assert supplier.calls == 0
+    assert unconsumed(supplier)
 
 
 def test_default_and_explicit_limits_are_forwarded(no_external_io, monkeypatch, tmp_path):
@@ -360,7 +382,7 @@ def test_default_and_explicit_limits_are_forwarded(no_external_io, monkeypatch, 
     stored = StoredUncappedAuthorization(permission, NOW + timedelta(seconds=1))
     builder = BuilderSpy(lambda team: pytest.fail('factory entered'))
     monkeypatch.setattr(operator, BUILDER, builder)
-    supplier = ForbiddenSupplier()
+    supplier = silent_supplier()
     for limits, expected in (({}, (2, 2)), ({'max_tasks': 1, 'max_workers': 1}, (1, 1)),
                              ({'max_tasks': 2, 'max_workers': 2}, (2, 2))):
         session = RecordingSession(stored, object())
@@ -369,20 +391,21 @@ def test_default_and_explicit_limits_are_forwarded(no_external_io, monkeypatch, 
         rotation_kwargs = session.calls[-1][1]
         assert (rotation_kwargs['max_tasks'], rotation_kwargs['max_workers']) == expected
         assert 'max_tasks' not in builder.calls[-1] and 'max_workers' not in builder.calls[-1]
-    assert len(builder.calls) == 3 and supplier.calls == 0
+    assert len(builder.calls) == 3 and unconsumed(supplier)
 
 
 @pytest.mark.parametrize('field', ['max_tasks', 'max_workers'])
 @pytest.mark.parametrize('value', [True, False, 0, -1, 3, '2', 1.0, None])
 def test_invalid_limits_fail_before_io(no_external_io, tmp_path, field, value):
     profile_obj, batches, permission = reviewed(tmp_path)
-    supplier = ForbiddenSupplier()
+    control = ResearchDispatchStop()
+    supplier = silent_supplier(control)
     with pytest.raises(ValueError):
         operator.run_claude_research_rotation(
             ForbiddenSession(), reviewed_batches=batches, profile=profile_obj,
             authorization=permission, api_key_supplier=supplier, rotation_id='rotation-1',
-            turn_id='turn-1', stop=ResearchDispatchStop(), **{field: value})
-    assert supplier.calls == 0
+            turn_id='turn-1', stop=control, **{field: value})
+    assert unconsumed(supplier)
 
 
 @pytest.mark.parametrize('supplier_value', [None, 123, 'api-key', object()])
@@ -425,21 +448,27 @@ def defect_roster(defect):
                                     'multi_request_batch', 'blocked_intake', 'duplicate_request'])
 def test_reviewed_batch_roster_is_exact(no_external_io, tmp_path, defect):
     profile_obj, _, permission = reviewed(tmp_path)
-    supplier = ForbiddenSupplier()
-    with pytest.raises(ValueError):
+    stop = ResearchDispatchStop()
+    supplier = silent_supplier(stop)
+    with pytest.raises(ValueError,
+                       match='research_claude_operator_batches_invalid') as caught:
         operator.run_claude_research_rotation(
             ForbiddenSession(), reviewed_batches=defect_roster(defect), profile=profile_obj,
             authorization=permission, api_key_supplier=supplier, rotation_id='rotation-1',
-            turn_id='turn-1', stop=ResearchDispatchStop())
-    assert supplier.calls == 0
+            turn_id='turn-1', stop=stop)
+    assert 'supplier_stop_mismatch' not in str(caught.value)
+    assert unconsumed(supplier)
 
 
 def typed_defect(tmp_path, defect):
     profile_obj, batches, permission = reviewed(tmp_path)
     btc, eth = batches
+    # The supplier must be bound to the SAME stop object the call receives,
+    # or the admission guard would mask the defect under investigation.
+    control = ResearchDispatchStop()
     kwargs = dict(reviewed_batches=batches, profile=profile_obj, authorization=permission,
-                  api_key_supplier=ForbiddenSupplier(), rotation_id='rotation-1',
-                  turn_id='turn-1', stop=ResearchDispatchStop())
+                  api_key_supplier=silent_supplier(control), rotation_id='rotation-1',
+                  turn_id='turn-1', stop=control)
     if defect == 'batch_object':
         kwargs['reviewed_batches'] = (object(), eth)
     elif defect == 'batch_flag':
@@ -461,12 +490,28 @@ def typed_defect(tmp_path, defect):
     return kwargs
 
 
-@pytest.mark.parametrize('defect', ['batch_object', 'batch_flag', 'authorization_object',
-                                    'authorization_flag', 'profile_object', 'stop_object',
-                                    'rotation_id', 'turn_id'])
+INTENDED_TYPED_CODES = {
+    'batch_object': 'research_batch_invalid',
+    'batch_flag': 'exact True',
+    'authorization_object': 'research_uncapped_authorization_invalid',
+    'authorization_flag': 'research_uncapped_authorization_invalid',
+    # The admission guard precedes structural validation: a foreign profile
+    # object and a non-stop stop object are refused by the guard itself.
+    'profile_object': 'research_claude_operator_profile_uncontained',
+    'stop_object': 'research_claude_operator_supplier_stop_mismatch',
+    'rotation_id': 'invalid rotation_id',
+    'turn_id': 'invalid turn_id',
+}
+
+
+@pytest.mark.parametrize('defect', list(INTENDED_TYPED_CODES))
 def test_invalid_typed_inputs_and_hard_flags_fail_before_io(no_external_io, tmp_path, defect):
-    with pytest.raises(ValueError):
+    supplier = typed_defect(tmp_path, defect)['api_key_supplier']
+    with pytest.raises(ValueError, match=INTENDED_TYPED_CODES[defect]) as caught:
         operator.run_claude_research_rotation(ForbiddenSession(), **typed_defect(tmp_path, defect))
+    if defect != 'stop_object':  # for a non-stop object the guard IS the refusal
+        assert 'supplier_stop_mismatch' not in str(caught.value)
+    assert unconsumed(supplier)
 
 
 def binding_defect(tmp_path, defect):
@@ -496,17 +541,25 @@ def binding_defect(tmp_path, defect):
     return profile_obj, batches, permission
 
 
-@pytest.mark.parametrize('defect', ['wrong_model', 'wrong_digest', 'missing_key', 'altered_key',
-                                    'extra_key', 'reordered_keys', 'request_model'])
+INTENDED_BINDING_CODES = dict.fromkeys(
+    ('wrong_model', 'wrong_digest', 'missing_key', 'altered_key', 'extra_key',
+     'reordered_keys'), 'research_claude_operator_authorization_binding_invalid')
+# A wrong request model is refused by the earlier roster validation.
+INTENDED_BINDING_CODES['request_model'] = 'research_claude_operator_batches_invalid'
+
+
+@pytest.mark.parametrize('defect', list(INTENDED_BINDING_CODES))
 def test_authorization_binds_entire_reviewed_roster_and_profile(no_external_io, tmp_path, defect):
     profile_obj, batches, permission = binding_defect(tmp_path, defect)
-    supplier = ForbiddenSupplier()
-    with pytest.raises(ValueError):
+    stop = ResearchDispatchStop()
+    supplier = silent_supplier(stop)
+    with pytest.raises(ValueError, match=INTENDED_BINDING_CODES[defect]) as caught:
         operator.run_claude_research_rotation(
             ForbiddenSession(), reviewed_batches=batches, profile=profile_obj,
             authorization=permission, api_key_supplier=supplier, rotation_id='rotation-1',
-            turn_id='turn-1', stop=ResearchDispatchStop())
-    assert supplier.calls == 0
+            turn_id='turn-1', stop=stop)
+    assert 'supplier_stop_mismatch' not in str(caught.value)
+    assert unconsumed(supplier)
 
 
 @pytest.mark.parametrize('defect', ['missing', 'wrong_type', 'different_authorization',
@@ -527,12 +580,12 @@ def test_authorization_receipt_mismatch_stops_before_enqueue(no_external_io, tmp
     else:
         session.create_result = StoredUncappedAuthorization(permission, NOW + timedelta(seconds=1))
         session.inspect_result = StoredUncappedAuthorization(permission, NOW + timedelta(seconds=2))
-    supplier = ForbiddenSupplier()
+    supplier = silent_supplier()
     with pytest.raises(ValueError, match='authorization_receipt_mismatch'):
         invoke(session, profile_obj=profile_obj, batches=batches, permission=permission,
                supplier=supplier)
     assert session.names() == [CREATE, INSPECT]
-    assert supplier.calls == 0
+    assert unconsumed(supplier)
 
 
 def test_equal_but_wrong_authorization_receipts_are_rejected(no_external_io, tmp_path):
@@ -543,12 +596,12 @@ def test_equal_but_wrong_authorization_receipts_are_rejected(no_external_io, tmp
     receipt = StoredUncappedAuthorization(wrong, NOW + timedelta(seconds=1))
     session = RecordingSession(receipt, object())
     session.create_result = session.inspect_result = receipt
-    supplier = ForbiddenSupplier()
+    supplier = silent_supplier()
     with pytest.raises(ValueError, match='authorization_receipt_mismatch'):
         invoke(session, profile_obj=profile_obj, batches=batches, permission=permission,
                supplier=supplier)
     assert session.names() == [CREATE, INSPECT]
-    assert supplier.calls == 0
+    assert unconsumed(supplier)
 
 
 @pytest.mark.parametrize('defect', ['wrong_type', 'other_batch', 'changed_content'])
@@ -564,12 +617,12 @@ def test_enqueue_receipt_must_match_reviewed_batch(no_external_io, tmp_path, def
         altered = ResearchBatch('batch-btc', (replace(batches[0].requests[0],
             forecast_cutoff_at=NOW + timedelta(hours=3)),))
         session.enqueue_results = [StoredResearchBatch(altered, NOW + timedelta(seconds=2))]
-    supplier = ForbiddenSupplier()
+    supplier = silent_supplier()
     with pytest.raises(ValueError, match='research_claude_operator_batch_receipt_mismatch'):
         invoke(session, profile_obj=profile_obj, batches=batches, permission=permission,
                supplier=supplier)
     assert session.names() == [CREATE, INSPECT, ENQUEUE]
-    assert supplier.calls == 0
+    assert unconsumed(supplier)
 
 
 @pytest.mark.parametrize('case', ['stale_btc', 'future_btc', 'stale_eth'])
@@ -587,7 +640,7 @@ def test_stale_new_batch_stops_assembly_without_retry(no_external_io, monkeypatc
     builder = BuilderSpy(lambda team: pytest.fail('factory entered'))
     monkeypatch.setattr(operator, BUILDER, builder)
     session = RealEnqueueSession(stored)
-    supplier = ForbiddenSupplier()
+    supplier = silent_supplier()
     with pytest.raises(dispatch_store.db.ResearchCaptureConflict, match='not_startable'):
         invoke(session, profile_obj=profile_obj, batches=batches, permission=permission,
                supplier=supplier)
@@ -600,18 +653,18 @@ def test_stale_new_batch_stops_assembly_without_retry(no_external_io, monkeypatc
         assert sum('INSERT INTO' in q for q, _ in cursor.calls) == 0
         assert sum('clock_timestamp' in q for q, _ in cursor.calls) == 1
     assert not builder.calls
-    assert supplier.calls == 0
+    assert unconsumed(supplier)
 
 
 def test_pre_stopped_token_does_no_io(no_external_io, tmp_path):
     profile_obj, batches, permission = reviewed(tmp_path)
     stop = ResearchDispatchStop()
     stop.request_stop()
-    supplier = ForbiddenSupplier()
+    supplier = silent_supplier(stop)
     with pytest.raises(ValueError, match='research_claude_operator_stopped'):
         invoke(ForbiddenSession(), profile_obj=profile_obj, batches=batches,
                permission=permission, supplier=supplier, stop=stop)
-    assert supplier.calls == 0
+    assert unconsumed(supplier)
 
 
 def step_trigger(trigger, name, kwargs):
@@ -637,7 +690,7 @@ def test_stop_between_steps_preserves_committed_prefix(no_external_io, monkeypat
     builder = BuilderSpy(lambda team: pytest.fail('factory entered'),
                          on_build=stop.request_stop if trigger == 'builder' else None)
     monkeypatch.setattr(operator, BUILDER, builder)
-    supplier = ForbiddenSupplier()
+    supplier = silent_supplier(stop)
     expected = {
         'create': [CREATE, INSPECT],
         'inspect': [CREATE, INSPECT],
@@ -651,7 +704,7 @@ def test_stop_between_steps_preserves_committed_prefix(no_external_io, monkeypat
     assert session.names() == expected
     assert len(builder.calls) == (1 if trigger == 'builder' else 0)
     assert ROTATE not in session.names()
-    assert supplier.calls == 0
+    assert unconsumed(supplier)
 
 
 def test_actual_claude_factory_binding_does_not_resolve_supplier(no_external_io, tmp_path):
@@ -659,14 +712,14 @@ def test_actual_claude_factory_binding_does_not_resolve_supplier(no_external_io,
     stored = StoredUncappedAuthorization(permission, NOW + timedelta(seconds=1))
     report = object()
     session = RecordingSession(stored, report)
-    supplier = ForbiddenSupplier()
+    supplier = silent_supplier()
     result = invoke(session, profile_obj=profile_obj, batches=batches, permission=permission,
                     supplier=supplier)
     assert session.names() == [CREATE, INSPECT, ENQUEUE, ENQUEUE, ROTATE]
     rotation_kwargs = session.calls[-1][1]
     bound_factory = rotation_kwargs['model_factory']
     assert callable(bound_factory) and result.report is report
-    assert supplier.calls == 0
+    assert unconsumed(supplier)
 
 
 @pytest.mark.parametrize('kind', ['exception', 'interrupt'])
@@ -682,7 +735,7 @@ def test_step_failure_or_interrupt_does_not_retry(no_external_io, monkeypatch, t
     builder = BuilderSpy(lambda team: pytest.fail('factory entered'),
                          on_build=lambda: (_ for _ in ()).throw(error) if step == 'builder' else None)
     monkeypatch.setattr(operator, BUILDER, builder)
-    supplier = ForbiddenSupplier()
+    supplier = silent_supplier()
     expected = {
         'create': [CREATE],
         'inspect': [CREATE, INSPECT],
@@ -698,7 +751,7 @@ def test_step_failure_or_interrupt_does_not_retry(no_external_io, monkeypatch, t
     assert session.names() == expected
     assert len(builder.calls) == (1 if step in ('builder', 'rotation') else 0)
     assert 'SECRET-SENTINEL' not in repr(session)
-    assert supplier.calls == 0
+    assert unconsumed(supplier)
 
 
 def test_factory_refusal_never_falls_back_to_codex(no_external_io, monkeypatch, tmp_path):
@@ -712,21 +765,21 @@ def test_factory_refusal_never_falls_back_to_codex(no_external_io, monkeypatch, 
         raise ValueError('research_claude_profile_authorization_mismatch')
 
     monkeypatch.setattr(operator, BUILDER, refusing_builder)
-    supplier = ForbiddenSupplier()
+    supplier = silent_supplier()
     with pytest.raises(ValueError, match='authorization_mismatch'):
         invoke(session, profile_obj=profile_obj, batches=batches, permission=permission,
                supplier=supplier)
     assert len(builder_calls) == 1
     assert session.names() == [CREATE, INSPECT, ENQUEUE, ENQUEUE]
-    assert supplier.calls == 0
+    assert unconsumed(supplier)
 
 
 def test_same_turn_replay_is_inert_even_after_expiry(no_external_io, monkeypatch, tmp_path):
     profile_obj, batches, permission = reviewed(tmp_path)
     bridge = Bridge(monkeypatch, permission, batches)
     session = BridgeSession(bridge)
-    supplier = ForbiddenSupplier()
     stop = ResearchDispatchStop()
+    supplier = silent_supplier(stop)
     first = invoke(session, profile_obj=profile_obj, batches=batches, permission=permission,
                    supplier=supplier, stop=stop)
     assert first.report.status == 'dispatched'
@@ -757,14 +810,14 @@ def test_same_turn_replay_is_inert_even_after_expiry(no_external_io, monkeypatch
     assert bridge.loads == loads_after_first
     assert bridge.events == events_after_first
     assert len(bridge.starts) == starts_after_first
-    assert supplier.calls == 0
+    assert unconsumed(supplier)
 
 
 def test_changed_same_turn_inputs_delegate_conflict(no_external_io, monkeypatch, tmp_path):
     profile_obj, batches, permission = reviewed(tmp_path)
     bridge = Bridge(monkeypatch, permission, batches)
     session = BridgeSession(bridge)
-    supplier = ForbiddenSupplier()
+    supplier = silent_supplier()
     invoke(session, profile_obj=profile_obj, batches=batches, permission=permission,
            supplier=supplier)
     events_after_first = list(bridge.events)
@@ -778,15 +831,15 @@ def test_changed_same_turn_inputs_delegate_conflict(no_external_io, monkeypatch,
                supplier=supplier)
     assert bridge.events == events_after_first
     assert bridge.loads == loads_after_first
-    assert supplier.calls == 0
+    assert unconsumed(supplier)
 
 
 def test_explicit_new_turn_preserves_existing_recovery_rules(no_external_io, monkeypatch, tmp_path):
     profile_obj, batches, permission = reviewed(tmp_path)
     bridge = Bridge(monkeypatch, permission, batches)
     session = BridgeSession(bridge)
-    supplier = ForbiddenSupplier()
     stop = ResearchDispatchStop()
+    supplier = silent_supplier(stop)
     base = dict(profile_obj=profile_obj, batches=batches, permission=permission,
                 supplier=supplier, stop=stop)
     btc_request, eth_request = batches[0].requests[0], batches[1].requests[0]
@@ -810,7 +863,7 @@ def test_explicit_new_turn_preserves_existing_recovery_rules(no_external_io, mon
     third = invoke(session, turn_id='t3', **base)
     assert third.report.status == 'dispatched' and third.report.attempts == ()
     assert bridge.events.count('factory') == 1 and bridge.events.count('complete') == 2
-    assert supplier.calls == 0
+    assert unconsumed(supplier)
 
 
 def test_result_preserves_report_and_audit_lookup_keys(no_external_io, monkeypatch, tmp_path):
@@ -819,7 +872,7 @@ def test_result_preserves_report_and_audit_lookup_keys(no_external_io, monkeypat
     report = object()
     session = RecordingSession(stored, report)
     monkeypatch.setattr(operator, BUILDER, BuilderSpy(lambda team: pytest.fail('factory entered')))
-    supplier = ForbiddenSupplier()
+    supplier = silent_supplier()
     result = invoke(session, profile_obj=profile_obj, batches=batches, permission=permission,
                     supplier=supplier)
     assert result.report is report
@@ -835,7 +888,7 @@ def test_result_preserves_report_and_audit_lookup_keys(no_external_io, monkeypat
     for handle in result.audit_handles:
         assert all(type(value) is str for value in dataclasses.astuple(handle))
     assert repr(result)
-    assert supplier.calls == 0
+    assert unconsumed(supplier)
 
 
 def test_capture_failed_pending_run_is_retained(no_external_io, monkeypatch, tmp_path):
@@ -853,7 +906,7 @@ def test_capture_failed_pending_run_is_retained(no_external_io, monkeypatch, tmp
                                          'capture_failed', pending_run=run)
 
     monkeypatch.setattr(uncapped_runner, 'run_uncapped_research_with_psycopg', fake_uncapped)
-    supplier = ForbiddenSupplier()
+    supplier = silent_supplier()
     result = invoke(session, profile_obj=profile_obj, batches=batches, permission=permission,
                     supplier=supplier)
     assert result.report.status == 'dispatched'
@@ -866,4 +919,56 @@ def test_capture_failed_pending_run_is_retained(no_external_io, monkeypatch, tmp
     # model call, audit start, or capture was ever entered.
     assert bridge.events == ['authorization']
     assert not bridge.starts and not bridge.outcomes
-    assert supplier.calls == 0
+    assert unconsumed(supplier)
+
+
+@pytest.mark.parametrize('defect', ['not_linux', 'uncontained_profile', 'egress_tampered',
+                                    'wrong_supplier_type', 'wrong_stop_object',
+                                    'supplier_bound_to_other_stop'])
+def test_linux_session_admission_guard_precedes_all_session_io(no_external_io, monkeypatch,
+                                                               tmp_path, defect):
+    profile_obj, batches, permission = reviewed(tmp_path)
+    if defect == 'not_linux':
+        monkeypatch.setattr(operator, '_SESSION_PLATFORM', 'win32')
+        stop = ResearchDispatchStop()
+        supplier = silent_supplier(stop)
+    else:
+        monkeypatch.setattr(operator, '_SESSION_PLATFORM', 'linux')
+        stop = ResearchDispatchStop()
+        supplier = silent_supplier(stop)
+        if defect == 'uncontained_profile':
+            profile_obj = claude_profile(tmp_path, linux_launch=None)
+        elif defect == 'egress_tampered':
+            object.__setattr__(profile_obj.linux_launch, 'egress_policy', 'host')
+        elif defect == 'wrong_supplier_type':
+            supplier = lambda: 'SYNTHETIC-KEY'
+        elif defect == 'wrong_stop_object':
+            supplier = silent_supplier(ResearchDispatchStop())
+        else:
+            supplier = silent_supplier(ResearchDispatchStop())
+            stop = ResearchDispatchStop()
+    if defect == 'uncontained_profile':
+        permission = approval(tuple(batch.requests[0] for batch in batches), model_id=MODEL,
+                              adapter_contract_sha256=profile_obj.contract_sha256)
+    with pytest.raises(ValueError, match='research_claude_operator_'):
+        operator.run_claude_research_rotation(
+            ForbiddenSession(), reviewed_batches=batches, profile=profile_obj,
+            authorization=permission, api_key_supplier=supplier, rotation_id='rotation-1',
+            turn_id='turn-1', stop=stop)
+    if type(supplier) is FiniteInMemoryApiKeySupplier:
+        assert unconsumed(supplier)
+
+
+def test_guard_runs_before_structural_validation_and_any_io(no_external_io, tmp_path):
+    profile_obj, batches, _permission = reviewed(tmp_path)
+    monkey = pytest.MonkeyPatch()
+    try:
+        monkey.setattr(operator, '_SESSION_PLATFORM', 'linux')
+        supplier = silent_supplier(ResearchDispatchStop())
+        with pytest.raises(ValueError, match='supplier_stop_mismatch'):
+            operator.run_claude_research_rotation(
+                ForbiddenSession(), reviewed_batches=batches, profile=profile_obj,
+                authorization=object(), api_key_supplier=supplier, rotation_id='rotation-1',
+                turn_id='turn-1', stop=ResearchDispatchStop())
+    finally:
+        monkey.undo()

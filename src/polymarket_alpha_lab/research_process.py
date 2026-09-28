@@ -300,13 +300,19 @@ def _cleanup(owned, descriptors, timeout_ms):
         raise failure
 
 
-def run_research_process(*, spec, stdin, allow_process_start=False, stop=None):
+def run_research_process(*, spec, stdin, allow_process_start=False, stop=None,
+                         linux_launch=None):
     """Run once. Never retry, run a shell, inherit env or emit raw diagnostics.
 
     Supervision counts from before image verification; OS file/process creation
     and teardown may be uninterruptible. timeout_ms is not a universal wall-clock
     guarantee. Cleanup failure is an error, never proof all processes are gone.
     Requires Linux or Windows/Python >=3.12 (nonblocking Windows pipes).
+
+    ``linux_launch`` composes beside the spec: ``spec`` still describes only
+    the vendor image, while the immutable launch specification selects the
+    separately verified contained Linux path (two contained executions per
+    admitted call; offline egress only). None keeps the legacy path unchanged.
     """
     owned = None
     descriptors = []
@@ -319,6 +325,14 @@ def run_research_process(*, spec, stdin, allow_process_start=False, stop=None):
             raise ValueError('research_process_input_invalid')
         if stop is not None and type(stop) is not ResearchDispatchStop:
             raise ValueError('research_process_stop_invalid')
+        if linux_launch is not None:
+            from polymarket_alpha_lab.research_process_linux import (
+                LinuxLaunchSpec, run_linux_contained_process,
+            )
+            if type(linux_launch) is not LinuxLaunchSpec:
+                raise ValueError('research_process_launch_invalid')
+            return run_linux_contained_process(spec=spec, launch=linux_launch,
+                                               stdin=stdin, stop=stop)
         if sys.platform != 'linux' and not (os.name == 'nt' and sys.version_info >= (3, 12)):
             raise ValueError('research_process_platform_unsupported')
         if stop is not None and stop.is_stopped():
@@ -350,7 +364,11 @@ def run_research_process(*, spec, stdin, allow_process_start=False, stop=None):
         reasons = ('research_process_stopped', 'research_process_timeout',
                    'research_process_not_started', 'research_process_output_limit',
                    'research_process_input_incomplete', 'research_process_nonzero_exit',
-                   'research_process_cleanup_failed')
+                   'research_process_cleanup_failed',
+                   # Contained-Linux fixed codes; unreachable on the legacy path.
+                   'research_process_platform_unsupported',
+                   'research_process_version_mismatch',
+                   'research_process_wrapper_unsupported')
         if (type(failure) is ResearchProcessError and len(failure.args) == 1
                 and type(failure.args[0]) is str and failure.args[0] in reasons):
             raise ResearchProcessError(failure.args[0]) from None

@@ -422,3 +422,232 @@ def test_verified_image_close_failure_never_launches_or_retries(monkeypatch, exe
         else:
             assert caught.value is original
     assert closed == [998]
+
+
+# ---------------------------------------------------------------------------
+# Opt-in native containment proofs (real rootless namespaces, cgroup controls,
+# sealed memfd snapshots and the compiled synthetic stand-in ELF). These run
+# only with POLYMARKET_ALPHA_LAB_RUN_LINUX_CONTAINMENT=1; after the explicit
+# opt-in, missing prerequisites are failures, never skips.
+CONTAINMENT_ENABLED = os.environ.get('POLYMARKET_ALPHA_LAB_RUN_LINUX_CONTAINMENT') == '1'
+
+
+def _contained(binary, digest, launch, work, argv=(), stdin=b'{}', timeout_ms=60000, stop=None):
+    from polymarket_alpha_lab.research_process import (
+        ResearchProcessSpec, run_research_process,
+    )
+    spec = ResearchProcessSpec(
+        (binary, *argv), str(work),
+        (('HOME', str(work / 'host-home')), ('CLAUDE_CONFIG_DIR', str(work / 'host-config')),
+         ('ANTHROPIC_BASE_URL', 'https://gateway.example.invalid'),
+         ('CLAUDE_CODE_MAX_OUTPUT_TOKENS', '8192'),
+         ('ANTHROPIC_API_KEY', 'SYNTHETIC-NOT-A-REAL-KEY')), digest, timeout_ms)
+    return run_research_process(spec=spec, stdin=stdin, allow_process_start=True,
+                                linux_launch=launch, stop=stop)
+
+
+def _standin_processes_gone(name='pal-standin', deadline=10.0):
+    def alive():
+        try:
+            entries = list(Path('/proc').iterdir())
+        except OSError:
+            return True
+        for entry in entries:
+            if not entry.name.isdigit():
+                continue
+            try:
+                command = (entry / 'cmdline').read_bytes()
+            except OSError:
+                continue
+            if name.encode() in command:
+                return True
+        return False
+    end = time.monotonic() + deadline
+    while alive() and time.monotonic() < end:
+        time.sleep(0.05)
+    return not alive()
+
+
+@pytest.mark.skipif(not CONTAINMENT_ENABLED, reason='explicit native containment proof is opt-in')
+def test_native_containment_normal_exit_and_private_state(tmp_path):
+    from tests.test_research_process_linux import build_native_launch
+    binary, digest, _size, launch = build_native_launch(tmp_path)
+    work = tmp_path / 'work'
+    work.mkdir()
+    result = _contained(binary, digest, launch, work,
+                        stdin=b'{"schema_version":"research-claude-actions-v1"}')
+    assert b'"subtype":"success"' in result.stdout and result.stderr_bytes == 0
+    assert not list(work.iterdir()), 'no writable host surface may remain'
+
+
+@pytest.mark.skipif(not CONTAINMENT_ENABLED, reason='explicit native containment proof is opt-in')
+def test_native_containment_denies_host_and_postgres_surfaces(tmp_path):
+    import socket
+    from tests.test_research_process_linux import build_native_launch
+    with socket.socket() as probe:
+        probe.bind(('127.0.0.1', 0))
+        port = probe.getsockname()[1]
+    binary, digest, _size, launch = build_native_launch(tmp_path)
+    work = tmp_path / 'work'
+    work.mkdir()
+    result = _contained(binary, digest, launch, work,
+                        argv=('--pal-deny-host', '--pal-deny-net=%d' % port))
+    assert b'HOST-DENIED' in result.stdout and b'NET-DENIED' in result.stdout
+
+
+@pytest.mark.skipif(not CONTAINMENT_ENABLED, reason='explicit native containment proof is opt-in')
+def test_native_containment_cross_worker_state_is_private(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    from tests.test_research_process_linux import build_native_launch
+    binary, digest, _size, launch = build_native_launch(tmp_path)
+    first, second = tmp_path / 'one', tmp_path / 'two'
+    first.mkdir()
+    second.mkdir()
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first_result = pool.submit(_contained, binary, digest, launch, first,
+                                   argv=('--pal-write-home',)).result()
+        second_result = pool.submit(_contained, binary, digest, launch, second,
+                                    argv=('--pal-write-home',)).result()
+    assert b'HOME-WRITTEN' in first_result.stdout
+    assert b'HOME-WRITTEN' in second_result.stdout
+    # The same literal guest HOME belongs to different namespaces: neither
+    # worker's marker leaks into the other worker's host work directory.
+    assert not list(first.iterdir()) and not list(second.iterdir())
+
+
+@pytest.mark.skipif(not CONTAINMENT_ENABLED, reason='explicit native containment proof is opt-in')
+def test_native_containment_enforces_tmpfs_and_scratch_bounds(tmp_path):
+    from tests.test_research_process_linux import build_native_launch
+    binary, digest, _size, launch = build_native_launch(tmp_path)
+    work = tmp_path / 'work'
+    work.mkdir()
+    result = _contained(binary, digest, launch, work, argv=('--pal-fill=1',))
+    assert b'FILLED=' in result.stdout  # /tmp writes stopped at the sizelimit
+    result = _contained(binary, digest, launch, work, argv=('--pal-fill=2',))
+    assert b'FILLED=' in result.stdout  # scratch writes stopped at the sizelimit
+
+
+@pytest.mark.skipif(not CONTAINMENT_ENABLED, reason='explicit native containment proof is opt-in')
+def test_native_containment_kills_setsid_and_double_fork_descendants(tmp_path):
+    from tests.test_research_process_linux import build_native_launch
+    binary, digest, _size, launch = build_native_launch(tmp_path)
+    work = tmp_path / 'work'
+    work.mkdir()
+    result = _contained(binary, digest, launch, work, argv=('--pal-escape',))
+    assert b'"subtype":"success"' in result.stdout
+    assert _standin_processes_gone(), 'escaped descendants survived cleanup'
+
+
+@pytest.mark.skipif(not CONTAINMENT_ENABLED, reason='explicit native containment proof is opt-in')
+def test_native_containment_stop_timeout_and_flood_are_bounded(tmp_path):
+    import threading
+    from tests.test_research_process_linux import build_native_launch
+    from polymarket_alpha_lab.research_dispatch_runner import ResearchDispatchStop
+    from polymarket_alpha_lab.research_process import ResearchProcessError
+    binary, digest, _size, launch = build_native_launch(tmp_path)
+    work = tmp_path / 'work'
+    work.mkdir()
+    stop = ResearchDispatchStop()
+    timer = threading.Timer(0.6, stop.request_stop)
+    timer.start()
+    try:
+        with pytest.raises(ResearchProcessError, match='stopped'):
+            _contained(binary, digest, launch, work, argv=('--pal-forks=2',), stop=stop)
+    finally:
+        timer.join()
+    # The budget must exceed two wrapper setups; only a genuinely hung
+    # vendor may trip it.
+    with pytest.raises(ResearchProcessError, match='timeout'):
+        _contained(binary, digest, launch, work, argv=('--pal-hang',), timeout_ms=6000)
+    # The flooding call is bounded by exactly one of two fixed outcomes:
+    # the relay cap (output_limit) or the post-cap teardown killing the
+    # flooding vendor (failed). Which one surfaces first is a benign race.
+    with pytest.raises(ResearchProcessError, match='output_limit|failed'):
+        _contained(binary, digest, launch, work, argv=('--pal-flood',), timeout_ms=8000)
+    assert _standin_processes_gone()
+
+
+@pytest.mark.skipif(not CONTAINMENT_ENABLED, reason='explicit native containment proof is opt-in')
+def test_native_parent_sigkill_is_covered_by_the_supervisor(tmp_path):
+    from tests.test_research_process_linux import build_native_launch
+    binary, digest, _size, launch = build_native_launch(tmp_path)
+    root = Path(__file__).resolve().parents[1]
+    work = tmp_path / 'work'
+    work.mkdir()
+    marker = tmp_path / 'driver-started'
+    code = (
+        'import sys;from pathlib import Path;'
+        'sys.path.insert(0,' + repr(str(root)) + ');'
+        'sys.path.insert(0,' + repr(str(root / 'src')) + ');'
+        'from polymarket_alpha_lab.research_process import run_research_process;'
+        'from tests.test_research_process_linux import contained_vendor_spec;'
+        'Path(' + repr(str(marker)) + ').write_text("1");'
+        'run_research_process(spec=contained_vendor_spec(' + repr(binary) + ', ' + repr(digest)
+        + ', Path(' + repr(str(work)) + '), argv=("--pal-forks=3",)), stdin=b"{}",'
+        ' allow_process_start=True, linux_launch=' + repr(launch) + ')')
+    driver_log = tmp_path / 'driver-stderr.log'
+    with driver_log.open('wb') as log:
+        driver = subprocess.Popen([sys.executable, '-I', '-c', code],
+                                  cwd=str(tmp_path), env={},
+                                  stdout=subprocess.DEVNULL, stderr=log,
+                                  stdin=subprocess.DEVNULL)
+    try:
+        deadline = time.monotonic() + 30
+        while not marker.exists() and driver.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.05)
+        if not marker.exists():
+            driver.poll()
+            tail = driver_log.read_text(errors='replace')[-800:]
+            pytest.fail('contained child did not start (driver rc=%r): %s'
+                        % (driver.returncode, tail))
+        driver.kill()
+        driver.wait(timeout=10)
+        assert _standin_processes_gone(deadline=15), 'parent loss left the contained tree alive'
+    finally:
+        if driver.poll() is None:
+            driver.kill()
+            driver.wait(timeout=10)
+
+
+@pytest.mark.skipif(not CONTAINMENT_ENABLED, reason='explicit native containment proof is opt-in')
+def test_native_supervisor_loss_is_covered_by_wrapper_parent_death(tmp_path):
+    import threading
+    from tests.test_research_process_linux import build_native_launch
+    from polymarket_alpha_lab.research_process import ResearchProcessError
+    binary, digest, _size, launch = build_native_launch(tmp_path)
+    work = tmp_path / 'work'
+    work.mkdir()
+
+    def find_supervisor():
+        try:
+            entries = list(Path('/proc').iterdir())
+        except OSError:
+            return None
+        for entry in entries:
+            if not entry.name.isdigit():
+                continue
+            try:
+                command = (entry / 'cmdline').read_bytes()
+            except OSError:
+                continue
+            # The supervisor runs the sealed interpreter with the helper
+            # script from a procfd path: '-B' plus 'supervise' identify it;
+            # memfd names never appear in argv.
+            if (b'supervise' in command and b'-B' in command
+                    and b'/proc/self/fd/' in command):
+                return int(entry.name)
+        return None
+
+    def kill_supervisor():
+        pid = find_supervisor()
+        if pid is not None:
+            os.kill(pid, signal.SIGKILL)
+
+    killer = threading.Timer(1.0, kill_supervisor)
+    killer.start()
+    try:
+        with pytest.raises(ResearchProcessError):
+            _contained(binary, digest, launch, work, argv=('--pal-forks=3',))
+    finally:
+        killer.join()
+    assert _standin_processes_gone(), 'supervisor loss left the contained tree alive'

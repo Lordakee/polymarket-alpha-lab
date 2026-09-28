@@ -15,6 +15,7 @@ from polymarket_alpha_lab.research_dispatch_runner import ResearchDispatchStop
 from polymarket_alpha_lab.research_process import (
     ResearchProcessResult, ResearchProcessSpec, run_research_process,
 )
+from polymarket_alpha_lab.research_process_linux import LinuxLaunchSpec
 from polymarket_alpha_lab.team_research_agent_types import (
     ResearchModelReply, ResearchToolCall, identifier, integer, strict_json,
 )
@@ -202,16 +203,25 @@ class ClaudeProcessModel:
     The trusted builder receives a copied input AFTER the original prompt is
     snapshotted. It may supply credentials at the approved application boundary;
     no credentials are discovered here. Use the existing durable-audit runner.
-    """
-    __slots__ = ('_model', '_prepare', '_stop', '_lock', '_failed', '_calls')
 
-    def __init__(self, *, model_id, prepare_command, allow_process_start=False, stop=None):
+    An optional immutable Linux launch specification is accepted, retained and
+    forwarded to the runner only when present, preserving the legacy call
+    shape; the decoder, prompt protocol, model identity and CLI flags are
+    unchanged by it.
+    """
+    __slots__ = ('_model', '_prepare', '_stop', '_lock', '_failed', '_calls', '_launch')
+
+    def __init__(self, *, model_id, prepare_command, allow_process_start=False, stop=None,
+                 linux_launch=None):
         identifier('model_id', model_id)
         if allow_process_start is not True or not callable(prepare_command):
             raise ValueError('research_claude_process_opt_in_required')
         if stop is not None and type(stop) is not ResearchDispatchStop:
             raise ValueError('research_claude_stop_invalid')
+        if linux_launch is not None and type(linux_launch) is not LinuxLaunchSpec:
+            raise ValueError('research_claude_launch_invalid')
         self._model, self._prepare, self._stop = model_id, prepare_command, stop
+        self._launch = linux_launch
         self._lock, self._failed, self._calls = Lock(), False, 0
 
     def __repr__(self):
@@ -231,8 +241,13 @@ class ClaudeProcessModel:
                 spec = self._prepare(replace(request))
                 if type(spec) is not ResearchProcessSpec:
                     raise ValueError
-                result = run_research_process(spec=spec, stdin=payload,
-                    allow_process_start=True, stop=self._stop)
+                if self._launch is None:
+                    result = run_research_process(spec=spec, stdin=payload,
+                        allow_process_start=True, stop=self._stop)
+                else:
+                    result = run_research_process(spec=spec, stdin=payload,
+                        allow_process_start=True, stop=self._stop,
+                        linux_launch=self._launch)
                 return decode_claude_result(result, request=request, call_number=self._calls)
             except BaseException as error:
                 self._failed = True

@@ -353,10 +353,13 @@ def test_operator_assembly_native_two_team_stop_restart_replay_and_audit(tmp_pat
     """
     from hashlib import sha256
     from polymarket_alpha_lab import research_claude_operator as operator
-    from polymarket_alpha_lab.research_claude_profile import ClaudeExecProfile
+    from polymarket_alpha_lab.research_claude_profile import (
+        ClaudeExecProfile, FiniteInMemoryApiKeySupplier,
+    )
     from polymarket_alpha_lab.research_process import ResearchProcessSpec
     from polymarket_alpha_lab.research_uncapped import UncappedResearchAuthorization
     from polymarket_alpha_lab.research_uncapped_audit import reply_fingerprint
+    from tests.test_research_process_linux import fixed_launch
 
     class ObservedSession:
         # Pass-through observer over the real session; no canned receipts.
@@ -373,12 +376,6 @@ def test_operator_assembly_native_two_team_stop_restart_replay_and_audit(tmp_pat
             report = self.real.run_research_rotation(**kwargs)
             self.reports.append(report)
             return report
-
-    supplier_calls = []
-
-    def forbidden_supplier():
-        supplier_calls.append(True)
-        raise AssertionError('api key supplier must not be invoked')
 
     builder_calls = []
     factory_entries = []
@@ -424,9 +421,6 @@ def test_operator_assembly_native_two_team_stop_restart_replay_and_audit(tmp_pat
     for key in tuple(os.environ):
         if key.upper().startswith('PG'): monkeypatch.delenv(key)
     parent = tmp_path
-    if os.name == 'nt':
-        parent = Path(os.environ['RUNNER_TEMP']) / ('pal-operator-'+uuid.uuid4().hex)
-        files.private_directory(parent, create=True)
     root = parent / 'Operator Assembly With Spaces'; root.mkdir()
     (root/'pyproject.toml').write_text('[project]\nname="polymarket-alpha-lab"\n')
     shutil.copytree(ROOT/'database', root/'database')
@@ -444,7 +438,8 @@ def test_operator_assembly_native_two_team_stop_restart_replay_and_audit(tmp_pat
         process = ResearchProcessSpec((str(work/'claude-native'),), str(work),
             (('HOME', str(work/'home')), ('CLAUDE_CONFIG_DIR', str(work/'config'))), 'b'*64, 15000)
         profile = ClaudeExecProfile(process=process,
-                                    endpoint_url='https://gateway.example.invalid')
+                                    endpoint_url='https://gateway.example.invalid',
+                                    linux_launch=fixed_launch())
         assert type(profile) is ClaudeExecProfile
         btc = replace(prepared(6300,'crypto_btc'), model_id=profile.model_id)
         eth = replace(prepared(6301,'crypto_eth'), model_id=profile.model_id)
@@ -458,12 +453,14 @@ def test_operator_assembly_native_two_team_stop_restart_replay_and_audit(tmp_pat
         assert permission.model_id == profile.model_id
         assert permission.request_keys == ((btc.record_id,btc.content_sha256),
                                            (eth.record_id,eth.content_sha256))
-        assert supplier_calls == []
+        def silent_supplier(control):
+            return FiniteInMemoryApiKeySupplier(stop=control,
+                crypto_btc=('SYNTHETIC-BTC-SLOT',), crypto_eth=('SYNTHETIC-ETH-SLOT',))
 
         def invoke(observed, turn_id, control):
             return operator.run_claude_research_rotation(observed,
                 reviewed_batches=batches, profile=profile, authorization=permission,
-                api_key_supplier=forbidden_supplier, rotation_id='operator-rotation',
+                api_key_supplier=silent_supplier(control), rotation_id='operator-rotation',
                 turn_id=turn_id, stop=control, max_tasks=2, max_workers=1)
 
         def shared(result, observed, control):
@@ -475,7 +472,10 @@ def test_operator_assembly_native_two_team_stop_restart_replay_and_audit(tmp_pat
             assert (built['authorization'] is rotation['uncapped_authorization']
                     is result.authorization_receipt.authorization)
             assert built['stop'] is rotation['stop'] is control
-            assert built['api_key_supplier'] is forbidden_supplier
+            assert type(built['api_key_supplier']) is FiniteInMemoryApiKeySupplier
+            assert built['api_key_supplier'].bound_stop_is(control)
+            assert built['api_key_supplier'].remaining('crypto_btc') == 1
+            assert built['api_key_supplier'].remaining('crypto_eth') == 1
             assert built['profile'] == profile
             assert built['allow_process_start'] is True and built['allow_api_key_use'] is True
             assert 'model_budget_id' not in rotation
@@ -484,7 +484,8 @@ def test_operator_assembly_native_two_team_stop_restart_replay_and_audit(tmp_pat
             assert rotation['require_durable_audit'] is True
             assert rotation['batch_ids_to_run'] == ('operator-btc','operator-eth')
             assert (rotation['max_tasks'],rotation['max_workers']) == (2,1)
-            assert supplier_calls == []
+            assert built['api_key_supplier'].remaining('crypto_btc') == 1
+            assert built['api_key_supplier'].remaining('crypto_eth') == 1
 
         # (b) First operator turn: BTC completes; cooperative stop skips ETH.
         with db.session() as s:
@@ -688,10 +689,526 @@ def test_operator_assembly_native_two_team_stop_restart_replay_and_audit(tmp_pat
                 # project_private is owner-only (an app-role read fails).
                 owner = not statement.startswith('SELECT count(*) FROM research_capture.')
                 assert restarted._psql(identity,statement,owner=owner) == expected
-            assert supplier_calls == []
         assert restarted.status()['status'] == 'running'
         print('native operator assembly: PASS;two-team stop,restart,replay,new turn,'
-              'two-record audit join,zero supplier,zero budget rows')
+              'two-record audit join,zero supplier consumption,zero budget rows')
     finally:
         for handle in (restarted, db):
             if handle is not None and handle.layout.home.exists(): handle.down()
+
+
+# ---------------------------------------------------------------------------
+# Opt-in native contained-operator proofs: the plan's 2/2 finite-supplier
+# scenario (real factory, real containment, real operator, real audit) and the
+# driver-loss scenario. Both require the native PostgreSQL opt-in AND the
+# Linux containment opt-in; missing prerequisites after an explicit opt-in are
+# failures, never skips.
+CONTAINMENT_ENABLED = os.environ.get('POLYMARKET_ALPHA_LAB_RUN_LINUX_CONTAINMENT') == '1'
+
+
+def _contained_request(number, team, condition=None):
+    """A fresh single-request batch input like prepared(), with an optional
+    custom condition id (the ETH block marker rides in the condition text)."""
+    from datetime import UTC, datetime, timedelta
+    from polymarket_alpha_lab.research_crypto_launch import CryptoResearchPreview, CryptoResearchSpec
+    from tests.test_research_crypto_launch import snapshots
+    at = datetime.now(UTC)
+    name = condition or ('queued-' + str(number))
+    spec = CryptoResearchSpec(name, team, '0x' + format(number, '064x'), name,
+                              at + timedelta(minutes=10), 'claude-opus-5')
+    market, candlesticks, klines = snapshots(spec, at)
+    preview = CryptoResearchPreview(spec, at, at, market, candlesticks, klines)
+    return preview.request(approved_terms_sha256=preview.to_dict()['terms_sha256'])
+
+
+def _contained_native_fixture(parent, name):
+    files.private_directory(parent)
+    root = parent / name
+    root.mkdir(parents=True, exist_ok=False)
+    (root / 'pyproject.toml').write_text('[project]\nname="polymarket-alpha-lab"\n')
+    shutil.copytree(ROOT / 'database', root / 'database')
+    shutil.copytree(ROOT / 'supabase/migrations', root / 'supabase/migrations')
+    with socket.socket() as sock:
+        sock.bind(('127.0.0.1', 0))
+        port = sock.getsockname()[1]
+    return root, port
+
+
+_DRIVER_LOSS_CODE = '''
+import json, os, sys, time
+sys.path.insert(0, sys.argv[6])
+sys.path.insert(0, sys.argv[6] + '/src')
+sys.path.insert(0, sys.argv[6] + '/tests')
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
+from pathlib import Path
+
+from polymarket_alpha_lab import research_process_linux as linux
+from polymarket_alpha_lab import research_claude_operator as operator
+from polymarket_alpha_lab.research_claude_profile import (
+    ClaudeExecProfile, FiniteInMemoryApiKeySupplier,
+)
+from polymarket_alpha_lab.research_process import ResearchProcessSpec
+from polymarket_alpha_lab.research_dispatch import ResearchBatch
+from polymarket_alpha_lab.research_dispatch_runner import ResearchDispatchStop
+from polymarket_alpha_lab.project_postgres.server import ProjectPostgres
+from tests.test_project_postgres_uncapped_audit_native import _contained_request
+from tests.test_project_postgres_dispatch_native import prepared
+from tests.test_project_postgres_uncapped_native import authorization
+
+root, artifacts, work = (Path(sys.argv[index]) for index in (1, 2, 3))
+vendor = artifacts / 'vendor' / 'pal-standin'
+digest = __import__('hashlib').sha256(vendor.read_bytes()).hexdigest()
+# Rebuild the EXACT launch the parent measured (serialized beside the
+# marker) so the reconstructed profile digest matches the authorization.
+data = json.loads(Path(sys.argv[7]).read_text(encoding='utf-8'))
+launch = linux.LinuxLaunchSpec(
+    wrapper=linux.LinuxArtifactPin(data['wrapper']['path'],
+                                   data['wrapper']['sha256'],
+                                   data['wrapper']['size_bytes']),
+    helper_sha256=data['helper_sha256'],
+    interpreter=linux.LinuxArtifactPin(data['interpreter']['path'],
+                                       data['interpreter']['sha256'],
+                                       data['interpreter']['size_bytes']),
+    supervisor_python_home=data['supervisor_python_home'],
+    runtime_files=tuple(
+        linux.LinuxRuntimeFile(item['guest_path'], item['host_path'],
+                               item['sha256'], item['size_bytes'])
+        for item in data['runtime_files']),
+    vendor_guest_path=data['vendor_guest_path'],
+    helper_guest_path=data['helper_guest_path'],
+    vendor_size_bytes=data['vendor_size_bytes'],
+    expected_version_output=data['expected_version_output'],
+    cgroup_root=data['cgroup_root'],
+    scratch_size_bytes=data['scratch_size_bytes'],
+    guest_tmp_size_bytes=data['guest_tmp_size_bytes'],
+    memory_max_bytes=data['memory_max_bytes'],
+    pids_max=data['pids_max'])
+work.mkdir(parents=True, exist_ok=True)
+profile = ClaudeExecProfile(
+    process=ResearchProcessSpec((str(vendor),), str(work),
+        (('HOME', str(work / 'host-home')), ('CLAUDE_CONFIG_DIR', str(work / 'host-config'))),
+        digest, 600000),
+    endpoint_url='https://gateway.example.invalid', linux_launch=launch)
+btc = replace(prepared(6500, 'crypto_btc'), model_id=profile.model_id)
+eth = replace(_contained_request(6501, 'crypto_eth', condition='blocked-eth-driver-loss'),
+              model_id=profile.model_id)
+batches = (ResearchBatch('driver-loss-btc', (btc,)), ResearchBatch('driver-loss-eth', (eth,)))
+permission = authorization((btc, eth), authorization_id='contained-driver-loss',
+                           adapter_contract_sha256=profile.contract_sha256)
+control = ResearchDispatchStop()
+supplier = FiniteInMemoryApiKeySupplier(stop=control,
+    crypto_btc=tuple('K-B%d' % n for n in range(3)),
+    crypto_eth=tuple('K-E%d' % n for n in range(3)))
+marker = Path(sys.argv[4])
+marker.write_text(json.dumps({'btc': btc.record_id, 'eth': eth.record_id}))
+with ProjectPostgres(root).session() as session:
+    report = operator.run_claude_research_rotation(session,
+        reviewed_batches=batches, profile=profile, authorization=permission,
+        api_key_supplier=supplier, rotation_id='driver-loss-rotation', turn_id='turn-one',
+        stop=control, max_tasks=2, max_workers=2)
+raise SystemExit(0)
+'''
+
+
+@pytest.mark.skipif(not (ENABLED and CONTAINMENT_ENABLED),
+                    reason='explicit native contained operator proof is opt-in')
+def test_contained_operator_two_by_two_stop_restart_replay_and_audit(tmp_path, monkeypatch):
+    """The plan's principal native synthetic scenario.
+
+    Two single-request BTC/ETH batches at max_tasks=2/max_workers=2, one
+    contained profile, one finite supplier and one stop token. A barrier proves
+    both workers enter their first calls concurrently; ETH's first model
+    process stays deliberately blocked; BTC completes and captures; a separate
+    observer session verifies both facts; stop terminates ETH with one failed
+    audit outcome; a real engine restart precedes the inert same-turn replay,
+    an empty explicit new turn and a final counter comparison. The vendor is
+    the compiled synthetic stand-in ELF: its outputs are fixture data, never
+    official-image evidence.
+    """
+    import threading
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+    from polymarket_alpha_lab import research_claude_operator as operator
+    from polymarket_alpha_lab import research_process_linux as linux
+    from polymarket_alpha_lab.research_claude_profile import (
+        ClaudeExecProfile, FiniteInMemoryApiKeySupplier,
+    )
+    from polymarket_alpha_lab.research_process import ResearchProcessSpec
+    from polymarket_alpha_lab.research_dispatch import ResearchBatch
+    from polymarket_alpha_lab.research_dispatch_runner import ResearchDispatchStop
+    from tests.test_research_process_linux import (
+        build_native_launch, require_native_containment,
+    )
+    require_native_containment()
+    for key in tuple(os.environ):
+        if key.upper().startswith('PG'):
+            monkeypatch.delenv(key)
+    prefix = Path(os.environ['POLYMARKET_ALPHA_LAB_NATIVE_PG_PREFIX'])
+    root, port = _contained_native_fixture(tmp_path, 'Contained Two By Two')
+    import_runtime_directory(root, prefix)
+    artifacts = tmp_path / 'native'
+    binary, digest, size, launch = build_native_launch(artifacts)
+    work = root / 'Contained Work'
+    work.mkdir()
+    db = ProjectPostgres(root)
+    restarted = None
+    try:
+        assert db.initialize(port=port)['migrations_applied'] == 68
+        assert db.up()['status'] == 'running'
+        profile = ClaudeExecProfile(
+            process=ResearchProcessSpec(
+                (binary,), str(work),
+                (('HOME', str(work / 'host-home')),
+                 ('CLAUDE_CONFIG_DIR', str(work / 'host-config'))),
+                digest, 600000),
+            endpoint_url='https://gateway.example.invalid', linux_launch=launch)
+        btc = replace(prepared(6400, 'crypto_btc'), model_id=profile.model_id)
+        eth = replace(_contained_request(6401, 'crypto_eth', condition='blocked-eth'),
+                      model_id=profile.model_id)
+        batches = (ResearchBatch('contained-btc', (btc,)),
+                   ResearchBatch('contained-eth', (eth,)))
+        permission = authorization((btc, eth), authorization_id='contained-2by2',
+                                   adapter_contract_sha256=profile.contract_sha256)
+        control = ResearchDispatchStop()
+        supplier = FiniteInMemoryApiKeySupplier(
+            stop=control, crypto_btc=tuple('K-B%d' % n for n in range(3)),
+            crypto_eth=tuple('K-E%d' % n for n in range(3)))
+        barrier = threading.Barrier(2)
+        entries = {'count': 0}
+        entry_lock = threading.Lock()
+        original_prepare = ClaudeExecProfile.prepare
+
+        def barrier_prepare(self, request, *, api_key):
+            with entry_lock:
+                first = entries['count'] < 2
+                if first:
+                    entries['count'] += 1
+            if first:
+                barrier.wait(timeout=120)
+            return original_prepare(self, request, api_key=api_key)
+
+        session_patch = pytest.MonkeyPatch()
+        session_patch.setattr(ClaudeExecProfile, 'prepare', barrier_prepare)
+        counters_before = linux.LINUX_PHASE_COUNTERS.snapshot()
+        with db.session() as session:
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(
+                    operator.run_claude_research_rotation, session,
+                    reviewed_batches=batches, profile=profile, authorization=permission,
+                    api_key_supplier=supplier, rotation_id='contained-rotation',
+                    turn_id='turn-one', stop=control, max_tasks=2, max_workers=2)
+                deadline = time.monotonic() + 600
+                observed = False
+                while time.monotonic() < deadline:
+                    try:
+                        # The research session serializes calls internally, so
+                        # this thread can observe durably committed rows while
+                        # the rotation worker runs through the same session.
+                        btc_audit = session.inspect_uncapped_calls(
+                            record_id=btc.record_id)
+                        eth_audit = session.inspect_uncapped_calls(
+                            record_id=eth.record_id)
+                        btc_state = session.inspect(record_id=btc.record_id)
+                        eth_state = session.inspect(record_id=eth.record_id)
+                        if (btc_state.status == 'already_captured'
+                                and btc_state.record.run.research.status == 'completed'
+                                and len(btc_audit.calls) == 3
+                                and len(btc_audit.outcomes) == 3
+                                and len(eth_audit.calls) == 1
+                                and eth_audit.outcomes == ()
+                                and eth_state.status == 'incomplete'):
+                            observed = True
+                            break
+                        if (btc_state.status == 'already_captured'
+                                and btc_state.record.run.research.status != 'completed'):
+                            pytest.fail('BTC captured unsuccessfully: '
+                                        + str(btc_state.record.run.research.reason_code))
+                    except Exception:
+                        pass
+                    time.sleep(0.25)
+                if not observed:
+                    failure = future.exception() if future.done() else None
+                    detail = repr(failure) if failure else 'rotation still running'
+                    pytest.fail('observer timeout; rotation state: ' + detail)
+                control.request_stop()
+                report = future.result(timeout=300)
+        assert entries['count'] == 2, 'both workers did not enter their first calls'
+        session_patch.undo()
+        counters_after = linux.LINUX_PHASE_COUNTERS.snapshot()
+        with db.session() as audit_probe:
+            btc_calls = len(audit_probe.inspect_uncapped_calls(
+                record_id=btc.record_id).calls)
+            eth_calls = len(audit_probe.inspect_uncapped_calls(
+                record_id=eth.record_id).calls)
+        assert btc_calls == 3 and eth_calls == 1
+        assert report.report.status == 'dispatched' and report.report.stop_requested is True
+        attempts = {attempt.position: attempt for attempt in report.report.attempts}
+        assert set(attempts) <= {0, 1}
+        btc_research = attempts[0].execution.record.run.research
+        assert attempts[0].status == 'returned'
+        assert attempts[0].execution.status == 'captured'
+        assert btc_research.status == 'completed' and btc_research.model_calls == 3
+        eth_attempt = attempts[1]
+        assert eth_attempt.status == 'returned'
+        eth_research = eth_attempt.execution.record.run.research
+        assert eth_attempt.execution.status == 'captured'
+        assert eth_research.status == 'failed' and eth_research.model_calls == 1
+        # The stand-in folds parallel reads into one reply, so the audited
+        # model executions are BTC's two or three calls plus ETH's blocked
+        # first call; every model execution always has one version execution.
+        model_delta = (counters_after['model_executions']
+                       - counters_before['model_executions'])
+        assert (counters_after['version_executions']
+                - counters_before['version_executions'] == model_delta)
+        assert model_delta == btc_calls + len(eth_audit.calls)
+        assert supplier.remaining('crypto_btc') == 0
+        assert supplier.remaining('crypto_eth') == 2
+        with db.session() as check:
+            btc_audit = check.inspect_uncapped_calls(record_id=btc.record_id)
+            eth_audit = check.inspect_uncapped_calls(record_id=eth.record_id)
+            assert len(btc_audit.calls) == len(btc_audit.outcomes) == 3
+            assert all(o.status == 'returned' for o in btc_audit.outcomes)
+            btc_calls = len(btc_audit.calls)
+            assert len(eth_audit.calls) == 1 and len(eth_audit.outcomes) == 1
+            assert eth_audit.outcomes[0].status == 'failed'
+            assert eth_audit.outcomes[0].reported_total_tokens is None
+            stored_batches = tuple(check.inspect_research_batch(
+                batch_id=batch_id).stored.batch
+                for batch_id in ('contained-btc', 'contained-eth'))
+            stored_authorization = check.inspect_uncapped_authorization(
+                authorization_id=permission.authorization_id).authorization
+        assert db.status()['status'] == 'running'
+        db.down()
+        assert db.status()['status'] == 'stopped'
+        restarted = ProjectPostgres(root)
+        assert restarted.up()['status'] == 'running'
+        with restarted.session() as session:
+            assert session.inspect(record_id=btc.record_id).record == attempts[0].execution.record
+            assert session.inspect(record_id=eth.record_id).record == eth_attempt.execution.record
+            # Inert same-turn replay with the exhausted supplier.
+            replay_stop = ResearchDispatchStop()
+            exhausted = FiniteInMemoryApiKeySupplier(stop=replay_stop,
+                                                     crypto_btc=(), crypto_eth=())
+            counters_replay_before = linux.LINUX_PHASE_COUNTERS.snapshot()
+            replay = operator.run_claude_research_rotation(
+                session, reviewed_batches=stored_batches, profile=profile,
+                authorization=stored_authorization, api_key_supplier=exhausted,
+                rotation_id='contained-rotation', turn_id='turn-one',
+                stop=replay_stop, max_tasks=2, max_workers=2)
+            assert replay.report.status == 'turn_already_reserved'
+            assert replay.report.attempts == ()
+            assert linux.LINUX_PHASE_COUNTERS.snapshot() == counters_replay_before
+            # An explicit second turn is empty: both tasks are already claimed.
+            second = operator.run_claude_research_rotation(
+                session, reviewed_batches=stored_batches, profile=profile,
+                authorization=stored_authorization, api_key_supplier=exhausted,
+                rotation_id='contained-rotation', turn_id='turn-two',
+                stop=replay_stop, max_tasks=2, max_workers=2)
+            assert second.report.status == 'dispatched' and second.report.attempts == ()
+            assert linux.LINUX_PHASE_COUNTERS.snapshot() == counters_replay_before
+            final = operator.run_claude_research_rotation(
+                session, reviewed_batches=stored_batches, profile=profile,
+                authorization=stored_authorization, api_key_supplier=exhausted,
+                rotation_id='contained-rotation', turn_id='turn-one',
+                stop=replay_stop, max_tasks=2, max_workers=2)
+            assert final.report.status == 'turn_already_reserved'
+            assert linux.LINUX_PHASE_COUNTERS.snapshot() == counters_replay_before
+            assert session.inspect_uncapped_calls(record_id=btc.record_id) == btc_audit
+            assert session.inspect_uncapped_calls(record_id=eth.record_id) == eth_audit
+        assert restarted.status()['status'] == 'running'
+        print('native contained 2/2: PASS;barrier,btc capture,eth blocked+stopped,'
+              '4 slots/4 version/4 model/restart/replay inert,empty second turn')
+    finally:
+        for handle in (restarted, db):
+            if handle is not None and handle.layout.home.exists():
+                handle.down()
+
+
+@pytest.mark.skipif(not (ENABLED and CONTAINMENT_ENABLED),
+                    reason='explicit native contained operator proof is opt-in')
+def test_contained_driver_loss_preserves_incomplete_claim_and_replays_inert(tmp_path,
+                                                                            monkeypatch):
+    """Kill the driver after BTC's capture and ETH's committed start and key
+    release; supervisor cleanup must reap the contained tree, the ETH claim
+    stays incomplete with no terminal outcome, and an inert same-turn replay
+    from a fresh parent session adds nothing."""
+    from polymarket_alpha_lab import research_process_linux as linux
+    from polymarket_alpha_lab import research_claude_operator as operator
+    from polymarket_alpha_lab.research_claude_profile import (
+        ClaudeExecProfile, FiniteInMemoryApiKeySupplier,
+    )
+    from polymarket_alpha_lab.research_process import ResearchProcessSpec
+    from polymarket_alpha_lab.research_dispatch_runner import ResearchDispatchStop
+    from tests.test_research_process_linux import (
+        build_native_launch, require_native_containment,
+    )
+    require_native_containment()
+    import time
+    for key in tuple(os.environ):
+        if key.upper().startswith('PG'):
+            monkeypatch.delenv(key)
+    prefix = Path(os.environ['POLYMARKET_ALPHA_LAB_NATIVE_PG_PREFIX'])
+    root, port = _contained_native_fixture(tmp_path, 'Driver Loss')
+    import_runtime_directory(root, prefix)
+    artifacts = tmp_path / 'native'
+    binary, digest, size, launch = build_native_launch(artifacts)
+    work = root / 'Driver Loss Work'
+    marker = tmp_path / 'driver-ids.json'
+    launch_file = tmp_path / 'driver-launch.json'
+    from dataclasses import asdict as _asdict
+    launch_file.write_text(json.dumps(_asdict(launch)), encoding='utf-8')
+    db = ProjectPostgres(root)
+    driver = None
+    try:
+        assert db.initialize(port=port)['migrations_applied'] == 68
+        assert db.up()['status'] == 'running'
+        environment = {'PATH': os.environ.get('PATH', '/usr/bin:/bin'),
+                       'PYTHONPATH': (str(ROOT) + os.pathsep + str(ROOT / 'src')
+                                      + os.pathsep + str(ROOT / 'tests')),
+                       'PYTHONUTF8': '1',
+                       'POLYMARKET_ALPHA_LAB_RUN_LINUX_CONTAINMENT': '1',
+                       'POLYMARKET_ALPHA_LAB_LINUX_CGROUP_ROOT':
+                           os.environ['POLYMARKET_ALPHA_LAB_LINUX_CGROUP_ROOT']}
+        driver = subprocess.Popen(
+            [sys.executable, '-I', '-c', _DRIVER_LOSS_CODE,
+             str(root), str(artifacts), str(work), str(marker), launch.wrapper.path, str(ROOT),
+             str(launch_file)],
+            cwd=str(tmp_path), env=environment, stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE, stdin=subprocess.DEVNULL)
+        deadline = time.monotonic() + 180
+        while not marker.exists() and driver.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.1)
+        if not marker.exists():
+            driver.poll()
+            tail = (driver.stderr.read() or b'')[-900:].decode('utf-8', 'replace')
+            pytest.fail('driver did not reach its invocation (rc=%r): %s'
+                        % (driver.returncode, tail))
+        ids = json.loads(marker.read_text(encoding='utf-8'))
+        btc_id, eth_id = ids['btc'], ids['eth']
+        # The driver process holds the engine's session lease, so the trusted
+        # observer reads committed rows directly over the validated local DSN
+        # (the same construction the engine itself uses). Note that
+        # research_capture.outcomes is the settlement table (keyed by
+        # condition_id): execution completion lives in research_capture.attempts.
+        import psycopg
+        observer_dsn = db._dsn(db._state())
+        def committed_starts(record_id):
+            with psycopg.connect(observer_dsn, autocommit=True) as connection:
+                starts = connection.execute(
+                    'SELECT count(*) FROM research_capture.uncapped_call_starts '
+                    'WHERE record_id = %s', (record_id,)).fetchone()[0]
+                outcomes = connection.execute(
+                    'SELECT count(*) FROM research_capture.uncapped_call_outcomes '
+                    'WHERE record_id = %s', (record_id,)).fetchone()[0]
+                return starts, outcomes
+        def capture_status(record_id):
+            with psycopg.connect(observer_dsn, autocommit=True) as connection:
+                rows = connection.execute(
+                    "SELECT payload::jsonb #>> '{run,research,status}' "
+                    'FROM research_capture.attempts WHERE record_id = %s',
+                    (record_id,)).fetchall()
+                return [row[0] for row in rows]
+        deadline = time.monotonic() + 480
+        reached = False
+        while time.monotonic() < deadline:
+            if driver.poll() is not None:
+                pytest.fail('driver exited early (rc=%r)' % driver.returncode)
+            try:
+                btc_starts, btc_outcomes = committed_starts(btc_id)
+                eth_starts, eth_outcomes = committed_starts(eth_id)
+                btc_attempts = capture_status(btc_id)
+                eth_attempts = capture_status(eth_id)
+                if eth_attempts or eth_outcomes:
+                    pytest.fail('ETH became terminal before the kill '
+                                '(starts/outcomes/attempts: %d/%d/%d)'
+                                % (eth_starts, eth_outcomes, len(eth_attempts)))
+                if (btc_attempts == ['completed'] and btc_starts == 3
+                        and btc_outcomes == 3 and eth_starts == 1):
+                    reached = True
+                    break
+            except Exception:
+                pass
+            time.sleep(0.25)
+        if not reached:
+            driver.poll()
+            driver.kill()
+            tail = ''
+            try:
+                tail = (driver.stderr.read() or b'')[-1200:].decode('utf-8', 'replace')
+            except Exception:
+                pass
+            try:
+                print('OBSERVER-STATE btc:', committed_starts(btc_id), 'eth:', committed_starts(eth_id))
+            except Exception as error:
+                print('OBSERVER-STATE-ERROR:', type(error).__name__, error)
+            pytest.fail('observer never saw progress; driver rc=%r stderr tail: %s'
+                        % (driver.returncode, tail))
+        driver.kill()
+        driver.kill()
+        driver.wait(timeout=15)
+        gone_deadline = time.monotonic() + 30
+
+        def standins_alive():
+            for entry in Path('/proc').iterdir():
+                if not entry.name.isdigit():
+                    continue
+                try:
+                    command = (entry / 'cmdline').read_bytes()
+                except OSError:
+                    continue
+                if b'pal-standin' in command or (b'supervise' in command
+                                                 and b'pal-artifact' in command):
+                    return True
+            return False
+        while standins_alive() and time.monotonic() < gone_deadline:
+            time.sleep(0.1)
+        assert not standins_alive(), 'driver loss left contained processes alive'
+        with db.session() as session:
+            btc_stored = session.inspect_research_batch(batch_id='driver-loss-btc')
+            eth_stored = session.inspect_research_batch(batch_id='driver-loss-eth')
+            btc_record = session.inspect(record_id=btc_id)
+            eth_state = session.inspect(record_id=eth_id)
+            assert btc_record.status == 'already_captured'
+            assert btc_record.record.run.research.status == 'completed'
+            assert eth_state.status == 'incomplete' and eth_state.record is None
+            eth_audit = session.inspect_uncapped_calls(record_id=eth_id)
+            assert len(eth_audit.calls) == 1 and eth_audit.outcomes == ()
+            assert eth_audit.to_dict()['unknown_usage_call_count'] == 1
+            stored_authorization = session.inspect_uncapped_authorization(
+                authorization_id='contained-driver-loss').authorization
+            stored_batches = (btc_stored.stored.batch, eth_stored.stored.batch)
+        # The parent reconstructs the identical profile digest from the same
+        # measured artifacts, then replays inertly with an exhausted supplier.
+        replay_profile = ClaudeExecProfile(
+            process=ResearchProcessSpec(
+                (binary,), str(work),
+                (('HOME', str(work / 'host-home')),
+                 ('CLAUDE_CONFIG_DIR', str(work / 'host-config'))),
+                digest, 600000),
+            endpoint_url='https://gateway.example.invalid', linux_launch=launch)
+        assert replay_profile.contract_sha256 == stored_authorization.adapter_contract_sha256
+        with db.session() as session:
+            counters_before = linux.LINUX_PHASE_COUNTERS.snapshot()
+            replay_stop = ResearchDispatchStop()
+            replay = operator.run_claude_research_rotation(
+                session, reviewed_batches=stored_batches, profile=replay_profile,
+                authorization=stored_authorization,
+                api_key_supplier=FiniteInMemoryApiKeySupplier(stop=replay_stop),
+                rotation_id='driver-loss-rotation', turn_id='turn-one',
+                stop=replay_stop, max_tasks=2, max_workers=2)
+            assert replay.report.status == 'turn_already_reserved'
+            assert replay.report.attempts == ()
+            assert linux.LINUX_PHASE_COUNTERS.snapshot() == counters_before
+            assert session.inspect(record_id=eth_id) == eth_state
+            assert session.inspect_uncapped_calls(record_id=eth_id) == eth_audit
+            assert session.inspect(record_id=btc_id).record == btc_record.record
+        assert db.status()['status'] == 'running'
+        print('native driver loss: PASS;supervisor cleanup,incomplete claim preserved,'
+              'no terminal outcome,inert replay from fresh parent session')
+    finally:
+        if driver is not None and driver.poll() is None:
+            driver.kill()
+            driver.wait(timeout=15)
+        if db.layout.home.exists():
+            db.down()

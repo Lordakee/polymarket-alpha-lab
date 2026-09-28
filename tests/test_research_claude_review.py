@@ -68,8 +68,10 @@ def test_model_usage_cannot_hide_wrong_scalar_type_by_equal_value(field,value):
 @pytest.mark.parametrize('path', [
     'src/polymarket_alpha_lab/research_claude_exec.py',
     'src/polymarket_alpha_lab/research_claude_profile.py',
+    'src/polymarket_alpha_lab/research_process_linux.py',
     'tests/test_research_claude_exec.py', 'tests/test_research_claude_profile.py',
-    'tests/test_research_claude_review.py',
+    'tests/test_research_claude_review.py', 'tests/test_research_claude_linux.py',
+    'tests/test_research_process_linux.py',
 ])
 @pytest.mark.parametrize('workflow', ['native-postgres.yml','native-distribution.yml'])
 def test_shipped_claude_changes_trigger_real_platform_gates(path,workflow):
@@ -78,6 +80,39 @@ def test_shipped_claude_changes_trigger_real_platform_gates(path,workflow):
     source=(root/'.github/workflows'/workflow).read_text()
     filters=re.findall(r"^      - '([^']+)'",source,flags=re.MULTILINE)
     assert any(fnmatch.fnmatchcase(path,pattern) for pattern in filters)
+
+
+def test_two_factory_clients_never_duplicate_a_shared_supplier_slot(monkeypatch,tmp_path):
+    """Adversarial regression: both team clients ride ONE supplier; concurrent
+    admissions consume distinct permanent slots and the stop cannot double-kill."""
+    from concurrent.futures import ThreadPoolExecutor
+    from polymarket_alpha_lab.research_claude_profile import FiniteInMemoryApiKeySupplier
+    from tests.test_research_process_linux import fixed_launch
+    stop=ResearchDispatchStop()
+    supplier=FiniteInMemoryApiKeySupplier(stop=stop,
+        crypto_btc=tuple('BTC-%d'%n for n in range(8)),
+        crypto_eth=tuple('ETH-%d'%n for n in range(8)))
+    process=replace(candidate(tmp_path).process,argv=(candidate(tmp_path).process.argv[0],))
+    p=profile.ClaudeExecProfile(process=process,endpoint_url='https://gateway.example.invalid',
+                                linux_launch=fixed_launch())
+    factory=bound(p,api_key_supplier=supplier,stop=stop)
+    seen=[]
+    def runner(**kwargs):
+        seen.append(dict(kwargs['spec'].environment)['ANTHROPIC_API_KEY'])
+        return wire()
+    monkeypatch.setattr(cli,'run_research_process',runner)
+    def drain(team):
+        model=factory(team)
+        for _ in range(8):
+            model.complete(messages_json='[{}]',max_output_tokens=100)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        pool.submit(drain,'crypto_btc');pool.submit(drain,'crypto_eth')
+    assert len(seen)==16 and len(set(seen))==16
+    assert supplier.remaining('crypto_btc')==0==supplier.remaining('crypto_eth')
+    stop.request_stop()
+    with pytest.raises(ValueError,match='call_failed'):
+        factory('crypto_btc').complete(messages_json='[{}]',max_output_tokens=100)
+    assert supplier.remaining('crypto_btc')==0
 
 
 def test_changed_prompt_contract_after_binding_never_enters_key_supplier(monkeypatch,tmp_path):
