@@ -23,10 +23,13 @@ def simulated_runner(events, *, version=None, fault=None, outcome=None, rejected
                      version_outcome=None):
     """Synthetic stand-in CLI.
 
-    ``outcome`` raises that fixed process code AFTER the one matching
-    request/response ('before_request' raises an ordinary nonzero exit before
-    any request). ``rejected_result`` returns a CLI result the strict decoder
-    must reject. ``version_outcome`` fails the --version invocation.
+    Performs the owner-approved L7-Q1 sequence: exactly one bodyless
+    unauthenticated HEAD /api/hello (fixed 404) strictly before the one
+    matching POST. ``outcome`` raises that fixed process code AFTER the one
+    matching request/response ('before_request' raises an ordinary nonzero
+    exit after the preflight, before the POST). ``rejected_result`` returns a
+    CLI result the strict decoder must reject. ``version_outcome`` fails the
+    --version invocation.
     """
     def run(*, spec, stdin, allow_process_start, **kwargs):
         assert allow_process_start is True
@@ -46,6 +49,9 @@ def simulated_runner(events, *, version=None, fault=None, outcome=None, rejected
             raise core.ResearchProcessError('research_process_nonzero_exit')
         address = env['ANTHROPIC_BASE_URL'].removeprefix('http://')
         conn = http.client.HTTPConnection(address, timeout=2)
+        # The approved preflight: one bodyless unauthenticated HEAD /api/hello.
+        conn.request('HEAD', probe.PREFLIGHT_HEAD_PATH)
+        conn.getresponse().read()
         body = {'model': probe.MODEL_ID, 'max_tokens': 1024, 'stream': True,
                 'tools': [], 'messages': [{'role': 'user', 'content': stdin.decode()}]}
         if fault == 'context':
@@ -95,6 +101,9 @@ def test_each_scenario_observes_actual_mock_request_and_fixed_response(tmp_path,
     # v2 observation: fixed allowlisted process codes, none for clean phases.
     assert result['schema_version'] == 'claude-cli-probe-v2'
     assert result['version_error_code'] is None
+    # L7-Q1: the approved HEAD preflight is expected, never unexpected.
+    assert result['preflight_head_observed'] == 1
+    assert result['unexpected_requests'] == 0
     expected = ('research_process_nonzero_exit'
                 if mode in ('rate_limit', 'server_error', 'tool_use', 'truncated') else None)
     assert result['process_error_code'] == expected
@@ -281,6 +290,9 @@ prompt = sys.stdin.buffer.read().decode('utf-8')
 url = os.environ['ANTHROPIC_BASE_URL']
 assert url.startswith('http://127.0.0.1:')
 connection = http.client.HTTPConnection(url.removeprefix('http://'), timeout=2)
+# Owner-approved L7-Q1 sequence: the one bodyless HEAD preflight first.
+connection.request('HEAD','/api/hello')
+preflight=connection.getresponse(); preflight.read()
 body = {'model':'claude-opus-5', 'max_tokens':1024, 'stream':True, 'tools':[],
         'messages':[{'role':'user','content':prompt}]}
 connection.request('POST','/v1/messages',json.dumps(body),
@@ -325,8 +337,16 @@ def test_transcript_records_the_admitted_message_post(tmp_path):
     result = probe.run_probe(*image(), root=tmp_path/'probe', mode='success',
                              allow_probe=True, process_runner=simulated_runner([]))
     transcript = result['diagnostics']['transcript']
-    assert len(transcript) == 1 and result['diagnostics']['transcript_truncated'] is False
-    entry = transcript[0]
+    assert len(transcript) == 2 and result['diagnostics']['transcript_truncated'] is False
+    # L7-Q1: the approved preflight is fully visible, first, and expected.
+    head = transcript[0]
+    assert head['kind'] == 'request' and head['phase'] == 'message'
+    assert head['method'] == 'HEAD' and head['target']['text'] == '/api/hello'
+    assert head['stage'] == 'preflight_head_admitted' and head['body_not_read'] is True
+    assert head['response']['status'] == 404 and head['response']['bytes'] == 0
+    head_names = {name.lower() for name, _ in head['headers']['pairs']}
+    assert head_names <= probe.PREFLIGHT_HEADER_NAMES
+    entry = transcript[1]
     assert entry['kind'] == 'request' and entry['phase'] == 'message'
     assert entry['method'] == 'POST' and entry['target']['text'] == '/v1/messages?beta=true'
     assert entry['stage'] == 'responded_scenario'
@@ -356,13 +376,13 @@ def test_transcript_records_the_admitted_message_post(tmp_path):
 def test_transcript_records_sse_truncation_framing_and_error_status(tmp_path):
     truncated = probe.run_probe(*image(), root=tmp_path/'probe', mode='truncated',
         allow_probe=True, process_runner=simulated_runner([]))
-    response = truncated['diagnostics']['transcript'][0]['response']
+    response = truncated['diagnostics']['transcript'][-1]['response']
     assert response['sse_events'] == ['message_start', 'content_block_start',
                                       'content_block_delta']
     assert response['sse_trailing_partial_frame'] == 'event: message_delta\n'
     limited = probe.run_probe(*image(), root=tmp_path/'probe2', mode='rate_limit',
         allow_probe=True, process_runner=simulated_runner([]))
-    response = limited['diagnostics']['transcript'][0]['response']
+    response = limited['diagnostics']['transcript'][-1]['response']
     assert response['status'] == 429 and response['content_type'] == 'application/json'
     assert response['sse_events'] is None and response['sse_trailing_partial_frame'] is None
 
@@ -373,7 +393,9 @@ def test_transcript_records_sse_truncation_framing_and_error_status(tmp_path):
 def test_transcript_identifies_the_failing_contract_predicate(tmp_path, fault, name):
     result = probe.run_probe(*image(), root=tmp_path/'probe', mode='success',
         allow_probe=True, process_runner=simulated_runner([], fault=fault))
-    entry = result['diagnostics']['transcript'][0]
+    # The approved HEAD preflight precedes the refused POST; the POST is last.
+    assert [entry['method'] for entry in result['diagnostics']['transcript']] == ['HEAD', 'POST']
+    entry = result['diagnostics']['transcript'][-1]
     assert entry['stage'] == 'refused_contract' and entry['response']['status'] == 400
     assert entry['predicates'][name] is False
     assert all(value is True for key, value in entry['predicates'].items() if key != name)
@@ -381,9 +403,11 @@ def test_transcript_identifies_the_failing_contract_predicate(tmp_path, fault, n
 
 
 def test_transcript_captures_the_extra_non_post_request_signature(tmp_path):
-    """Reproduce the recorded first-attempt signature (one admitted POST plus
-    one extra non-POST request) and pin that the transcript explains it while
-    every counter and verdict keeps its original value."""
+    """Reproduce the recorded first-attempt extra request (a GET /api/hello)
+    ahead of the approved sequence and pin that the transcript explains it
+    while every counter keeps its original value: under the owner-approved
+    L7-Q1 sequence a GET (or any non-HEAD method) is NOT the one permitted
+    bodyless HEAD preflight, so it stays an unexpected request and fails."""
     original = simulated_runner([])
     def run(**kwargs):
         if kwargs['spec'].argv[1:] == ('--version',):
@@ -396,13 +420,15 @@ def test_transcript_captures_the_extra_non_post_request_signature(tmp_path):
     result = probe.run_probe(*image(), root=tmp_path/'probe', mode='success',
                              allow_probe=True, process_runner=run)
     transcript = result['diagnostics']['transcript']
-    assert [entry['method'] for entry in transcript] == ['GET', 'POST']
+    assert [entry['method'] for entry in transcript] == ['GET', 'HEAD', 'POST']
     get = transcript[0]
     assert get['stage'] == 'refused_unexpected_method' and get['body_not_read'] is True
     assert get['phase'] == 'message' and get['response']['status'] == 404
-    assert transcript[1]['stage'] == 'responded_scenario'
+    assert transcript[1]['stage'] == 'preflight_head_admitted'
+    assert transcript[2]['stage'] == 'responded_scenario'
     assert result['request_count'] == result['responses_sent'] == 1
     assert result['unexpected_requests'] == 1 and result['server_faults'] == 0
+    assert result['preflight_head_observed'] == 1
     assert result['request_contract_matches'] is False
     assert probe.observation_passed(result) is False
 
@@ -490,6 +516,8 @@ def test_predecode_stage_orders_stderr_before_stdout_parsing(tmp_path):
             return core.ResearchProcessResult(probe.VERSION_OUTPUT.encode(), 0, 1)
         env = dict(kwargs['spec'].environment)
         conn = http.client.HTTPConnection(env['ANTHROPIC_BASE_URL'].removeprefix('http://'), timeout=2)
+        conn.request('HEAD', probe.PREFLIGHT_HEAD_PATH)
+        conn.getresponse().read()
         body = json.dumps({'model': probe.MODEL_ID, 'max_tokens': 1024, 'stream': True,
                            'tools': [], 'messages': [{'role': 'user', 'content': kwargs['stdin'].decode()}]})
         conn.request('POST', '/v1/messages', body,
@@ -608,3 +636,299 @@ def test_diagnostic_budget_overflow_is_recorded_never_qualification(monkeypatch,
     assert list((tmp_path/'probe-diagnostics').iterdir()) == []
     # The overflow only fails the diagnostic capture, never the qualification.
     assert probe.observation_passed(result) is True
+
+
+# ---------------------------------------------------------------------------
+# Owner-approved prospective criteria (2026-09-29, DELIVERY_PLAN section 63).
+# L7-Q1: the expected request sequence is exactly one bodyless unauthenticated
+# HEAD /api/hello (fixed 404) strictly before the one contract-matching POST;
+# the preflight is an expected preflight, never an unexpected request.
+# L7-Q2: the state gate keeps the original baseline and the raw five-entry
+# delta, and admits exactly the five demonstrated content-validated bootstrap
+# additions. Any deviation still fails.
+# ---------------------------------------------------------------------------
+
+def test_approved_preflight_head_is_expected_not_unexpected(tmp_path):
+    result = probe.run_probe(*image(), root=tmp_path/'probe', mode='success',
+                             allow_probe=True, process_runner=simulated_runner([]))
+    assert result['preflight_head_observed'] == 1
+    assert result['unexpected_requests'] == 0 and result['server_faults'] == 0
+    assert result['request_count'] == result['responses_sent'] == 1
+    assert result['request_contract_matches'] is True
+    head = result['diagnostics']['transcript'][0]
+    assert head['method'] == 'HEAD' and head['target']['text'] == '/api/hello'
+    assert head['stage'] == 'preflight_head_admitted' and head['body_not_read'] is True
+    assert head['response']['status'] == 404 and head['response']['bytes'] == 0
+    assert result['bootstrap_exception']['applied'] is False  # zero changes: not applied
+    assert probe.observation_passed(result) is True
+
+
+def _preflight_violation_runner(kind):
+    """The approved sequence with exactly one deviation. Every request uses a
+    fresh connection so a refused exchange cannot mask the next one."""
+    def run(**kwargs):
+        if kwargs['spec'].argv[1:] == ('--version',):
+            return core.ResearchProcessResult(probe.VERSION_OUTPUT.encode(), 0, 1)
+        env = dict(kwargs['spec'].environment)
+        address = env['ANTHROPIC_BASE_URL'].removeprefix('http://')
+
+        def exchange(method, target, body=None, headers=None):
+            fresh = http.client.HTTPConnection(address, timeout=2)
+            fresh.request(method, target, body=body, headers=headers or {})
+            try:
+                fresh.getresponse().read()
+            except Exception:
+                pass  # a refused exchange may half-close; counters record it
+            finally:
+                fresh.close()
+
+        def raw_exchange(target, host_values=None):
+            """Full control over the raw request line and every Host header
+            line, for unnormalized-target and Host-authority deviations."""
+            fresh = http.client.HTTPConnection(address, timeout=2)
+            fresh.putrequest('HEAD', target, skip_host=host_values is not None)
+            if host_values:
+                fresh.putheader('Host', *host_values)
+            fresh.endheaders()
+            try:
+                fresh.getresponse().read()
+            except Exception:
+                pass
+            finally:
+                fresh.close()
+
+        deviations = dict(
+            get=('GET', probe.PREFLIGHT_HEAD_PATH, None, None),
+            put=('PUT', probe.PREFLIGHT_HEAD_PATH, None, None),
+            query=('HEAD', probe.PREFLIGHT_HEAD_PATH + '?beta=true', None, None),
+            path=('HEAD', probe.PREFLIGHT_HEAD_PATH + '/', None, None),
+            other_target=('HEAD', '/api/telemetry', None, None),
+            x_api_key=('HEAD', probe.PREFLIGHT_HEAD_PATH, None, {'x-api-key': probe.TEST_KEY}),
+            authorization=('HEAD', probe.PREFLIGHT_HEAD_PATH, None,
+                           {'Authorization': 'Bearer synthetic-not-a-credential'}),
+            content_length=('HEAD', probe.PREFLIGHT_HEAD_PATH, b'x', {}),
+            custom_header=('HEAD', probe.PREFLIGHT_HEAD_PATH, None, {'X-Custom': 'anything'}))
+        # The designated loopback authority this server actually listens on.
+        authority = address  # '127.0.0.1:<port>'
+        raw_deviations = dict(
+            trailing_question=(probe.PREFLIGHT_HEAD_PATH + '?', None),
+            trailing_fragment=(probe.PREFLIGHT_HEAD_PATH + '#', None),
+            double_slash=('/' + probe.PREFLIGHT_HEAD_PATH, None),
+            missing_host=(probe.PREFLIGHT_HEAD_PATH, []),
+            wrong_host=(probe.PREFLIGHT_HEAD_PATH, ['example.invalid']),
+            duplicate_host=(probe.PREFLIGHT_HEAD_PATH, [authority, authority]),
+            arbitrary_host=(probe.PREFLIGHT_HEAD_PATH, ['api.anthropic.com']))
+        if kind == 'two_heads':
+            exchange('HEAD', probe.PREFLIGHT_HEAD_PATH)
+            exchange('HEAD', probe.PREFLIGHT_HEAD_PATH)
+        elif kind in raw_deviations:
+            raw_exchange(*raw_deviations[kind])
+        elif kind != 'no_head' and kind != 'head_after_post':
+            exchange(*deviations[kind])
+        body = json.dumps({'model': probe.MODEL_ID, 'max_tokens': 1024, 'stream': True,
+                           'tools': [], 'messages': [{'role': 'user', 'content': kwargs['stdin'].decode()}]})
+        exchange('POST', '/v1/messages?beta=true', body,
+                 {'Content-Type': 'application/json', 'x-api-key': probe.TEST_KEY})
+        if kind == 'head_after_post':  # any request after the POST is a failure
+            exchange('HEAD', probe.PREFLIGHT_HEAD_PATH)
+        value = envelope(); value['result'] = probe.response_text('success')
+        return core.ResearchProcessResult(json.dumps(value).encode(), 0, 1)
+    return run
+
+
+@pytest.mark.parametrize('kind', [
+    'no_head', 'get', 'put', 'query', 'path', 'other_target', 'x_api_key',
+    'authorization', 'content_length', 'custom_header', 'two_heads',
+    'head_after_post', 'trailing_question', 'trailing_fragment',
+    'double_slash', 'missing_host', 'wrong_host', 'duplicate_host',
+    'arbitrary_host'])
+def test_any_deviation_from_the_approved_sequence_fails(tmp_path, kind):
+    result = probe.run_probe(*image(), root=tmp_path/'probe', mode='success',
+        allow_probe=True, process_runner=_preflight_violation_runner(kind))
+    assert result['request_count'] == result['responses_sent'] == 1
+    assert result['request_contract_matches'] is False
+    assert probe.observation_passed(result) is False
+    if kind == 'no_head':  # missing preflight: zero admitted, nothing unexpected
+        assert result['preflight_head_observed'] == 0 and result['unexpected_requests'] == 0
+    else:  # every other deviation stays an unexpected request
+        assert result['unexpected_requests'] == 1
+    if kind in ('two_heads', 'head_after_post'):
+        assert result['preflight_head_observed'] in (0, 1)  # never two admitted
+
+
+BOOTSTRAP_INSTANT = '2026-09-29T02:43:50.216Z'
+BOOTSTRAP_BACKUP_NAME = '.claude.json.backup.1790649830552'
+
+
+def bootstrap_config_text(**override):
+    """The nine demonstrated config/.claude.json fields (closed schema)."""
+    value = dict(firstStartTime=BOOTSTRAP_INSTANT, firstStartVersion=probe.CLAUDE_VERSION,
+        machineID='a'*64, opusProMigrationComplete=True,
+        sonnet1m45MigrationComplete=True, seenNotifications={},
+        hasResetAutoModeOptInForDefaultOffer=True, migrationVersion=14, userID='b'*64)
+    value.update(override)
+    return json.dumps(value, indent=2)
+
+
+def bootstrap_backup_text(first_start=BOOTSTRAP_INSTANT, **override):
+    """The two demonstrated backup fields (the real pre-migration subset)."""
+    value = dict(firstStartTime=first_start, firstStartVersion=probe.CLAUDE_VERSION)
+    value.update(override)
+    return json.dumps(value, indent=2)
+
+
+def bootstrap_runner(*, config_text=None, backup_text=None, backup_name=None,
+                     sessions_entry=None, tmp_entry=None, extra_writes=(),
+                     remove=(), rewrite=(), outcome=None):
+    """Simulated CLI: the approved HEAD+POST sequence plus the five
+    demonstrated first-run bootstrap writes; the options perturb them."""
+    original = simulated_runner([], outcome=outcome)
+    def run(**kwargs):
+        if kwargs['spec'].argv[1:] == ('--version',):
+            return original(**kwargs)  # first-run writes happen in the scenario phase
+        env = dict(kwargs['spec'].environment)
+        config = Path(env['CLAUDE_CONFIG_DIR'])
+        (config/'backups').mkdir()
+        (config/'sessions').mkdir()
+        Path(env['TMPDIR'], 'claude-1000').mkdir()
+        (config/'.claude.json').write_text(
+            config_text if config_text is not None else bootstrap_config_text(),
+            encoding='utf-8')
+        (config/'backups'/(backup_name or BOOTSTRAP_BACKUP_NAME)).write_text(
+            backup_text if backup_text is not None else bootstrap_backup_text(),
+            encoding='utf-8')
+        if sessions_entry is not None:
+            (config/'sessions'/sessions_entry).write_text('entry', encoding='utf-8')
+        if tmp_entry is not None:
+            Path(env['TMPDIR'], 'claude-1000', tmp_entry).write_text('entry', encoding='utf-8')
+        for relative, text in extra_writes:
+            target = config.parent/relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(text, encoding='utf-8')
+        for relative in remove:
+            (config.parent/relative).unlink()
+        for relative, text in rewrite:
+            (config.parent/relative).write_text(text, encoding='utf-8')
+        return original(**kwargs)
+    return run
+
+
+@pytest.mark.parametrize('mode', probe.MODES)
+def test_approved_five_entry_bootstrap_passes_with_raw_delta_preserved(tmp_path, mode):
+    result = probe.run_probe(*image(), root=tmp_path/'probe', mode=mode, allow_probe=True,
+                             process_runner=bootstrap_runner())
+    # The original baseline and the raw five-entry delta stay recorded.
+    assert result['state']['changed_entries'] == 5
+    assert result['diagnostics']['state_inventory']['qualification_baseline'] \
+        == 'original initial snapshot (unchanged)'
+    bootstrap = result['bootstrap_exception']
+    assert bootstrap['applied'] is True and bootstrap['violations'] == []
+    assert bootstrap['raw_delta'] == dict(added=5, removed=0, modified=0)
+    assert bootstrap['baseline'] == 'original initial snapshot (unchanged; relocation excluded)'
+    assert bootstrap['content']['claude_json']['valid'] is True
+    assert bootstrap['content']['backup']['valid'] is True
+    assert 0 < bootstrap['content']['claude_json']['bytes'] <= probe.BOOTSTRAP_CONFIG_MAX_BYTES
+    assert bootstrap['content']['backup']['name'] == BOOTSTRAP_BACKUP_NAME
+    assert result['preflight_head_observed'] == 1 and result['unexpected_requests'] == 0
+    assert probe.observation_passed(result) is True, (mode, bootstrap)
+
+
+@pytest.mark.parametrize('options', [
+    dict(extra_writes=[('work/extra.txt', 'a sixth entry')]),
+    dict(extra_writes=[('home/leak.txt', probe.TEST_KEY)]),
+    dict(config_text=bootstrap_config_text(unknownBootstrapKey='x')),
+    dict(config_text=bootstrap_config_text(transcript='[{"role":"user"}]')),
+    dict(config_text=bootstrap_config_text(machineID=probe.APPROVED)),
+    dict(config_text=bootstrap_config_text(userID=probe.RESPONSE)),
+    dict(config_text=bootstrap_config_text(seenNotifications={'tips': 1})),
+    dict(config_text=bootstrap_config_text(migrationVersion=15)),
+    dict(config_text=bootstrap_config_text(firstStartTime='2026-09-29T02:43:50Z')),
+    dict(config_text=bootstrap_config_text(firstStartVersion='2.1.277')),
+    dict(config_text='not json'),
+    dict(config_text=bootstrap_config_text() + '\n' + ' '*(probe.BOOTSTRAP_CONFIG_MAX_BYTES+1)),
+    dict(backup_text=bootstrap_config_text()),
+    dict(backup_name='claude.json.backup.1790649830552'),
+    dict(backup_name='.claude.json.backup.17906498305'),
+    dict(backup_text=bootstrap_backup_text(first_start='2026-09-29T02:43:50.999Z')),
+    dict(backup_text=bootstrap_backup_text(firstStartVersion='2.1.277')),
+    dict(sessions_entry='session.json'),
+    dict(tmp_entry='tool-output.txt'),
+    dict(extra_writes=[('config/backups/.claude.json.backup.1790649830553',
+                        '{"firstStartTime": "%s", "firstStartVersion": "%s"}'
+                        % (BOOTSTRAP_INSTANT, probe.CLAUDE_VERSION))]),
+    dict(rewrite=[('CLAUDE.md', 'modified')]),
+    dict(remove=['CLAUDE.md']),
+])
+def test_bootstrap_violations_keep_the_state_gate_failed(tmp_path, options):
+    result = probe.run_probe(*image(), root=tmp_path/'probe', mode='success',
+        allow_probe=True, process_runner=bootstrap_runner(**options))
+    bootstrap = result['bootstrap_exception']
+    assert bootstrap['applied'] is False and bootstrap['violations'] != []
+    assert result['state']['changed_entries'] >= 5  # raw delta still recorded
+    assert probe.observation_passed(result) is False
+
+
+def test_bootstrap_exception_records_no_file_content_and_no_secrets(tmp_path):
+    result = probe.run_probe(*image(), root=tmp_path/'probe', mode='success',
+        allow_probe=True, process_runner=bootstrap_runner())
+    text = json.dumps(result)
+    assert probe.TEST_KEY not in text and probe.APPROVED not in text
+    assert str(tmp_path) not in text
+    assert BOOTSTRAP_INSTANT not in text  # values stay out of the observation
+    assert 'a'*64 not in text  # the synthetic machineID is not echoed
+
+
+def test_rejected_bootstrap_pathnames_never_leak_into_observation_or_sidecars(tmp_path):
+    """A rejected addition whose FILENAME carries the synthetic key must not
+    survive verbatim anywhere: not in the returned observation and not in any
+    diagnostic sidecar payload, rejected case included."""
+    result = probe.run_probe(*image(), root=tmp_path/'probe', mode='success',
+        allow_probe=True, process_runner=bootstrap_runner(
+            extra_writes=[(str(Path('work', probe.TEST_KEY + '.txt')), 'a rejected entry')]))
+    bootstrap = result['bootstrap_exception']
+    assert bootstrap['applied'] is False and bootstrap['violations'] != []
+    assert probe.TEST_KEY not in json.dumps(result)
+    for name in probe.SIDECAR_NAMES:
+        sidecar = (tmp_path/'probe-diagnostics'/name).read_text(encoding='utf-8')
+        assert probe.TEST_KEY not in sidecar, name
+    for name in bootstrap['added']:
+        assert len(name) <= probe.MAX_TRANSCRIPT_STRING
+        assert probe.TEST_KEY not in name
+
+
+def test_bootstrap_exception_redacts_and_bounds_overlength_rejected_names(tmp_path):
+    """Over-length rejected pathnames (not creatable portably on disk) are
+    exercised directly through the evaluator with synthetic snapshots."""
+    long_name = str(Path('work', 'n'*300))
+    before = dict(complete=True, unsafe_entries=0, limit_reached=False,
+                  sentinel_files=0, files={}, root_identity=None)
+    after = dict(complete=True, unsafe_entries=0, limit_reached=False,
+                 sentinel_files=0, root_identity=None, files={
+                     str(Path('work', probe.TEST_KEY + '.txt')): ('file', '0'*64),
+                     long_name: ('file', '0'*64)})
+    secrets = probe._redaction_secrets(tmp_path/'probe')
+    exception = probe._bootstrap_exception(before, after, tmp_path/'probe', secrets)
+    assert exception['applied'] is False and exception['violations'] != []
+    exported = json.dumps(exception)
+    assert probe.TEST_KEY not in exported and 'n'*300 not in exported
+    for name in exception['added']:
+        assert len(name) <= probe.MAX_TRANSCRIPT_STRING
+    # Raw names remain available to validation only via the bounded counts.
+    assert exception['raw_delta'] == dict(added=2, removed=0, modified=0)
+
+
+def test_applied_bootstrap_exports_only_the_five_bounded_expected_names(tmp_path):
+    result = probe.run_probe(*image(), root=tmp_path/'probe', mode='success',
+        allow_probe=True, process_runner=bootstrap_runner())
+    bootstrap = result['bootstrap_exception']
+    assert bootstrap['applied'] is True
+    expected = sorted(str(Path(*name)) for name in (
+        ('config', '.claude.json'), ('config', 'backups'),
+        ('config', 'backups', BOOTSTRAP_BACKUP_NAME),
+        ('config', 'sessions'), ('tmp', 'claude-1000')))
+    assert sorted(bootstrap['added']) == expected
+    exported = (bootstrap['added'] + bootstrap['removed'] + bootstrap['modified']
+        + [name for name in bootstrap['entries'].values() if name is not None]
+        + [bootstrap['content']['backup']['name']])
+    for name in exported:
+        assert len(name) <= probe.MAX_TRANSCRIPT_STRING

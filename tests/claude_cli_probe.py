@@ -19,6 +19,20 @@ files under a fixed sub-budget. Every diagnostic field is observation-only:
 counters, matching decisions, the qualification baseline and observation_passed
 are unchanged, and a failed diagnostic capture is recorded as incomplete, never
 raised into the qualification itself.
+
+v2 prospective criteria (owner-approved acceptance changes, 2026-09-29,
+DELIVERY_PLAN section 63): L7-Q1 permits exactly one bodyless unauthenticated
+HEAD /api/hello to this same numeric-loopback server -- answered with the fixed
+404 the server already sends, strictly before the one unchanged contract-matching
+POST, validated by method, target, framing, header allowlist, order and
+cardinality, and recorded as an expected preflight (preflight_head_observed),
+never as an unexpected request. L7-Q2 keeps the original initial snapshot and
+the raw five-entry delta recorded, and admits exactly the five demonstrated
+first-run bootstrap additions after closed-schema content validation inside the
+disposable synthetic root. Every other request, retry, sequencing deviation or
+external destination, and any other addition, modification, removal, unsafe
+entry, sentinel, oversized file or nonconforming content still fails. Baseline
+relocation is expressly excluded from the approval and is not implemented.
 """
 from contextlib import contextmanager
 from dataclasses import replace
@@ -47,6 +61,34 @@ UNRELATED = 'SYNTHETIC-PAL-UNRELATED-CONTEXT'
 RESPONSE = 'SYNTHETIC-PAL-MOCK-RESPONSE'
 MAX_FILE_BYTES, MAX_STATE_BYTES, MAX_ENTRIES = 65536, 4194304, 256
 MAX_HTTP_BYTES, MAX_REQUESTS = 1048576, 8
+# --- Owner-approved L7-Q1 request-sequence exception (2026-09-29, section 63) --
+# Exactly one bodyless unauthenticated HEAD to the exact /api/hello path on
+# this same numeric-loopback server, answered with the fixed 404, strictly
+# before the one contract-matching POST. The preflight header allowlist is the
+# demonstrated diagnostic-cohort header-name set; any other name -- including
+# any credential-bearing header, Content-Length or Transfer-Encoding -- makes
+# the HEAD an unexpected request again.
+PREFLIGHT_HEAD_PATH = '/api/hello'
+PREFLIGHT_HEADER_NAMES = frozenset(('accept', 'accept-encoding', 'connection',
+                                    'host', 'user-agent'))
+# --- Owner-approved L7-Q2 five-entry bootstrap exception (2026-09-29, section 63) --
+# Closed schemas derived only from the demonstrated diagnostic capture
+# (ubuntu@166.1.232.93:~/pal-artifacts/l7-work/diag/export/pytest-tmp/
+# test_supplied_claude_profile_l0/claude-probe/): the real config/.claude.json
+# the CLI wrote (423 bytes, exactly nine bootstrap keys) and the real backup
+# (84 bytes, exactly the two-key pre-migration subset; it is NOT byte-identical
+# to .claude.json). No credential, prompt, response, session-transcript or
+# tool data is admissible: every admitted value is one of the bounded forms
+# validated below, and unknown keys are rejected outright.
+BOOTSTRAP_CONFIG_MAX_BYTES = 4096
+BOOTSTRAP_BACKUP_MAX_BYTES = 1024
+BOOTSTRAP_MIGRATION_VERSION = 14
+BOOTSTRAP_CONFIG_SCHEMA = 'claude-cli-bootstrap-config-v1'
+BOOTSTRAP_BACKUP_SCHEMA = 'claude-cli-bootstrap-backup-v1'
+_BOOTSTRAP_INSTANT = re.compile('[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:'
+                                '[0-9]{2}\\.[0-9]{3}Z')
+_BOOTSTRAP_ID = re.compile('[0-9a-f]{64}')
+_BOOTSTRAP_BACKUP_NAME = re.compile(r'\.claude\.json\.backup\.[0-9]{13}')
 # --- v2 diagnostic constants (observation-only, never qualification inputs) --
 DIAGNOSTIC_SCHEMA = 'claude-cli-probe-diagnostics-v1'
 MAX_TRANSCRIPT_ENTRIES = 64
@@ -312,6 +354,9 @@ class _Server(HTTPServer):
     def __init__(self, mode):
         self.mode, self.count, self.unexpected = mode, 0, 0
         self.matches, self.faults, self.responses = True, 0, 0
+        # L7-Q1 expected-preflight counter: HEADs admitted by the approved
+        # sequence never touch the unexpected counter; cardinality is one.
+        self.preflight_heads = 0
         # Diagnostic-only transcript state; never read by any gate.
         self.transcript, self.transcript_truncated, self.phase = [], False, 'version'
         super().__init__(('127.0.0.1', 0), _Handler)
@@ -457,7 +502,60 @@ class _Handler(BaseHTTPRequestHandler):
         entry['body_not_read'] = True
         self._respond(404)
 
-    do_GET = do_HEAD = do_PUT = do_DELETE = do_PATCH = do_OPTIONS = do_CONNECT = _unexpected
+    def _preflight_admissible(self):
+        """L7-Q1 validation: exactly one bodyless unauthenticated HEAD to the
+        exact /api/hello target, in the message phase and strictly before the
+        POST, addressed to exactly one Host naming this designated loopback
+        server, carrying only demonstrated preflight header names. Anything
+        else stays an unexpected request."""
+        server = self.server
+        try:
+            if (server.phase != 'message' or server.preflight_heads >= 1
+                    or server.count > 0 or server.responses > 0
+                    or self.command != 'HEAD'):
+                return False
+            # Unnormalized request target: read it from the RAW request line,
+            # not the parser-normalized self.path, so '/api/hello?',
+            # '/api/hello#' and '//api/hello' are refused like any other
+            # target. Exactly one whitespace-separated token triple (the
+            # version token is deliberately unpinned: the approved ruling
+            # pins method/target/Host/framing/allowlist/order/cardinality
+            # only), target exact.
+            line = getattr(self, 'requestline', '')
+            parts = line.split() if type(line) is str else []
+            if (len(parts) != 3 or parts[0] != 'HEAD'
+                    or parts[1] != PREFLIGHT_HEAD_PATH):
+                return False
+            # Designated authority: exactly one Host header whose value names
+            # this numeric-loopback server; missing, duplicate, wrong or
+            # arbitrary Host values are refused.
+            if self.headers.get_all('Host', []) != [
+                    '127.0.0.1:%d' % server.server_port]:
+                return False
+            # Bodyless framing: no body descriptors; the handler reads no body.
+            if (self.headers.get('Content-Length') is not None
+                    or self.headers.get('Transfer-Encoding') is not None):
+                return False
+            # Unauthenticated: credential-bearing names are outside the
+            # demonstrated allowlist and fail here already.
+            return all(name.lower() in PREFLIGHT_HEADER_NAMES
+                       for name in self.headers.keys())
+        except Exception:
+            return False
+
+    def do_HEAD(self):
+        if self._preflight_admissible():
+            entry = self._begin('HEAD')
+            self.server.preflight_heads += 1
+            # Expected preflight per the approved sequence: fully visible in
+            # the transcript, never counted as an unexpected request.
+            entry['stage'] = 'preflight_head_admitted'
+            entry['body_not_read'] = True
+            self._respond(404)  # the same fixed 404 the server already sends
+            return
+        self._unexpected()
+
+    do_GET = do_PUT = do_DELETE = do_PATCH = do_OPTIONS = do_CONNECT = _unexpected
 
 
 @contextmanager
@@ -704,6 +802,223 @@ def _state_inventory(before, after, secrets):
         redaction='relative entry names redacted for sentinel markers only')
 
 
+def _read_bootstrap_file(path, limit):
+    """Bounded no-follow read of one regular singly-linked file. Returns
+    (bytes, None) or (None, fixed reason); any anomaly is a validation
+    failure, never an exception and never content beyond the bound."""
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, 'O_BINARY', 0)
+                     | getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_NONBLOCK', 0))
+    except OSError:
+        return None, 'unreadable'
+    content, failure = bytearray(), None
+    try:
+        opened = os.fstat(fd)
+        if not stat.S_ISREG(opened.st_mode) or opened.st_nlink != 1:
+            raise ValueError('unsafe_entry')
+        if opened.st_size > limit:
+            raise ValueError('oversized')
+        while len(content) <= limit:
+            block = os.read(fd, min(8192, limit+1-len(content)))
+            if not block:
+                break
+            content.extend(block)
+        if (len(content) != opened.st_size
+                or os.fstat(fd).st_mtime_ns != opened.st_mtime_ns):
+            raise ValueError
+    except BaseException as error:
+        failure = error
+    finally:
+        try:
+            os.close(fd)
+        except BaseException as error:
+            failure = process._prefer_failure(failure, error)
+    if failure is not None:
+        reason = failure.args[0] if (type(failure) is ValueError and failure.args
+                                     and type(failure.args[0]) is str) else 'read_failed'
+        return None, reason
+    return bytes(content), None
+
+
+def _bootstrap_config_schema(data):
+    """Closed schema of the demonstrated config/.claude.json: exactly the nine
+    demonstrated bootstrap keys with bounded values. Unknown keys (including
+    any credential, prompt, response, transcript or tool field), wrong types
+    or out-of-bound values are rejected."""
+    if type(data) is not dict:
+        return 'not_an_object'
+    expected = {'firstStartTime', 'firstStartVersion', 'machineID',
+                'opusProMigrationComplete', 'sonnet1m45MigrationComplete',
+                'seenNotifications', 'hasResetAutoModeOptInForDefaultOffer',
+                'migrationVersion', 'userID'}
+    if set(data) != expected:
+        return 'keys'
+    if not (type(data['firstStartTime']) is str
+            and _BOOTSTRAP_INSTANT.fullmatch(data['firstStartTime'])):
+        return 'firstStartTime'
+    if data['firstStartVersion'] != CLAUDE_VERSION:
+        return 'firstStartVersion'
+    for key in ('machineID', 'userID'):
+        if not (type(data[key]) is str and _BOOTSTRAP_ID.fullmatch(data[key])):
+            return key
+    for key in ('opusProMigrationComplete', 'sonnet1m45MigrationComplete',
+                'hasResetAutoModeOptInForDefaultOffer'):
+        if data[key] is not True:
+            return key
+    if type(data['seenNotifications']) is not dict or data['seenNotifications']:
+        return 'seenNotifications'
+    if (type(data['migrationVersion']) is not int
+            or data['migrationVersion'] != BOOTSTRAP_MIGRATION_VERSION):
+        return 'migrationVersion'
+    return None
+
+
+def _bootstrap_backup_schema(data):
+    """Closed schema of the demonstrated backup: exactly the two demonstrated
+    pre-migration keys with the same bounded value forms. The real backup is
+    the two-field subset the CLI wrote before migration, not a byte copy of
+    .claude.json; a byte-identical copy of the demonstrated backup parses to
+    exactly these two keys, anything richer or different is rejected."""
+    if type(data) is not dict:
+        return 'not_an_object'
+    if set(data) != {'firstStartTime', 'firstStartVersion'}:
+        return 'keys'
+    if not (type(data['firstStartTime']) is str
+            and _BOOTSTRAP_INSTANT.fullmatch(data['firstStartTime'])):
+        return 'firstStartTime'
+    if data['firstStartVersion'] != CLAUDE_VERSION:
+        return 'firstStartVersion'
+    return None
+
+
+def _bootstrap_exception(before, after, root, secrets):
+    """Owner-approved L7-Q2 five-entry first-run bootstrap evaluation.
+
+    The qualification delta recorded in result['state'] still compares the
+    ORIGINAL initial snapshot (no baseline relocation, prewarming, precreation
+    or cleanup). This evaluation only decides whether exactly the five
+    demonstrated additions -- regular file config/.claude.json, directory
+    config/backups/ holding exactly one conforming
+    .claude.json.backup.<13-digit epoch-milliseconds> file, and empty
+    directories config/sessions/ and tmp/claude-1000/ -- pass closed-schema
+    content validation read inside the disposable root. Anything else keeps
+    the state gate failed. Raw pathnames are used for validation only: every
+    exported pathname (including rejected-case names) passes the existing
+    secret redaction with the transcript length bound, and no file content is
+    copied into the observation -- outcomes, byte sizes and the
+    already-recorded snapshot hashes only."""
+    before_files, after_files = before['files'], after['files']
+    names = before_files.keys() | after_files.keys()
+    added = sorted(str(name) for name in names if name not in before_files)
+    removed = sorted(str(name) for name in names if name not in after_files)
+    modified = sorted(str(name) for name in names if name in before_files
+                      and name in after_files
+                      and before_files[name] != after_files[name])
+    claude_json = str(Path('config', '.claude.json'))
+    backups_dir = str(Path('config', 'backups'))
+    sessions_dir = str(Path('config', 'sessions'))
+    tmp_dir = str(Path('tmp', 'claude-1000'))
+    fixed_expected = (claude_json, backups_dir, sessions_dir, tmp_dir)
+    backups_children = sorted(name for name in after_files
+                              if name.startswith(backups_dir + os.sep))
+    conforming = [name for name in backups_children
+                  if _BOOTSTRAP_BACKUP_NAME.fullmatch(name[len(backups_dir)+1:])]
+    violations, parsed = [], {}
+    entries = dict(claude_json=None, backups_dir=None, backup=None,
+                   sessions_dir=None, tmp_dir=None)
+    content = dict(claude_json=None, backup=None)
+    if not (before['complete'] and after['complete']):
+        violations.append('snapshot_incomplete')
+    if removed:
+        violations.append('removed_entries')
+    if modified:
+        violations.append('modified_entries')
+    if after_files.get(claude_json, (None,))[0] == 'file':
+        entries['claude_json'] = claude_json
+    else:
+        violations.append('claude_json_not_a_regular_file')
+    for name, key in ((backups_dir, 'backups_dir'), (sessions_dir, 'sessions_dir'),
+                      (tmp_dir, 'tmp_dir')):
+        if after_files.get(name) == ('directory',):
+            entries[key] = name
+        else:
+            violations.append(key + '_not_a_directory')
+    if len(conforming) != 1:
+        violations.append('backup_not_exactly_one_conforming_name')
+    else:
+        entries['backup'] = conforming[0]
+    if backups_children != conforming:
+        violations.append('backups_dir_not_exactly_one_backup')
+    if any(name.startswith(sessions_dir + os.sep) for name in after_files):
+        violations.append('sessions_dir_not_empty')
+    if any(name.startswith(tmp_dir + os.sep) for name in after_files):
+        violations.append('tmp_dir_not_empty')
+    expected_five = fixed_expected + (conforming[0],) if conforming else fixed_expected
+    if len(added) != 5 or sorted(added) != sorted(expected_five):
+        violations.append('added_not_exactly_the_five_demonstrated')
+    if entries['claude_json'] is not None:
+        blob, reason = _read_bootstrap_file(Path(root)/'config'/'.claude.json',
+                                            BOOTSTRAP_CONFIG_MAX_BYTES)
+        if blob is None:
+            violations.append('claude_json_' + reason)
+            content['claude_json'] = dict(bytes=None, schema=BOOTSTRAP_CONFIG_SCHEMA,
+                                          valid=False, reason=reason)
+        else:
+            schema_reason = None
+            try:
+                data = strict_json(blob.decode('utf-8'))
+                schema_reason = _bootstrap_config_schema(data)
+            except Exception:
+                schema_reason = 'not_strict_json'
+            content['claude_json'] = dict(bytes=len(blob),
+                schema=BOOTSTRAP_CONFIG_SCHEMA, valid=schema_reason is None,
+                reason=schema_reason)
+            if schema_reason is not None:
+                violations.append('claude_json_schema_' + schema_reason)
+            else:
+                parsed['claude_json'] = data
+    if entries['backup'] is not None:
+        leaf = entries['backup'][len(backups_dir)+1:]
+        blob, reason = _read_bootstrap_file(
+            Path(root)/'config'/'backups'/leaf, BOOTSTRAP_BACKUP_MAX_BYTES)
+        if blob is None:
+            violations.append('backup_' + reason)
+            content['backup'] = dict(bytes=None, name=_redact_text(leaf, secrets)[:MAX_TRANSCRIPT_STRING],
+                schema=BOOTSTRAP_BACKUP_SCHEMA, valid=False, reason=reason)
+        else:
+            schema_reason = None
+            try:
+                data = strict_json(blob.decode('utf-8'))
+                schema_reason = _bootstrap_backup_schema(data)
+            except Exception:
+                schema_reason = 'not_strict_json'
+            content['backup'] = dict(bytes=len(blob),
+                name=_redact_text(leaf, secrets)[:MAX_TRANSCRIPT_STRING],
+                schema=BOOTSTRAP_BACKUP_SCHEMA, valid=schema_reason is None,
+                reason=schema_reason)
+            if schema_reason is not None:
+                violations.append('backup_schema_' + schema_reason)
+            else:
+                parsed['backup'] = data
+    if len(parsed) == 2 and (parsed['backup']['firstStartTime']
+                             != parsed['claude_json']['firstStartTime']):
+        violations.append('backup_firstStartTime_mismatch')
+
+    def sanitized(name):  # exported pathnames: redacted, length-bounded
+        return _redact_text(name, secrets)[:MAX_TRANSCRIPT_STRING]
+    return dict(applied=not violations,
+        approval='L7-Q2 five-entry first-run bootstrap exception '
+                 '(owner-approved 2026-09-29, DELIVERY_PLAN section 63)',
+        baseline='original initial snapshot (unchanged; relocation excluded)',
+        raw_delta=dict(added=len(added), removed=len(removed), modified=len(modified)),
+        added=[sanitized(name) for name in added],
+        removed=[sanitized(name) for name in removed],
+        modified=[sanitized(name) for name in modified],
+        entries={key: (sanitized(name) if type(name) is str else None)
+                 for key, name in entries.items()},
+        content=content, violations=violations)
+
+
 def _write_diagnostic_sidecars(root, payloads):
     """Write bounded sanitized sidecars next to (never inside) the snapshotted
     probe root, so in the contained run they land under the /pal-output pytest
@@ -801,7 +1116,8 @@ def run_probe(image, digest, size, *, root, mode, allow_probe=False, process_run
         process_status='not_started', process_error_code=None, decoder_status='not_attempted',
         reported_tokens=None, response_matches=False, test_endpoint_override='numeric-loopback-http',
         activation_authorized=False, external_egress_verified=False, outside_root_verified=False,
-        transient_writes_verified=False, vendor_provenance_verified=False)
+        transient_writes_verified=False, vendor_provenance_verified=False,
+        preflight_head_observed=0, bootstrap_exception=None)
     before = state_snapshot(root)
     if not before['complete']:
         raise ValueError('probe_initial_snapshot_failed')
@@ -851,10 +1167,16 @@ def run_probe(image, digest, size, *, root, mode, allow_probe=False, process_run
                 result['process_status'] = 'failed'
                 result['process_error_code'] = _process_error_code(error)
     result.update(request_count=server.count, unexpected_requests=server.unexpected,
-                  request_contract_matches=server.matches and server.count == 1,
-                  server_faults=server.faults, responses_sent=server.responses)
+        preflight_head_observed=server.preflight_heads,
+        request_contract_matches=server.matches and server.count == 1
+            and server.preflight_heads == 1,
+        server_faults=server.faults, responses_sent=server.responses)
     after = state_snapshot(root, expected_root=before['root_identity'])
     result['state'] = state_delta(before, after)
+    # L7-Q2: the raw delta above keeps the ORIGINAL initial snapshot as its
+    # baseline; this evaluation records whether the owner-approved five-entry
+    # content-validated bootstrap exception applies to the state gate.
+    result['bootstrap_exception'] = _bootstrap_exception(before, after, root, secrets)
     # Observation-only diagnostics (arbitration prescriptions 2-5). Nothing
     # below feeds observation_passed, any counter or any matching decision.
     diagnostics = dict(schema_version=DIAGNOSTIC_SCHEMA,
@@ -871,24 +1193,43 @@ def run_probe(image, digest, size, *, root, mode, allow_probe=False, process_run
             image_sha256=digest, cli_version=CLAUDE_VERSION, transcript=server.transcript,
             transcript_truncated=server.transcript_truncated,
             counters=dict(requests=server.count, unexpected=server.unexpected,
+                          preflight_heads=server.preflight_heads,
                           responses=server.responses, faults=server.faults),
             redaction='header values, body string values and stderr content redacted'),
         'predecode.json': dict(schema_version=DIAGNOSTIC_SCHEMA, mode=mode, predecode=predecode),
         'state-inventory.json': dict(schema_version=DIAGNOSTIC_SCHEMA, mode=mode,
             qualification_state=result['state'],
+            preflight_head_observed=server.preflight_heads,
+            bootstrap_exception=result['bootstrap_exception'],
             state_inventory=diagnostics['state_inventory'])})
     result['diagnostics'] = diagnostics
     return result
 
 
 def observation_passed(value):
-    """Engineering subset only. Success can NEVER authorize real activation."""
+    """Engineering subset only. Success can NEVER authorize real activation.
+
+    Prospective criteria per the two owner-approved L7 acceptance changes
+    (2026-09-29, DELIVERY_PLAN section 63). Request gate (L7-Q1): exactly one
+    admitted bodyless unauthenticated preflight HEAD before the one matching
+    POST -- unexpected_requests must still be zero and preflight_head_observed
+    must be exactly one. State gate (L7-Q2): zero changes, or exactly the five
+    demonstrated bootstrap additions with the content-validated exception
+    applied while the raw delta stays recorded. Baseline relocation and every
+    other request or state change remain failures."""
     state = value['state']
+    bootstrap = value.get('bootstrap_exception')
+    state_ok = (state['complete'] is True and state['unsafe_entries'] == 0
+        and state['sentinel_files'] == 0 and state['limit_reached'] is False
+        and (state['changed_entries'] == 0 or (state['changed_entries'] == 5
+            and type(bootstrap) is dict and bootstrap.get('applied') is True
+            and bootstrap.get('violations') == []
+            and bootstrap.get('raw_delta') == dict(added=5, removed=0, modified=0))))
     common = (value['version_matches'] is True and value['request_count'] == 1
+        and value.get('preflight_head_observed') == 1
         and value['unexpected_requests'] == value['server_faults'] == 0
         and value['request_contract_matches'] is True and value['responses_sent'] == 1
-        and state['complete'] is True and state['changed_entries'] == state['unsafe_entries'] == 0
-        and state['sentinel_files'] == 0 and state['limit_reached'] is False)
+        and state_ok)
     if value['mode'] == 'success':
         return (common and value['decoder_status'] == 'accepted' and value['reported_tokens'] == 26
                 and value['response_matches'] is True)

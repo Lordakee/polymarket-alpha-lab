@@ -37,7 +37,8 @@ def test_v2_error_code_allowlist_is_exactly_the_fixed_codes():
 def _v2_observation(**overrides):
     value = dict(schema_version='claude-cli-probe-v2', mode='rate_limit',
         version_matches=True, request_count=1, unexpected_requests=0, server_faults=0,
-        request_contract_matches=True, responses_sent=1, process_status='failed',
+        request_contract_matches=True, responses_sent=1, preflight_head_observed=1,
+        process_status='failed',
         process_error_code='research_process_nonzero_exit', decoder_status='not_attempted',
         state=dict(complete=True, changed_entries=0, unsafe_entries=0,
                    sentinel_files=0, limit_reached=False))
@@ -336,8 +337,11 @@ def _first_attempt_observation(mode):
 
 def test_observation_passed_is_unchanged_on_the_recorded_first_attempt_shapes():
     """Pin: with or without any diagnostics payload, the six recorded shapes
-    fail exactly as recorded. The observation-only additions cannot alter a
-    qualification verdict."""
+    fail exactly as recorded. The owner-approved L7-Q1/L7-Q2 changes are
+    PROSPECTIVE criteria only: the recorded observations carry no admitted
+    preflight and no applied bootstrap exception, so both historical cohorts
+    stay unrescored in the repository history. The observation-only additions
+    cannot alter a qualification verdict."""
     for mode in probe.MODES:
         value = _first_attempt_observation(mode)
         assert probe.observation_passed(value) is False, mode
@@ -351,6 +355,116 @@ def test_observation_passed_is_unchanged_on_the_recorded_first_attempt_shapes():
     passing['diagnostics'] = dict(schema_version=probe.DIAGNOSTIC_SCHEMA,
                                   sidecars=dict(status='incomplete-and-recorded'))
     assert probe.observation_passed(passing) is True
+
+
+# ---------------------------------------------------------------------------
+# Owner-approved prospective criteria (2026-09-29, DELIVERY_PLAN section 63):
+# counterexamples pinning that the two approved exceptions accept exactly the
+# demonstrated behavior and nothing broader.
+# ---------------------------------------------------------------------------
+
+def _approved_observation(mode, **overrides):
+    """The six section-63 cohort shapes re-scored PROSPECTIVELY under the two
+    owner-approved acceptance changes: the single HEAD preflight becomes an
+    expected preflight (unexpected zero, contract matching, preflight count
+    one) and the five-entry bootstrap is content-validated and applied. This
+    mirror demonstrates the new criteria only; it does not rescore any
+    retained evidence."""
+    returned = mode in ('success', 'invalid_action')
+    value = dict(schema_version='claude-cli-probe-v2', mode=mode, image_sha256='a'*64,
+        image_bytes=234119480, cli_version=probe.CLAUDE_VERSION, version_matches=True,
+        version_status='returned', version_error_code=None,
+        process_status='returned' if returned else 'failed',
+        process_error_code=None if returned else 'research_process_nonzero_exit',
+        decoder_status='rejected' if returned else 'not_attempted',
+        reported_tokens=None, response_matches=False,
+        test_endpoint_override='numeric-loopback-http', activation_authorized=False,
+        external_egress_verified=False, outside_root_verified=False,
+        transient_writes_verified=False, vendor_provenance_verified=False,
+        request_count=1, unexpected_requests=0, server_faults=0,
+        request_contract_matches=True, responses_sent=1, preflight_head_observed=1,
+        bootstrap_exception=dict(applied=True, violations=[],
+            raw_delta=dict(added=5, removed=0, modified=0)),
+        state=dict(complete=True, changed_entries=5, unsafe_entries=0,
+                   sentinel_files=0, limit_reached=False))
+    value.update(overrides)
+    return value
+
+
+def test_recorded_shapes_pass_under_the_owner_approved_criteria():
+    for mode in probe.MODES:
+        value = _approved_observation(mode)
+        if mode == 'success':
+            # The success shape additionally needs the separately calibrated
+            # second terminal-result representation: decoder accepted, the 26
+            # synthetic tokens and the exact action match. That decoder axis
+            # is NOT part of the two approval changes and stays as-is.
+            value.update(decoder_status='accepted', reported_tokens=26,
+                         response_matches=True)
+        assert probe.observation_passed(value) is True, mode
+
+
+def test_recorded_success_shape_still_requires_the_calibrated_decoder():
+    as_recorded = _approved_observation('success')  # decoder rejected, tokens unknown
+    assert probe.observation_passed(as_recorded) is False
+    calibrated = _approved_observation('success', decoder_status='accepted',
+                                       reported_tokens=26, response_matches=True)
+    assert probe.observation_passed(calibrated) is True
+
+
+@pytest.mark.parametrize('overrides', [
+    dict(preflight_head_observed=0),      # preflight missing
+    dict(preflight_head_observed=2),      # more than one admitted preflight
+    dict(unexpected_requests=1),          # any unexpected request
+    dict(request_contract_matches=False), # aggregate contract failure
+    dict(request_count=2),                # any second POST
+    dict(responses_sent=2),               # any request answered after the POST
+])
+def test_approved_request_criteria_fail_on_every_sequence_violation(overrides):
+    for mode in ('rate_limit', 'tool_use'):
+        assert probe.observation_passed(_approved_observation(mode, **overrides)) is False
+
+
+_VALID_BOOTSTRAP = dict(applied=True, violations=[],
+                        raw_delta=dict(added=5, removed=0, modified=0))
+
+
+@pytest.mark.parametrize('bootstrap,changed', [
+    (None, 5),                       # five changes with no exception recorded
+    (dict(applied=False, violations=['added_not_exactly_the_five_demonstrated'],
+          raw_delta=dict(added=6, removed=0, modified=0)), 6),  # a sixth entry
+    (dict(applied=True, raw_delta=dict(added=5, removed=0, modified=0)), 5),  # missing violations
+    (dict(applied=True, violations=['x'],
+          raw_delta=dict(added=5, removed=0, modified=0)), 5),  # unclean validation
+    (dict(applied=True, violations=[],
+          raw_delta=dict(added=5, removed=0, modified=0)), 6),  # delta/exception disagree
+    (dict(applied=True, violations=[],
+          raw_delta=dict(added=5, removed=0, modified=0)), 4),  # not five changes
+    (dict(applied=True, violations=['modified_entries'],
+          raw_delta=dict(added=5, removed=0, modified=1)), 6),  # a modification
+    (dict(applied=True, violations=['removed_entries'],
+          raw_delta=dict(added=5, removed=1, modified=0)), 6),  # a removal
+])
+def test_state_gate_accepts_only_zero_or_the_content_validated_five(bootstrap, changed):
+    value = _approved_observation('rate_limit', bootstrap_exception=bootstrap,
+        state=dict(complete=True, changed_entries=changed, unsafe_entries=0,
+                   sentinel_files=0, limit_reached=False))
+    assert probe.observation_passed(value) is False
+    # Zero surviving changes still passes regardless of the exception outcome.
+    zero = _approved_observation('rate_limit', bootstrap_exception=bootstrap,
+        state=dict(complete=True, changed_entries=0, unsafe_entries=0,
+                   sentinel_files=0, limit_reached=False))
+    assert probe.observation_passed(zero) is True
+
+
+@pytest.mark.parametrize('state', [
+    dict(complete=False, changed_entries=5, unsafe_entries=0, sentinel_files=0, limit_reached=False),
+    dict(complete=True, changed_entries=5, unsafe_entries=1, sentinel_files=0, limit_reached=False),
+    dict(complete=True, changed_entries=5, unsafe_entries=0, sentinel_files=1, limit_reached=False),
+    dict(complete=True, changed_entries=5, unsafe_entries=0, sentinel_files=0, limit_reached=True),
+])
+def test_bootstrap_exception_never_waives_safety_subchecks(state):
+    assert probe.observation_passed(_approved_observation('rate_limit', state=state)) is False
 
 
 def test_transcript_redacts_hostile_header_values_and_targets(tmp_path):
