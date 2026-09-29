@@ -25,6 +25,7 @@ import socket
 import stat
 import subprocess
 import sys
+import threading
 import time
 
 import pytest
@@ -293,11 +294,11 @@ def test_derived_execution_applies_exactly_the_two_deviations():
     executed = runner.derive_executed_argv(plan, 'official-six', 123,
                                            '/usr/bin/bwrap')
     assert executed[0] == '/usr/bin/bwrap'
-    assert '--ro-bind' in executed and '/proc/self/fd/123' in executed
+    assert '--ro-bind-data' in executed and '123' in executed
     assert '/opt/synth/image' not in executed
     expected = ['/usr/bin/bwrap'] + canonical[1:]
     index = expected.index('/opt/synth/image')
-    expected[index - 1:index + 2] = ['--ro-bind', '/proc/self/fd/123',
+    expected[index - 1:index + 2] = ['--perms', '0555', '--ro-bind-data', '123',
                                      '/pal-claude-image/claude']
     expected = expected[:-2] + ['/bin/sh', '-c', runner.wrap_guest_entry(
         plan['modes'][1]['command'])]
@@ -306,7 +307,7 @@ def test_derived_execution_applies_exactly_the_two_deviations():
                                           '/usr/bin/bwrap')
     assert qualify[-3:] == ['/bin/sh', '-c', runner.wrap_guest_entry(
         plan['modes'][0]['command'])]
-    assert '/proc/self/fd/7' in qualify
+    assert qualify[qualify.index('--ro-bind-data') + 1] == '7'
     tampered = base_plan()
     tampered['argv'] = canonical[:-2]
     with pytest.raises(ValueError, match='plan_argv_invalid'):
@@ -913,6 +914,7 @@ GUEST_PROBE = r'''
 import json,os,socket
 res={'pid':os.getpid(),'uidmap':open('/proc/self/uid_map').read().strip(),
      'nodename':os.uname().nodename,
+     'uts_ino':os.stat('/proc/self/ns/uts').st_ino,
      'host_pid_absent':not os.path.exists('/proc/'+os.environ['PAL_TEST_HOST_PID'])}
 a=socket.socket();a.bind(('127.0.0.1',0));a.listen(1);port=a.getsockname()[1]
 b=socket.create_connection(('127.0.0.1',port),3);c,_=a.accept();b.sendall(b'PAL7')
@@ -980,10 +982,51 @@ open('/pal-output/junit.xml','w').write('<?xml version="1.0"?><testsuite ' +
 '''
 
 
+def _elf_interp(path):
+    """Bounded ELF64 read of PT_INTERP (the literal path exec requires)."""
+    try:
+        with open(path, 'rb') as stream:
+            header = stream.read(64)
+            if (len(header) != 64 or not header.startswith(b'\x7fELF')
+                    or header[4] != 2 or header[5] != 1):
+                return None
+            phoff = int.from_bytes(header[32:40], 'little')
+            phentsize = int.from_bytes(header[54:56], 'little')
+            phnum = int.from_bytes(header[56:58], 'little')
+            if phentsize != 56 or not 1 <= phnum <= 1024:
+                return None
+            stream.seek(phoff)
+            phdrs = stream.read(56 * phnum)
+            if len(phdrs) != 56 * phnum:
+                return None
+            for index in range(phnum):
+                entry = phdrs[56 * index:56 * (index + 1)]
+                if int.from_bytes(entry[0:4], 'little') != 3:  # PT_INTERP
+                    continue
+                offset = int.from_bytes(entry[8:16], 'little')
+                size = int.from_bytes(entry[32:40], 'little')
+                stream.seek(offset)
+                raw = stream.read(size)
+                if raw.endswith(b'\x00'):
+                    return raw[:-1].decode('ascii')
+        return None
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
 def build_synthetic_plan(tmp_path, *, mode='qualify-version', guest_code=None,
                          payload_files=None, launcher_body=None,
                          extra_child_env=None, allocation=None):
-    """Assemble a runnable synthetic v2 plan around the interpreter stand-in."""
+    """Assemble a runnable synthetic v2 plan around the interpreter stand-in.
+
+    The v2 schema has no arbitrary read-only directory binds, so the stand-in
+    interpreter's runtime lives INSIDE the payload tree exactly like the
+    official INPUT layout (python/bin/python3 + python/lib/python3.x stdlib);
+    the guest PYTHONHOME points at /pal-input/python. The sealed IMAGE member
+    (a copy of the same interpreter) initializes against that payload runtime,
+    which is why qualify-mode commands stay in the documented superset form
+    (argv[0] == the sealed image) while still executing the probe code.
+    """
     python = _standin_interpreter()
     closure = _standin_closure(python)
     image_dir = tmp_path / 'IMAGE'
@@ -998,6 +1041,16 @@ def build_synthetic_plan(tmp_path, *, mode='qualify-version', guest_code=None,
     payload_root.mkdir()
     (payload_root / 'probe.py').write_text('stand-in payload marker\n',
                                            encoding='ascii')
+    runtime = payload_root / 'python'
+    (runtime / 'bin').mkdir(parents=True)
+    shutil.copyfile(python, runtime / 'bin' / 'python3')
+    os.chmod(runtime / 'bin' / 'python3', 0o755)
+    stdlib = Path(closure['stdlib'])
+    shutil.copytree(stdlib, runtime / 'lib' / stdlib.name, symlinks=False)
+    prefix = Path(closure['prefix'])
+    for shared in sorted(prefix.glob('lib/libpython*.so*')):
+        if shared.is_file():
+            shutil.copyfile(shared, runtime / 'lib' / shared.name)
     for name, text in (payload_files or {}).items():
         target = payload_root / name
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -1036,9 +1089,26 @@ def build_synthetic_plan(tmp_path, *, mode='qualify-version', guest_code=None,
                               'sha256': sha256(data).hexdigest(),
                               'bytes': len(data)})
         lib_dirs.add(str(Path(lib).parent))
+    # The sandbox root is an empty tmpfs (no usrmerge symlinks), so every
+    # exec'd ELF needs its interpreter bound at the LITERAL PT_INTERP path;
+    # on usr-merged hosts that resolves onto the same file already bound at
+    # its canonical path (one source, two guests, one identity).
+    bound_guests = {bind['guest'] for bind in runtime_binds}
+    for executable in (sh_source, python):
+        interp = _elf_interp(executable)
+        if interp is None or interp in bound_guests:
+            continue
+        real = str(Path(interp).resolve())
+        data = Path(real).read_bytes()
+        runtime_binds.append({'guest': interp, 'mode': 'ro', 'source': real,
+                              'sha256': sha256(data).hexdigest(),
+                              'bytes': len(data)})
+        lib_dirs.add(str(Path(real).parent))
+        bound_guests.add(interp)
     runtime_binds.sort(key=lambda item: item['guest'])
     lib_dirs.add(str(Path(sh_source).parent))
-    child = {'PATH': '/usr/bin:/bin', 'PYTHONHOME': closure['prefix'],
+    lib_dirs.add('/pal-input/python/lib')
+    child = {'PATH': '/usr/bin:/bin', 'PYTHONHOME': '/pal-input/python',
              'LD_LIBRARY_PATH': ':'.join(sorted(lib_dirs))}
     child.update(extra_child_env or {})
     plan = {
@@ -1141,10 +1211,12 @@ def test_native_bwrap_identity_admission():
 @pytest.mark.skipif(not RUNNER_ENABLED, reason='explicit native probe-runner qualification is opt-in')
 def test_native_namespace_separation_and_readonly_bindings(tmp_path):
     require_native_runner()
+    host_uts_ino = os.stat('/proc/self/ns/uts').st_ino
     plan_path, plan = build_synthetic_plan(
         tmp_path, guest_code=GUEST_PROBE,
         extra_child_env={'PAL_TEST_HOST_PID': str(os.getpid()),
-                         'PAL_TEST_HOST_PORT': '9'},
+                         'PAL_TEST_HOST_PORT': '9',
+                         'PAL_TEST_UTS_INO': str(host_uts_ino)},
         allocation='pal-l7-test-separation')
     record = runner.run_outer_probe(plan_path, mode='qualify-version',
                                     deadline_seconds=120)
@@ -1155,7 +1227,9 @@ def test_native_namespace_separation_and_readonly_bindings(tmp_path):
     result = _exported_result(plan)
     assert result['host_pid_absent'] is True
     assert result['uidmap'] != Path('/proc/self/uid_map').read_text().strip()
-    assert result['nodename'] != os.uname().nodename
+    # --unshare-uts keeps the inherited nodename until sethostname is called,
+    # so UTS isolation is proven by a distinct namespace inode instead.
+    assert result['uts_ino'] != host_uts_ino
     assert result['input_readonly'] is True
     assert result['image_readonly'] is True
     assert result['control_readonly'] is True
@@ -1207,15 +1281,48 @@ def test_native_escaped_descendant_cleanup(tmp_path):
     require_native_runner()
     plan_path, plan = build_synthetic_plan(
         tmp_path, guest_code=GUEST_ESCAPE, allocation='pal-l7-test-escaped')
-    record = runner.run_outer_probe(plan_path, mode='qualify-version',
-                                    deadline_seconds=120)
+    # Observe DURING the run that the escaped descendant is actually alive in
+    # the workload cgroup (launcher, monitor, wrapper sh, python, survivor);
+    # the survivor's pid is a NAMESPACE pid, meaningless against host /proc.
+    observed = {'members': 0}
+    outcome = {}
+
+    def probe():
+        outcome['record'] = runner.run_outer_probe(
+            plan_path, mode='qualify-version', deadline_seconds=120,
+            allocation='pal-l7-test-escaped')
+
+    worker = threading.Thread(target=probe)
+    worker.start()
+    procs = Path(os.environ[CGROUP_ROOT_ENV], 'pal-l7-test-escaped',
+                 'cgroup.procs')
+    deadline = time.monotonic() + 120
+    while time.monotonic() < deadline and observed['members'] < 4:
+        try:
+            observed['members'] = len(procs.read_text().split())
+        except OSError:
+            pass
+        time.sleep(0.05)
+    worker.join(timeout=180)
+    record = outcome['record']
     _assert_clean_teardown(record)
+    # Steady state during the run: bwrap monitor + wrapper sh + entry python
+    # + the escaped survivor (the bwrap launcher exits after setup).
+    assert observed['members'] >= 4, 'escaped descendant never ran'
     survivor = int((Path(plan['export']['destination']) / 'survivor.txt')
                    .read_text(encoding='ascii').strip())
+    assert survivor >= 2, 'survivor pid must be a guest-namespace pid'
     deadline = time.monotonic() + 10
-    while time.monotonic() < deadline and os.path.exists('/proc/%d' % survivor):
-        time.sleep(0.05)
-    assert not os.path.exists('/proc/%d' % survivor), 'descendant survived teardown'
+    while time.monotonic() < deadline and procs.exists():
+        try:
+            remaining = procs.read_text().split()
+        except OSError:
+            remaining = []
+        if not remaining:
+            break
+        time.sleep(0.1)
+    assert not procs.exists() or not procs.read_text().split(), \
+        'workload cgroup still occupied after teardown'
 
 
 @pytest.mark.skipif(not RUNNER_ENABLED, reason='explicit native probe-runner qualification is opt-in')
@@ -1250,8 +1357,12 @@ def test_native_deadline_timeout_stop(tmp_path):
 @pytest.mark.skipif(not RUNNER_ENABLED, reason='explicit native probe-runner qualification is opt-in')
 def test_native_qualify_version_banner_gate(tmp_path):
     require_native_runner()
+    # The stand-in prints the expected banner itself (the official plan's
+    # pinned --version command produces the same bytes from the real CLI).
     plan_path, plan = build_synthetic_plan(
-        tmp_path, guest_code=None, allocation='pal-l7-test-qv-ok')
+        tmp_path,
+        guest_code="import sys; sys.stdout.write('2.1.278 (Claude Code)\\n')",
+        allocation='pal-l7-test-qv-ok')
     record = runner.run_outer_probe(plan_path, mode='qualify-version',
                                     deadline_seconds=120)
     _assert_clean_teardown(record)
@@ -1307,7 +1418,9 @@ def test_native_driver_loss_cli(tmp_path):
         [sys.executable, str(ROOT / 'scripts' / 'run_claude_probe_linux.py'),
          'run', '--plan', str(plan_path), '--mode', 'qualify-version'],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    # communicate() flushes stdin; detach the closed pipe first.
     process.stdin.close()
+    process.stdin = None
     output, _error = process.communicate(timeout=180)
     result = json.loads(output.decode('utf-8').strip().splitlines()[-1])
     assert result['stop_condition'] == 'driver_lost'
@@ -1347,9 +1460,11 @@ def test_native_supervisor_loss_cli(tmp_path):
     assert initial_members, 'workload processes never appeared'
     process.kill()
     process.wait(timeout=30)
-    # The test holds the stdin pipe's write end: close it so the namespace
-    # holder (blocked on read) observes EOF once the killed runner is gone.
+    # Detach the closed stdin so communicate() below does not flush an
+    # already-closed file; the namespace holder's EOF comes from the
+    # supervisor-internal hold pipe closing when the killed runner dies.
     process.stdin.close()
+    process.stdin = None
     members = initial_members
     deadline = time.monotonic() + 30
     while time.monotonic() < deadline:
@@ -1361,8 +1476,24 @@ def test_native_supervisor_loss_cli(tmp_path):
             break
         time.sleep(0.1)
     assert not members, 'workload survived supervisor loss'
-    for pid in initial_members:
-        assert not os.path.exists('/proc/%s' % pid), pid
+    # Zombies of a SIGKILLed supervisor are reaped asynchronously by init;
+    # the guarantee under test is that no LIVE process remains.
+    def _live(pid):
+        try:
+            with open('/proc/%s/status' % pid) as handle:
+                for line in handle:
+                    if line.startswith('State:'):
+                        return 'Z' not in line and 'X' not in line
+            return True
+        except OSError:
+            return False
+    deadline = time.monotonic() + 10
+    remaining = list(initial_members)
+    while time.monotonic() < deadline and remaining:
+        remaining = [pid for pid in remaining if _live(pid)]
+        time.sleep(0.1)
+    assert not remaining, 'workload processes survived supervisor loss: %s' \
+        % remaining
     try:
         created.rmdir()
     except OSError:

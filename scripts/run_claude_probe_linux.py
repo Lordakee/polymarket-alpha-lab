@@ -41,7 +41,12 @@ writable into the namespace), a REQUIRED ``launcher`` block
 on-disk file must be a regular non-symlink, mode exactly 0755, whose measured
 digest and length equal the block; it is re-measured after the drain and a
 divergence fails acceptance), every runtime bind enumerated as
-``{guest, mode: ro, source, sha256, bytes}`` at canonical guest paths, a clean
+``{guest, mode: ro, source, sha256, bytes}`` at canonical guest paths (one
+measured source may back several canonical guest paths with a single
+identity: an ELF needs its interpreter at the literal PT_INTERP path and at
+its soname path, and usr-merged hosts realpath both onto one file — the
+sandbox root is an empty tmpfs with no usrmerge symlinks, so the literal
+interpreter path must be bound), a clean
 ``environment.setenv`` (PATH pinned to /usr/bin:/bin), pinned ``bounds``
 (memory 4096 MiB, swap 0, pids 64, deadline 900 s), and the plan's ``argv``
 equal to the runner's canonical reconstruction (fixed flag order; sorted
@@ -52,20 +57,24 @@ command anywhere).
 Two documented deviations are applied when EXECUTING, never when validating:
 
 D1 (sealing choice): the verified official IMAGE member is measured once, then
-    sealed into an immutable memfd (F_SEAL_ALL, mode 0555) and bound into the
-    namespace as ``--ro-bind /proc/self/fd/<N> <image guest path>`` replacing
-    the plan's pathname bind of the IMAGE DIRECTORY (the sealed member replaces
-    the whole-directory bind; image-manifest.json is not needed inside the
-    namespace). bwrap 0.11.1 supports /proc/self/fd bind sources, so the
-    executed bytes are the sealed snapshot and are immune to host pathname
-    substitution after admission. bwrap itself is executed by its measured,
-    resolved, non-setuid absolute pathname (never a PATH re-lookup). The
-    runtime closure and the payload tree cannot be sealed this way
-    (directory-sized, multi-file), so every file bind and the payload
-    inventory are hash-verified at admission and the IMAGE pathname is
-    re-measured once more after the drain; the CONTROL launcher twin carries
-    its own required identity block and is likewise measured twice (at
-    admission and post-drain), both measurements recorded in the run record.
+    sealed into an immutable memfd (F_SEAL_ALL, mode 0555) and crossed into
+    the namespace with ``--perms 0555 --ro-bind-data <fd> <image guest path>``
+    replacing the plan's pathname bind of the IMAGE DIRECTORY. Empirically
+    (first native qualification on the real host) bwrap 0.11.1 REFUSES
+    ``/proc/self/fd/N`` as a --ro-bind source ("Can't find source path":
+    the fd magic symlink fails its no-follow source resolution), while
+    ``--ro-bind-data`` consumes the inherited sealed descriptor directly —
+    the mechanism the L5 helper already proved. The executed bytes are
+    therefore still the sealed snapshot, immune to host pathname substitution
+    after admission (descriptor-bound copy, no pathname reopen). bwrap itself
+    is executed by its measured, resolved, non-setuid absolute pathname
+    (never a PATH re-lookup). The runtime closure and the payload tree cannot
+    be sealed this way (directory-sized, multi-file), so every file bind and
+    the payload inventory are hash-verified at admission and the IMAGE
+    pathname is re-measured once more after the drain; the CONTROL launcher
+    twin carries its own required identity block and is likewise measured
+    twice (at admission and post-drain), both measurements recorded in the
+    run record.
 D2 (holder): the selected mode's final command is wrapped in
     ``/bin/sh -c '<command>; status=$?; printf ... > /pal-output/pal-holder-status;
     IFS= read -r hold'`` using only shell builtins (the plan pins
@@ -126,6 +135,14 @@ env-overridable upward only via POLYMARKET_ALPHA_LAB_LINUX_PROBE_RUNNER_TIMEOUT,
 same raise-only pattern as POLYMARKET_ALPHA_LAB_PACKAGED_RECIPE_TIMEOUT),
 ``driver_lost`` (the CLI's driving stdin pipe closed), ``supervisor_error``,
 plus admission/teardown/export/gate fixed failure codes in ``findings``.
+Supervisor death itself is a kernel-level guarantee, not a stop condition:
+a minimal guard child (outside the workload cgroup, dismissed with one byte
+on the normal path) writes cgroup.kill when the supervisor dies undismissed,
+so a SIGKILLed supervisor still tears down every workload process regardless
+of bwrap 0.11.1's internal launcher/monitor process model (its
+--die-with-parent ties only the sandbox init to the internal monitor). The
+bootstrap child additionally arms PR_SET_PDEATHSIG as a belt, and the
+holder's stdin EOF is the post-workload release path.
 
 Qualification tests live in tests/test_claude_probe_linux_execution.py. They
 use synthetic stand-ins only and NEVER the official binary.
@@ -144,6 +161,7 @@ from pathlib import Path
 import re
 import select
 import shutil
+import signal
 import stat
 import subprocess
 import sys
@@ -208,6 +226,7 @@ _O_NOFOLLOW = getattr(os, 'O_NOFOLLOW', 0)
 _O_DIRECTORY = getattr(os, 'O_DIRECTORY', 0)
 _O_NONBLOCK = getattr(os, 'O_NONBLOCK', 0)
 _O_BINARY = getattr(os, 'O_BINARY', 0)
+_WNOHANG = getattr(os, 'WNOHANG', 1)
 RUN_RECORD_NAME = 'run-record.json'
 EXPORT_MANIFEST_NAME = 'export-manifest.json'
 RUNNER_RECORD_SCHEMA = 'claude-probe-runner-linux-v1'
@@ -453,7 +472,7 @@ def plan_problem(plan):
     binds = plan['runtime_binds']
     if type(binds) is not list or not 1 <= len(binds) <= RUNTIME_BIND_MAX:
         return 'plan_runtime_binds_invalid'
-    bind_guests, bind_sources = set(), set()
+    bind_guests, source_identities = set(), {}
     for bind in binds:
         if type(bind) is not dict or set(bind) != {'guest', 'mode', 'source',
                                                    'sha256', 'bytes'}:
@@ -464,10 +483,19 @@ def plan_problem(plan):
                 or not _sha256_text(bind['sha256'])
                 or not _bounded_int(bind['bytes'], 1, RUNTIME_BIND_MAX_BYTES)):
             return 'plan_runtime_binds_invalid'
-        if bind['guest'] in bind_guests or bind['source'] in bind_sources:
+        if bind['guest'] in bind_guests:
             return 'plan_runtime_binds_invalid'
+        # Guests must be unique; one measured source may legitimately back
+        # several canonical guest paths (an ELF needs its interpreter at the
+        # literal PT_INTERP path AND at its soname path, and usr-merged hosts
+        # realpath both onto one file) - but only ever with one identity,
+        # matching the generator's own validator.
+        identity = (bind['sha256'], bind['bytes'])
+        previous = source_identities.get(bind['source'])
+        if previous is not None and previous != identity:
+            return 'plan_runtime_binds_invalid'
+        source_identities[bind['source']] = identity
         bind_guests.add(bind['guest'])
-        bind_sources.add(bind['source'])
     if GUEST_SH not in bind_guests:
         return 'plan_runtime_binds_invalid'  # the D2 holder needs /bin/sh
     if not bind_guests.isdisjoint(set(guests.values())):
@@ -492,7 +520,7 @@ def plan_problem(plan):
                    for item in layout['library_search'])
             or layout['shell_guest'] != GUEST_SH
             or type(layout['shell_source']) is not str
-            or layout['shell_source'] not in bind_sources):
+            or layout['shell_source'] not in source_identities):
         return 'plan_runtime_layout_invalid'
     environment = _plan_section(plan['environment'], ('clearenv', 'setenv'),
                                 'plan_environment_invalid')
@@ -1118,8 +1146,8 @@ def derive_executed_argv(plan, mode, sealed_fd, bwrap_path):
     index = next((i for i in range(len(argv) - 2) if argv[i:i + 3] == pair), None)
     if index is None:
         fail('plan_argv_invalid')
-    argv[index:index + 3] = ['--ro-bind', '/proc/self/fd/%d' % sealed_fd,
-                             image_guest]
+    argv[index:index + 3] = ['--perms', '0555', '--ro-bind-data',
+                             str(sealed_fd), image_guest]
     return argv + [GUEST_SH, '-c', wrap_guest_entry(command)]
 
 
@@ -1360,6 +1388,109 @@ def _close_except(keep):
                 pass
 
 
+_PR_SET_PDEATHSIG = 1
+
+
+def _load_libc():
+    """Load libc once in the supervisor (pre-fork) for the child's prctl.
+
+    Returns None on hosts where the default-library handle is unavailable
+    (Windows development hosts); the bootstrap child only exists on Linux.
+    """
+    import ctypes
+    try:
+        libc = ctypes.CDLL(None, use_errno=True)
+        libc.prctl.restype = ctypes.c_int
+        libc.prctl.argtypes = [ctypes.c_int, ctypes.c_ulong, ctypes.c_ulong,
+                               ctypes.c_ulong, ctypes.c_ulong]
+        return libc
+    except (OSError, TypeError, AttributeError):
+        return None
+
+
+def _arm_pdeathsig(libc, expected_parent):
+    """Arm PR_SET_PDEATHSIG(SIGKILL) in the bootstrap child (belt only).
+
+    Empirically (first native qualification): bwrap 0.11.1's --die-with-parent
+    ties the SANDBOX INIT to the internal monitor, and the monitor itself is
+    tied to nothing — a SIGKILLed supervisor leaves launcher, monitor, init
+    and the whole workload alive. This prctl makes the launcher die with the
+    supervisor; the real teardown guarantee is the cgroup guard below.
+    """
+    if libc is None:
+        os._exit(99)
+    if libc.prctl(_PR_SET_PDEATHSIG, signal.SIGKILL, 0, 0, 0) != 0:
+        os._exit(99)
+    if os.getppid() != expected_parent:
+        os._exit(99)
+
+
+def _spawn_cgroup_guard(cgroup_path):
+    """Fork a minimal guard: supervisor loss SIGKILLs the workload cgroup.
+
+    Protocol: one byte on the dismiss pipe. ``b'D'`` = stand down (normal
+    teardown dismisses after its own verified-empty kill); EOF without the
+    byte means the supervisor died, and the guard writes cgroup.kill itself,
+    tearing down every workload process regardless of bwrap's internal
+    launcher/monitor process model. The guard stays OUTSIDE the workload
+    cgroup and uses only raw syscalls on precomputed strings (the child path
+    avoids threads; the fd-closure helper may allocate, the same accepted
+    shape as the committed L5 helper), so it is fork-safe and needs nothing
+    from the sandbox.
+    """
+    dismiss_r, dismiss_w = os.pipe()
+    kill_path = os.path.join(cgroup_path, 'cgroup.kill')
+
+    def _kill_cgroup():
+        try:
+            fd = os.open(kill_path, os.O_WRONLY)
+            os.write(fd, b'1')
+            os.close(fd)
+        except OSError:
+            pass
+
+    pid = os.fork()
+    if pid == 0:
+        try:
+            try:
+                os.close(dismiss_w)
+                _close_except({dismiss_r})
+                dismissed = os.read(dismiss_r, 1) == b'D'
+            except BaseException:
+                # A pre-read failure must DISARM nothing: fall through to the
+                # kill attempt rather than exiting silently (fail-closed).
+                dismissed = False
+            if not dismissed:
+                _kill_cgroup()
+        except BaseException:
+            pass
+        os._exit(0)
+    os.close(dismiss_r)
+    return pid, dismiss_w
+
+
+def _dismiss_guard(pid, dismiss_w):
+    """Stand the guard down and reap it (normal teardown path only)."""
+    if dismiss_w is not None:
+        try:
+            os.write(dismiss_w, b'D')
+        except OSError:
+            pass
+        try:
+            os.close(dismiss_w)
+        except OSError:
+            pass
+    deadline = time.monotonic() + REAP_ALLOWANCE_S
+    while time.monotonic() < deadline:
+        try:
+            done, _status = os.waitpid(pid, _WNOHANG)
+            if done == pid:
+                return
+        except (ChildProcessError, OSError):
+            return
+        time.sleep(0.01)
+
+
 def _classify_stderr(sniff):
     text = bytes(sniff)
     for marker in (b'Unknown option', b'unrecognized option'):
@@ -1466,7 +1597,8 @@ def run_outer_probe(plan_path, *, mode, deadline_seconds=None, driver_stop=None,
     ).hexdigest()[:16])
     cgroup = WorkloadCgroup(root, allocation)
     cgroup.create()
-    record['cgroup'] = {'root': root, 'path': cgroup.path,
+    guard_pid, guard_w = _spawn_cgroup_guard(cgroup.path)
+    record['cgroup'] = {'root': root, 'path': cgroup.path, 'guard_pid': guard_pid,
                         'limits': {name: value for name, value in cgroup.limits}}
     executed = derive_executed_argv(plan, mode, sealed_fd, bwrap['path'])
     record['execution']['executed_argv'] = executed
@@ -1474,6 +1606,8 @@ def run_outer_probe(plan_path, *, mode, deadline_seconds=None, driver_stop=None,
     out_r, out_w = os.pipe()
     err_r, err_w = os.pipe()
     gate_r, gate_w = os.pipe()
+    libc = _load_libc()
+    supervisor_pid = os.getpid()
     workload_pid = os.fork()
     if workload_pid == 0:
         # Bootstrap child: admitted behind the gate, becomes bwrap itself.
@@ -1487,6 +1621,7 @@ def run_outer_probe(plan_path, *, mode, deadline_seconds=None, driver_stop=None,
                     os.close(fd)
             _close_except({0, 1, 2, gate_r, sealed_fd})
             os.set_inheritable(sealed_fd, True)
+            _arm_pdeathsig(libc, supervisor_pid)
             if os.read(gate_r, 1) != b'R':
                 os._exit(96)
             os.lseek(sealed_fd, 0, os.SEEK_SET)
@@ -1538,7 +1673,7 @@ def run_outer_probe(plan_path, *, mode, deadline_seconds=None, driver_stop=None,
                     break
                 if bwrap_status is None:
                     try:
-                        done, status = os.waitpid(workload_pid, os.WNOHANG)
+                        done, status = os.waitpid(workload_pid, _WNOHANG)
                         if done == workload_pid:
                             bwrap_status = status
                     except ChildProcessError:
@@ -1663,6 +1798,12 @@ def run_outer_probe(plan_path, *, mode, deadline_seconds=None, driver_stop=None,
         survivors = cgroup.members() if not empty else []
         if not empty or survivors:
             findings.append('teardown_failed')
+        # Dismiss the guard only after a VERIFIED-EMPTY teardown: our own kill
+        # ran first, and on a failed teardown the guard stays armed as a
+        # last-resort second cgroup.kill when the supervisor exits.
+        if empty and not survivors:
+            _dismiss_guard(guard_pid, guard_w)
+            guard_w = None
         events = cgroup.resource_limit_events()
         record['cgroup']['events_after'] = cgroup.events()
         if events:
