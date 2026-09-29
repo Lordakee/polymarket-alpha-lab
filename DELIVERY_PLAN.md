@@ -2654,3 +2654,35 @@ v0.1.0-linux-preview.1 的发布记录（回执已由 E=a1128a65 补记）。
 > qualification cohort must identify the newly approved criteria and its
 > exact source/input pins and preserve both earlier cohorts without
 > retrospective rescoring.
+
+### L7 前瞻性重入判据——按所有者常设授权批准（2026-09-30）
+
+> **L7 prospective reentry criteria — approved under the owner's standing
+> delegation (2026-09-30).** For pinned Claude Code 2.1.278, L7-Q1 requires
+> exactly one bodyless, unauthenticated HEAD with literal unnormalized
+> request target `/api/hello`, exactly one Host identifying the designated
+> numeric-loopback server, and the approved header/framing constraints; it
+> receives the fixed HTTP 404 and must precede exactly one POST satisfying
+> the unchanged Messages contract. The HEAD is recorded separately as an
+> expected preflight; zero HEADs, additional requests, retries, or sequence
+> deviations fail. L7-Q2 retains the original initial snapshot and raw
+> delta, permitting either zero changes or exactly the five demonstrated
+> additions: `config/.claude.json`, `config/backups/`, one conforming
+> `.claude.json.backup.<13-digit timestamp>` beneath it, empty
+> `config/sessions/`, and empty `tmp/claude-1000/`. The config and backup
+> require bounded strict-JSON validation against their respective closed
+> nine-field and two-field schemas; machineID/userID are exactly 64
+> lowercase hexadecimal characters without a cross-root variation
+> requirement; firstStartVersion is exactly `2.1.278`, migrationVersion is
+> integer—not boolean—`14`, and backup/config firstStartTime values must
+> match. This explicitly refines the earlier backup wording to the
+> demonstrated two-field subset. Existing safety, redaction, size, decoder,
+> action, usage, and containment requirements remain in force; other state
+> changes and baseline relocation remain excluded. Reentry requires
+> correction and final-revision verification of the identified
+> preflight-validation and pathname-redaction defects, complete
+> retained-success-envelope validation, and exact source/input pins. Both
+> earlier cohorts remain preserved without retrospective rescoring; real
+> provider calls remain false, `activation_authorized=false`, and this
+> criteria approval alone does not close WP-02/G2 or establish V1
+> completion.
