@@ -2686,3 +2686,66 @@ v0.1.0-linux-preview.1 的发布记录（回执已由 E=a1128a65 补记）。
 > provider calls remain false, `activation_authorized=false`, and this
 > criteria approval alone does not close WP-02/G2 or establish V1
 > completion.
+
+### L7 official-six 重入——装置修正后合成探针子条件达成（2026-09-30）
+
+> **L7 official-six reentry — synthetic-probe subcondition satisfied after
+> harness correction.**
+>
+> The preceding REENTRY cohort at source
+> `d21e0adbbfffe680b74aede88b4ba99d78de2eaf` reported JUnit `tests=6
+> failures=0 errors=0 skipped=0`. The operator reported verified-empty
+> cgroup teardown, zero resource-limit events, and one outer-runner finding:
+> `export_unsafe_entry` for
+> `pytest-tmp/test_supplied_claude_profile_lcurrent`, pytest 9.1.1's
+> convenience symlink. That cohort remains recorded as six scenario tests
+> passed but overall qualification rejected. Its original findings and
+> artifacts, and all earlier cohorts, remain preserved without retrospective
+> rescoring.
+>
+> Under the owner's standing delegation, Codex approved handling (a): prevent
+> the harness alias prospectively. The native entry now creates six distinct,
+> exclusively allocated scenario directories using
+> `tmp_path_factory.mktemp(..., numbered=False)`. The exporter and
+> acceptance rule remain unchanged: bounded, exclusive, no-follow export;
+> regular files only; zero unsafe entries required. No workload evidence is
+> deleted or exempted.
+>
+> The corrected rerun used source
+> `714efa6cbb396703984e4b26f85d69879cab9600` (tree
+> `2d11618c9b467a571f84deb95115b43178569ea9`), rebuilt and measured INPUT
+> manifest source_commit `714efa6cbb396703984e4b26f85d69879cab9600` (4,710
+> files; environment-manifest.json per-file hashes), pinned pytest 9.1.1,
+> the previously pinned official artifact and provenance (image sha256
+> `5c4735937844e84f8a93306e841a5b0e12252909b07870f789b190468da147ab`,
+> 234,119,480 bytes), and the approved §63 prospective criteria. The
+> execution command and retained evidence: the contained outer-runner
+> official-six invocation under the delegated cgroup
+> `/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/pal-l7-*` with
+> systemd-run --user --scope; export at
+> `ubuntu@166.1.232.93:~/pal-artifacts/l7-work/final7/export/` (52 files,
+> 172,649 bytes; junit.xml + run-record.json + export-manifest.json +
+> per-scenario evidence and diagnostic sidecars; launcher sha
+> `0e9ba04e315c…`/1,405 B, plan sha256 prefix `0208c44fdeb9515c`).
+>
+> The designated Linux host rerun recorded six executed and six passed, zero
+> failures/errors/skips (JUnit `tests="6" failures="0" errors="0"
+> skipped="0" time="28.227"`), complete exported scenario evidence and
+> sidecars, zero unsafe entries, no export limit breach, verified-empty
+> cgroup teardown (`memory.max` 4 GiB / `swap.max` 0 / `pids.max` 64 with
+> zero events), and an outer run record with `accepted=true` and no
+> findings. Required final-revision verification is recorded in the
+> repository history: the predicate round (d21e0adb, independent review
+> VERDICT: PASS) and the harness-correction round (714efa6c, Codex
+> arbitration-approved prescription with its regression test; local 234
+> passed/17 skipped; adjacent decoder suite 326).
+>
+> **Disposition: only G2's fixed-official-artifact six-scenario
+> synthetic-probe subcondition is closed.** WP-02/G2 remains PARTIAL/open:
+> its authorized real-research half, including at least one reviewed real
+> execution for each of `crypto_btc` and `crypto_eth` with the required
+> authorization, identity, usage and failure-preservation evidence, remains
+> open. G3–G5 remain open; G6 remains PARTIAL/open. Real provider calls
+> remain false and `activation_authorized=false` for this probe. V1 remains
+> incomplete; no statistical strategy validation or live-execution
+> authorization follows.
