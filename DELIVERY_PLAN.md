@@ -2566,3 +2566,89 @@ v0.1.0-linux-preview.1 的发布记录（回执已由 E=a1128a65 补记）。
   有界转录、状态增量清册、/pal-output 边车、单次无重跑），据此要么受
   评审校准（仅限被证实的解码器缺陷/额外请求处置），要么触发连接性停
   规则附录（仲裁已给出逐字措辞）。
+
+### L7 观察性诊断队列（单次，原判据不变）——附录记录
+
+> **L7 observation-only diagnostic cohort — one cohort, original criteria unchanged.**
+>
+> Source: `b76dc7bee35bf67ee39916ce60df67194eb19cef`; tree:
+> `60983a87917db03895b3262b19e81ffece790454`. Following the reported
+> independent-review PASS of the observation-only instrumentation, the
+> operator reports one contained diagnostic cohort comprising success,
+> rate_limit, server_error, invalid_action, tool_use and truncated, each
+> executed once. Evidence is retained at
+> `ubuntu@166.1.232.93:~/pal-artifacts/l7-work/diag/`.
+>
+> The qualification predicates, request-counter semantics and
+> original-initial-snapshot baseline were unchanged. The diagnostic
+> transcript, predecode capture and state inventory were observation-only.
+> The original official-six qualification failure recorded in §63 remains
+> unchanged; this diagnostic cohort does not reclassify any historical
+> failure as a pass.
+>
+> In all six scenario message phases, the transcript recorded
+> `HEAD /api/hello`, refused with HTTP 404 as `refused_unexpected_method`,
+> followed by the contract-matching `POST /v1/messages?beta=true` and its
+> scenario response. The CLI continued after the refused preflight. No
+> required authentication, telemetry, retry or external-service dependency
+> was established. The required-excluded-interaction connectivity stop rule
+> was therefore not triggered. The additional request nevertheless continued
+> to fail the original request acceptance condition.
+>
+> The success predecode capture reported stdout of 1,671 bytes, zero stderr
+> bytes, valid outer JSON and first failing validation stage `outer_keys`.
+> Its reported 25-key shape contains all existing required keys and nine
+> previously unadmitted metadata keys. The reported envelope includes
+> `is_error=false`, one turn, `stop_reason=end_turn`, the declared-model
+> usage entry and counters input=3, output=5, cache creation=7, cache
+> read=11, totaling 26. These are captured synthetic counters; they do not
+> retroactively change the failed observation's rejected decoder status or
+> unknown decoded usage. The result is a string of reported length 106. Its
+> complete contents and all remaining production admission checks require
+> offline validation before decoder-correction acceptance.
+>
+> Version-time state changes were zero. Each scenario added five entries:
+> `config/.claude.json`, `config/backups/`, one timestamped backup beneath
+> that directory, `config/sessions/`, and `tmp/claude-1000/`. Modified and
+> removed entries, unsafe entries and sentinel files were zero. The raw
+> qualification delta remained five changes relative to the original initial
+> snapshot. All six cases therefore remained nonqualifying under the
+> unchanged common request and state conditions.
+>
+> **Disposition:** the demonstrated decoder representation mismatch is
+> eligible for narrow reviewed calibration. Accepting the HEAD preflight
+> requires owner decision L7-Q1. Accepting the first-run bootstrap requires
+> owner decision L7-Q2. Baseline relocation is not calibration. The
+> diagnostic cohort is evidence for correction and decision-making, not
+> successful official reentry.
+>
+> This appendix records operator-supplied execution evidence checked against
+> the pinned repository source. The final arbitration did not repeat the
+> remote execution or independently read the remote artifacts. Real provider
+> calls remain false; `activation_authorized=false`; WP-02/G2 remains
+> PARTIAL/open. No G2–G6 closure, statistical strategy validation or V1
+> completion follows.
+
+### L7 验收条件变更决策——待决
+
+> **L7 acceptance-change decisions — pending.**
+>
+> L7-Q1: exact refused-preflight-plus-Messages-POST sequence. Recommendation:
+> approve the narrowly bounded prospective exception. Owner decision:
+> **PENDING**.
+>
+> L7-Q2: exact five-entry first-run bootstrap class, validated by content
+> while retaining the original initial snapshot and raw delta.
+> Recommendation: approve subject to reviewed content validation. Owner
+> decision: **PENDING**.
+>
+> Baseline relocation: not calibration; not authorized by either proposed
+> exception; not recommended.
+>
+> Decoder calibration may proceed through source development and offline
+> validation. Official-six reentry requires explicit approval of both
+> acceptance changes, complete validation of the retained success envelope,
+> and passing final-revision implementation gates. Any subsequent
+> qualification cohort must identify the newly approved criteria and its
+> exact source/input pins and preserve both earlier cohorts without
+> retrospective rescoring.
