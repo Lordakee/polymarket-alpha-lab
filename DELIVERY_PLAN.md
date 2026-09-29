@@ -2631,19 +2631,21 @@ v0.1.0-linux-preview.1 的发布记录（回执已由 E=a1128a65 补记）。
 
 ### L7 验收条件变更决策——待决
 
-> **L7 acceptance-change decisions — pending.**
+> **L7 acceptance-change decisions — APPROVED (2026-09-29).**
 >
-> L7-Q1: exact refused-preflight-plus-Messages-POST sequence. Recommendation:
-> approve the narrowly bounded prospective exception. Owner decision:
-> **PENDING**.
+> Owner instruction (verbatim): “两项都批 之后有任何需要我审批的，你
+> 直接问codex，以他建议为准”. L7-Q1: exact refused-preflight-plus-
+> Messages-POST sequence — **APPROVED** per the Codex recommendation (narrow
+> bounded prospective exception; implementation must validate the HEAD's
+> method, target, framing, headers, order and cardinality). L7-Q2: exact
+> five-entry first-run bootstrap class with reviewed content validation while
+> retaining the original initial snapshot and raw delta — **APPROVED** per
+> the Codex recommendation; baseline relocation remains excluded.
 >
-> L7-Q2: exact five-entry first-run bootstrap class, validated by content
-> while retaining the original initial snapshot and raw delta.
-> Recommendation: approve subject to reviewed content validation. Owner
-> decision: **PENDING**.
->
-> Baseline relocation: not calibration; not authorized by either proposed
-> exception; not recommended.
+> Standing delegation added by the same instruction: from this point, any
+> further item that would otherwise require owner approval may be decided by
+> Codex consultation, with the Codex recommendation governing (recorded here
+> as the owner's advance authorization; Article 0 direct instruction).
 >
 > Decoder calibration may proceed through source development and offline
 > validation. Official-six reentry requires explicit approval of both
