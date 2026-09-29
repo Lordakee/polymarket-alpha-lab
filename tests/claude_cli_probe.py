@@ -11,9 +11,18 @@ matching request/response AND either an ordinary nonzero child exit or a
 returned result rejected by the strict decoder. Signal death, timeout, stop,
 failed startup, output limit, incomplete input, cleanup failure and generic
 infrastructure failure fail the case even when the response preceded them.
+
+v2 diagnostic additions (first-official-six arbitration prescriptions 2-5):
+a bounded sanitized server transcript, a pre-decode capture of the returned
+result, a three-snapshot state inventory and bounded /pal-output sidecar
+files under a fixed sub-budget. Every diagnostic field is observation-only:
+counters, matching decisions, the qualification baseline and observation_passed
+are unchanged, and a failed diagnostic capture is recorded as incomplete, never
+raised into the qualification itself.
 """
 from contextlib import contextmanager
 from dataclasses import replace
+from decimal import Decimal
 from hashlib import sha256
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
@@ -25,7 +34,8 @@ from threading import Thread
 from urllib.parse import urlsplit
 
 from polymarket_alpha_lab import research_process as process
-from polymarket_alpha_lab.research_claude_exec import CLAUDE_VERSION, ClaudeExecInput, decode_claude_result
+from polymarket_alpha_lab.research_claude_exec import (
+    CLAUDE_VERSION, MAX_RESULT_BYTES, ClaudeExecInput, decode_claude_result)
 from polymarket_alpha_lab.research_claude_profile import ClaudeExecProfile, MODEL_ID
 from polymarket_alpha_lab.team_research_agent_types import strict_json
 
@@ -37,6 +47,31 @@ UNRELATED = 'SYNTHETIC-PAL-UNRELATED-CONTEXT'
 RESPONSE = 'SYNTHETIC-PAL-MOCK-RESPONSE'
 MAX_FILE_BYTES, MAX_STATE_BYTES, MAX_ENTRIES = 65536, 4194304, 256
 MAX_HTTP_BYTES, MAX_REQUESTS = 1048576, 8
+# --- v2 diagnostic constants (observation-only, never qualification inputs) --
+DIAGNOSTIC_SCHEMA = 'claude-cli-probe-diagnostics-v1'
+MAX_TRANSCRIPT_ENTRIES = 64
+MAX_TRANSCRIPT_STRING = 256
+MAX_HEADER_PAIRS = 64
+MAX_STDOUT_EXCERPT_BYTES = 4096
+MAX_INVENTORY_ENTRIES = 64
+DIAGNOSTIC_BUDGET_BYTES = 8388608  # fixed 8 MiB sub-budget inside the 64 MiB export allowance
+DIAGNOSTIC_DIR_SUFFIX = '-diagnostics'
+SIDECAR_NAMES = ('server-transcript.json', 'predecode.json', 'state-inventory.json')
+_MARKER_SECRETS = (TEST_KEY, APPROVED, UNRELATED)
+_HEADER_NAME_OK = re.compile("[!#$%&'*+\\-.^_`|~0-9A-Za-z]{1,128}")
+# Header values are redacted by name, EXCEPT two structurally safe ones:
+# content-length (digit-only, already regex-validated by the handler itself)
+# and content-type (retained only when it matches this token charset, so it
+# cannot carry credential bytes). Safe-value regexes are applied, not trusted.
+_SAFE_HEADER_VALUE = {'content-length': re.compile('[0-9]{1,7}'),
+                      'content-type': re.compile('[A-Za-z0-9./+-]{1,64}')}
+# Fixed mirror of the pinned decoder's outer result-key contract at the
+# revision under test; diagnostic staging only, never an admission decision.
+_OUTER_REQUIRED = ('type', 'subtype', 'is_error', 'num_turns', 'session_id', 'result',
+                   'duration_ms', 'duration_api_ms', 'stop_reason', 'usage', 'modelUsage',
+                   'permission_denials')
+_OUTER_OPTIONAL = ('uuid', 'total_cost_usd', 'structured_output', 'deferred_tool_use', 'errors',
+                   'api_error_status', 'terminal_reason', 'origin')
 # Fixed process-failure codes the v2 observation may carry; anything else is
 # recorded as None and can never satisfy a negative case.
 PROCESS_ERROR_CODES = frozenset((
@@ -126,12 +161,159 @@ def _strings(value):
             pending.extend(item)
 
 
+def _redaction_secrets(root):
+    """Marker sentinels plus the probe paths; longest first so a contained
+    shorter occurrence cannot survive a partial replace."""
+    paths = (str(root), str(Path(root).parent), Path(root).as_posix(),
+             Path(Path(root).parent).as_posix())
+    return tuple(sorted({value for value in (*_MARKER_SECRETS, *paths) if value},
+                        key=len, reverse=True))
+
+
+def _redact_text(text, secrets):
+    for secret in secrets:
+        text = text.replace(secret, '[REDACTED]')
+    return text
+
+
+def _sanitize_target(path):
+    if type(path) is not str:
+        return dict(text=None, length=None)
+    text = path[:MAX_TRANSCRIPT_STRING]
+    if any(ord(character) < 32 or ord(character) > 126 for character in text):
+        text = '[non-printable-target]'
+    return dict(text=_redact_text(text, _MARKER_SECRETS), length=len(path))
+
+
+def _header_pairs(headers):
+    pairs, redacted, truncated = [], [], False
+    try:
+        for name, value in headers.items():
+            if len(pairs) >= MAX_HEADER_PAIRS:
+                truncated = True
+                break
+            safe_name = (name if type(name) is str and _HEADER_NAME_OK.fullmatch(name)
+                         else '[invalid-header-name]')
+            retained = None
+            if (type(name) is str and type(value) is str
+                    and name.lower() in _SAFE_HEADER_VALUE
+                    and _SAFE_HEADER_VALUE[name.lower()].fullmatch(value)):
+                retained = value
+            else:
+                redacted.append(safe_name)
+            pairs.append([safe_name, retained])
+    except Exception:
+        pass
+    return dict(pairs=pairs, redacted_values=sorted(set(redacted))[:MAX_HEADER_PAIRS],
+        truncated=truncated,
+        policy='names with multiplicity; only digit-only Content-Length and '
+               'token-charset Content-Type values retained, all other values redacted')
+
+
+def _json_shape(value):
+    try:
+        if value is None:
+            return 'null'
+        if value is True:
+            return 'true'
+        if value is False:
+            return 'false'
+        if type(value) is str:
+            return 'string:%d' % len(value.encode('utf-8'))
+        if type(value) is int:
+            return 'int:%d' % value if -10**15 <= value <= 10**15 else 'int:out-of-range'
+        if type(value) is Decimal:
+            return 'decimal'
+        if type(value) is dict:
+            return 'object:%d' % len(value)
+        if type(value) is list:
+            return 'array:%d' % len(value)
+        return type(value).__name__
+    except Exception:
+        return 'string:invalid-utf8'
+
+
+def _body_summary(raw):
+    """Sanitized retention of the POST bytes the handler already read:
+    byte length, digest and a shapes-only view. String VALUES (which carry the
+    prompt and any credential echoes) are replaced by their utf-8 lengths."""
+    summary = dict(read=True, bytes=len(raw), sha256=sha256(raw).hexdigest() if raw else None,
+        utf8=None, top_level_keys=None, value_shapes=None, keys_truncated=False,
+        redaction='json string values replaced by length; numbers kept only when small')
+    try:
+        text = raw.decode('utf-8')
+        summary['utf8'] = True
+        body = strict_json(text)
+    except Exception:
+        return summary
+    keys = sorted(body) if type(body) is dict else ['<root>']
+    bounded, truncated = keys[:MAX_HEADER_PAIRS], len(keys) > MAX_HEADER_PAIRS
+    summary['top_level_keys'] = [_redact_text(key, _MARKER_SECRETS)[:MAX_TRANSCRIPT_STRING]
+                                 for key in bounded]
+    summary['keys_truncated'] = truncated
+    summary['value_shapes'] = {_redact_text(key, _MARKER_SECRETS)[:MAX_TRANSCRIPT_STRING]:
+                               _json_shape(body[key] if type(body) is dict else body)
+                               for key in bounded}
+    return summary
+
+
+def _response_summary(code, payload, content_type):
+    summary = dict(status=code, content_type=content_type, bytes=len(payload),
+                   sha256=sha256(payload).hexdigest() if payload else None,
+                   sse_events=None, sse_trailing_partial_frame=None)
+    if content_type == 'text/event-stream' and payload:
+        try:
+            text = payload.decode('utf-8')
+            frames = text.split('\n\n')
+            if frames and frames[-1] != '':
+                summary['sse_trailing_partial_frame'] = frames[-1][:MAX_TRANSCRIPT_STRING]
+                frames = frames[:-1]
+            summary['sse_events'] = [line[7:][:MAX_TRANSCRIPT_STRING]
+                                     for frame in frames for line in frame.split('\n')
+                                     if line.startswith('event: ')]
+        except Exception:
+            pass
+    return summary
+
+
+def _body_predicates(body, texts, headers, path):
+    """Diagnostic mirror of the do_POST contract conjunction, evaluated only
+    AFTER the original ``good`` expression has been computed unchanged. Each
+    predicate is guarded; a non-evaluable one is None. Never a decision input."""
+    def evaluate():
+        route = urlsplit(path)
+        is_object = type(body) is dict
+        return dict(
+            route_path=route.path == '/v1/messages',
+            route_scheme=not route.scheme,
+            route_netloc=not route.netloc,
+            route_query=route.query in ('', 'beta=true'),
+            route_fragment=not route.fragment,
+            body_is_object=is_object,
+            model=is_object and body.get('model') == MODEL_ID,
+            max_tokens=(is_object and type(body.get('max_tokens')) is int
+                        and body['max_tokens'] == 1024),
+            stream=is_object and body.get('stream') is True,
+            tools=is_object and body.get('tools') in (None, []),
+            prompt_present=any(test_input().prompt_json in text for text in texts),
+            no_unrelated_or_test_key=all(UNRELATED not in text and TEST_KEY not in text
+                                         for text in texts),
+            x_api_key=headers.get_all('x-api-key', []) == [TEST_KEY],
+            no_authorization=headers.get('Authorization') is None)
+    try:
+        return evaluate()
+    except Exception:
+        return None
+
+
 class _Server(HTTPServer):
     allow_reuse_address = False
 
     def __init__(self, mode):
         self.mode, self.count, self.unexpected = mode, 0, 0
         self.matches, self.faults, self.responses = True, 0, 0
+        # Diagnostic-only transcript state; never read by any gate.
+        self.transcript, self.transcript_truncated, self.phase = [], False, 'version'
         super().__init__(('127.0.0.1', 0), _Handler)
 
     def get_request(self):
@@ -141,17 +323,60 @@ class _Server(HTTPServer):
 
     def handle_error(self, *_):
         self.faults += 1  # Never print peer headers/body or exception text.
+        try:  # Diagnostic note only; no peer data is ever recorded.
+            if len(self.transcript) < MAX_TRANSCRIPT_ENTRIES:
+                self.transcript.append(dict(kind='connection_error', phase=self.phase))
+            else:
+                self.transcript_truncated = True
+        except Exception:
+            pass
 
 
 class _Handler(BaseHTTPRequestHandler):
+    _entry = None  # Diagnostic-only reference to the current transcript entry.
+
     def log_message(self, *_):
         pass
 
+    def _append(self, entry):
+        try:
+            transcript = self.server.transcript
+            if len(transcript) < MAX_TRANSCRIPT_ENTRIES:
+                transcript.append(entry)
+            else:
+                self.server.transcript_truncated = True
+        except Exception:
+            pass
+
+    def _begin(self, method):
+        entry = dict(kind='request', phase=getattr(self.server, 'phase', 'unknown'),
+            method=method if type(method) is str else None,
+            target=_sanitize_target(getattr(self, 'path', None)),
+            headers=_header_pairs(getattr(self, 'headers', None)),
+            stage='unrecorded', stage_detail=None, predicates=None, body=None,
+            body_not_read=False, response=None)
+        self._entry = entry
+        self._append(entry)
+        return entry
+
     def send_error(self, code, message=None, explain=None):
+        entry = getattr(self, '_entry', None)
+        if entry is None:  # Parser-level refusal (bad request line, unknown method).
+            entry = self._begin(getattr(self, 'command', None))
+        try:
+            entry.update(stage='refused_parser', body_not_read=True, refusal_status=code)
+        except Exception:
+            pass
         self.server.faults += 1
         super().send_error(code, 'Synthetic probe refusal', 'Request not admitted')
 
     def _respond(self, code, payload=b'', content_type='application/json'):
+        entry = getattr(self, '_entry', None)
+        if type(entry) is dict:
+            try:
+                entry['response'] = _response_summary(code, payload, content_type)
+            except Exception:
+                pass
         self.send_response(code)
         self.send_header('Content-Type', content_type)
         self.send_header('Content-Length', str(len(payload)))
@@ -162,23 +387,35 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         s = self.server
+        entry = self._begin('POST')
         s.count = min(MAX_REQUESTS+1, s.count+1)
         if s.count > MAX_REQUESTS:
             s.matches = False
+            entry['stage'] = 'refused_over_limit'
+            entry['body_not_read'] = True
             self._respond(429)
             return
+        detail = 'handler_exception'
         try:
             lengths = self.headers.get_all('Content-Length', [])
             if (len(lengths) != 1 or re.fullmatch('[1-9][0-9]{0,6}', lengths[0]) is None
                     or self.headers.get('Transfer-Encoding') is not None):
+                detail = 'content_length_or_transfer_encoding_invalid'
                 raise ValueError
             length = int(lengths[0])
             if not 1 <= length <= MAX_HTTP_BYTES:
+                detail = 'content_length_out_of_range'
                 raise ValueError
             raw = self.rfile.read(length)
             if len(raw) != length:
+                detail = 'body_read_short'
                 raise ValueError
-            body = strict_json(raw.decode('utf-8'))
+            entry['body'] = _body_summary(raw)
+            try:
+                body = strict_json(raw.decode('utf-8'))
+            except Exception:
+                detail = 'body_json_invalid_or_not_utf8'
+                raise
             texts = tuple(_strings(body))
             route = urlsplit(self.path)
             good = (route.path == '/v1/messages' and not route.scheme and not route.netloc
@@ -190,10 +427,13 @@ class _Handler(BaseHTTPRequestHandler):
                 and all(UNRELATED not in text and TEST_KEY not in text for text in texts)
                 and self.headers.get_all('x-api-key', []) == [TEST_KEY]
                 and self.headers.get('Authorization') is None)
+            entry['predicates'] = _body_predicates(body, texts, self.headers, self.path)
             if not good:
                 s.matches = False
+                entry['stage'] = 'refused_contract'
                 self._respond(400)
                 return
+            entry['stage'] = 'responded_scenario'
             if s.mode in ('rate_limit', 'server_error'):
                 payload = json.dumps({'type': 'error', 'error': {
                     'type': 'rate_limit_error' if s.mode == 'rate_limit' else 'api_error',
@@ -204,11 +444,17 @@ class _Handler(BaseHTTPRequestHandler):
             s.responses += 1
         except Exception:
             s.faults += 1
+            entry.update(stage='handler_fault', stage_detail=detail,
+                body_not_read=detail in ('content_length_or_transfer_encoding_invalid',
+                                         'content_length_out_of_range'))
             self.close_connection = True
 
     def _unexpected(self):
+        entry = self._begin(self.command)
         self.server.unexpected = min(MAX_REQUESTS+1, self.server.unexpected+1)
         self.server.matches = False
+        entry['stage'] = 'refused_unexpected_method'
+        entry['body_not_read'] = True
         self._respond(404)
 
     do_GET = do_HEAD = do_PUT = do_DELETE = do_PATCH = do_OPTIONS = do_CONNECT = _unexpected
@@ -336,6 +582,177 @@ def state_delta(before, after):
         sentinel_files=after['sentinel_files'])
 
 
+def _decoder_stage(raw, request):
+    """Fixed first-failing validation stage mirroring decode_claude_result's
+    admission order (stderr-zero -> outer JSON -> result JSON -> action
+    validation, with the envelope/usage steps broken out). Diagnostic only:
+    the real decoder remains the sole admission decision, and this mirror
+    never feeds matching or pass/fail logic. None means every mirrored
+    stage passed."""
+    try:
+        if type(raw) is not process.ResearchProcessResult:
+            return 'not_a_process_result'
+        if raw.stderr_bytes != 0:
+            return 'stderr_nonzero'
+        if not 1 <= len(raw.stdout) <= MAX_RESULT_BYTES:
+            return 'stdout_bounds'
+        try:
+            data = strict_json(raw.stdout.decode('utf-8'))
+        except Exception:
+            return 'outer_json'
+        if (type(data) is not dict
+                or not set(_OUTER_REQUIRED) <= set(data) <= set(_OUTER_REQUIRED) | set(_OUTER_OPTIONAL)):
+            return 'outer_keys'
+        if (data['type'] != 'result' or data['subtype'] != 'success'
+                or data['is_error'] is not False or data['stop_reason'] != 'end_turn'
+                or data['num_turns'] != 1
+                or type(data['permission_denials']) is not list or data['permission_denials']
+                or ('errors' in data and (type(data['errors']) is not list or data['errors']))):
+            return 'envelope_values'
+        if (type(data.get('modelUsage')) is not dict
+                or set(data['modelUsage']) != {request.model_id}
+                or type(data.get('usage')) is not dict):
+            return 'usage'
+        if type(data['result']) is not str:
+            return 'result_json'
+        try:
+            actions = strict_json(data['result'])
+        except Exception:
+            return 'result_json'
+        if (type(actions) is not dict or set(actions) != {'calls'}
+                or type(actions['calls']) is not list or not 1 <= len(actions['calls']) <= 8):
+            return 'action_validation'
+        for call in actions['calls']:
+            if type(call) is not dict or set(call) != {'name', 'arguments_json'}:
+                return 'action_validation'
+            try:
+                strict_json(call['arguments_json'])
+            except Exception:
+                return 'action_validation'
+        return None
+    except Exception:
+        return 'not_a_process_result'
+
+
+def _predecode_capture(raw, request, secrets):
+    """Bounded sanitized retention of the returned result BEFORE decoding.
+
+    Keeps stdout length/digest plus a redacted bounded excerpt, the stderr
+    BYTE COUNT (ResearchProcessResult retains no stderr content and production
+    stderr logging stays disabled), top-level JSON key shapes, and the fixed
+    first-failing validation stage. The RESPONSE marker is public synthetic
+    data and is deliberately not redacted."""
+    capture = dict(stdout_bytes=None, stdout_sha256=None, stdout_utf8=None,
+        stdout_excerpt_redacted=None, stdout_excerpt_truncated=None,
+        stdout_json_top_keys=None, stdout_json_value_shapes=None, stderr_bytes=None,
+        first_failing_validation_stage=_decoder_stage(raw, request),
+        capture_status='captured' if type(raw) is process.ResearchProcessResult else 'not_a_result',
+        stderr_note='ResearchProcessResult retains only a stderr byte count; '
+                    'content is never captured or logged',
+        redaction='sentinel markers and probe paths replaced in the retained excerpt')
+    if type(raw) is not process.ResearchProcessResult:
+        return capture
+    stdout = raw.stdout
+    capture['stdout_bytes'] = len(stdout)
+    capture['stdout_sha256'] = sha256(stdout).hexdigest()
+    capture['stderr_bytes'] = raw.stderr_bytes
+    try:
+        text = stdout.decode('utf-8')
+        capture['stdout_utf8'] = True
+    except UnicodeDecodeError:
+        capture['stdout_utf8'] = False
+        text = stdout[:MAX_STDOUT_EXCERPT_BYTES].decode('utf-8', 'replace')
+    excerpt_source = text[:MAX_STDOUT_EXCERPT_BYTES]
+    capture['stdout_excerpt_truncated'] = len(text) > len(excerpt_source)
+    capture['stdout_excerpt_redacted'] = _redact_text(excerpt_source, secrets)
+    if capture['stdout_utf8']:
+        try:
+            data = strict_json(text)
+        except Exception:
+            data = None
+        if type(data) is dict:
+            keys = sorted(data)[:MAX_HEADER_PAIRS]
+            capture['stdout_json_top_keys'] = [
+                _redact_text(key, secrets)[:MAX_TRANSCRIPT_STRING] for key in keys]
+            capture['stdout_json_value_shapes'] = {
+                _redact_text(key, secrets)[:MAX_TRANSCRIPT_STRING]:
+                    _json_shape(data[key]) for key in keys}
+    return capture
+
+
+def _state_inventory(before, after, secrets):
+    """Bounded relative-path/entry-type/hash inventory for diagnosis. The
+    qualification baseline stays the ORIGINAL initial snapshot via
+    state_delta(before, after); this inventory only explains which phase
+    produced which change, without hiding either. Never exports the private
+    HOME: bounded path/type/hash lists only, no file contents."""
+    names = sorted(before['files'].keys() | after['files'].keys(), key=str)
+    changed = [name for name in names if before['files'].get(name) != after['files'].get(name)]
+    bounded = changed[:MAX_INVENTORY_ENTRIES]
+
+    def sanitized(name):
+        return _redact_text(name, secrets)[:MAX_TRANSCRIPT_STRING]
+    entries = [dict(path=sanitized(name), before=before['files'].get(name),
+                    after=after['files'].get(name)) for name in bounded]
+    added = sum(1 for name in changed if name not in before['files'])
+    removed = sum(1 for name in changed if name not in after['files'])
+    return dict(complete=before['complete'] and after['complete'],
+        limit_reached=before['limit_reached'] or after['limit_reached'],
+        changed_entries=len(changed), added=added, removed=removed,
+        modified=len(changed)-added-removed, entries=entries,
+        entries_listed=len(bounded), entries_truncated=len(changed) > MAX_INVENTORY_ENTRIES,
+        redaction='relative entry names redacted for sentinel markers only')
+
+
+def _write_diagnostic_sidecars(root, payloads):
+    """Write bounded sanitized sidecars next to (never inside) the snapshotted
+    probe root, so in the contained run they land under the /pal-output pytest
+    base temp outside the snapshotted private root. Files are created
+    exclusively (O_CREAT|O_EXCL, no-follow where available) under a fixed
+    sub-budget well inside the 64 MiB export allowance. Any failure or budget
+    overflow marks THIS diagnostic capture incomplete-and-recorded; it can
+    never fail or pass the qualification itself."""
+    directory = Path(root).parent / (Path(root).name + DIAGNOSTIC_DIR_SUFFIX)
+    status = dict(directory=directory.name, budget_bytes=DIAGNOSTIC_BUDGET_BYTES,
+                  files=[], written_bytes=0, status='written', incomplete_reason=None,
+                  note='exclusive creation, bounded diagnostic sub-budget; '
+                       'incomplete captures are recorded, never raised')
+    try:
+        try:
+            directory.mkdir(mode=0o700)
+        except FileExistsError:
+            info = directory.lstat()
+            if not stat.S_ISDIR(info.st_mode):
+                raise
+        for name, value in payloads.items():
+            blob = json.dumps(value, sort_keys=True, separators=(',', ':')).encode('utf-8')
+            if status['written_bytes'] + len(blob) > DIAGNOSTIC_BUDGET_BYTES:
+                status['status'] = 'incomplete-and-recorded'
+                status['incomplete_reason'] = status['incomplete_reason'] or 'diagnostic_budget_exceeded'
+                status['files'].append([name, 'not_written', 0])
+                continue
+            try:
+                fd = os.open(directory/name, os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                             | getattr(os, 'O_BINARY', 0) | getattr(os, 'O_NOFOLLOW', 0), 0o600)
+                try:
+                    written = 0
+                    while written < len(blob):
+                        written += os.write(fd, blob[written:])
+                finally:
+                    os.close(fd)
+            except OSError:
+                status['status'] = 'incomplete-and-recorded'
+                status['incomplete_reason'] = status['incomplete_reason'] or 'sidecar_creation_failed'
+                status['files'].append([name, 'skipped', 0])
+                continue
+            status['files'].append([name, 'written', len(blob)])
+            status['written_bytes'] += len(blob)
+    except Exception:
+        status['status'] = 'incomplete-and-recorded'
+        status['incomplete_reason'] = status['incomplete_reason'] or 'sidecar_directory_unavailable'
+    return status
+
+
 def run_probe(image, digest, size, *, root, mode, allow_probe=False, process_runner=None):
     """Two explicit operations: --version, then ONE synthetic prompt scenario.
 
@@ -388,6 +805,14 @@ def run_probe(image, digest, size, *, root, mode, allow_probe=False, process_run
     before = state_snapshot(root)
     if not before['complete']:
         raise ValueError('probe_initial_snapshot_failed')
+    secrets = _redaction_secrets(root)
+    predecode = dict(stdout_bytes=None, stdout_sha256=None, stdout_utf8=None,
+        stdout_excerpt_redacted=None, stdout_excerpt_truncated=None,
+        stdout_json_top_keys=None, stdout_json_value_shapes=None, stderr_bytes=None,
+        first_failing_validation_stage=None, capture_status='not_attempted',
+        stderr_note='ResearchProcessResult retains only a stderr byte count; '
+                    'content is never captured or logged',
+        redaction='sentinel markers and probe paths replaced in the retained excerpt')
     with loopback_server(mode) as server:
         profile = ClaudeExecProfile(spec, 'https://127.0.0.1:'+str(server.server_port))
         request = test_input()
@@ -404,10 +829,15 @@ def run_probe(image, digest, size, *, root, mode, allow_probe=False, process_run
         except process.ResearchProcessError as error:
             result['version_status'] = 'failed'
             result['version_error_code'] = _process_error_code(error)
+        # Diagnostic mid snapshot: separates version-time from prompt-time state
+        # changes. The qualification baseline below stays the ORIGINAL snapshot.
+        mid = state_snapshot(root, expected_root=before['root_identity'])
         if result['version_matches'] and server.count == server.unexpected == server.faults == 0:
+            server.phase = 'message'
             try:
                 raw = runner(spec=selected, stdin=request.prompt_json.encode(), allow_process_start=True)
                 result['process_status'] = 'returned'
+                predecode = _predecode_capture(raw, request, secrets)
                 try:
                     reply = decode_claude_result(raw, request=request, call_number=1)
                     result['decoder_status'] = 'accepted'
@@ -423,7 +853,31 @@ def run_probe(image, digest, size, *, root, mode, allow_probe=False, process_run
     result.update(request_count=server.count, unexpected_requests=server.unexpected,
                   request_contract_matches=server.matches and server.count == 1,
                   server_faults=server.faults, responses_sent=server.responses)
-    result['state'] = state_delta(before, state_snapshot(root, expected_root=before['root_identity']))
+    after = state_snapshot(root, expected_root=before['root_identity'])
+    result['state'] = state_delta(before, after)
+    # Observation-only diagnostics (arbitration prescriptions 2-5). Nothing
+    # below feeds observation_passed, any counter or any matching decision.
+    diagnostics = dict(schema_version=DIAGNOSTIC_SCHEMA,
+        note='observation-only diagnostics; qualification inputs are unchanged',
+        transcript=server.transcript, transcript_truncated=server.transcript_truncated,
+        transcript_entry_limit=MAX_TRANSCRIPT_ENTRIES, predecode=predecode,
+        state_inventory=dict(initial_complete=before['complete'],
+            after_version_complete=mid['complete'], after_scenario_complete=after['complete'],
+            version_time=_state_inventory(before, mid, secrets),
+            scenario_time=_state_inventory(mid, after, secrets),
+            qualification_baseline='original initial snapshot (unchanged)'))
+    diagnostics['sidecars'] = _write_diagnostic_sidecars(root, {
+        'server-transcript.json': dict(schema_version=DIAGNOSTIC_SCHEMA, mode=mode,
+            image_sha256=digest, cli_version=CLAUDE_VERSION, transcript=server.transcript,
+            transcript_truncated=server.transcript_truncated,
+            counters=dict(requests=server.count, unexpected=server.unexpected,
+                          responses=server.responses, faults=server.faults),
+            redaction='header values, body string values and stderr content redacted'),
+        'predecode.json': dict(schema_version=DIAGNOSTIC_SCHEMA, mode=mode, predecode=predecode),
+        'state-inventory.json': dict(schema_version=DIAGNOSTIC_SCHEMA, mode=mode,
+            qualification_state=result['state'],
+            state_inventory=diagnostics['state_inventory'])})
+    result['diagnostics'] = diagnostics
     return result
 
 

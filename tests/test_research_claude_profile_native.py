@@ -32,3 +32,12 @@ def test_supplied_claude_profile_loopback_and_surviving_state(supplied_image, tm
     print('CLAUDE_CLI_PROBE '+text, flush=True)
     assert probe.observation_passed(observation), text
     assert observation['activation_authorized'] is False
+    # v2 diagnostic additions (arbitration prescriptions 2-5): observation-only
+    # transcript/predecode/inventory captured above regardless of the verdict,
+    # with bounded sidecars beside (never inside) the snapshotted root. Their
+    # capture status can never influence the qualification above.
+    diagnostics = observation['diagnostics']
+    assert diagnostics['schema_version'] == probe.DIAGNOSTIC_SCHEMA
+    assert diagnostics['sidecars']['status'] in ('written', 'incomplete-and-recorded')
+    assert diagnostics['state_inventory']['qualification_baseline'] \
+        == 'original initial snapshot (unchanged)'

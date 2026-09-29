@@ -313,3 +313,298 @@ def test_real_synthetic_processes_exercise_probe_without_official_cli(tmp_path, 
     assert len(launched) == 2 and launched[0] == ('--version',)
     assert probe.observation_passed(result) is True, result
     assert result['vendor_provenance_verified'] is False
+
+
+# ---------------------------------------------------------------------------
+# v2 diagnostic observation additions (first-official-six arbitration
+# prescriptions 2-5). These tests cover the observation-only capture; none of
+# them may change any qualification assertion above.
+# ---------------------------------------------------------------------------
+
+def test_transcript_records_the_admitted_message_post(tmp_path):
+    result = probe.run_probe(*image(), root=tmp_path/'probe', mode='success',
+                             allow_probe=True, process_runner=simulated_runner([]))
+    transcript = result['diagnostics']['transcript']
+    assert len(transcript) == 1 and result['diagnostics']['transcript_truncated'] is False
+    entry = transcript[0]
+    assert entry['kind'] == 'request' and entry['phase'] == 'message'
+    assert entry['method'] == 'POST' and entry['target']['text'] == '/v1/messages?beta=true'
+    assert entry['stage'] == 'responded_scenario'
+    assert entry['predicates'] == dict(route_path=True, route_scheme=True,
+        route_netloc=True, route_query=True, route_fragment=True, body_is_object=True,
+        model=True, max_tokens=True, stream=True, tools=True, prompt_present=True,
+        no_unrelated_or_test_key=True, x_api_key=True, no_authorization=True)
+    assert entry['body']['bytes'] > 0 and len(entry['body']['sha256']) == 64
+    assert entry['body']['utf8'] is True
+    for key in ('model', 'max_tokens', 'stream', 'tools', 'messages'):
+        assert key in entry['body']['top_level_keys']
+    assert entry['body']['value_shapes']['messages'].startswith('array:')
+    headers = dict(entry['headers']['pairs'])
+    assert headers['x-api-key'] is None and headers['Content-Type'] == 'application/json'
+    assert 'x-api-key' in entry['headers']['redacted_values']
+    assert entry['response']['status'] == 200
+    assert entry['response']['content_type'] == 'text/event-stream'
+    assert entry['response']['sse_events'] == ['message_start', 'content_block_start',
+        'content_block_delta', 'content_block_stop', 'message_delta', 'message_stop']
+    assert entry['response']['sse_trailing_partial_frame'] is None
+    # Only shapes are retained: no prompt, key or unrelated context anywhere.
+    text = json.dumps(entry)
+    for secret in (probe.APPROVED, probe.TEST_KEY, probe.UNRELATED, str(tmp_path)):
+        assert secret not in text
+
+
+def test_transcript_records_sse_truncation_framing_and_error_status(tmp_path):
+    truncated = probe.run_probe(*image(), root=tmp_path/'probe', mode='truncated',
+        allow_probe=True, process_runner=simulated_runner([]))
+    response = truncated['diagnostics']['transcript'][0]['response']
+    assert response['sse_events'] == ['message_start', 'content_block_start',
+                                      'content_block_delta']
+    assert response['sse_trailing_partial_frame'] == 'event: message_delta\n'
+    limited = probe.run_probe(*image(), root=tmp_path/'probe2', mode='rate_limit',
+        allow_probe=True, process_runner=simulated_runner([]))
+    response = limited['diagnostics']['transcript'][0]['response']
+    assert response['status'] == 429 and response['content_type'] == 'application/json'
+    assert response['sse_events'] is None and response['sse_trailing_partial_frame'] is None
+
+
+@pytest.mark.parametrize('fault,name', [
+    ('context', 'no_unrelated_or_test_key'), ('key_body', 'no_unrelated_or_test_key'),
+    ('auth', 'x_api_key'), ('tools', 'tools'), ('output_cap', 'max_tokens')])
+def test_transcript_identifies_the_failing_contract_predicate(tmp_path, fault, name):
+    result = probe.run_probe(*image(), root=tmp_path/'probe', mode='success',
+        allow_probe=True, process_runner=simulated_runner([], fault=fault))
+    entry = result['diagnostics']['transcript'][0]
+    assert entry['stage'] == 'refused_contract' and entry['response']['status'] == 400
+    assert entry['predicates'][name] is False
+    assert all(value is True for key, value in entry['predicates'].items() if key != name)
+    assert probe.observation_passed(result) is False
+
+
+def test_transcript_captures_the_extra_non_post_request_signature(tmp_path):
+    """Reproduce the recorded first-attempt signature (one admitted POST plus
+    one extra non-POST request) and pin that the transcript explains it while
+    every counter and verdict keeps its original value."""
+    original = simulated_runner([])
+    def run(**kwargs):
+        if kwargs['spec'].argv[1:] == ('--version',):
+            return original(**kwargs)
+        env = dict(kwargs['spec'].environment)
+        conn = http.client.HTTPConnection(env['ANTHROPIC_BASE_URL'].removeprefix('http://'), timeout=2)
+        conn.request('GET', '/api/hello')
+        conn.getresponse().read(); conn.close()
+        return original(**kwargs)
+    result = probe.run_probe(*image(), root=tmp_path/'probe', mode='success',
+                             allow_probe=True, process_runner=run)
+    transcript = result['diagnostics']['transcript']
+    assert [entry['method'] for entry in transcript] == ['GET', 'POST']
+    get = transcript[0]
+    assert get['stage'] == 'refused_unexpected_method' and get['body_not_read'] is True
+    assert get['phase'] == 'message' and get['response']['status'] == 404
+    assert transcript[1]['stage'] == 'responded_scenario'
+    assert result['request_count'] == result['responses_sent'] == 1
+    assert result['unexpected_requests'] == 1 and result['server_faults'] == 0
+    assert result['request_contract_matches'] is False
+    assert probe.observation_passed(result) is False
+
+
+def test_transcript_records_malformed_body_and_parser_refusals(tmp_path):
+    def run(**kwargs):
+        if kwargs['spec'].argv[1:] == ('--version',):
+            return core.ResearchProcessResult(probe.VERSION_OUTPUT.encode(), 0, 1)
+        env = dict(kwargs['spec'].environment)
+        conn = http.client.HTTPConnection(env['ANTHROPIC_BASE_URL'].removeprefix('http://'), timeout=2)
+        conn.request('POST', '/v1/messages', 'not-json',
+                     {'Content-Type': 'application/json', 'x-api-key': probe.TEST_KEY})
+        try:
+            conn.getresponse().read()
+        except http.client.RemoteDisconnected:
+            pass
+        finally:
+            conn.close()
+        value = envelope(); value['result'] = probe.response_text('success')
+        return core.ResearchProcessResult(json.dumps(value).encode(), 0, 1)
+    result = probe.run_probe(*image(), root=tmp_path/'probe', mode='success',
+                             allow_probe=True, process_runner=run)
+    entry = result['diagnostics']['transcript'][0]
+    assert entry['stage'] == 'handler_fault'
+    assert entry['stage_detail'] == 'body_json_invalid_or_not_utf8'
+    assert entry['body']['utf8'] is True and entry['body']['top_level_keys'] is None
+    assert entry['body']['bytes'] == len('not-json')
+    assert result['server_faults'] == 1 and probe.observation_passed(result) is False
+
+
+def test_transcript_records_the_parser_refusal_for_an_unknown_method(tmp_path):
+    def run(**kwargs):
+        if kwargs['spec'].argv[1:] == ('--version',):
+            return core.ResearchProcessResult(probe.VERSION_OUTPUT.encode(), 0, 1)
+        env = dict(kwargs['spec'].environment)
+        conn = http.client.HTTPConnection(env['ANTHROPIC_BASE_URL'].removeprefix('http://'), timeout=2)
+        conn.request('BREW', '/v1/messages')
+        try:
+            conn.getresponse().read()
+        except http.client.RemoteDisconnected:
+            pass
+        finally:
+            conn.close()
+        value = envelope(); value['result'] = probe.response_text('success')
+        return core.ResearchProcessResult(json.dumps(value).encode(), 0, 1)
+    result = probe.run_probe(*image(), root=tmp_path/'probe', mode='success',
+                             allow_probe=True, process_runner=run)
+    entry = result['diagnostics']['transcript'][0]
+    assert entry['kind'] == 'request' and entry['method'] == 'BREW'
+    assert entry['stage'] == 'refused_parser' and entry['refusal_status'] == 501
+    assert entry['body_not_read'] is True
+    assert probe.observation_passed(result) is False
+
+
+def test_predecode_capture_fields_for_an_accepted_result(tmp_path):
+    result = probe.run_probe(*image(), root=tmp_path/'probe', mode='success',
+                             allow_probe=True, process_runner=simulated_runner([]))
+    capture = result['diagnostics']['predecode']
+    assert capture['capture_status'] == 'captured' and capture['stderr_bytes'] == 0
+    assert capture['stdout_utf8'] is True and capture['stdout_bytes'] > 0
+    assert capture['stdout_excerpt_truncated'] is False
+    assert capture['first_failing_validation_stage'] is None
+    assert capture['stdout_json_top_keys'] == sorted(envelope())
+    assert capture['stdout_json_value_shapes']['result'].startswith('string:')
+    assert len(capture['stdout_sha256']) == 64
+    # The public synthetic action payload stays visible in the redacted excerpt;
+    # credentials and probe paths never do.
+    assert probe.RESPONSE in capture['stdout_excerpt_redacted']
+    assert probe.TEST_KEY not in capture['stdout_excerpt_redacted']
+
+
+@pytest.mark.parametrize('mode', ('invalid_action', 'tool_use'))
+def test_predecode_stage_for_a_decoder_rejected_result(tmp_path, mode):
+    result = probe.run_probe(*image(), root=tmp_path/'probe', mode=mode,
+        allow_probe=True, process_runner=simulated_runner([], rejected_result=True))
+    capture = result['diagnostics']['predecode']
+    assert capture['first_failing_validation_stage'] == 'result_json'
+    assert result['decoder_status'] == 'rejected'
+    assert probe.observation_passed(result) is True  # negative path unchanged
+
+
+def test_predecode_stage_orders_stderr_before_stdout_parsing(tmp_path):
+    def run(**kwargs):
+        if kwargs['spec'].argv[1:] == ('--version',):
+            return core.ResearchProcessResult(probe.VERSION_OUTPUT.encode(), 0, 1)
+        env = dict(kwargs['spec'].environment)
+        conn = http.client.HTTPConnection(env['ANTHROPIC_BASE_URL'].removeprefix('http://'), timeout=2)
+        body = json.dumps({'model': probe.MODEL_ID, 'max_tokens': 1024, 'stream': True,
+                           'tools': [], 'messages': [{'role': 'user', 'content': kwargs['stdin'].decode()}]})
+        conn.request('POST', '/v1/messages', body,
+                     {'x-api-key': probe.TEST_KEY, 'Content-Type': 'application/json'})
+        conn.getresponse().read(); conn.close()
+        return core.ResearchProcessResult(json.dumps(envelope()).encode(), 3, 1)
+    result = probe.run_probe(*image(), root=tmp_path/'probe', mode='rate_limit',
+                             allow_probe=True, process_runner=run)
+    capture = result['diagnostics']['predecode']
+    assert capture['stderr_bytes'] == 3  # only the byte count, never content
+    assert capture['first_failing_validation_stage'] == 'stderr_nonzero'
+    assert result['decoder_status'] == 'rejected'
+    assert probe.observation_passed(result) is True  # eligible negative disposition unchanged
+
+
+@pytest.mark.parametrize('mutate,stage', [
+    (lambda value: None, None),
+    (lambda value: value.update(result='not json'), 'result_json'),
+    (lambda value: value.update(result='{"calls": []}'), 'action_validation'),
+    (lambda value: value.update(result='{"calls": [{"name": "x"}]}'), 'action_validation'),
+    (lambda value: value.update(result=5), 'result_json'),
+    (lambda value: value.pop('usage'), 'outer_keys'),
+    (lambda value: value.update(unexpected=1), 'outer_keys'),
+    (lambda value: value.update(type='error'), 'envelope_values'),
+    (lambda value: value.update(is_error=True), 'envelope_values'),
+    (lambda value: value.update(num_turns=2), 'envelope_values'),
+    (lambda value: value.update(permission_denials=[{}]), 'envelope_values'),
+    (lambda value: value.update(modelUsage={}), 'usage'),
+    (lambda value: value.update(modelUsage={'other-model': {}}), 'usage'),
+])
+def test_decoder_stage_ladder_matches_the_pinned_admission_order(mutate, stage):
+    value = envelope()
+    mutate(value)
+    result = core.ResearchProcessResult(json.dumps(value).encode(), 0, 1)
+    assert probe._decoder_stage(result, probe.test_input()) == stage
+    assert probe._decoder_stage(core.ResearchProcessResult(b'', 0, 1), probe.test_input()) \
+        == 'stdout_bounds'
+    assert probe._decoder_stage(core.ResearchProcessResult(b'{', 0, 1), probe.test_input()) \
+        == 'outer_json'
+    assert probe._decoder_stage(core.ResearchProcessResult(b'{}', 0, 1), probe.test_input()) \
+        == 'outer_keys'
+    assert probe._decoder_stage('not-a-result', probe.test_input()) == 'not_a_process_result'
+
+
+def test_decoder_stage_ladder_stderr_precedes_outer_json():
+    result = core.ResearchProcessResult(b'not json', 7, 1)
+    assert probe._decoder_stage(result, probe.test_input()) == 'stderr_nonzero'
+
+
+def test_state_inventory_attributes_changes_to_phases_but_baseline_counts_all(tmp_path):
+    original = simulated_runner([], fault='write')
+    def run(**kwargs):
+        if kwargs['spec'].argv[1:] == ('--version',):
+            home = Path(dict(kwargs['spec'].environment)['HOME'])
+            (home/'version-marker').write_bytes(b'v1')
+        return original(**kwargs)
+    result = probe.run_probe(*image(), root=tmp_path/'probe', mode='success',
+                             allow_probe=True, process_runner=run)
+    inventory = result['diagnostics']['state_inventory']
+    assert inventory['qualification_baseline'] == 'original initial snapshot (unchanged)'
+    assert inventory['version_time']['changed_entries'] == 1
+    version_name = str(Path('home', 'version-marker'))  # snapshot paths are native-form
+    work_name = str(Path('work', 'new-state.sqlite'))
+    assert [entry['path'] for entry in inventory['version_time']['entries']] == [version_name]
+    assert inventory['version_time']['entries'][0]['before'] is None
+    assert inventory['version_time']['entries'][0]['after'][0] == 'file'
+    assert inventory['scenario_time']['changed_entries'] == 1
+    assert [entry['path'] for entry in inventory['scenario_time']['entries']] == [work_name]
+    # The qualification gate still compares the ORIGINAL snapshot to the end:
+    # both phases count, and the zero-change gate fails exactly as before.
+    assert result['state']['changed_entries'] == 2
+    assert probe.observation_passed(result) is False
+
+
+def test_state_inventory_is_empty_when_nothing_changes(tmp_path):
+    result = probe.run_probe(*image(), root=tmp_path/'probe', mode='success',
+                             allow_probe=True, process_runner=simulated_runner([]))
+    inventory = result['diagnostics']['state_inventory']
+    for phase in ('version_time', 'scenario_time'):
+        assert inventory[phase]['changed_entries'] == 0 and inventory[phase]['entries'] == []
+    assert result['state']['changed_entries'] == 0
+    assert probe.observation_passed(result) is True
+
+
+def test_sidecars_are_written_exclusively_outside_the_probe_root(tmp_path):
+    result = probe.run_probe(*image(), root=tmp_path/'probe', mode='success',
+                             allow_probe=True, process_runner=simulated_runner([]))
+    sidecars = result['diagnostics']['sidecars']
+    directory = tmp_path/'probe-diagnostics'
+    assert sidecars['directory'] == 'probe-diagnostics'
+    assert sidecars['status'] == 'written' and sidecars['budget_bytes'] == 8388608
+    assert [entry[0] for entry in sidecars['files']] == list(probe.SIDECAR_NAMES)
+    assert all(entry[1] == 'written' for entry in sidecars['files'])
+    assert 0 < sidecars['written_bytes'] <= probe.DIAGNOSTIC_BUDGET_BYTES
+    for name in probe.SIDECAR_NAMES:
+        payload = json.loads((directory/name).read_text(encoding='utf-8'))
+        assert payload['schema_version'] == probe.DIAGNOSTIC_SCHEMA and payload['mode'] == 'success'
+    # The sidecar directory is a sibling, never inside the snapshotted root.
+    assert not (tmp_path/'probe'/('probe'+probe.DIAGNOSTIC_DIR_SUFFIX)).exists()
+    assert probe.observation_passed(result) is True
+    # Exclusive creation: a second write into the same directory is refused.
+    again = probe._write_diagnostic_sidecars(tmp_path/'probe', {'server-transcript.json': {'x': 1}})
+    assert again['status'] == 'incomplete-and-recorded'
+    assert again['incomplete_reason'] == 'sidecar_creation_failed'
+    assert again['files'] == [['server-transcript.json', 'skipped', 0]]
+
+
+def test_diagnostic_budget_overflow_is_recorded_never_qualification(monkeypatch, tmp_path):
+    monkeypatch.setattr(probe, 'DIAGNOSTIC_BUDGET_BYTES', 16)
+    result = probe.run_probe(*image(), root=tmp_path/'probe', mode='success',
+                             allow_probe=True, process_runner=simulated_runner([]))
+    sidecars = result['diagnostics']['sidecars']
+    assert sidecars['status'] == 'incomplete-and-recorded'
+    assert sidecars['incomplete_reason'] == 'diagnostic_budget_exceeded'
+    assert [entry[1] for entry in sidecars['files']] == ['not_written']*3
+    assert list((tmp_path/'probe-diagnostics').iterdir()) == []
+    # The overflow only fails the diagnostic capture, never the qualification.
+    assert probe.observation_passed(result) is True

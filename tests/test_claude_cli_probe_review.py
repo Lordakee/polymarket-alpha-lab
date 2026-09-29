@@ -302,3 +302,141 @@ def test_failed_injection_assertion_restores_os_before_pytest_reporting(monkeypa
         finally:
             inner.undo()  # Keep the RED test itself from breaking pytest's reporter.
     assert restored is True
+
+
+# ---------------------------------------------------------------------------
+# v2 diagnostic additions (arbitration prescriptions 2-5): independent
+# counterexamples. The diagnostic capture is observation-only; these tests
+# pin that it cannot leak, follow links, or alter any qualification verdict.
+# ---------------------------------------------------------------------------
+
+def _first_attempt_observation(mode):
+    """The six observation shapes recorded for the first official-six attempt
+    (DELIVERY_PLAN section 63): one admitted POST plus one extra non-POST
+    request, five changed state entries, zero faults/sentinels, success and
+    invalid_action returned-but-decoder-rejected, the other four ordinary
+    nonzero exits."""
+    returned = mode in ('success', 'invalid_action')
+    value = dict(schema_version='claude-cli-probe-v2', mode=mode, image_sha256='a'*64,
+        image_bytes=234119480, cli_version=probe.CLAUDE_VERSION, version_matches=True,
+        version_status='returned', version_error_code=None,
+        process_status='returned' if returned else 'failed',
+        process_error_code=None if returned else 'research_process_nonzero_exit',
+        decoder_status='rejected' if returned else 'not_attempted',
+        reported_tokens=None, response_matches=False,
+        test_endpoint_override='numeric-loopback-http', activation_authorized=False,
+        external_egress_verified=False, outside_root_verified=False,
+        transient_writes_verified=False, vendor_provenance_verified=False,
+        request_count=1, unexpected_requests=1, server_faults=0,
+        request_contract_matches=False, responses_sent=1,
+        state=dict(complete=True, changed_entries=5, unsafe_entries=0,
+                   sentinel_files=0, limit_reached=False))
+    return value
+
+
+def test_observation_passed_is_unchanged_on_the_recorded_first_attempt_shapes():
+    """Pin: with or without any diagnostics payload, the six recorded shapes
+    fail exactly as recorded. The observation-only additions cannot alter a
+    qualification verdict."""
+    for mode in probe.MODES:
+        value = _first_attempt_observation(mode)
+        assert probe.observation_passed(value) is False, mode
+        value['diagnostics'] = dict(schema_version=probe.DIAGNOSTIC_SCHEMA,
+            transcript=[dict(kind='request', anything=True)], transcript_truncated=False,
+            predecode=dict(first_failing_validation_stage='outer_keys'),
+            state_inventory=dict(version_time=dict(changed_entries=5)),
+            sidecars=dict(status='written'))
+        assert probe.observation_passed(value) is False, mode
+    passing = _v2_observation()
+    passing['diagnostics'] = dict(schema_version=probe.DIAGNOSTIC_SCHEMA,
+                                  sidecars=dict(status='incomplete-and-recorded'))
+    assert probe.observation_passed(passing) is True
+
+
+def test_transcript_redacts_hostile_header_values_and_targets(tmp_path):
+    def run(**kwargs):
+        if kwargs['spec'].argv[1:] == ('--version',):
+            return core.ResearchProcessResult(probe.VERSION_OUTPUT.encode(), 0, 1)
+        env = dict(kwargs['spec'].environment)
+        conn = http.client.HTTPConnection(env['ANTHROPIC_BASE_URL'].removeprefix('http://'), timeout=2)
+        body = json.dumps({'model': probe.MODEL_ID, 'max_tokens': 1024, 'stream': True,
+                           'tools': [], 'messages': [{'role': 'user', 'content': kwargs['stdin'].decode()}]})
+        conn.request('POST', '/v1/messages?token=' + probe.TEST_KEY, body,
+                     {'x-api-key': probe.TEST_KEY, 'Content-Type': 'application/json',
+                      'X-Custom-Leak': probe.APPROVED})
+        try:
+            conn.getresponse().read()
+        except http.client.RemoteDisconnected:
+            pass
+        finally:
+            conn.close()
+        value = envelope(); value['result'] = probe.response_text('success')
+        return core.ResearchProcessResult(json.dumps(value).encode(), 0, 1)
+    result = probe.run_probe(*image(), root=tmp_path/'probe', mode='success',
+                             allow_probe=True, process_runner=run)
+    entry = result['diagnostics']['transcript'][0]
+    text = json.dumps(entry)
+    for secret in (probe.TEST_KEY, probe.APPROVED, probe.UNRELATED, str(tmp_path)):
+        assert secret not in text
+    headers = dict(entry['headers']['pairs'])
+    assert headers['x-api-key'] is None and headers['X-Custom-Leak'] is None
+    assert headers['Content-Type'] == 'application/json'
+    assert entry['target']['text'].endswith('token=[REDACTED]')
+    assert entry['predicates']['route_query'] is False
+    assert probe.observation_passed(result) is False
+
+
+def test_predecode_capture_redacts_key_and_probe_paths_in_result_and_sidecars(tmp_path):
+    def run(**kwargs):
+        if kwargs['spec'].argv[1:] == ('--version',):
+            return core.ResearchProcessResult(probe.VERSION_OUTPUT.encode(), 0, 1)
+        env = dict(kwargs['spec'].environment)
+        conn = http.client.HTTPConnection(env['ANTHROPIC_BASE_URL'].removeprefix('http://'), timeout=2)
+        body = json.dumps({'model': probe.MODEL_ID, 'max_tokens': 1024, 'stream': True,
+                           'tools': [], 'messages': [{'role': 'user', 'content': kwargs['stdin'].decode()}]})
+        conn.request('POST', '/v1/messages', body,
+                     {'x-api-key': probe.TEST_KEY, 'Content-Type': 'application/json'})
+        conn.getresponse().read(); conn.close()
+        leak = ' '.join((probe.TEST_KEY, probe.APPROVED, probe.UNRELATED,
+                         str(Path(kwargs['spec'].cwd).parent.parent)))
+        return core.ResearchProcessResult(json.dumps({'leaked': leak}).encode(), 0, 1)
+    result = probe.run_probe(*image(), root=tmp_path/'probe', mode='success',
+                             allow_probe=True, process_runner=run)
+    text = json.dumps(result)
+    for secret in (probe.TEST_KEY, probe.APPROVED, probe.UNRELATED, str(tmp_path)):
+        assert secret not in text
+    sidecar = json.loads((tmp_path/'probe-diagnostics'/'predecode.json').read_text(encoding='utf-8'))
+    for secret in (probe.TEST_KEY, probe.APPROVED, probe.UNRELATED, str(tmp_path)):
+        assert secret not in json.dumps(sidecar)
+    assert result['diagnostics']['predecode']['first_failing_validation_stage'] == 'outer_keys'
+    assert result['decoder_status'] == 'rejected'
+
+
+def test_sidecar_writer_never_follows_a_preexisting_symlink(tmp_path):
+    directory = tmp_path/'probe-diagnostics'; directory.mkdir()
+    outside = tmp_path/'outside'; outside.write_text(probe.TEST_KEY)
+    try:
+        (directory/probe.SIDECAR_NAMES[0]).symlink_to(outside)
+    except OSError:
+        pytest.skip('symlink privilege unavailable')
+    status = probe._write_diagnostic_sidecars(tmp_path/'probe', {probe.SIDECAR_NAMES[0]: {'x': 1}})
+    assert status['status'] == 'incomplete-and-recorded'
+    assert status['files'] == [[probe.SIDECAR_NAMES[0], 'skipped', 0]]
+    assert outside.read_text(encoding='utf-8') == probe.TEST_KEY  # never written through the link
+
+
+def test_sidecar_directory_that_is_not_a_directory_is_recorded_not_raised(tmp_path):
+    (tmp_path/'probe-diagnostics').write_text('occupied', encoding='utf-8')
+    status = probe._write_diagnostic_sidecars(tmp_path/'probe', {'x.json': {'x': 1}})
+    assert status['status'] == 'incomplete-and-recorded'
+    assert status['incomplete_reason'] == 'sidecar_directory_unavailable'
+    assert status['files'] == []
+
+
+def test_qualification_is_indifferent_to_the_sidecar_capture_status(monkeypatch, tmp_path):
+    monkeypatch.setattr(probe, '_write_diagnostic_sidecars',
+                        lambda root, payloads: {'status': 'incomplete-and-recorded'})
+    result = probe.run_probe(*image(), root=tmp_path/'probe', mode='success',
+                             allow_probe=True, process_runner=simulated_runner([]))
+    assert result['diagnostics']['sidecars'] == {'status': 'incomplete-and-recorded'}
+    assert probe.observation_passed(result) is True
