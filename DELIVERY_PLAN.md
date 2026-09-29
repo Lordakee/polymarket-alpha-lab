@@ -2486,3 +2486,83 @@ v0.1.0-linux-preview.1 的发布记录（回执已由 E=a1128a65 补记）。
 0/6、真实研究/结算/样本证据未采、activation_authorized=false、真实
 提供商调用 false）。本预发布不是 V1 完成、不是统计策略验证、不是执行
 授权。Windows 保持退役冻结。**
+
+## 63. L7 官方探针：六场景首次尝试记录为资格失败（2026-09-29）
+
+本节按 Codex 仲裁（l7-official-six-escalation/codex-verdict.md，内含独立复
+审 VERDICT: PASS）逐字记录首次 official-six 尝试，并保全全部证据。
+
+> **L7 first official-six attempt — qualification failed.**
+>
+> Source under review: `a2e32a13301512e0345edebf6a8e4380a75f1d2f`. This entry
+> records operator-supplied execution evidence from the designated Linux host.
+> The arbitration inspected repository source; it did not repeat the remote
+> execution.
+>
+> The operator reports verification of the vendor signature/key-fingerprint
+> chain and agreement between the signed manifest and measured official
+> artifact, size 234,119,480 bytes, version `2.1.278 (Claude Code)`. The
+> complete artifact digest remains pinned in the retained provenance evidence.
+> INPUT contained 4,710 files with tkinter excluded. Outer-runner native
+> qualification reported 38 passed / 0 failed / 0 skipped. `qualify-version`
+> subsequently passed its exact banner, teardown and post-run integrity
+> checks. Its earlier false-abort remains preserved as a separate first
+> failure.
+>
+> The first official-six cohort executed all six scenarios: success,
+> rate_limit, server_error, invalid_action, tool_use and truncated.
+> Qualification result: **6 executed / 0 passed / 6 failed**. Original JUnit,
+> pytest log, observations and exported evidence are preserved; no failure is
+> reclassified as a pass.
+>
+> All six inner version checks passed. All six snapshots were complete, with
+> zero unsafe entries and zero sentinel files, but each reported five changed
+> entries. Thus snapshot completeness/safety subchecks passed; the required
+> zero-state-change gate failed.
+>
+> Each observation reported one POST, one scenario response and one additional
+> unexpected request, with zero server faults. Subject to reconciliation of
+> the executed INPUT identity, the pinned source establishes one admitted
+> Messages POST plus one additional handled non-POST request. That additional
+> request latches aggregate request-contract failure; the counters do not
+> establish a malformed Messages POST.
+>
+> Success and invalid_action returned exit 0 but were rejected by the strict
+> decoder, with decoded usage unknown. The other four scenarios reported
+> ordinary nonzero process exit, which is an eligible negative disposition
+> only when the common gates also pass. Those common gates did not pass.
+> `response_matches=false` records absence of an accepted exact decoded
+> action; it is not a server-response acknowledgment failure.
+>
+> The operator reports that containment held. Its supporting outer-runner
+> records remain separate from the inner observation:
+> `external_egress_verified=false` is a fixed unasserted field and does not
+> itself establish containment.
+>
+> **Decision: RECORD-QUALIFICATION-FAILURE.** The cause of the additional
+> request and the precise result-validation failure remain unresolved. A
+> protocol-model-only cause and a required external-service dependency are
+> not established. Any further diagnostic cohort must be separately reviewed,
+> pinned, bounded, and recorded without changing the original acceptance
+> criteria or erasing this failure.
+>
+> Real provider calls remain false; `activation_authorized=false`. WP-02/G2
+> remains PARTIAL/open. No G2–G6 closure or V1 completion follows from this
+> attempt.
+
+### 执行侧补充记录（证据位置）
+
+- 产物与溯源：l7-acquisition（签名链三层核验；二进制 sha256
+  5c473593…与签名清单一致；IMAGE 六键清单为操作者实测值）。控制件/计划/
+  INPUT/输出与运行记录保全于 166:~/pal-artifacts/l7-work/（six/ 为首次
+  official-six；qv2/ 为 qualify-version 通过；final/export/ 为其更早
+  误中止首败）。
+- 首败保全链：build 依赖元组 colorama（DEPS_LINUX 修复前的 BLOCKED）、
+  tkinter/ELF 解析/usrmerge（runtime_closure_incomplete 三连）、运行器
+  合格化首轮 10 失败（l7-runner-qualification.log）、qualify-version
+  误中止（final/export/run-record.json）、official-six 首次 6 失败
+  （six/export/ 全量证据）。
+- 后续：按仲裁处方 2—6 实施一次受评审的观察性诊断队列（不改判据、
+  有界转录、状态增量清册、/pal-output 边车、单次无重跑），据此要么受
+  评审校准（仅限被证实的解码器缺陷/额外请求处置），要么触发连接性停
+  规则附录（仲裁已给出逐字措辞）。
