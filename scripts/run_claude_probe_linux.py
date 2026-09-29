@@ -1491,6 +1491,19 @@ def _dismiss_guard(pid, dismiss_w):
         time.sleep(0.01)
 
 
+def _stderr_evidence(sniff):
+    """Bounded sanitized stderr prefix for the run record.
+
+    bwrap/loader/startup errors must always survive in the evidence (the
+    first official attempt lost bwrap's message to a byte counter). Control
+    characters are reduced to escapes; nothing secret ever travels this pipe
+    (no credential exists anywhere in the probe), and the bound is 4096.
+    """
+    text = bytes(sniff)[:4096].decode('utf-8', 'replace')
+    return ''.join(character if character >= ' ' or character in '\n\t'
+                   else '\\x%02x' % ord(character) for character in text)
+
+
 def _classify_stderr(sniff):
     text = bytes(sniff)
     for marker in (b'Unknown option', b'unrecognized option'):
@@ -1736,6 +1749,7 @@ def run_outer_probe(plan_path, *, mode, deadline_seconds=None, driver_stop=None,
                 stdout_bytes_value=bytes(stdout), stdout_bytes=len(stdout),
                 stderr_bytes=err_total, stdout_total_bytes=out_total,
                 stderr_total_bytes=err_total,
+                stderr_prefix=_stderr_evidence(sniff),
                 output_truncated=(out_total > STDOUT_CAP_BYTES
                                   or err_total > STDOUT_CAP_BYTES),
                 holder_status=_holder_status(source_dir),
@@ -1871,7 +1885,15 @@ def run_outer_probe(plan_path, *, mode, deadline_seconds=None, driver_stop=None,
 # --------------------------------------------------------------------------
 
 class DriverStop:
-    """Signals that the driving stdin pipe closed (CLI use only)."""
+    """Signals that the driving stdin pipe closed (CLI use only).
+
+    A FIFO stdin that is ALREADY at EOF when the CLI starts means no driver
+    ever connected (non-interactive ssh/systemd launch): the watch is not
+    armed and the run proceeds — supervisor loss stays covered by the cgroup
+    guard. Only a pipe that was open at startup and closes later counts as
+    driver loss. (The first official qualify-version attempt was aborted by a
+    false driver_lost from an already-EOF ssh stdin pipe.)
+    """
 
     def __init__(self):
         self._flag = threading.Event()
@@ -1883,6 +1905,9 @@ class DriverStop:
         try:
             if not stat.S_ISFIFO(os.fstat(0).st_mode):
                 return
+            readable, _, _ = select.select([0], [], [], 0)
+            if readable and os.read(0, 4096) == b'':
+                return  # already EOF: no driver ever connected
         except OSError:
             return
 

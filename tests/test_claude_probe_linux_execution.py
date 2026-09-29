@@ -1412,12 +1412,37 @@ def test_native_official_six_style_export_and_gate(tmp_path):
 @pytest.mark.skipif(not RUNNER_ENABLED, reason='explicit native probe-runner qualification is opt-in')
 def test_native_driver_loss_cli(tmp_path):
     require_native_runner()
+    root = Path(os.environ[CGROUP_ROOT_ENV])
+    before = {entry.name for entry in root.glob('pal-l7-*')}
     plan_path, _plan = build_synthetic_plan(
         tmp_path, guest_code=GUEST_SLEEP, allocation='pal-l7-test-driver')
     process = subprocess.Popen(
         [sys.executable, str(ROOT / 'scripts' / 'run_claude_probe_linux.py'),
          'run', '--plan', str(plan_path), '--mode', 'qualify-version'],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    # A real driver is connected while the runner starts and disconnects
+    # mid-run: hold the pipe open until the workload cgroup is populated
+    # (the CLI derives a random allocation, so discover it by diff), then
+    # close the pipe. (A pipe already at EOF when the CLI starts now means
+    # "no driver ever connected" and must NOT trigger driver_lost.)
+    populated = False
+    deadline = time.monotonic() + 120
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            pytest.fail('runner exited before the driver disconnected')
+        current = {entry.name for entry in root.glob('pal-l7-*')} - before
+        if current:
+            try:
+                if (root / sorted(current)[0]).joinpath('cgroup.procs') \
+                        .read_text().split():
+                    populated = True
+                    break
+            except OSError:
+                pass
+        time.sleep(0.05)
+    if not populated:
+        process.kill()
+        pytest.fail('workload cgroup never appeared for driver-loss run')
     # communicate() flushes stdin; detach the closed pipe first.
     process.stdin.close()
     process.stdin = None
