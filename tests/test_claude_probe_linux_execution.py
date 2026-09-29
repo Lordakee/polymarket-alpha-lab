@@ -396,6 +396,75 @@ def test_export_tree_exclusive_nofollow_and_cap(tmp_path):
         (source / 'run-record.json').unlink()
 
 
+def test_native_probe_directories_preserve_evidence_and_reject_symlinks(tmp_path):
+    """Codex arbitration (a): the native entry allocates six exclusively owned
+    scenario directories via mktemp(numbered=False), so pytest's convenience
+    `test_<name>current` alias never appears in the export tree; the exporter
+    itself stays unchanged — zero unsafe entries required, every symlink it
+    does encounter still fails the export."""
+    from _pytest.tmpdir import TempPathFactory
+
+    basetemp = tmp_path / 'pal-output' / 'pytest-tmp'
+    basetemp.mkdir(parents=True)
+    factory = TempPathFactory(
+        given_basetemp=basetemp, retention_count=0, retention_policy='all',
+        trace=lambda *args, **kwargs: None, _ispytest=True)
+
+    modes = ('success', 'rate_limit', 'server_error',
+             'invalid_action', 'tool_use', 'truncated')
+    for index, mode in enumerate(modes):
+        case_dir = factory.mktemp(f'claude-probe-{index}', numbered=False)
+        root = case_dir / 'claude-probe'
+        root.mkdir(parents=True)
+        (root / 'evidence.bin').write_bytes(f'proof-{mode}'.encode())
+        sibling = case_dir / 'claude-probe-diagnostics'
+        sibling.mkdir()
+        (sibling / 'server-transcript.json').write_bytes(b'{"transcript":[]}')
+    # (1) Six ordinary directories; no *current alias exists.
+    entries = sorted(item.name for item in basetemp.iterdir())
+    assert entries == [f'claude-probe-{index}' for index in range(6)]
+    for item in basetemp.iterdir():
+        assert item.is_dir() and not item.is_symlink()
+    # (2) Repeating one allocation raises with existing evidence unchanged.
+    with pytest.raises(FileExistsError):
+        factory.mktemp('claude-probe-0', numbered=False)
+    assert (basetemp / 'claude-probe-0' / 'claude-probe'
+            / 'evidence.bin').read_bytes() == b'proof-success'
+    # (3) The complete set exports with zero unsafe entries.
+    destination = tmp_path / 'export-clean'
+    destination.mkdir()
+    state = runner.export_output_tree(basetemp.parent, destination)
+    assert state['unsafe'] == [] and state['limit_exceeded'] is False
+    names = {item['name'] for item in state['manifest']}
+    for index in range(6):
+        assert f'pytest-tmp/claude-probe-{index}/claude-probe/evidence.bin' in names
+        assert (f'pytest-tmp/claude-probe-{index}/claude-probe-diagnostics/'
+                'server-transcript.json') in names
+    # (4) An injected internal alias and an external-pointer symlink still
+    # both report unsafe in a FRESH destination, with nothing crossing.
+    if _can_symlink():
+        os.symlink('claude-probe-0',
+                   basetemp / 'test_supplied_claude_profile_lcurrent')
+        external = tmp_path / 'external-sentinel'
+        external.write_bytes(b'EXTERNAL-SECRET')
+        os.symlink('../../../external-sentinel', basetemp / 'escape')
+        hostile = tmp_path / 'export-hostile'
+        hostile.mkdir()
+        state = runner.export_output_tree(basetemp.parent, hostile)
+        assert set(state['unsafe']) >= {
+            'pytest-tmp/test_supplied_claude_profile_lcurrent',
+            'pytest-tmp/escape'}
+        assert not (hostile / 'pytest-tmp'
+                    / 'test_supplied_claude_profile_lcurrent').exists()
+        assert not (hostile / 'pytest-tmp' / 'escape').exists()
+        blob = b''.join(file.read_bytes()
+                        for file in sorted(hostile.rglob('*')) if file.is_file())
+        assert b'EXTERNAL-SECRET' not in blob
+        for index in range(6):
+            assert (hostile / 'pytest-tmp' / f'claude-probe-{index}'
+                    / 'claude-probe' / 'evidence.bin').exists()
+
+
 def _xml_attr(value):
     return '"' + value.replace('&', '&amp;').replace('"', '&quot;') + '"'
 

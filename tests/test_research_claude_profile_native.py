@@ -23,8 +23,16 @@ def supplied_image():
 
 
 @pytest.mark.parametrize('mode', probe.MODES)
-def test_supplied_claude_profile_loopback_and_surviving_state(supplied_image, tmp_path, mode, record_property):
-    observation = probe.run_probe(*supplied_image, root=tmp_path/'claude-probe', mode=mode, allow_probe=True)
+def test_supplied_claude_profile_loopback_and_surviving_state(
+        supplied_image, tmp_path_factory, mode, record_property):
+    # Six distinct exclusively allocated scenario directories (mkdir 0o700,
+    # a collision raises): pytest's numbered machinery — including its
+    # `test_<name>current` convenience symlink, which the outer runner's
+    # no-follow export correctly reports as unsafe — is opted out with
+    # numbered=False; the explicit scenario index supplies unique names.
+    case_dir = tmp_path_factory.mktemp(
+        f'claude-probe-{probe.MODES.index(mode)}', numbered=False)
+    observation = probe.run_probe(*supplied_image, root=case_dir/'claude-probe', mode=mode, allow_probe=True)
     # Metadata has no raw stdout/stderr, headers, paths, prompt or state-file body.
     # Keep failed observations as failed; do not whitelist newly observed writes.
     text = json.dumps(observation, sort_keys=True, separators=(',', ':'))
