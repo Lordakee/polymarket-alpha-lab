@@ -96,9 +96,10 @@ def _cost(value):
         raise ValueError
 
 
-def _usage(value, model_value):
-    _keys(value, _USAGE, ('server_tool_use', 'service_tier', 'cache_creation'))
-    _keys(model_value, _MODEL_USAGE, ('webSearchRequests', 'costUSD', 'contextWindow', 'maxOutputTokens'))
+def _usage_fields(value, model_value):
+    """Closed accounting core shared by both admitted representations: the
+    four reported counters, their equality with the sole modelUsage entry,
+    zero tool-use counters and validated cost/capacity metadata."""
     for raw, model in zip(_USAGE, _MODEL_USAGE, strict=True):
         integer('usage', value[raw], 0, 1000000)
         integer('model_usage', model_value[model], 0, 1000000)
@@ -111,13 +112,6 @@ def _usage(value, model_value):
             integer('server_tool_count', count, 0, 0)
     if 'service_tier' in value and value['service_tier'] not in (None, 'standard', 'default'):
         raise ValueError
-    if 'cache_creation' in value:
-        cache = value['cache_creation']
-        _keys(cache, ('ephemeral_5m_input_tokens', 'ephemeral_1h_input_tokens'))
-        for count in cache.values():
-            integer('cache_write_tokens', count, 0, 1000000)
-        if sum(cache.values()) != value['cache_creation_input_tokens']:
-            raise ValueError
     if 'webSearchRequests' in model_value:
         integer('web_search_requests', model_value['webSearchRequests'], 0, 0)
     for name in ('contextWindow', 'maxOutputTokens'):
@@ -125,8 +119,118 @@ def _usage(value, model_value):
             integer(name, model_value[name], 1, 10000000)
     if 'costUSD' in model_value:
         _cost(model_value['costUSD'])
+
+
+def _usage(value, model_value):
+    _keys(value, _USAGE, ('server_tool_use', 'service_tier', 'cache_creation'))
+    _keys(model_value, _MODEL_USAGE, ('webSearchRequests', 'costUSD', 'contextWindow', 'maxOutputTokens'))
+    _usage_fields(value, model_value)
+    if 'cache_creation' in value:
+        cache = value['cache_creation']
+        _keys(cache, ('ephemeral_5m_input_tokens', 'ephemeral_1h_input_tokens'))
+        for count in cache.values():
+            integer('cache_write_tokens', count, 0, 1000000)
+        if sum(cache.values()) != value['cache_creation_input_tokens']:
+            raise ValueError
     # Anthropic reports cache READ and WRITE separately from uncached input.
     # Do not use Codex's different "cached is a subset of input" convention.
+    return sum(value[name] for name in _USAGE)
+
+
+# The demonstrated terminal envelope of the pinned CLI (2.1.278,
+# --output-format json): a SECOND closed representation admitted beside the
+# original strict one. This is not a permissive stream reader and does not
+# relax the original: admission requires exactly this 25-key set (the L7
+# final ruling's calibration list) and every field is validated against the
+# retained success capture's demonstrated type/bound schema, never assumed
+# from an SDK shape.
+_TERMINAL_KEYS = frozenset((
+    'api_error_status', 'duration_api_ms', 'duration_ms',
+    'fast_mode_disabled_reason', 'fast_mode_state', 'first_content_frame_ms',
+    'is_error', 'modelUsage', 'num_turns', 'permission_denials', 'queued_turn_count',
+    'result', 'result_index', 'session_id', 'stop_reason', 'subagent_stats', 'subtype',
+    'terminal_reason', 'time_to_request_ms', 'total_cost_usd', 'ttft_ms',
+    'ttft_stream_ms', 'type', 'usage', 'uuid'))
+_TERMINAL_USAGE = ('input_tokens', 'output_tokens', 'cache_creation_input_tokens',
+    'cache_read_input_tokens', 'output_tokens_details', 'server_tool_use',
+    'service_tier', 'cache_creation', 'inference_geo', 'iterations', 'speed')
+_TERMINAL_MODEL_USAGE = _MODEL_USAGE + ('webSearchRequests', 'costUSD', 'contextWindow',
+    'maxOutputTokens', 'thinkingTokens', 'canonicalModel', 'provider', 'costBasis')
+
+
+def _text_meta(name, value, limit=128):
+    if (type(value) is not str or not value or value.strip() != value
+            or len(value) > limit or '\x00' in value):
+        raise ValueError
+
+
+def _subagents(value):
+    # No subagent activity is demonstrable in this envelope: every reported
+    # counter is exactly zero and the per-type map is empty. Extra or missing
+    # subkeys are unknown fields, not optional metadata.
+    _keys(value, ('spawned', 'requested', 'started_in_background', 'max_depth',
+        'spawned_by_subagents', 'completed', 'failed', 'killed', 'refused', 'by_type'))
+    _keys(value['requested'], ('background', 'foreground', 'unset'))
+    _keys(value['killed'], ('parent', 'user', 'system'))
+    _keys(value['refused'], ('depth_limit', 'concurrency_limit', 'budget'))
+    if type(value['by_type']) is not dict or value['by_type']:
+        raise ValueError
+    for count in (*value['requested'].values(), *value['killed'].values(),
+                  *value['refused'].values()):
+        integer('subagent_activity', count, 0, 0)
+    for name in ('spawned', 'started_in_background', 'max_depth',
+                 'spawned_by_subagents', 'completed', 'failed'):
+        integer('subagent_activity', value[name], 0, 0)
+
+
+def _terminal_metadata(data):
+    # Envelope gating unique to the demonstrated representation: fast mode
+    # disabled, no queued turn, the sole result index, bounded timing
+    # counters, and no subagent activity.
+    if data['fast_mode_state'] != 'off':
+        raise ValueError
+    _text_meta('fast_mode_disabled_reason', data['fast_mode_disabled_reason'])
+    integer('queued_turn_count', data['queued_turn_count'], 0, 0)
+    integer('result_index', data['result_index'], 0, 0)
+    for name in ('first_content_frame_ms', 'time_to_request_ms', 'ttft_ms', 'ttft_stream_ms'):
+        integer(name, data[name], 0, 2**63 - 1)
+    _subagents(data['subagent_stats'])
+
+
+def _terminal_usage(value, model_value, model_id):
+    # The demonstrated usage blocks: exactly the 11 usage keys and exactly
+    # the 12 sole-model keys the retained capture carries. Thinking tokens
+    # agree between both blocks; capacity metadata stays metadata.
+    _keys(value, _TERMINAL_USAGE)
+    _keys(model_value, _TERMINAL_MODEL_USAGE)
+    if (model_value['canonicalModel'] != model_id or model_value['provider'] != 'firstParty'
+            or model_value['costBasis'] != 'list'):
+        raise ValueError
+    details = value['output_tokens_details']
+    _keys(details, ('thinking_tokens',))
+    integer('thinking_tokens', details['thinking_tokens'], 0, 1000000)
+    integer('model_thinking_tokens', model_value['thinkingTokens'], 0, 1000000)
+    if details['thinking_tokens'] != model_value['thinkingTokens']:
+        raise ValueError
+    _usage_fields(value, model_value)
+    cache = value['cache_creation']
+    _keys(cache, ('ephemeral_5m_input_tokens', 'ephemeral_1h_input_tokens'))
+    for count in cache.values():
+        integer('cache_write_tokens', count, 0, 1000000)
+    # The CLI attributes cache writes to the ephemeral buckets only as the
+    # provider reports them: the retained capture carries 7 cache-creation
+    # tokens with a 0/0 split, so this representation's closed invariant is
+    # that the attributed writes can never EXCEED the reported total.
+    if sum(cache.values()) > value['cache_creation_input_tokens']:
+        raise ValueError
+    if (type(value['inference_geo']) is not str or len(value['inference_geo']) > 16
+            or '\x00' in value['inference_geo']):
+        raise ValueError
+    if type(value['iterations']) is not list or value['iterations']:
+        raise ValueError
+    if value['speed'] != 'standard':
+        raise ValueError
+    # Same additive cache accounting as the original representation.
     return sum(value[name] for name in _USAGE)
 
 
@@ -141,10 +245,15 @@ def _decode(result, *, request, call_number):
         raise ValueError
     data = strict_json(result.stdout.decode('utf-8'))
     _unicode(data)
-    _keys(data, ('type', 'subtype', 'is_error', 'num_turns', 'session_id', 'result',
-                 'duration_ms', 'duration_api_ms', 'stop_reason', 'usage', 'modelUsage', 'permission_denials'),
-          ('uuid', 'total_cost_usd', 'structured_output', 'deferred_tool_use', 'errors',
-           'api_error_status', 'terminal_reason', 'origin'))
+    terminal = set(data) == _TERMINAL_KEYS
+    if terminal:
+        # The demonstrated 25-key terminal representation; see _TERMINAL_KEYS.
+        _terminal_metadata(data)
+    else:
+        _keys(data, ('type', 'subtype', 'is_error', 'num_turns', 'session_id', 'result',
+                     'duration_ms', 'duration_api_ms', 'stop_reason', 'usage', 'modelUsage', 'permission_denials'),
+              ('uuid', 'total_cost_usd', 'structured_output', 'deferred_tool_use', 'errors',
+               'api_error_status', 'terminal_reason', 'origin'))
     if (data['type'] != 'result' or data['subtype'] != 'success' or data['is_error'] is not False
             or data['stop_reason'] != 'end_turn'):
         raise ValueError
@@ -158,15 +267,26 @@ def _decode(result, *, request, call_number):
         raise ValueError
     if 'errors' in data and (type(data['errors']) is not list or data['errors']):
         raise ValueError
-    for name in ('structured_output', 'deferred_tool_use', 'api_error_status', 'terminal_reason', 'origin'):
+    for name in ('structured_output', 'deferred_tool_use', 'api_error_status', 'origin'):
         if data.get(name) is not None:
             # No CLI-hosted structured-output repair, deferred tool or origin
             # forwarding is part of this narrowly accepted result contract.
             raise ValueError
+    if terminal:
+        # The demonstrated envelope reports the positive terminal reason
+        # "completed" where the original representation requires null; that
+        # exact value carries equivalent single-turn end_turn success
+        # semantics. Every other value, including null, still rejects.
+        if data['terminal_reason'] != 'completed':
+            raise ValueError
+    elif data.get('terminal_reason') is not None:
+        raise ValueError
     if 'total_cost_usd' in data:
         _cost(data['total_cost_usd'])
     _keys(data['modelUsage'], (request.model_id,))
-    tokens = _usage(data['usage'], data['modelUsage'][request.model_id])
+    model_usage = data['modelUsage'][request.model_id]
+    tokens = (_terminal_usage(data['usage'], model_usage, request.model_id) if terminal
+              else _usage(data['usage'], model_usage))
     if data['usage']['output_tokens'] > request.max_output_tokens:
         raise ValueError
     if type(data['result']) is not str:
