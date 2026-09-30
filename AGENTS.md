@@ -208,10 +208,12 @@ the user explicitly changes them in a later instruction.
    raise it again when doing so becomes useful.
 7. **Codex subagent model is fixed.** Every Codex subagent, including nested
    subagents, implementation workers, planning workers, explorers, test workers,
-   and audit workers, must be spawned with model `gpt-5.6-sol` and reasoning
+   and audit workers, must be spawned with model `gpt-6.1-sol` and reasoning
    effort `max` explicitly specified. Do not omit either setting, inherit a
    different model or effort, or substitute another Codex model. Fast mode
-   remains forbidden.
+   remains forbidden. (Owner directive 2026-09-30: "修改项目规则，本项目调用
+   codex，指定模型改为gpt-6.1-sol 思考等级为max" — replaces the prior
+   `gpt-5.6-sol` pin recorded in DELIVERY_PLAN.md section 64.)
 
 ## CodeGraph
 
@@ -261,9 +263,10 @@ Avoid using website scraping as a primary data path unless a needed field is una
 
 ## Model Defaults
 
-- Every Codex subagent must explicitly use model `gpt-5.6-sol` with reasoning
-  effort `max`, as required by Project Iron Rule 7. No other Codex subagent
-  model or reasoning effort is permitted.
+- Every Codex subagent must explicitly use model `gpt-6.1-sol` with reasoning
+  effort `max`, as required by Project Iron Rule 7 (owner directive
+  2026-09-30). No other Codex subagent model or reasoning effort is
+  permitted.
 - Review subagents (Project Iron Rule 4) run as native subagents on the
   session's current model; do not pin, substitute, or fast-path them.
 - Do not use fast mode for the main Codex agent, Codex subagents, review

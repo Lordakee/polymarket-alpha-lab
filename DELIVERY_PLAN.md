@@ -2749,3 +2749,20 @@ v0.1.0-linux-preview.1 的发布记录（回执已由 E=a1128a65 补记）。
 > remain false and `activation_authorized=false` for this probe. V1 remains
 > incomplete; no statistical strategy validation or live-execution
 > authorization follows.
+
+## 64. Owner 指令：Codex 子代理模型改为 gpt-6.1-sol/max（2026-09-30）
+
+Owner 指令（verbatim）：“修改项目规则，本项目调用codex，指定模型改为
+gpt-6.1-sol 思考等级为max”。据此修改：
+
+- **Project Iron Rule 7 与 Model Defaults（AGENTS.md）**：Codex 子代理
+  固定模型由 `gpt-5.6-sol` 改为 `gpt-6.1-sol`，reasoning effort 保持
+  `max`，禁止省略、继承或替代；fast mode 仍禁止。本指令覆盖 §7 早期
+  记录的 `gpt-5.6-sol` 钉定（该历史值保留于本节与原修订历史中，不
+  改写既有记录文本）。
+- 本会话此前的 `gpt-6-astra/max` 咨询分发为当时有效的会话级授权所用；
+  自本节起，所有新的 Codex 分发（含经 dispatch-wrapper 的只读咨询与
+  常设授权下的审批仲裁）一律使用 `gpt-6.1-sol` + `-c
+  model_reasoning_effort='"max"'`。
+- §63 的常设授权（审批问 Codex、以其建议为准）不受影响，继续有效；
+  仅模型标识变更。
