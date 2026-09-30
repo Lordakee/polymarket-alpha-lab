@@ -2766,3 +2766,34 @@ gpt-6.1-sol 思考等级为max”。据此修改：
   model_reasoning_effort='"max"'`。
 - §63 的常设授权（审批问 Codex、以其建议为准）不受影响，继续有效；
   仅模型标识变更。
+
+### §64 Post-L7 clarification (2026-09-30)
+All new Codex planning, implementation, test, audit and independent-review
+dispatches must explicitly use gpt-6.1-sol with reasoning effort max.
+Earlier inherited-model reviewer wording is superseded. Fast mode remains
+forbidden. Historical research-profile fixtures and v1 goldens are preserved;
+this dispatch directive does not reconfigure a research client.
+
+## 65. Post-L7 ruling: L8 engineering approved; real activation withheld
+Consult baseline: 4f84f264d8d762c298f4623459aa24923aab4bc0.
+The amended L8 plan received independent VERDICT: PASS.
+L8 covers WP-02 compatibility/containment and WP-03 recovery readiness:
+A fixes cleanup-success suppression and the exact contained official banner;
+B proves the calibrated terminal reply through contained client/pipe wiring;
+C strengthens owned-process cleanup evidence and useful fresh-parent recovery;
+D delivers the provider-relay and credential-ingress design only, requiring
+independent design approval before subsequent transport implementation.
+The existing cleanup return and survivor-name assertion are current blockers;
+no surviving process was demonstrated. Historical acceptance is not rescored.
+The shared production decoder remains authoritative; no second admission
+decoder or relaxed envelope is introduced. The stale probe diagnostic is deferred.
+Under §63, Codex may decide the future scoped real-run authorization; another
+generic owner approval is not required. No effective activation is granted here.
+activation_authorized=false; real provider calls remain false.
+Effective activation requires accepted final engineering/native/review evidence,
+delivered contained transport, official-image qualification through actual L5
+wiring, a non-shared trusted runtime, reviewed explicit per-call credential supply,
+and a Codex-approved pinned activation record with scoped PG evidence writes.
+D1-D3 and Phase 1 paper-only/report-only/readonly boundaries remain unchanged.
+G2's official synthetic-probe subcondition stays closed; its real-research half,
+final G3, G4, G5 and G6 remain open. V1 remains incomplete.
