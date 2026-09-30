@@ -78,7 +78,10 @@ class ClaudeExecProfile:
                 # any host); the launch's identity pins live in its digest.
                 if type(self.linux_launch) is not LinuxLaunchSpec:
                     raise ValueError
-                if self.linux_launch.expected_version_output != self.cli_version + '\n':
+                # The pinned official CLI prints its identity banner, not a
+                # bare version line, for --version (see the retained official
+                # probe fixture): exactly ``<version> (Claude Code)``.
+                if self.linux_launch.expected_version_output != self.cli_version + ' (Claude Code)\n':
                     raise ValueError
                 if not _CONTAINED_ENV_KEYS <= set(self.linux_launch.allowed_guest_env):
                     raise ValueError

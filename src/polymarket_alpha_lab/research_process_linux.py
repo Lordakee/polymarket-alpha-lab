@@ -1670,6 +1670,7 @@ def run_linux_contained_process(*, spec, launch, stdin, stop):
     LINUX_PHASE_COUNTERS.contained_call()
     session = None
     failure = None
+    result = None
     try:
         session = _ContainedSession(spec, launch, stop, deadline)
         if time.monotonic_ns() >= deadline or session._stopped():
@@ -1680,8 +1681,12 @@ def run_linux_contained_process(*, spec, launch, stdin, stop):
         if session._stopped():
             raise ResearchProcessError('research_process_stopped')
         output, stderr_bytes = session.run_model_phase(stdin)
-        return ResearchProcessResult(output, stderr_bytes,
-                                     (time.monotonic_ns() - started) // 1000000)
+        # Candidate only: the elapsed time still excludes cleanup. Success is
+        # returned AFTER cleanup and the error handling below, so a cleanup
+        # failure recorded in ``finally`` suppresses the successful output
+        # instead of bypassing this handling via an early return.
+        result = ResearchProcessResult(output, stderr_bytes,
+                                       (time.monotonic_ns() - started) // 1000000)
     except BaseException as error:
         failure = error
     finally:
@@ -1700,3 +1705,4 @@ def run_linux_contained_process(*, spec, launch, stdin, stop):
                 and type(failure.args[0]) is str and failure.args[0] in _ADMITTED_VALUE_ERRORS:
             raise ValueError(failure.args[0]) from None
         raise ResearchProcessError('research_process_failed') from None
+    return result

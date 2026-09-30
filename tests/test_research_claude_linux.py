@@ -20,7 +20,7 @@ from polymarket_alpha_lab.research_claude_profile import (
 )
 from polymarket_alpha_lab.research_codex_profile import CodexExecProfile
 from polymarket_alpha_lab.research_dispatch_runner import ResearchDispatchStop
-from polymarket_alpha_lab.research_process import ResearchProcessSpec
+from polymarket_alpha_lab.research_process import ResearchProcessError, ResearchProcessSpec
 from tests.test_research_claude_exec import MODEL, action, envelope, wire
 from tests.test_research_claude_profile import SENTINEL, permission
 from tests.test_research_process_linux import HELPER_DIGEST, fixed_launch, relaunch
@@ -35,6 +35,14 @@ CLAUDE_V1_GOLDEN = {
 CODEX_V1_GOLDEN = {
     'linux': '8b4edb02749acddc197bb264fd415b20b1b0ef5b7dd686024e0acd7136bbf162',
     'win32': '3988359c974aa5052c0224c5f16d4be1f7e4ba44a2410462ea07c9a63e48b5aa',
+}
+# Historical v2 digest with the pre-correction bare banner
+# ('<version>\n'), per golden-root platform layout. The corrected profile
+# refuses that banner, so this value can no longer be produced by
+# construction; authorizations carrying it must be rejected, never rewritten.
+PRE_CORRECTION_V2_GOLDEN = {
+    'linux': '46c14c1f8bbaf2f9dda2899489b6cc09b0825e0f796d6376bc00381d8112f204',
+    'win32': 'f1986a31715dc34c3dbf30dbd42451f8753875ed83d03d6888f37b38ca246390',
 }
 
 
@@ -137,6 +145,35 @@ def test_old_authorization_cannot_authorize_a_contained_profile(tmp_path):
         claude_profile_factory(profile=contained_profile(), authorization=stale,
                                api_key_supplier=finite_supplier(stop),
                                allow_process_start=True, allow_api_key_use=True, stop=stop)
+
+
+def test_pre_correction_v2_authorization_is_rejected_without_rewriting():
+    """The banner correction changes the v2 digest: an authorization issued
+    against the pre-correction (bare-banner) v2 digest is rejected by the
+    corrected profile, and nothing rewrites either side to force a match.
+    The pre-correction profile itself no longer even constructs."""
+    corrected = contained_profile()
+    stale_digest = PRE_CORRECTION_V2_GOLDEN[sys.platform]
+    assert corrected.contract_sha256 != stale_digest
+    with pytest.raises(ValueError, match='profile_invalid'):
+        contained_profile(launch=relaunch(fixed_launch(),
+                                          expected_version_output=cli.CLAUDE_VERSION + '\n'))
+    stop = ResearchDispatchStop()
+    stale = replace(permission(corrected), adapter_contract_sha256=stale_digest)
+    with pytest.raises(ValueError, match='authorization_mismatch'):
+        claude_profile_factory(profile=corrected, authorization=stale,
+                               api_key_supplier=finite_supplier(stop),
+                               allow_process_start=True, allow_api_key_use=True, stop=stop)
+    # No automatic rewriting happened: the corrected digest and the stale
+    # authorization are unchanged after the failed binding, and the corrected
+    # profile still accepts its OWN current digest.
+    assert corrected.contract_sha256 == contained_profile().contract_sha256
+    assert stale.adapter_contract_sha256 == stale_digest
+    factory = claude_profile_factory(profile=corrected, authorization=permission(corrected),
+                                     api_key_supplier=finite_supplier(stop),
+                                     allow_process_start=True, allow_api_key_use=True,
+                                     stop=stop)
+    assert type(factory('crypto_btc')) is cli.ClaudeProcessModel
 
 
 @pytest.mark.parametrize('defect', ['wrong_type', 'unbound_stop', 'plain_callable'])
@@ -281,6 +318,29 @@ def test_supplier_exhaustion_fails_the_call_without_recycling(monkeypatch):
         factory('crypto_btc').complete(messages_json='[{}]', max_output_tokens=100)
     assert 'KEY-ONLY' not in ''.join(traceback.format_exception(caught.value))
     assert supplier.remaining('crypto_btc') == 0
+
+
+def test_banner_mismatch_keeps_the_consumed_slot_consumed(monkeypatch):
+    """The version-mismatch path consumes the supplier slot before the run and
+    never returns it: the malformed banner fails the call inside the version
+    phase (before model launch or credential delivery) and the slot stays
+    permanently consumed; the key value never leaks into the failure."""
+    stop = ResearchDispatchStop()
+    supplier = finite_supplier(stop, btc=('KEY-ONLY',), eth=())
+    contained = contained_profile()
+    factory = claude_profile_factory(profile=contained, authorization=permission(contained),
+                                     api_key_supplier=supplier, allow_process_start=True,
+                                     allow_api_key_use=True, stop=stop)
+
+    def banner_mismatch(**kwargs):
+        raise ResearchProcessError('research_process_version_mismatch')
+
+    monkeypatch.setattr(cli, 'run_research_process', banner_mismatch)
+    with pytest.raises(ValueError, match='research_claude_call_failed') as caught:
+        factory('crypto_btc').complete(messages_json='[{}]', max_output_tokens=100)
+    assert 'KEY-ONLY' not in ''.join(traceback.format_exception(caught.value))
+    assert supplier.remaining('crypto_btc') == 0
+    assert supplier.remaining('crypto_eth') == 0
 
 
 @pytest.mark.parametrize('team', ['crypto_btc', 'crypto_eth'])

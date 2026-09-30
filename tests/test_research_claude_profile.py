@@ -229,12 +229,32 @@ def test_contained_profile_construction_is_declaration_only(monkeypatch, tmp_pat
     assert list(tmp_path.iterdir()) == []
 
 
-def test_contained_version_output_is_bound_to_the_pinned_cli_version(tmp_path):
-    from polymarket_alpha_lab.research_process_linux import LinuxLaunchSpec
+@pytest.mark.parametrize('banner', [
+    '0.0.0\n',                                   # wrong version, bare
+    '2.1.278\n',                                 # pre-correction bare banner
+    '2.1.279 (Claude Code)\n',                   # drifted version, right shape
+    '2.1.278 (claude code)\n',                   # wrong case/spacing
+])
+def test_contained_version_output_is_bound_to_the_pinned_cli_version(tmp_path, banner):
+    from polymarket_alpha_lab.research_claude_exec import CLAUDE_VERSION
     from tests.test_research_process_linux import fixed_launch
+    assert fixed_launch().expected_version_output == CLAUDE_VERSION + ' (Claude Code)\n'
     with pytest.raises(ValueError, match='profile_invalid'):
         candidate(tmp_path, linux_launch=replace(fixed_launch(),
-                                                 expected_version_output='0.0.0\n'))
+                                                 expected_version_output=banner))
+
+
+@pytest.mark.parametrize('banner', [
+    '2.1.278 (Claude Code)',                     # missing trailing newline
+    '2.1.278 (Claude Code)\n\n',                 # extra line
+    '2.1.278 (Claude Code)\r\n',                 # CR byte
+])
+def test_structurally_malformed_banners_are_refused_before_profile_binding(tmp_path, banner):
+    """Malformed banners never reach profile binding, model launch or
+    credential delivery: the launch policy itself refuses to construct."""
+    from tests.test_research_process_linux import fixed_launch
+    with pytest.raises(ValueError, match='linux_launch_spec_invalid'):
+        replace(fixed_launch(), expected_version_output=banner)
 
 
 @pytest.mark.parametrize('field', ['launch_object', 'launch_env_allowlist'])

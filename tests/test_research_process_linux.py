@@ -13,10 +13,12 @@ import json
 import os
 from pathlib import Path
 import shutil
+import signal
 import subprocess
 import sys
 import threading
 import time
+import types
 
 import pytest
 
@@ -156,7 +158,7 @@ int main(int argc, char **argv) {
     if (has(argc, argv, "--version")) {
         long hang = flag_number(argc, argv, "--pal-version-hang=");
         if (hang > 0) sleep((unsigned)hang);
-        fputs("2.1.278\n", stdout);
+        fputs("2.1.278 (Claude Code)\n", stdout);
         return 0;
     }
     read_stdin();
@@ -410,7 +412,7 @@ def build_native_launch(directory, **launch_changes):
         vendor_guest_path='/pal/vendor/claude',
         helper_guest_path='/pal/runtime/helper.py',
         vendor_size_bytes=size,
-        expected_version_output=CLAUDE_VERSION + '\n',
+        expected_version_output=CLAUDE_VERSION + ' (Claude Code)\n',
         cgroup_root=os.environ['POLYMARKET_ALPHA_LAB_LINUX_CGROUP_ROOT'],
         scratch_size_bytes=64 * 1024 * 1024,
         guest_tmp_size_bytes=32 * 1024 * 1024,
@@ -444,7 +446,7 @@ def fixed_launch():
         vendor_guest_path='/pal/vendor/claude',
         helper_guest_path='/pal/runtime/helper.py',
         vendor_size_bytes=98765432,
-        expected_version_output=CLAUDE_VERSION + '\n',
+        expected_version_output=CLAUDE_VERSION + ' (Claude Code)\n',
         cgroup_root=FIXED_CGROUP)
 
 
@@ -459,7 +461,7 @@ def synthetic_launch(tmp_path=None, **changes):
         vendor_guest_path='/pal/vendor/claude',
         helper_guest_path='/pal/runtime/helper.py',
         vendor_size_bytes=98765432,
-        expected_version_output=CLAUDE_VERSION + '\n',
+        expected_version_output=CLAUDE_VERSION + ' (Claude Code)\n',
         cgroup_root=FIXED_CGROUP)
     values.update(changes)
     return linux.LinuxLaunchSpec(**values)
@@ -749,6 +751,115 @@ def test_cleanup_failure_is_reported_not_swallowed():
         session._cleanup(5)
 
 
+MODEL_PHASE_OUTPUT = b'{"synthetic":"model-output"}'
+
+
+def _driver_session(monkeypatch, record, *, version=None, model=None, cleanup=None,
+                    model_output=(MODEL_PHASE_OUTPUT, 7)):
+    """Fake two-phase session for driver-ordering tests.
+
+    Every phase call is recorded; version/model/cleanup inject failures. The
+    one-use credential channel is written only inside the real run_model_phase
+    (after readiness), so ``'model' in record`` marks the earliest point the
+    credential could ever be released. Nothing real is spawned.
+    """
+
+    class FakeSession:
+        def __init__(self, spec, launch, stop, deadline):
+            record.append('construct')
+
+        def _stopped(self):
+            return False
+
+        def run_version_phase(self):
+            record.append('version')
+            if version is not None:
+                raise version
+
+        def run_model_phase(self, stdin):
+            record.append('model')
+            if model is not None:
+                raise model
+            return model_output
+
+        def _cleanup(self, timeout_ms):
+            record.append('cleanup')
+            return cleanup
+
+    monkeypatch.setattr(linux, '_ContainedSession', FakeSession)
+
+
+def _drive(monkeypatch, tmp_path, stdin=b'{"schema_version":"probe"}'):
+    # Satisfy the driver's fixed platform/SIGCHLD preconditions on any
+    # development host; the session itself is the fake installed above.
+    monkeypatch.setattr(linux, 'sys', types.SimpleNamespace(platform='linux'))
+    monkeypatch.setattr(linux, 'signal', types.SimpleNamespace(
+        SIG_DFL=signal.SIG_DFL, SIGCHLD='placeholder', getsignal=lambda _: signal.SIG_DFL))
+    return linux.run_linux_contained_process(spec=vendor_spec(tmp_path), stdin=stdin,
+                                             launch=synthetic_launch(tmp_path), stop=None)
+
+
+def test_clean_success_returns_after_cleanup_with_exact_bytes(monkeypatch, tmp_path):
+    record = []
+    _driver_session(monkeypatch, record)
+    result = _drive(monkeypatch, tmp_path)
+    assert record == ['construct', 'version', 'model', 'cleanup']
+    assert type(result) is linux.ResearchProcessResult
+    assert result.stdout == MODEL_PHASE_OUTPUT
+    assert result.stderr_bytes == 7
+    assert result.elapsed_ms >= 0
+
+
+def test_cleanup_failure_after_model_success_suppresses_the_output(monkeypatch, tmp_path):
+    """Regression for the return-inside-try defect: a cleanup error recorded
+    by ``finally`` must suppress the successful output and flow through the
+    driver's fixed error handling, never bypass it with an early return."""
+    record = []
+    _driver_session(monkeypatch, record,
+                    cleanup=ResearchProcessError('research_process_cleanup_failed'))
+    with pytest.raises(ResearchProcessError, match='research_process_cleanup_failed'):
+        _drive(monkeypatch, tmp_path)
+    assert record == ['construct', 'version', 'model', 'cleanup']
+
+
+@pytest.mark.parametrize('model_error', [
+    ResearchProcessError('research_process_nonzero_exit'),
+    ValueError('research_process_launch_invalid'),
+])
+def test_cleanup_failure_keeps_precedence_over_ordinary_model_errors(
+        monkeypatch, tmp_path, model_error):
+    """An ordinary model-phase exception is superseded by a cleanup failure,
+    exactly as before the suppression fix."""
+    record = []
+    _driver_session(monkeypatch, record, model=model_error,
+                    cleanup=ResearchProcessError('research_process_cleanup_failed'))
+    with pytest.raises(ResearchProcessError, match='research_process_cleanup_failed'):
+        _drive(monkeypatch, tmp_path)
+    assert record == ['construct', 'version', 'model', 'cleanup']
+
+
+def test_original_interrupts_survive_a_concurrent_cleanup_failure(monkeypatch, tmp_path):
+    record = []
+    _driver_session(monkeypatch, record, model=KeyboardInterrupt('original interrupt'),
+                    cleanup=ResearchProcessError('research_process_cleanup_failed'))
+    with pytest.raises(KeyboardInterrupt):
+        _drive(monkeypatch, tmp_path)
+    assert record == ['construct', 'version', 'model', 'cleanup']
+
+
+def test_version_mismatch_precedes_model_launch_and_credential_release(monkeypatch, tmp_path):
+    """A malformed vendor banner fails inside the version phase: the model
+    namespace is never launched and the one-use credential channel (released
+    only inside run_model_phase after readiness) is never written."""
+    record = []
+    _driver_session(monkeypatch, record,
+                    version=ResearchProcessError('research_process_version_mismatch'))
+    with pytest.raises(ResearchProcessError, match='research_process_version_mismatch'):
+        _drive(monkeypatch, tmp_path)
+    assert record == ['construct', 'version', 'cleanup']
+    assert 'model' not in record
+
+
 def test_helper_source_is_stdlib_only_and_protocol_pinned():
     import ast
     tree = ast.parse(linux.HELPER_SOURCE)
@@ -805,7 +916,11 @@ def test_standin_source_is_synthetic_and_secret_free():
     assert 'api_key' not in STANDIN_C_SOURCE
     assert 'ANTHROPIC' not in STANDIN_C_SOURCE
     assert 'sk-' not in STANDIN_C_SOURCE
-    assert '--version' in STANDIN_C_SOURCE and '2.1.278\\n' in STANDIN_C_SOURCE
+    # The stand-in prints the exact official identity banner for --version,
+    # never the pre-correction bare version line.
+    assert '--version' in STANDIN_C_SOURCE
+    assert (CLAUDE_VERSION + ' (Claude Code)\\n') in STANDIN_C_SOURCE
+    assert (CLAUDE_VERSION + '\\n') not in STANDIN_C_SOURCE
 
 
 @pytest.mark.skipif(not CONTAINMENT_ENABLED, reason='explicit native containment proof is opt-in')
