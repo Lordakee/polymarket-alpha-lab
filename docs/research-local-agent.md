@@ -1251,3 +1251,314 @@ research profile or certifies a provider, model identity, or usage path.
 > The Codex 0.155.1 activation block remains in force. This addendum changes
 > no version, pin, profile, code, test, credential handling, or real-run
 > authorization. WP-02 remains PARTIAL and G2 remains open.
+
+
+## Provider transport and credential ingress design (L8-D; design only)
+
+Baseline: repository main `db6e2291` (2026-09-30). This section is the
+**design-only** deliverable required by the post-L7 ruling
+(DELIVERY_PLAN.md sections 64-65; Codex consultation on baseline
+`4f84f264d8d762c298f4623459aa24923aab4bc0`, ruling item 4 and its
+activation-prerequisite list). It specifies the bounded fixed-origin relay,
+its destination/TLS/identity binding, request and response limits, approved
+preflight handling, stop/driver-loss teardown, parent-only PostgreSQL access
+and private per-call credential supply. It adds no source, no test, no
+constructor and no relaxation of the L5 offline guards: `EGRESS_OFFLINE`
+stays the only accepted `egress_policy` value in
+[research_process_linux.py](../src/polymarket_alpha_lab/research_process_linux.py),
+there is still no `qualified=True` escape and no host-network fallback.
+
+A **mandatory independent design gate** (fresh read-only review subagent,
+Project Iron Rule 4) must return an explicit `VERDICT: PASS` on this design
+or its reviewed amendment before any transport implementation PR starts.
+Real provider calls and real credential use remain unauthorized here;
+`activation_authorized` stays false. The activation-record template and the
+precise subsequent source/test scope live in
+[research-dispatch.md](research-dispatch.md) so the next design gate can
+approve one bounded package.
+
+### The bounded fixed-origin relay
+
+The direction selected by the reviewed L5 plan is a **fixed-origin
+validating request relay** under trusted supervision. The relay is not a
+proxy. It accepts exactly one approved HTTP origin-form request set from the
+contained vendor, validates every byte of framing it can observe, creates the
+upstream HTTPS connection itself, and returns one bounded response per
+request. It provides **no general CONNECT, no SOCKS, no HTTP proxy
+semantics, no tunneling of arbitrary hosts, and no automatic retries** of
+any request, connection, TLS handshake or response.
+
+#### Destination, TLS and the reviewed trust configuration
+
+Every destination decision comes from a **reviewed trust configuration**
+record supplied by the owning application with the profile. It contains,
+and the relay enforces, all of:
+
+- One approved origin: scheme `https`, one exact hostname (the documented
+  default Messages origin is `api.anthropic.com`; the binding value is the
+  reviewed configuration, never a value read from the guest, DNS, the
+  environment or the vendor's request), and port 443. No userinfo, no path,
+  no query in the origin itself.
+- A pinned CA bundle file, admitted and hash-pinned like any L5 runtime
+  artifact (SHA256 plus exact byte size in the configuration). Upstream peer
+  chains validate against this bundle only. The relay never adds ambient
+  system roots, user-installed roots, or the guest's trust material.
+- TLS floor TLS 1.2 (TLS 1.3 when offered); SNI is exactly the approved
+  hostname; certificate hostname matching follows RFC 2818/6125 semantics
+  through the standard library's checked handshake. Renegotiation to weaker
+  parameters and anonymous cipher suites are not used. Revocation (OCSP/
+  CRL) is NOT checked unless the reviewed configuration adds it; that
+  limitation is recorded, not hidden.
+- A reviewed permitted-address rule for DNS results: the relay resolves the
+  approved hostname itself, then connects only to reviewed-allowed address
+  classes on the reviewed port (default: public/global unicast only;
+  loopback, private, link-local, multicast and IPv4-mapped forms are
+  refused). One resolution result set per call; the relay does not re-query
+  to work around a refusal.
+
+The trust configuration is a digest input of the relay-bearing profile
+branch. Changing the hostname, port, CA bundle, permitted-address rule or
+any limit below produces a different profile digest and therefore requires
+a new matching authorization. Nothing in the configuration is discovered at
+run time.
+
+#### Validating request relay semantics
+
+At the inner hop the relay accepts only what the reviewed request set
+declares. For pinned Claude Code `2.1.278` that set is, on today's evidence,
+exactly one `POST /v1/messages?beta=true` Messages request (the documented
+Messages API path with the query the pinned CLI was observed sending), plus
+any separately approved preflight entries from the real-endpoint decision
+below. For EACH request the relay enforces:
+
+- Method: exactly the reviewed method; any other method is refused.
+- Target: origin-form only, with the exact reviewed literal path and query
+  string, unnormalized comparison (no percent-decoding, path folding or
+  query reordering). Absolute-form targets and any `Host` that does not
+  equal the bound local endpoint authority are refused (authority override
+  refusal). The upstream request line and `Host` are reconstructed from the
+  approved origin and are never copied from the guest request.
+- Headers: a reviewed allowlist forwarded verbatim (authentication, content
+  type, accepted encoding, and the documented `anthropic-version` and
+  `anthropic-beta` family actually used by the pinned CLI). An unknown header
+  fails closed. Header cardinality, order class (framing first) and sizes are
+  bounded.
+- Body: exact `Content-Length` framing, bounded size, no chunked
+  transfer-encoding at the inner hop unless separately reviewed. The body
+  crosses to the upstream TLS connection unmodified; the relay never parses,
+  stores, retries or repairs it.
+- Responses: exactly one response per request. Any 3xx status is a failure;
+  `Location` is never followed. 2xx, 4xx and 5xx bytes pass through bounded
+  and are never resent, cached or replayed.
+- Cardinality: at most the reviewed number of requests per contained call
+  (today's evidence: one Messages POST, optionally preceded by approved
+  preflight). An additional or out-of-order request closes the call as
+  failed with no resend.
+
+The relay observes the credential header by necessity (it forwards it
+upstream over TLS). It must not copy the credential, the prompt body, or
+response bytes into any log, digest, audit field or durable store; the only
+relay evidence is fixed outcome codes and byte/counter metadata returned to
+the trusted parent.
+
+#### Finite byte and time bounds
+
+Every channel is bounded before it is opened. The reviewed limits (with
+their default engineering bounds, mirroring the existing spec caps):
+
+| Bound | Default | Failure behavior |
+| --- | --- | --- |
+| `max_relay_request_bytes` per request incl. headers | 16,000,000 | refuse request, fail call, no retry |
+| `max_relay_response_bytes` per response | 32 MiB in 4,096-byte reads | fail call, teardown, no retry |
+| `relay_connect_timeout_ms` (upstream TCP) | 10,000 | fail call |
+| `relay_handshake_timeout_ms` (TLS) | 10,000 | fail call |
+| `relay_idle_timeout_ms` (no byte in either direction) | 30,000 | fail call |
+| `relay_total_ms` (whole relay lifetime per call) | remaining spec budget | fail call, mandatory cleanup |
+
+`relay_total_ms` is a sub-budget of the existing process
+`timeout_ms`, never an extension: the relay must fail fast enough that the
+contained call's existing active deadline and `cleanup_timeout_ms` still
+govern. Time accounting starts when the relay peer starts listening and
+covers DNS, connect, handshake, both hops and teardown. All counters are
+reported as fixed metadata; exceeded caps fail closed. No limit is raised
+automatically after a rejection.
+
+### Offline-netns boundary: where the relay lives, what crosses
+
+The L5 contained client executes inside a `--unshare-net` bubblewrap
+namespace whose only network is an offline namespace-local stack; nothing
+in that namespace can reach host listeners, the parent PostgreSQL port or
+any external address. The relay keeps that boundary intact:
+
+1. **Trusted parent side.** The validating relay engine (HTTP validation,
+   DNS, TLS, upstream socket, limits, counters) runs in the trusted parent
+   domain, outside the vendor cgroup, alongside the existing supervisor.
+   It is a hash-pinned, sealed-artifact peer with its own protocol version
+   (`research-linux-relay-v1`, design name), standard-library only, no
+   database access, no background thread inside the Python parent, and
+   parent-liveness termination. It performs no I/O other than the two relay
+   channels and the one upstream TLS connection per approved request.
+2. **Namespace side.** A dumb inner peer (also a pinned stdlib-only runtime
+   artifact executed by the sealed interpreter inside the namespace, model
+   phase only) brings up the namespace loopback, binds exactly one local
+   endpoint `127.0.0.1:<port>` with `<port>` drawn once per call from the
+   reviewed `[20000, 32767]` native window, and pumps raw bytes between
+   that TCP listener and one inherited anonymous relay channel. It parses
+   no HTTP, holds no credential knowledge, performs no DNS and creates no
+   other socket. The inner hop is plaintext HTTP on namespace-local
+   loopback, isolated to the namespace; the ONLY TLS boundary is parent to
+   provider. The ephemeral port is never a digest input.
+3. **What crosses the boundary, exactly:** the vendor's request bytes
+   (including its authentication header) inner to parent, the validated
+   response/SSE bytes parent to inner, and fixed-code relay metadata
+   returned to supervision after the call. Nothing else crosses: no file
+   descriptors to host paths, no database access from the child, no
+   credentials flowing parent to child through the relay. The per-call
+   credential still travels only the existing L5 one-use anonymous pipe
+   after model-phase readiness into the guest environment
+   (`ANTHROPIC_API_KEY`) exactly as today; the vendor then presents it to
+   the local endpoint.
+   The `ANTHROPIC_BASE_URL` of a relay-bearing profile is exactly the bound
+   numeric-loopback `http://127.0.BIND.ADDRESS:port` declaration of that
+   local endpoint. The existing profile URL contract enforces https (the L7
+   harness overrode the base URL after `prepare` and recorded it as a
+   test-only override, `test_endpoint_override='numeric-loopback-http'`);
+   the v3 relay branch must therefore define a scoped numeric-loopback
+   `http` endpoint form validated only in that branch, leaving v1/v2
+   endpoint validation unchanged.
+
+The guest environment allowlist, namespace set, sealed-artifact execution,
+cgroup placement, two-phase version/model protocol and verified teardown
+are unchanged. A relay-bearing launch policy is a NEW closed `egress_policy`
+value (design name `relay-fixed-origin`) that names this exact boundary; the
+offline value remains the default and remains the only value the current
+constructor accepts. Adding the new value, its validation and its digest
+input is implementation work gated on this design's approval, and it
+invalidates no existing offline golden.
+
+### Approved preflight handling at a real endpoint (design position)
+
+The L7 qualification harness approved one narrow exception: a single
+bodyless, unauthenticated `HEAD` with literal target `/api/hello` toward the
+designated numeric-loopback server, fixed 404, before the single Messages
+POST. **That approval authorizes nothing at a real endpoint.** It was an
+acceptance decision about a synthetic loopback qualification environment,
+and L7's numeric-loopback exception does not carry over. A real-endpoint
+equivalent requires, in order:
+
+1. Demonstration of the exact preflight the pinned CLI actually issues toward
+   the real origin (method, literal unnormalized target, headers, framing,
+   order, cardinality) through the contained path with dummy credentials and
+   a fake service first, then through the approved relay with the reviewed
+   trust configuration.
+2. An explicit reviewed decision (Codex consultation under the standing
+   delegation) approving exactly that demonstrated set as additional entries
+   of the relay's required request set, recorded in the activation record.
+3. Relay enforcement of that set with the same fail-closed semantics as the
+   Messages entry: zero, extra, duplicated or deviating preflight requests
+   fail the call; no request is synthesized, answered locally or retried by
+   the relay to make the CLI continue.
+
+Until a reviewed approval exists (steps 1 and 2), a relay-bearing profile
+must NOT forward any preflight: the unapproved request is refused and the
+call fails. This is a deliberate blocker, not an implementation gap to patch
+by widening the request set.
+
+### Stop and driver-loss teardown for relay-held connections
+
+Every relay component is bounded on every outcome, with no hang and no
+retry:
+
+- **Ordinary stop.** The existing shared `ResearchDispatchStop` is checked
+  inside the relay engine's event loop. On stop the engine performs no new
+  upstream connection or DNS query, immediately tears down open channels,
+  and the vendor tree is terminated through the existing supervisor path.
+  A stop is cooperative: an in-flight upstream exchange may have already
+  happened; the audit keeps its existing failure/unknown semantics.
+- **Any call outcome** (success, decode failure, deadline, byte cap, inner
+  hop failure, vendor exit): the parent closes the inherited relay channel,
+  the engine closes the upstream socket with a bounded discard drain (at
+  most a small fixed byte count, never waiting for upstream EOF or FIN
+  beyond a fixed linger), and the inner peer exits when its channel closes.
+  Relay teardown runs inside the existing `cleanup_timeout_ms` budget.
+- **Driver loss.** The engine peer is created with parent-liveness
+  termination semantics (the same ownership domain as the existing wrapper
+  and supervisor; the namespace already uses `--die-with-parent` for its
+  side). If the Python parent dies, the engine's channels see EOF/ownership
+  loss and exit without completing pending writes; the inner peer dies with
+  the namespace. No relay component daemonizes, persists, reconnects or
+  reschedules.
+- **Teardown failure is an error.** It suppresses a successful result (the
+  contained-process cleanup contract suppresses success once L8-A's
+  corrections land; the relay wiring is sequenced strictly after them), is
+  recorded as a fixed code, and never triggers a resend. External usage may already
+  have occurred; the audit records unknown where it cannot verify. There is
+  no automatic second upstream connection under ANY condition.
+
+### Parent-only PostgreSQL access is unchanged
+
+The relay adds zero database surface. The validating engine performs no
+database I/O: it admits no DSN, imports no database module, reads no
+configuration file and holds no role. All project persistence remains
+exactly as today: only the trusted parent's managed `ProjectPostgres`
+session, through the single audited `validate_local_postgres_dsn` gate, may
+write, and only the existing durable uncapped authorization/call-start/
+outcome paths and dispatch tables. The contained child never gains database
+or network reach beyond the one bound relay endpoint: the offline netns
+keeps the PostgreSQL port unreachable, the guest environment allowlist adds
+no database variables, and relay metadata reaches storage only through the
+existing parent-side audit outcome machinery. No new table, column, audit
+field or migration is introduced by the relay design.
+
+### Private per-call credential supply (operator procedure)
+
+Activation-time credential ingress is an explicit operator procedure, not
+a code path. The ruling's prerequisites bind it:
+
+- **Dedicated principal, never the shared parent.** Credentials are typed
+  only on the dedicated, non-shared runtime principal with documented host
+  trust (see the runtime-isolation prerequisite). They are NEVER supplied
+  through the shared `ubuntu` parent/supplier account; a separate directory
+  or namespace does not protect parent memory from the same UID or
+  privileged observers. If untrusted shared users retain inspection or sudo
+  access, use a dedicated host.
+- **Private local channel into finite per-call slots.** The operator enters
+  each key once through a private local channel on that host (for example
+  an interactive local terminal prompt or an explicitly reviewed local
+  entry helper; never chat, Git, files in the repository, ambient
+  environment variables, argv, stored-secret discovery or logs). The
+  entered values become the explicit in-memory slots of the existing
+  `FiniteInMemoryApiKeySupplier`: construction requires the rotation stop
+  token by identity, one shared lock covers both teams, and admission
+  remains lock, stop check, then permanent consume. No discovery exists
+  anywhere in the chain.
+- **Delayed model-phase delivery is unchanged.** The slot is released only
+  after the durable call-start audit commits and, contained-side, only
+  after version teardown and model-boundary readiness, through the one-use
+  bounded anonymous pipe. A consumed slot stays consumed: stop, byte
+  verification failure, readiness failure or process failure never returns
+  it. An exhausted supplier fails new calls; inert replay still works.
+- **No erasure claim.** Python does not securely erase strings; the key may
+  persist in process memory until exit and is visible to privileged host
+  observers by necessity (relay-forwarded header included). The design
+  claims no protection against a compromised host, CLI or parent.
+- **No credential in evidence.** The key never enters the profile digest,
+  the activation record, audit rows, relay logs, tests or handoffs.
+
+The typed operator assembly `run_claude_research_rotation` in
+[src/polymarket_alpha_lab/research_claude_operator.py](../src/polymarket_alpha_lab/research_claude_operator.py)
+remains the composition point; a relay-bearing profile changes its
+supplier/profile inputs, not this procedure's shape.
+
+
+## L8-D handoff
+
+The bounded relay above, the credential procedure, the real-endpoint
+preflight position and this document's teardown/PG boundaries are the
+reviewed-ready design text. The matching **activation-record template** and
+the **precise subsequent source/test scope** (exact files a future
+implementation PR may touch, with ownership boundaries) are specified in
+[research-dispatch.md](research-dispatch.md) so a single independent design
+gate can approve the whole package. No constructor, profile branch or
+egress value may be added before that gate passes; do not treat this text
+as activation, qualification or a shipped interface.

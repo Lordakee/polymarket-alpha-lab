@@ -629,3 +629,171 @@ stored authorization, two reviewed BTC/ETH batches, the lazy Claude factory, the
 durable call audit and one bounded rotation, and is itself side-effecting when
 invoked. The standalone script still has no real client configuration; no
 default subprocess transport or durable authorization ledger is supplied here.
+
+
+## L8-D activation record template and subsequent transport scope (design only)
+
+Baseline: repository main `db6e2291` (2026-09-30). The post-L7 ruling
+(DELIVERY_PLAN.md sections 64-65) withholds effective activation until a
+Codex-approved pinned activation record binds the delivered engineering, the
+runtime isolation, the credential procedure and the scoped authorization. This
+section supplies the two artifacts that ruling requires from L8-D: the
+**activation record template** and the **precise subsequent source/test scope**.
+The provider transport and credential-ingress design itself is specified in
+[the L8-D section of the local-agent guide](research-local-agent.md#provider-transport-and-credential-ingress-design-l8-d-design-only);
+the two documents are one reviewed package. Everything here is design only:
+
+- Filling or approving a record does NOT flip any activation flag;
+  `activation_authorized` changes only through the explicit Codex activation
+  decision, never automatically when CI turns green.
+- The template is a review schema, not a runnable command, a new persistence
+  table or an API. It is recorded as evidence through the existing
+  documentation/PR path; no migration stores it.
+- Until the design gate passes and every engineering prerequisite has its
+  evidence reference, every field below stays a placeholder.
+
+### Activation record template
+
+```text
+activation_record_id : <operator-chosen unique ID>
+created_utc          : <UTC>
+status               : blocked | approved-not-yet-effective | effective
+deciding_authority   : Codex consultation <verdict artifact reference>
+valid_window_utc     : <from>/<to> (must cover the whole intended run)
+
+baseline_pins
+  repository         : <URL>
+  commit_sha         : <full commit>
+  tree_sha           : <full tree; worktree clean at recording>
+  branch             : <retained branch>
+
+runtime_isolation
+  host_id            : <dedicated host identity>
+  host_trust_doc     : <reference to documented host trust>
+  principal          : <dedicated non-shared UID/name; NEVER the shared
+                        ubuntu parent/supplier>
+  attestation        : <who verified, when, how; result of the
+                        shared-observer/inspection/sudo check>
+
+engineering_prerequisites   (each field cites its evidence; all mandatory)
+  cleanup_corrections       : <L8-A commit + review verdicts>
+  relay_design_gate         : <this design + independent VERDICT: PASS>
+  relay_implementation      : <relay PR commit + final review verdict>
+  contained_qualification   : <official supplied-image run through the
+                              actual contained factory/model path with a
+                              fake service and dummy credentials>
+  reply_composition         : <L8-B evidence reference>
+  recovery_evidence         : <L8-C evidence reference>
+
+pins
+  vendor_image       : <path, byte size, SHA256, version>
+  wrapper            : <SHA256, size>
+  helper             : <SHA256, protocol version>
+  interpreter        : <SHA256, size>
+  runtime_closure    : <per-file guest path, SHA256, size>
+  relay              : engine peer <SHA256, protocol version
+                       research-linux-relay-v1>, inner peer <SHA256>
+  trust_configuration: origin hostname, port, CA bundle <SHA256, size>,
+                       permitted-address rule, TLS floor
+  profile            : schema_version, contract_sha256
+
+provider_and_model
+  provider           : Anthropic Messages via the pinned Claude Code CLI
+  model_id / effort / cli_version : <exact pinned values>
+
+reviewed_requests
+  rotation/batch/turn IDs : <exact IDs>
+  request_roster     : 1..100 exact (record_id, content_sha256) pairs
+  authorization      : authorization_id, adapter_contract_sha256,
+                       approved_utc, expires_utc
+  input_review       : <reference to the reviewed BTC/ETH inputs>
+
+finite_limits
+  dispatch           : max_tasks, max_workers, turn count
+  supplier_slots     : per-team slot counts (consumed permanently)
+  process            : timeout_ms, cleanup_timeout_ms, stdin/stdout/
+                       stderr caps, memory/pids/scratch caps
+  relay              : request/response byte caps, connect/handshake/
+                       idle/total deadlines
+  stop               : stop token binding <identity requirement>
+
+scoped_pg_writes
+  project_root       : <root; DSN via validate_local_postgres_dsn only>
+  permitted_classes  : uncapped authorization row, call-start rows,
+                       outcome rows, batch/turn reservation rows <exact>
+  prohibition        : no other writes; no new migrations unless
+                       separately reviewed
+
+preflight_set        : <approved entries: method, literal target, query,
+                       header constraints; approval decision references;
+                       empty means no preflight is forwarded>
+
+credential_supply
+  channel            : <private local channel description on the
+                        dedicated principal>
+  slots_supplied     : <counts per team>
+  attestation        : no chat/Git/env/argv/file/log/stored-secret use;
+                        no secure-erasure claim
+
+identity_and_usage
+  expected_identity  : <what the provider must report/serve>
+  check_method       : <how actual identity/usage is verified at
+                        acceptance; mismatch stops further admission>
+  unknown_billing    : remains unknown; never recorded as zero
+
+evidence
+  commands_results   : <exact commands, outputs, first failures,
+                        retries, skipped and unexecuted steps>
+
+sign_off             : operator + Codex approval references
+```
+
+### Precise subsequent source and test scope
+
+A future transport implementation PR may touch exactly the files below.
+Anything outside this list, any relaxation of an offline guard, any online
+constructor added before the design gate, and any scope growth beyond these
+boundaries requires a newly reviewed design amendment first.
+
+| File | Change | Boundary |
+| --- | --- | --- |
+| `src/polymarket_alpha_lab/research_linux_relay.py` | NEW | Trusted-parent validating relay engine, inner-peer source, reviewed trust-configuration record, fixed outcome codes. Standard library only; no database import; no background thread in the Python parent. |
+| `src/polymarket_alpha_lab/research_process_linux.py` | MODIFIED (bounded) | Closed `relay-fixed-origin` policy value, inherited relay channel staging (model phase only), digest input, teardown integration. Offline default, offline validation and offline goldens byte-unchanged; no `qualified=` escape. Strictly after L8-A's corrections land. |
+| `src/polymarket_alpha_lab/research_claude_profile.py` | MODIFIED (bounded) | New `research-claude-profile-linux-v3` digest branch binding the relay trust configuration and a v3-scoped numeric-loopback `http` endpoint form (v1/v2 https validation unchanged). v1/v2 digest bytes unchanged. |
+| `src/polymarket_alpha_lab/research_claude_operator.py` | MODIFIED (opt-in wiring) | Accept a relay-bearing profile/trust configuration in the typed assembly. No discovery, no default client. |
+| `tests/test_research_linux_relay.py` | NEW | Validation matrix: origin/method/target/query/header allowlist, authority-override refusal, redirect refusal, cardinality, DNS/permitted-address constraints, byte/time bounds, teardown on every outcome, no-retry, absence of CONNECT/SOCKS. |
+| `tests/test_research_process_linux.py` | MODIFIED (additive) | Relay channel staging/cleanup; all offline regressions retained unchanged. |
+| `tests/test_research_claude_profile.py` | MODIFIED (additive) | v3 digest golden plus v1/v2 immutability counterexamples. |
+| `tests/test_research_claude_linux.py` | MODIFIED (additive) | Contained composition through the actual factory/client path against a synthetic loopback upstream with a dummy key. |
+| `tests/test_research_claude_relay_native.py` | NEW (opt-in) | Official supplied-image qualification through the actual contained factory/model path with a fake service and dummy credentials, gated by explicit environment opt-ins exactly like the existing supplied-image probe. |
+
+Ownership boundaries for the implementation phase: the relay module plus its
+new test file form one write scope; the `research_process_linux.py` wiring plus
+its test additions form a second, strictly sequenced after L8-A; the profile
+v3/operator wiring plus its tests form a third; the opt-in native
+qualification is a fourth. No two workers hold the same file; the coordinator
+alone updates `DELIVERY_PLAN.md`. Every scope keeps its focused tests, full
+verification, labeled self-review and a final independent read-only review
+with an explicit verdict. Audit-semantics changes inside
+`tests/test_project_postgres_uncapped_audit_native.py` remain L8-C's owned
+surface and enter only through a separately reviewed amendment.
+
+### Scope sequencing note
+
+Scope 1 (`research_linux_relay.py` + its tests) must land before scope 3
+(the v3 digest branch binds the relay trust-configuration record type that
+scope 1 defines), in addition to the stated L8-A dependency of scope 2.
+Scopes 1 and 4 remain parallel-safe.
+
+### Gate ordering
+
+1. This design package (both documents) receives the mandatory independent
+   design gate verdict before any file above changes.
+2. Implementation proceeds only inside the enumerated scope, one owned scope
+   per worker, offline guards untouched.
+3. The relay qualification runs use fake services and dummy credentials first;
+   the official-image composition check is the ruling's new prerequisite, not
+   a repeat of L7 acceptance.
+4. An activation record filled from a completed tree is returned to Codex for
+   the effective activation decision. Nothing in steps 1-3 activates real
+   research, flips `activation_authorized`, or authorizes real credential use.
