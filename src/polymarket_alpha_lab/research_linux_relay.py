@@ -14,15 +14,16 @@ bounded response per request. There is no CONNECT, no SOCKS, no HTTP proxy
 semantics, no tunneling of arbitrary hosts and no automatic retry of any
 request, connection, TLS handshake or response.
 
-Slice boundary (deliberate omission): the plan's INNER_PEER_SOURCE and
-STAGE_SOURCE constants are NOT implemented in this file yet. They depend on
-the concurrently drafted design amendment that decides how the relay channel
-crosses the bubblewrap namespace boundary, and they land only after that
-amendment passes its plan gate - either in a follow-up slice of this same
-module or beside it. This module compiles, imports and is fully testable
-without them; the engine constant below only requires the two inherited relay
-channel halves (a single bidirectional descriptor may be named twice for both
-halves), so it stays valid under either crossing decision.
+Crossing decision (L9 Amendment 1, DELIVERY_PLAN.md section 67): the design
+amendment passed its plan gate and resolved the crossing as an INHERITED
+AF_UNIX socketpair descriptor kept alive through the existing staging
+keep-set, so the separately planned INNER_PEER_SOURCE and STAGE_SOURCE
+constants never exist as names. The namespace side of the crossing lives in
+RELAY_HELPER_SOURCE below: the frozen offline helper structure plus strictly
+additive relay branches (CONF relay keys, keep-set membership, two PAL_RELAY_*
+setenv values in the model phase only, and the dumb guest byte pump forked
+before the credential read). The trusted parent still binds the engine to
+the two inherited relay channel halves exactly as before.
 
 This module is pure standard library with ZERO project imports and performs no
 I/O at import time. It stores no credential, prompt or response byte anywhere:
@@ -43,6 +44,11 @@ RELAY_ORIGIN_PORT = 443
 RELAY_TLS_FLOOR = 'tls12'
 RELAY_LOOPBACK_BIND_ADDRESS = '127.0.0.1'
 ENDPOINT_BINDING = 'per-call-numeric-loopback-http'
+# The engine caps each per-phase timeout (connect/handshake/idle) at one
+# hour; the parent-side record admits exactly the same tighter bound so
+# every constructible trust configuration is engine-admissible (R-W1 NOTE-5:
+# the parent previously admitted up to RELAY_TOTAL_TIMEOUT_CAP_MS on these
+# three, which the engine would have refused as relay_config_invalid).
 
 # Bounds table from the reviewed L8-D design (default engineering bounds).
 MAX_RELAY_REQUEST_BYTES = 16_000_000          # per request incl. headers
@@ -52,6 +58,7 @@ RELAY_CONNECT_TIMEOUT_MS = 10_000             # upstream TCP connect
 RELAY_HANDSHAKE_TIMEOUT_MS = 10_000           # upstream TLS handshake
 RELAY_IDLE_TIMEOUT_MS = 30_000                # no byte in either direction
 RELAY_TOTAL_TIMEOUT_CAP_MS = 24 * 60 * 60 * 1000
+RELAY_PHASE_TIMEOUT_CAP_MS = 3_600_000        # engine's per-phase bound
 RELAY_PORT_WINDOW = (20000, 32767)            # per-call native draw window
 MAX_RELAY_HEADER_COUNT = 32
 MAX_RELAY_HEADER_BYTES = 8192                 # single header line
@@ -64,8 +71,11 @@ RELAY_HOSTNAME_MAX_BYTES = 253
 PERMITTED_ADDRESS_RULES = frozenset((
     'public-global-unicast-only', 'qualification-loopback-only'))
 
-# Closed outcome vocabulary. Every engine report and every call result uses
-# exactly one of these fixed codes; no other outcome string exists.
+# Closed outcome vocabulary for call results: every call_done/engine_done
+# code is exactly one of these fixed strings (R-W1 NOTE-4: the engine also
+# reports the two startup error codes below, which terminate it before any
+# call exists; RELAY_REPORT_VOCABULARY is the closed union covering every
+# code any engine report line can carry).
 RELAY_OUTCOMES = frozenset((
     'relay_ok', 'relay_stopped', 'relay_parent_lost',
     'relay_refused_method', 'relay_refused_target', 'relay_refused_authority',
@@ -76,6 +86,13 @@ RELAY_OUTCOMES = frozenset((
     'relay_total_timeout', 'relay_channel_failed', 'relay_teardown_failed',
     'relay_preflight_not_approved',
 ))
+
+# Closed startup report codes (pre-call engine termination codes).
+RELAY_REPORT_CODES = frozenset(('relay_config_invalid',
+                                'relay_ca_pin_mismatch'))
+# The complete closed report vocabulary: every code any engine report line
+# can ever carry (the 20 call outcomes plus the 2 startup error codes).
+RELAY_REPORT_VOCABULARY = RELAY_OUTCOMES | RELAY_REPORT_CODES
 
 FRAMING_HEADER_NAMES = frozenset(('content-length', 'transfer-encoding'))
 FORWARDED_HEADER_NAMES = frozenset((
@@ -475,6 +492,11 @@ class _Response:
                 if self.fed > head_cap:
                     return 'relay_channel_failed', 0
                 return None, 0
+            if end + 4 > head_cap:
+                # R-W1 MINOR-2: a head completed by the read that crossed the
+                # cap is still over the cap; the completing read never
+                # bypasses the bound (matches the split-arrival refusal).
+                return 'relay_channel_failed', 0
             head = bytes(self.buf[:end])
             lines = head.split(b'\\r\\n')
             parts = lines[0].split(b' ')
@@ -534,7 +556,12 @@ class _Response:
                         self.state = 'data'
                 elif line == b'':
                     self.complete = True
-                    return 'relay_ok_complete', max(self.fed - self.released, 0)
+                    # R-W1 MINOR-1: cap the release at the end of the
+                    # terminal chunk framing exactly like length-mode; bytes
+                    # that arrived in the same block after the terminal
+                    # 0 CRLF CRLF are never released.
+                    return 'relay_ok_complete', max(min(self.fed, end + 2)
+                                                    - self.released, 0)
                 self.walk = end + 2
             else:
                 if self.fed - self.walk < self.need + 2:
@@ -945,6 +972,13 @@ def main():
                             refuse_request('relay_refused_framing')
                             del inbuf[:]
                         continue
+                    if marker + 4 > limits['max_head_bytes']:
+                        # R-W1 MINOR-2: the completing read is bound by the
+                        # same cap as every partial one; a terminator found
+                        # inside the read that crossed the cap never rescues
+                        # a head that is over the bound.
+                        refuse_request('relay_refused_framing')
+                        continue
                     head = bytes(inbuf[:marker])
                     excess_after = bytes(inbuf[marker + 4:])
                     del inbuf[:]
@@ -991,6 +1025,756 @@ if __name__ == '__main__':
 def _engine_digest():
     """Digest of the exact engine source bytes (helper-digest pattern)."""
     return sha256(ENGINE_SOURCE.encode('utf-8')).hexdigest()
+
+
+# The second checked-in stdlib helper (L9 Amendment 1, DELIVERY_PLAN.md
+# section 67): the frozen offline supervisor/guest helper structure plus
+# STRICTLY ADDITIVE relay-model branches only - the CONF relay keys, the
+# staging keep-set membership, exactly two PAL_RELAY_* setenv values in the
+# model-phase wrapper argv, and the dumb namespace-side byte pump the guest
+# forks BEFORE the credential read (one drawn-port bind, exactly one served
+# connection, bind failure exits 92 with no second draw). Standard library
+# only; no application or database imports; offline behavior byte-identical
+# to research_process_linux.HELPER_SOURCE whenever the CONF carries no relay
+# keys. The relay launch machinery selects THIS source by egress; nothing
+# here is executed on a non-Linux development host.
+RELAY_HELPER_SOURCE = '''# Trusted containment helper (protocol research-linux-helper-v1).
+# Standard library only: no application or PostgreSQL imports.
+# Modes: supervise (outside the vendor cgroup) and guest (namespace entry).
+import hashlib
+import json
+import os
+import select
+import signal
+import socket
+import sys
+import time
+
+CHUNK = 65536
+_RUNNING = object()
+# Canonical channel numbers installed by THIS process at startup: fd 0 is the
+# control pipe (supervisor stdin), 1/2 relay vendor stdout/stderr, and the
+# four CONF-listed channels are placed at 3..6 here, never in the parent.
+CONTROL_FD, RELAY_OUT_FD, RELAY_ERR_FD, REPORT_FD, LIVENESS_FD, PROMPT_FD, CREDENTIAL_FD = range(7)
+
+
+def _write_all(fd, data):
+    view = memoryview(data)
+    while view:
+        try:
+            written = os.write(fd, view)
+        except BlockingIOError:
+            select.select([], [fd], [], 1.0)
+            continue
+        view = view[written:]
+
+
+def _read_line(fd, limit):
+    data = bytearray()
+    while len(data) < limit:
+        block = os.read(fd, min(4096, limit - len(data)))
+        if not block:
+            raise EOFError('channel closed')
+        data.extend(block)
+        if data.endswith(b'\\n'):
+            return bytes(data[:-1])
+    raise ValueError('line too long')
+
+
+def _report(fd, value):
+    _write_all(fd, json.dumps(value, separators=(',', ':')).encode('utf-8') + b'\\n')
+
+
+def _now_ms():
+    return time.monotonic_ns() // 1000000
+
+
+def _close_except(keep):
+    for name in os.listdir('/proc/self/fd'):
+        try:
+            number = int(name)
+        except ValueError:
+            continue
+        if number not in keep:
+            try:
+                os.close(number)
+            except OSError:
+                pass
+
+
+def _install_channels(cfg):
+    # Place the CONF-listed inherited channels at the canonical numbers inside
+    # THIS fresh process only; the parent never touches its own descriptors.
+    for target, name in ((REPORT_FD, 'report_fd'), (LIVENESS_FD, 'liveness_fd'),
+                         (PROMPT_FD, 'prompt_fd'), (CREDENTIAL_FD, 'credential_fd')):
+        source = cfg[name]
+        if source != target:
+            os.dup2(source, target)
+            os.close(source)
+
+
+def _enable_root_controls(root):
+    # The delegated root must expose the memory/pids controller files to its
+    # children. Enabling them here configures only the test-owned delegated
+    # subtree; leftover empty per-call directories from crashed runs are
+    # removed so the enable write can succeed.
+    target = os.path.join(root, 'cgroup.subtree_control')
+
+    def enabled():
+        with open(target) as handle:
+            active = handle.read().split()
+        return 'memory' in active and 'pids' in active
+
+    def attempt():
+        with open(target, 'w') as handle:
+            handle.write('+memory +pids\\n')
+        return enabled()
+
+    if enabled():
+        return
+    try:
+        if attempt():
+            return
+    except OSError:
+        pass
+    for name in os.listdir(root):
+        if name.startswith('pal-call-'):
+            try:
+                os.rmdir(os.path.join(root, name))
+            except OSError:
+                pass
+    if not attempt():
+        raise OSError('delegated cgroup controllers cannot be enabled')
+
+
+class Cgroup:
+    def __init__(self, cfg):
+        self.path = os.path.join(cfg['cgroup_root'], cfg['alloc_name'])
+        self.controls = (('memory.max', str(cfg['memory_max_bytes'])),
+                         ('memory.swap.max', str(cfg['memory_swap_max_bytes'])),
+                         ('pids.max', str(cfg['pids_max'])))
+
+    def _write(self, name, value):
+        with open(os.path.join(self.path, name), 'w') as handle:
+            handle.write(value + '\\n')
+
+    def _read(self, name):
+        with open(os.path.join(self.path, name)) as handle:
+            return handle.read().strip()
+
+    def create(self):
+        os.mkdir(self.path)
+        for name, value in self.controls:
+            self._write(name, value)
+            if self._read(name) != value:
+                raise OSError('cgroup control not enforced: ' + name)
+
+    def admit(self, pid):
+        self._write('cgroup.procs', str(pid))
+        if str(pid) not in self._read('cgroup.procs').split():
+            raise OSError('cgroup admission failed')
+
+    def kill(self, deadline_ms):
+        try:
+            self._write('cgroup.kill', '1')
+        except OSError:
+            pass
+        while _now_ms() < deadline_ms:
+            if not self._read('cgroup.procs').split():
+                return True
+            time.sleep(0.01)
+        return not self._read('cgroup.procs').split()
+
+
+def _bwrap_argv(cfg, mode):
+    guest = cfg['guest']
+    artifacts = [cfg['wrapper_fd'], cfg['helper_fd'], cfg['interp_fd'], cfg['vendor_fd']]
+    artifacts.extend(item['fd'] for item in cfg['runtime'])
+    argv = ['bwrap', '--unshare-user', '--unshare-ipc', '--unshare-pid',
+            '--unshare-net', '--unshare-uts', '--die-with-parent', '--new-session',
+            '--cap-drop', 'ALL', '--clearenv', '--dev', '/dev', '--proc', '/proc']
+    binds = ((cfg['vendor_fd'], guest['vendor'], '0555'),
+             (cfg['interp_fd'], guest['interp'], '0555'),
+             (cfg['helper_fd'], guest['helper'], '0444'))
+    binds = binds + tuple((item['fd'], item['guest'], '0555') for item in cfg['runtime'])
+    for source_fd, target, perms in binds:
+        # --ro-bind-data copies the exact sealed-descriptor bytes into the
+        # namespace at setup: descriptor-bound (no pathname reopen), with the
+        # executable/library mode pinned by --perms.
+        argv += ['--perms', perms, '--ro-bind-data', str(source_fd), target]
+    if mode == 'model':
+        # The one-use credential pipe is copied into the namespace at setup:
+        # bwrap consumes it (read to EOF), so the copy completes only when the
+        # parent releases the credential after readiness.
+        argv += ['--perms', '0400', '--ro-bind-data', str(CREDENTIAL_FD),
+                 guest['credential']]
+    # bubblewrap 0.11 removed --sizelimit; --size precedes its --tmpfs.
+    argv += ['--size', str(cfg['scratch_size_bytes']), '--tmpfs', guest['scratch'],
+             '--size', str(cfg['tmp_size_bytes']), '--tmpfs', '/tmp']
+    for key, value in cfg['env_pairs']:
+        argv += ['--setenv', key, value]
+    for key, value in (('PYTHONHOME', '/pal/runtime'),
+                       ('PAL_GUEST_HOME', guest['home']), ('PAL_GUEST_CONFIG', guest['config']),
+                       ('PAL_GUEST_WORK', guest['work']), ('PAL_GUEST_SCRATCH', guest['scratch']),
+                       ('PAL_GUEST_PATH_BIN', guest['path_bin']),
+                       ('PAL_GUEST_LD', guest['ld_library_path']),
+                       ('PAL_PASSTHROUGH', ','.join(cfg['passthrough_env_keys'])),
+                       ('PAL_CREDENTIAL_FILE',
+                        guest['credential'] if mode == 'model' else 'none')):
+        argv += ['--setenv', key, value]
+    if mode == 'model' and 'relay_channel_fd' in cfg:
+        # Relay model phase: the inherited channel descriptor number and
+        # the one drawn relay port cross into the namespace as PAL_RELAY_*
+        # setenv values only - never a bind source and never a pathname.
+        # The version-phase argv never carries them.
+        argv += ['--setenv', 'PAL_RELAY_CHANNEL_FD', str(cfg['relay_channel_fd']),
+                 '--setenv', 'PAL_RELAY_PORT', str(cfg['relay_port'])]
+    tail = cfg['model_argv_tail'] if mode == 'model' else cfg['version_argv_tail']
+    return argv + [guest['interp'], '-S', '-B', guest['helper'], 'guest', mode,
+                   guest['vendor']] + list(tail)
+
+
+def _stage(cfg, cgroup, mode, cred_source_fd):
+    stdin_r, stdin_w = os.pipe()
+    stdout_r, stdout_w = os.pipe()
+    stderr_r, stderr_w = os.pipe()
+    gate_r, gate_w = os.pipe()
+    # The one-use credential channel is created by the parent before the
+    # supervisor starts and released only after model readiness. Its read end
+    # is passed down unread: the credential value never enters this process,
+    # and the wrapper consumes it once via --ro-bind-data.
+    cred_r = cred_source_fd if mode == 'model' else None
+    pid = os.fork()
+    if pid == 0:
+        try:
+            os.dup2(stdin_r, 0)
+            os.dup2(stdout_w, 1)
+            os.dup2(stderr_w, 2)
+            artifacts = {cfg['helper_fd'], cfg['interp_fd'], cfg['vendor_fd']}
+            artifacts.update(item['fd'] for item in cfg['runtime'])
+            keep = {0, 1, 2, gate_r} | artifacts
+            if cred_r is not None:
+                keep.add(cred_r)
+            if mode == 'model' and 'relay_channel_fd' in cfg:
+                # The inherited relay channel joins the keep-set so it
+                # survives the wrapper exec into the namespace.
+                keep.add(cfg['relay_channel_fd'])
+            _close_except(keep)
+            for fd in keep - {0, 1, 2}:
+                try:
+                    os.set_inheritable(fd, True)
+                except OSError:
+                    pass
+            # The bootstrap waits until the supervisor has placed it in the
+            # cgroup and verified the controls; only then may the wrapper run.
+            if os.read(gate_r, 1) != b'R':
+                os._exit(96)
+            # Each wrapper run consumes the artifact descriptors to EOF (the
+            # fd copy reads to end); rewind so the next phase copies the full
+            # sealed snapshot again.
+            for fd in artifacts:
+                os.lseek(fd, 0, os.SEEK_SET)
+            # The wrapper executes from its pathname after re-verifying the
+            # admitted bytes: the host profiles the real bubblewrap path for
+            # user namespaces (a memfd-exec'd copy runs restricted and cannot
+            # configure the offline network namespace).
+            digest = hashlib.sha256()
+            size = 0
+            wrapper_fd = os.open(cfg['wrapper_path'], os.O_RDONLY)
+            while True:
+                block = os.read(wrapper_fd, 65536)
+                if not block:
+                    break
+                digest.update(block)
+                size += len(block)
+            os.close(wrapper_fd)
+            if (digest.hexdigest() != cfg['wrapper_sha256']
+                    or size != cfg['wrapper_size_bytes']):
+                os._exit(97)
+            os.execv(cfg['wrapper_path'], _bwrap_argv(cfg, mode))
+        except BaseException:
+            os._exit(98)
+        os._exit(98)
+    for fd in (stdin_r, stdout_w, stderr_w, gate_r):
+        os.close(fd)
+    if cred_r is not None:
+        os.close(cred_r)
+    try:
+        cgroup.admit(pid)
+    except BaseException:
+        os.kill(pid, signal.SIGKILL)
+        try:
+            os.waitpid(pid, 0)
+        except OSError:
+            pass
+        for fd in (stdin_w, stdout_r, stderr_r, gate_w):
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        raise
+    os.write(gate_w, b'R')
+    os.close(gate_w)
+    return {'pid': pid, 'stdin_w': stdin_w, 'stdout_r': stdout_r,
+            'stderr_r': stderr_r}
+
+
+def _try_reap(pid):
+    try:
+        done, status = os.waitpid(pid, os.WNOHANG)
+    except ChildProcessError:
+        return None
+    return status if done == pid else _RUNNING
+
+
+def _reap(pid, deadline_ms):
+    while _now_ms() < deadline_ms:
+        status = _try_reap(pid)
+        if status is not _RUNNING:
+            return status
+        time.sleep(0.01)
+    return _RUNNING
+
+
+def _classify_stderr(sniff):
+    text = bytes(sniff)
+    for marker in (b'--pass-fd', b'Unknown option', b'unrecognized option'):
+        if marker in text:
+            return 'wrapper_option_unsupported'
+    return None
+
+
+def _run_version(cfg, cgroup, report_fd, liveness_fd, remaining_ms):
+    deadline = _now_ms() + max(remaining_ms, 1)
+    staged = _stage(cfg, cgroup, 'version', None)
+    stdout = bytearray()
+    sniff = bytearray()
+    stderr_bytes = 0
+    failure = None
+    exit_code = None
+    status = _RUNNING
+    out_open = err_open = True
+    try:
+        while out_open or err_open or status is _RUNNING:
+            if _now_ms() >= deadline:
+                failure = failure or 'phase_timeout'
+                break
+            try:
+                readable, _, _ = select.select(
+                    [fd for fd in (staged['stdout_r'], staged['stderr_r'], liveness_fd)
+                     if fd is not None], [], [], 0.05)
+            except InterruptedError:
+                continue
+            if liveness_fd in readable and not os.read(liveness_fd, 1):
+                return 'parent_lost'
+            if staged['stdout_r'] in readable:
+                block = os.read(staged['stdout_r'], CHUNK)
+                if block == b'':
+                    staged['stdout_r'] = None
+                    out_open = False
+                else:
+                    stdout.extend(block)
+                    if len(stdout) > cfg['max_version_output_bytes']:
+                        failure = failure or 'version_output_limit'
+                        break
+            if staged['stderr_r'] in readable:
+                block = os.read(staged['stderr_r'], CHUNK)
+                if block == b'':
+                    staged['stderr_r'] = None
+                    err_open = False
+                else:
+                    stderr_bytes += len(block)
+                    if len(sniff) < 4096:
+                        sniff.extend(block[:4096 - len(sniff)])
+            status = _try_reap(staged['pid'])
+            if status is not _RUNNING and not out_open and not err_open:
+                break
+        if failure is None and status is _RUNNING:
+            # A failed phase must not wait on a possibly still-running vendor;
+            # the teardown below kills it. A successful phase gets the same
+            # extra window as teardown so a loaded host cannot turn a clean
+            # exit into an unreaped child.
+            status = _reap(staged['pid'], deadline + 5000)
+        if status is not _RUNNING and status is not None:
+            exit_code = os.waitstatus_to_exitcode(status)
+        if failure is None and exit_code is not None:
+            if exit_code != 0:
+                failure = _classify_stderr(sniff) or 'version_nonzero_exit'
+            elif stderr_bytes != 0:
+                failure = _classify_stderr(sniff) or 'version_stderr_nonzero'
+            elif bytes(stdout).hex() != cfg['expected_version_output_hex']:
+                failure = 'version_mismatch'
+    finally:
+        if not cgroup.kill(deadline + 5000):
+            failure = failure or 'teardown_failed'
+        _reap(staged['pid'], _now_ms() + 5000)
+        for name in ('stdin_w', 'stdout_r', 'stderr_r'):
+            if staged[name] is not None:
+                try:
+                    os.close(staged[name])
+                except OSError:
+                    pass
+    _report(report_fd, {'type': 'version_done', 'code': failure, 'exit_code': exit_code,
+                        'stderr_bytes': stderr_bytes})
+    return failure is None
+
+
+def _run_model(cfg, cgroup, report_fd, liveness_fd, prompt_fd, out_fd, err_fd, remaining_ms):
+    deadline = _now_ms() + max(remaining_ms, 1)
+    prompt_buf = bytearray()
+    out_buf = bytearray()
+    err_buf = bytearray()
+    sniff = bytearray()
+    out_total = 0
+    err_total = 0
+    prompt_open = True
+    failure = None
+    exit_code = None
+    status = _RUNNING
+    try:
+        # Readiness precedes staging: the wrapper blocks consuming the
+        # one-use credential channel during setup, so the credential crosses
+        # only after the parent sees ready and releases it.
+        _report(report_fd, {'type': 'ready'})
+        staged = None
+        while staged is None:
+            staged = _stage(cfg, cgroup, 'model', CREDENTIAL_FD)
+        os.set_blocking(staged['stdin_w'], False)
+        os.set_blocking(out_fd, False)
+        os.set_blocking(err_fd, False)
+        while status is _RUNNING:
+            if _now_ms() >= deadline:
+                failure = failure or 'phase_timeout'
+                break
+            watched = [fd for fd in (staged['stdout_r'], staged['stderr_r'], liveness_fd)
+                       if fd is not None]
+            if prompt_open:
+                watched.append(prompt_fd)
+            writers = [fd for fd, buf in ((staged['stdin_w'], prompt_buf),
+                                          (out_fd, out_buf), (err_fd, err_buf))
+                       if fd is not None and buf]
+            try:
+                readable, writable, _ = select.select(watched, writers, [], 0.05)
+            except InterruptedError:
+                continue
+            if liveness_fd in readable and not os.read(liveness_fd, 1):
+                return 'parent_lost'
+            if prompt_open and prompt_fd in readable:
+                block = os.read(prompt_fd, CHUNK)
+                if block == b'':
+                    # Parent EOF: stop accepting, but every accepted byte
+                    # must still reach guest stdin before its own EOF.
+                    prompt_open = False
+                    try:
+                        os.close(prompt_fd)
+                    except OSError:
+                        pass
+                elif block:
+                    prompt_buf.extend(block)
+            for fd, buf in ((staged['stdin_w'], prompt_buf), (out_fd, out_buf),
+                            (err_fd, err_buf)):
+                if fd is not None and fd in writable and buf:
+                    try:
+                        written = os.write(fd, buf)
+                    except BlockingIOError:
+                        written = 0
+                    except OSError:
+                        # Input conservation is the invariant on the prompt
+                        # relay; an output pipe failure is a relay failure,
+                        # not a lost-prompt condition.
+                        failure = failure or ('model_input_incomplete'
+                            if fd is staged['stdin_w'] else 'model_relay_failed')
+                        written = 0
+                    del buf[:written]
+            if (not prompt_open and not prompt_buf
+                    and staged['stdin_w'] is not None):
+                fd, staged['stdin_w'] = staged['stdin_w'], None
+                os.close(fd)
+            # Relay byte caps mirror the parent's output limits: exceeding one
+            # fails the phase immediately instead of buffering unboundedly.
+            if staged['stdout_r'] in readable:
+                block = os.read(staged['stdout_r'], CHUNK)
+                if block:
+                    out_total += len(block)
+                    if out_total > cfg['max_stdout_bytes']:
+                        failure = failure or 'model_output_limit'
+                    else:
+                        out_buf.extend(block)
+            if staged['stderr_r'] in readable:
+                block = os.read(staged['stderr_r'], CHUNK)
+                if block:
+                    err_total += len(block)
+                    if len(sniff) < 4096:
+                        sniff.extend(block[:4096 - len(sniff)])
+                    if err_total > cfg['max_stderr_bytes']:
+                        failure = failure or 'model_output_limit'
+                    else:
+                        err_buf.extend(block)
+            if failure == 'model_output_limit':
+                break
+            status = _try_reap(staged['pid'])
+        if failure is None and status is _RUNNING:
+            # A failed phase (for example the output cap) must not wait on a
+            # still-running vendor; the teardown below kills it. A successful
+            # phase gets the same extra window as teardown so a loaded host
+            # cannot turn a clean exit into an unreaped child.
+            status = _reap(staged['pid'], deadline + 5000)
+        if status is not _RUNNING and status is not None:
+            exit_code = os.waitstatus_to_exitcode(status)
+        # Drain guest pipes to EOF; teardown kills escaped descendants still
+        # holding the write ends. Totals stay capped here too. A cap breach
+        # skips the drains: fail fast inside the caller's deadline.
+        if failure is not None:
+            staged['stdout_r'] = None
+            staged['stderr_r'] = None
+            out_buf = bytearray()
+            err_buf = bytearray()
+            prompt_buf = bytearray()
+        drain_deadline = _now_ms() + 5000
+        while (staged['stdout_r'] is not None or staged['stderr_r'] is not None)                 and _now_ms() < drain_deadline:
+            watched = [fd for fd in (staged['stdout_r'], staged['stderr_r']) if fd is not None]
+            try:
+                readable, _, _ = select.select(watched, [], [], 0.05)
+            except (InterruptedError, OSError):
+                break
+            if staged['stdout_r'] in readable:
+                block = os.read(staged['stdout_r'], CHUNK)
+                if block:
+                    out_total += len(block)
+                    if out_total > cfg['max_stdout_bytes']:
+                        failure = failure or 'model_output_limit'
+                    else:
+                        out_buf.extend(block)
+                else:
+                    staged['stdout_r'] = None
+            if staged['stderr_r'] in readable:
+                block = os.read(staged['stderr_r'], CHUNK)
+                if block:
+                    err_total += len(block)
+                    if len(sniff) < 4096:
+                        sniff.extend(block[:4096 - len(sniff)])
+                    if err_total > cfg['max_stderr_bytes']:
+                        failure = failure or 'model_output_limit'
+                    else:
+                        err_buf.extend(block)
+                else:
+                    staged['stderr_r'] = None
+            if failure == 'model_output_limit':
+                break
+            if not readable:
+                break
+        if not cgroup.kill(deadline + 5000):
+            failure = failure or 'teardown_failed'
+        _reap(staged['pid'], _now_ms() + 5000)
+        flush_deadline = _now_ms() + 5000
+        while (out_buf or err_buf or prompt_buf) and _now_ms() < flush_deadline:
+            for fd, buf in ((out_fd, out_buf), (err_fd, err_buf),
+                            (staged['stdin_w'], prompt_buf)):
+                if fd is not None and buf:
+                    try:
+                        written = os.write(fd, buf)
+                    except BlockingIOError:
+                        written = 0
+                    except OSError:
+                        failure = failure or ('model_input_incomplete'
+                            if fd is staged['stdin_w'] else 'model_relay_failed')
+                        written = 0
+                    del buf[:written]
+            if (not prompt_open and not prompt_buf
+                    and staged['stdin_w'] is not None):
+                fd, staged['stdin_w'] = staged['stdin_w'], None
+                os.close(fd)
+            if out_buf or err_buf or prompt_buf:
+                time.sleep(0.01)
+        if failure is None and exit_code is not None and exit_code != 0:
+            failure = _classify_stderr(sniff) or 'model_nonzero_exit'
+    finally:
+        for name in ('stdin_w', 'stdout_r', 'stderr_r'):
+            if staged[name] is not None:
+                try:
+                    os.close(staged[name])
+                except (OSError, KeyError):
+                    pass
+    if failure is None and (out_buf or err_buf or prompt_buf):
+        failure = 'model_output_limit' if (out_buf or err_buf) else 'model_input_incomplete'
+    _report(report_fd, {'type': 'model_done', 'code': failure, 'exit_code': exit_code})
+    return failure is None
+
+
+def guest():
+    # Namespace entry: read the one-use credential channel, close every
+    # non-approved descriptor, construct the allowlist environment, and exec
+    # the verified vendor snapshot. The credential must never arrive through
+    # the launcher environment.
+    mode, vendor = sys.argv[2], sys.argv[3]
+    if 'ANTHROPIC_API_KEY' in os.environ:
+        os._exit(95)
+    env = {key: os.environ[key] for key in os.environ['PAL_PASSTHROUGH'].split(',')}
+    env['HOME'] = os.environ['PAL_GUEST_HOME']
+    env['CLAUDE_CONFIG_DIR'] = os.environ['PAL_GUEST_CONFIG']
+    env['PATH'] = os.environ['PAL_GUEST_PATH_BIN']
+    env['LD_LIBRARY_PATH'] = os.environ['PAL_GUEST_LD']
+    relay_channel = os.environ.get('PAL_RELAY_CHANNEL_FD')
+    relay_port_text = os.environ.get('PAL_RELAY_PORT')
+    if relay_channel is not None or relay_port_text is not None:
+        # Relay model phase: fork the dumb byte pump BEFORE the credential
+        # read. The pump binds exactly one drawn relay port, serves exactly
+        # one connection and moves raw bytes between that connection and
+        # the inherited relay channel; it parses no HTTP, holds no
+        # credential knowledge, performs no DNS and opens no other socket.
+        # The frozen guest duties below then run verbatim.
+
+        def relay_pump(chan, port):
+            try:
+                server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                try:
+                    server.bind(('127.0.0.1', port))
+                    server.listen(1)
+                except OSError:
+                    os._exit(92)  # one draw only: a bind failure is terminal
+                connection, _peer = server.accept()
+                server.close()
+                stream = connection.fileno()
+            except OSError:
+                os._exit(91)
+            try:
+                while True:
+                    ready = select.select([chan, stream], [], [])[0]
+                    if chan in ready:
+                        block = os.read(chan, 65536)
+                        if not block:
+                            break
+                        connection.sendall(block)
+                    if stream in ready:
+                        block = connection.recv(65536)
+                        if not block:
+                            break
+                        os.write(chan, block)
+            except OSError:
+                os._exit(91)
+            finally:
+                for handle in (connection, server):
+                    try:
+                        handle.close()
+                    except OSError:
+                        pass
+            os._exit(0)
+
+        try:
+            relay_fd = int(relay_channel)
+            relay_port = int(relay_port_text)
+            # A channel that is closed or not a socket fails the call
+            # before the pump can ever listen: the contained vendor then
+            # observes a connection refusal instead of a silent endpoint.
+            socket.socket(fileno=relay_fd).detach()
+            if not 20000 <= relay_port <= 32767:
+                os._exit(91)
+        except (TypeError, ValueError, OSError):
+            os._exit(91)
+        pid = os.fork()
+        if pid == 0:
+            relay_pump(relay_fd, relay_port)
+        # The pump owns the relay channel from here; the guest parent drops
+        # its own copy in the descriptor sweep below before the vendor exec.
+    credential_file = os.environ['PAL_CREDENTIAL_FILE']
+    if credential_file != 'none':
+        # The wrapper copied the one-use credential pipe into the namespace as
+        # this file; read it once, bounded by the parent's credential bound.
+        fd = os.open(credential_file, os.O_RDONLY)
+        data = bytearray()
+        while len(data) < 8:
+            block = os.read(fd, 8 - len(data))
+            if not block:
+                os._exit(94)
+            data.extend(block)
+        size = int.from_bytes(bytes(data), 'big')
+        if not 1 <= size <= 4096:  # mirrors the parent's credential bound
+            os._exit(94)
+        while len(data) < 8 + size:
+            block = os.read(fd, 8 + size - len(data))
+            if not block:
+                os._exit(94)
+            data.extend(block)
+        os.close(fd)
+        env['ANTHROPIC_API_KEY'] = bytes(data[8:]).decode('utf-8')
+    for name in ('HOME', 'CLAUDE_CONFIG_DIR'):
+        os.makedirs(env[name], exist_ok=True)
+    os.makedirs(os.environ['PAL_GUEST_WORK'], exist_ok=True)
+    os.makedirs(os.environ['PAL_GUEST_SCRATCH'], exist_ok=True)
+    os.chdir(os.environ['PAL_GUEST_WORK'])
+    _close_except({0, 1, 2})
+    os.execve(vendor, [vendor] + sys.argv[4:], env)
+
+
+def supervise():
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    signal.signal(signal.SIGPIPE, signal.SIG_IGN)
+    # The CONF line arrives on fd 0 (the parent-supplied stdin pipe) and names
+    # the inherited channel descriptors; install them at the canonical slots
+    # before anything else runs. The whole line is hex-encoded, so the CONF
+    # marker is validated on the decoded bytes.
+    payload = bytes.fromhex(_read_line(CONTROL_FD, 1 << 20).decode('ascii'))
+    if not payload.startswith(b'CONF '):
+        os._exit(93)
+    cfg = json.loads(payload[5:].decode('utf-8'))
+    _install_channels(cfg)
+    control, out_fd, err_fd = CONTROL_FD, RELAY_OUT_FD, RELAY_ERR_FD
+    report_fd, liveness_fd, prompt_fd, cred_fd = (REPORT_FD, LIVENESS_FD,
+                                                  PROMPT_FD, CREDENTIAL_FD)
+    try:
+        _enable_root_controls(cfg['cgroup_root'])
+        cgroup = Cgroup(cfg)
+        cgroup.create()
+    except OSError:
+        _report(report_fd, {'type': 'error', 'code': 'cgroup_setup_failed'})
+        return
+    _report(report_fd, {'type': 'started'})
+    try:
+        while True:
+            try:
+                readable, _, _ = select.select([control, liveness_fd], [], [])
+            except InterruptedError:
+                continue
+            if liveness_fd in readable and not os.read(liveness_fd, 1):
+                return
+            if control not in readable:
+                continue
+            parts = _read_line(control, 4096).split(b' ')
+            command = parts[0]
+            remaining_ms = int(parts[1]) if len(parts) > 1 else 0
+            if command == b'SHUTDOWN':
+                return
+            if command == b'VERSION':
+                if _run_version(cfg, cgroup, report_fd, liveness_fd, remaining_ms) in (False, 'parent_lost'):
+                    return
+            elif command == b'MODEL':
+                if _run_model(cfg, cgroup, report_fd, liveness_fd, prompt_fd, out_fd,
+                              err_fd, remaining_ms) in (False, 'parent_lost'):
+                    return
+            else:
+                _report(report_fd, {'type': 'error', 'code': 'protocol'})
+                return
+    finally:
+        cgroup.kill(_now_ms() + 10000)
+        try:
+            os.rmdir(cgroup.path)
+        except OSError:
+            pass
+
+
+if __name__ == '__main__':
+    if len(sys.argv) >= 4 and sys.argv[1] == 'guest':
+        guest()
+    elif len(sys.argv) >= 2 and sys.argv[1] == 'supervise':
+        supervise()
+    else:
+        os._exit(99)
+'''
+
+def _relay_helper_digest():
+    """Digest of the exact relay helper source bytes (helper-digest pattern)."""
+    return sha256(RELAY_HELPER_SOURCE.encode('utf-8')).hexdigest()
 
 
 def _linux_path(value):
@@ -1146,11 +1930,11 @@ class RelayTrustConfig:
         _bounded_int('relay_response_read_chunk', self.relay_response_read_chunk,
                      1, RELAY_RESPONSE_READ_CHUNK)
         _bounded_int('connect_timeout_ms', self.connect_timeout_ms,
-                     1, RELAY_TOTAL_TIMEOUT_CAP_MS)
+                     1, RELAY_PHASE_TIMEOUT_CAP_MS)
         _bounded_int('handshake_timeout_ms', self.handshake_timeout_ms,
-                     1, RELAY_TOTAL_TIMEOUT_CAP_MS)
+                     1, RELAY_PHASE_TIMEOUT_CAP_MS)
         _bounded_int('idle_timeout_ms', self.idle_timeout_ms,
-                     1, RELAY_TOTAL_TIMEOUT_CAP_MS)
+                     1, RELAY_PHASE_TIMEOUT_CAP_MS)
         if not (self.total_timeout_ms is None
                 or (type(self.total_timeout_ms) is int
                     and 1 <= self.total_timeout_ms <= RELAY_TOTAL_TIMEOUT_CAP_MS)):
@@ -1215,4 +1999,12 @@ def validate_relay_outcome(value):
     """Closed-vocabulary check for every relay outcome code."""
     if type(value) is not str or value not in RELAY_OUTCOMES:
         raise ValueError('relay_outcome_invalid')
+    return value
+
+
+def validate_relay_report_code(value):
+    """Closed-vocabulary check for every code any engine report line carries
+    (the 20 call outcomes plus the 2 startup error codes; R-W1 NOTE-4)."""
+    if type(value) is not str or value not in RELAY_REPORT_VOCABULARY:
+        raise ValueError('relay_report_code_invalid')
     return value

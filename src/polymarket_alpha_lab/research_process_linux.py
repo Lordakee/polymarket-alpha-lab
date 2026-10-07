@@ -22,6 +22,19 @@ synthetic-acceptance engineering, not official-client or TLS qualification.
 
 The embedded :data:`HELPER_SOURCE` is the trusted supervisor/guest entry. It
 is standard-library-only and performs no application or PostgreSQL imports.
+
+L9 Amendment 1 (DELIVERY_PLAN.md section 67) adds the closed
+``relay-fixed-origin`` egress value: a launch declaring it pins the SECOND
+checked-in stdlib helper (:data:`RELAY_HELPER_SOURCE` in
+``research_linux_relay``, selected by egress at admission), carries the typed
+reviewed relay trust record, and stages one inherited AF_UNIX relay channel
+descriptor (duplicated to >= 100 through the existing F_DUPFD idiom) plus one
+port drawn from the exact (20000, 32767) window into the model-phase wrapper
+argv as two PAL_RELAY_* setenv values. The offline branch keeps the frozen
+helper bytes, CONF, argv and policy digests byte-identical; cross-pinned
+combinations refuse construction. The relay egress authorizes no real
+endpoint, no credential use and no activation; native relay execution stays
+deferred to the opt-in Linux probes.
 """
 from __future__ import annotations
 
@@ -37,6 +50,7 @@ from pathlib import Path
 import re
 import select
 import signal
+import socket
 import stat
 import subprocess
 import sys
@@ -44,6 +58,10 @@ import threading
 import time
 
 from polymarket_alpha_lab.research_dispatch_runner import ResearchDispatchStop
+from polymarket_alpha_lab.research_linux_relay import (
+    RELAY_HELPER_SOURCE, RELAY_PORT_WINDOW, RELAY_PROTOCOL_VERSION,
+    RelayTrustConfig, _relay_helper_digest, draw_relay_port,
+)
 from polymarket_alpha_lab.research_process import (
     ResearchProcessError, ResearchProcessResult,
 )
@@ -52,6 +70,14 @@ from polymarket_alpha_lab.team_research_agent_types import integer
 LAUNCH_SCHEMA = 'research-linux-launch-v1'
 HELPER_PROTOCOL_VERSION = 'research-linux-helper-v1'
 EGRESS_OFFLINE = 'offline'
+# L9 Amendment 1 (DELIVERY_PLAN.md section 67): the second admitted closed
+# egress value. It selects the RELAY_HELPER_SOURCE helper, the exact
+# (20000, 32767) relay port window and the typed reviewed trust record; the
+# offline value keeps the frozen helper, an empty relay surface and no trust
+# record. Cross-pinned combinations refuse construction.
+EGRESS_RELAY = 'relay-fixed-origin'
+RELAY_HELPER_DIGEST = _relay_helper_digest()
+RELAY_INHERITED_FROM_PARENT = 'relay-channel-model-phase-only'
 NAMESPACES = ('user', 'mount', 'pid', 'net', 'ipc', 'uts')
 SCRATCH_SIZE_CAP = 1073741824        # 1 GiB declared engineering bound
 TMP_SIZE_CAP = 536870912             # 512 MiB declared engineering bound
@@ -751,6 +777,15 @@ def _helper_digest():
     return sha256(HELPER_SOURCE.encode('utf-8')).hexdigest()
 
 
+def _helper_source(launch):
+    """The sealed helper source selected by the launch's closed egress value:
+    the frozen offline helper, or the strictly-additive relay helper for the
+    relay-fixed-origin branch (L9 Amendment 1)."""
+    if launch.egress_policy == EGRESS_RELAY:
+        return RELAY_HELPER_SOURCE
+    return HELPER_SOURCE
+
+
 def _linux_path(value):
     """Linux host/guest path rules, host-independent so that declaration and
     digests behave identically on every development platform."""
@@ -841,6 +876,7 @@ class LinuxLaunchSpec:
     pids_max: int = PIDS_MAX_CAP
     namespaces: tuple[str, ...] = NAMESPACES
     egress_policy: str = EGRESS_OFFLINE
+    relay_trust: RelayTrustConfig | None = None
     allowed_guest_env: tuple[str, ...] = DEFAULT_GUEST_ENV
     version_argument: str = '--version'
     max_version_output_bytes: int = 4096
@@ -850,8 +886,6 @@ class LinuxLaunchSpec:
         if self.launch_schema != LAUNCH_SCHEMA:
             raise ValueError('linux_launch_spec_invalid')
         if self.helper_protocol_version != HELPER_PROTOCOL_VERSION:
-            raise ValueError('linux_launch_spec_invalid')
-        if self.helper_sha256 != _helper_digest():
             raise ValueError('linux_launch_spec_invalid')
         if (type(self.wrapper) is not LinuxArtifactPin
                 or type(self.interpreter) is not LinuxArtifactPin):
@@ -894,7 +928,22 @@ class LinuxLaunchSpec:
         _bound('pids_max', self.pids_max, 1, PIDS_MAX_CAP)
         if self.namespaces != NAMESPACES:
             raise ValueError('linux_launch_spec_invalid')
-        if self.egress_policy != EGRESS_OFFLINE:
+        # Two-value closed egress branch (L9 Amendment 1): offline keeps the
+        # frozen helper digest, an empty relay surface and no trust record;
+        # relay-fixed-origin keeps the relay helper digest and the typed
+        # reviewed trust record. Every cross-pinned combination and every
+        # neighbor value refuses with the fixed code.
+        if self.egress_policy == EGRESS_OFFLINE:
+            if self.helper_sha256 != _helper_digest():
+                raise ValueError('linux_launch_spec_invalid')
+            if self.relay_trust is not None:
+                raise ValueError('linux_launch_spec_invalid')
+        elif self.egress_policy == EGRESS_RELAY:
+            if self.helper_sha256 != RELAY_HELPER_DIGEST:
+                raise ValueError('linux_launch_spec_invalid')
+            if type(self.relay_trust) is not RelayTrustConfig:
+                raise ValueError('linux_launch_spec_invalid')
+        else:
             raise ValueError('linux_launch_spec_invalid')
         if (type(self.allowed_guest_env) is not tuple
                 or any(type(key) is not str
@@ -920,7 +969,8 @@ class LinuxLaunchSpec:
     def policy_dict(self):
         """Public digest input: pins and rules only; never a credential,
         prompt, random allocation name, descriptor number, PID, or port."""
-        return dict(
+        relay_bearing = self.egress_policy == EGRESS_RELAY
+        policy = dict(
             launch_schema=self.launch_schema,
             helper=dict(protocol_version=self.helper_protocol_version,
                         sha256=self.helper_sha256),
@@ -954,7 +1004,9 @@ class LinuxLaunchSpec:
                              supervisor_environment='minimal-no-credential'),
             descriptors=dict(guest_baseline=[0, 1, 2], credential_fd='model-phase-only',
                              artifacts='sealed-memfd-no-pathname-reopen',
-                             inherited_from_parent=[]),
+                             inherited_from_parent=(
+                                 [RELAY_INHERITED_FROM_PARENT]
+                                 if relay_bearing else [])),
             resources=dict(memory_max_bytes=self.memory_max_bytes,
                            memory_swap_max_bytes=self.memory_swap_max_bytes,
                            pids_max=self.pids_max,
@@ -970,11 +1022,29 @@ class LinuxLaunchSpec:
             cleanup='cgroup-kill-verified-empty-then-reap',
             egress=dict(policy=self.egress_policy, production_egress='unavailable',
                         host_network_fallback='forbidden',
-                        relay='not-shipped-in-this-node'),
+                        relay=('bounded-fixed-origin-validating-relay'
+                               if relay_bearing
+                               else 'not-shipped-in-this-node')),
             cgroup=dict(root=self.cgroup_root, allocation_rule=self.cgroup_allocation_rule,
                         supervisor='outside-vendor-cgroup',
                         bootstrap='gate-until-placed-and-verified'),
             vendor_size_bytes=self.vendor_size_bytes)
+        if relay_bearing and type(self.relay_trust) is RelayTrustConfig:
+            # The relay-bearing policy section: the relay helper pin (the
+            # relay engine protocol names the section's helper entry), the
+            # exact reviewed per-call port window and the typed reviewed
+            # trust record. The drawn port itself, the channel descriptor
+            # number and any runtime-discovered value are never inputs. A
+            # constructible relay launch ALWAYS carries the typed trust
+            # record (the cross-pin refusal); an attribute-tampered object
+            # without one digests WITHOUT the relay section, a shape no
+            # constructible launch can ever produce.
+            policy['relay'] = dict(
+                port_window=list(RELAY_PORT_WINDOW),
+                helper=dict(protocol_version=RELAY_PROTOCOL_VERSION,
+                            sha256=self.helper_sha256),
+                trust=self.relay_trust.policy_dict())
+        return policy
 
 
 class _LinuxPhaseCounters:
@@ -1175,7 +1245,13 @@ class _Admission:
             raise ResearchProcessError('research_process_platform_unsupported')
         if not hasattr(os, 'memfd_create'):
             raise ResearchProcessError('research_process_memfd_unavailable')
-        helper_bytes = HELPER_SOURCE.encode('utf-8')
+        # Egress-driven source selection (L9 Amendment 1): the sealed helper
+        # bytes are the frozen offline source or the strictly-additive relay
+        # helper, per the launch's closed egress value; the digest pin above
+        # already guarantees the matching value, so a mismatch here is an
+        # artifact refusal. The sealed source is read back by the native
+        # probes to prove the selection.
+        helper_bytes = _helper_source(launch).encode('utf-8')
         if sha256(helper_bytes).hexdigest() != launch.helper_sha256:
             raise ValueError('research_process_artifact_invalid')
         if (spec.executable_sha256 in (launch.wrapper.sha256, launch.interpreter.sha256)
@@ -1279,13 +1355,20 @@ def _guest_configuration(spec, launch):
 
 def _supervisor_configuration(spec, launch, *, wrapper_fd, helper_fd, interp_fd,
                               vendor_fd, runtime_fds, allocation, report_fd,
-                              liveness_fd, prompt_fd, credential_fd):
+                              liveness_fd, prompt_fd, credential_fd,
+                              relay_channel_fd=None, relay_port=None):
     """Pure supervisor configuration; no I/O and no credential value.
 
     The channel descriptors are the parent-side numbers inherited via
     ``pass_fds``; the supervisor installs them at its canonical 3..6 itself.
+    A relay-bearing launch additionally names the inherited relay channel
+    descriptor and the one drawn relay port: both are required, the channel
+    number must clear the supervisor's canonical 3..6 slots, and the port must
+    sit inside the exact reviewed (20000, 32767) window. The keys never exist
+    on the offline branch (whose CONF bytes stay frozen), and supplying them
+    for an offline launch refuses.
     """
-    return dict(
+    configuration = dict(
         wrapper_fd=wrapper_fd, helper_fd=helper_fd, interp_fd=interp_fd,
         vendor_fd=vendor_fd,
         wrapper_path=launch.wrapper.path, wrapper_sha256=launch.wrapper.sha256,
@@ -1316,6 +1399,16 @@ def _supervisor_configuration(spec, launch, *, wrapper_fd, helper_fd, interp_fd,
         max_stdout_bytes=spec.max_stdout_bytes,
         max_stderr_bytes=spec.max_stderr_bytes,
         expected_version_output_hex=launch.expected_version_output.encode('utf-8').hex())
+    if launch.egress_policy == EGRESS_RELAY:
+        if (type(relay_channel_fd) is not int or relay_channel_fd < 7
+                or type(relay_port) is not int
+                or not RELAY_PORT_WINDOW[0] <= relay_port <= RELAY_PORT_WINDOW[1]):
+            raise ValueError('linux_launch_spec_invalid')
+        configuration['relay_channel_fd'] = relay_channel_fd
+        configuration['relay_port'] = relay_port
+    elif relay_channel_fd is not None or relay_port is not None:
+        raise ValueError('linux_launch_spec_invalid')
+    return configuration
 
 
 def _model_phase_error(code):
@@ -1344,6 +1437,8 @@ class _ContainedSession:
         self._deadline = deadline_ns
         self._prompt_w = self._credential_w = self._control_w = None
         self._stdout_r = self._stderr_r = self._report_r = self._liveness_w = None
+        self._relay_channel = None
+        self._relay_child_fd = None
         self._supervisor = None
         admission = _Admission(spec, launch)
         self._admission = admission
@@ -1373,6 +1468,27 @@ class _ContainedSession:
             artifact_fds = [admission.vendor_fd, admission.wrapper_fd,
                             admission.helper_fd, admission.interp_fd,
                             *admission.runtime_fds]
+            relay_child_fd = None
+            relay_kwargs = {}
+            if launch.egress_policy == EGRESS_RELAY:
+                # The inherited relay channel (L9 Amendment 1): one AF_UNIX
+                # socketpair per call. The child-bound half moves to a
+                # descriptor >= 100 through the existing F_DUPFD idiom (the
+                # canonical 3..6 supervisor slots and the staged artifact
+                # descriptors are never touched); the drawn port comes from
+                # the production draw inside the exact reviewed window; the
+                # parent half stays here for the trusted-parent engine peer
+                # and is closed only by cleanup. Nothing crosses the wrapper
+                # argv except the two PAL_RELAY_* setenv values.
+                channel_parent, channel_child = socket.socketpair()
+                relay_child_fd = _fresh_copy(channel_child.fileno())
+                channel_child.close()
+                self._relay_channel = channel_parent
+                # cleanup owns the duplicate until the supervisor has
+                # inherited it, so a failure below cannot leak it
+                self._relay_child_fd = relay_child_fd
+                relay_kwargs = dict(relay_channel_fd=relay_child_fd,
+                                    relay_port=draw_relay_port())
             allocation = 'pal-call-' + sha256(
                 (str(os.getpid()) + ':' + str(time.monotonic_ns())).encode('ascii')
             ).hexdigest()[:16]
@@ -1381,14 +1497,15 @@ class _ContainedSession:
                 helper_fd=admission.helper_fd, interp_fd=admission.interp_fd,
                 vendor_fd=admission.vendor_fd, runtime_fds=admission.runtime_fds,
                 allocation=allocation, report_fd=rep_w, liveness_fd=live_r,
-                prompt_fd=prom_r, credential_fd=cred_r)
+                prompt_fd=prom_r, credential_fd=cred_r, **relay_kwargs)
             configuration['env_pairs'] = [list(pair) for pair in pairs]
             configuration['passthrough_env_keys'] = [key for key, _ in pairs]
             self._supervisor = subprocess.Popen(
                 ['/proc/self/fd/%d' % admission.interp_fd, '-S', '-B',
                  '/proc/self/fd/%d' % admission.helper_fd, 'supervise'],
                 stdin=ctrl_r, stdout=vout_w, stderr=verr_w,
-                pass_fds=[rep_w, live_r, prom_r, cred_r, *artifact_fds],
+                pass_fds=[rep_w, live_r, prom_r, cred_r, *artifact_fds]
+                + ([relay_child_fd] if relay_child_fd is not None else []),
                 env={'PYTHONHOME': launch.supervisor_python_home},
                 cwd=launch.cgroup_root, shell=False, close_fds=True,
                 start_new_session=True)
@@ -1397,6 +1514,12 @@ class _ContainedSession:
                     os.close(fd)
                 except OSError:
                     pass
+            if relay_child_fd is not None:
+                try:
+                    os.close(relay_child_fd)
+                except OSError:
+                    pass
+                self._relay_child_fd = None
             self._send_conf(configuration)
             event = self._await_first_event()
             if event.get('type') != 'started':
@@ -1610,6 +1733,20 @@ class _ContainedSession:
                     except OSError:
                         pass
                     setattr(self, name, None)
+            channel = getattr(self, '_relay_channel', None)
+            if channel is not None:
+                try:
+                    channel.close()
+                except OSError:
+                    pass
+                self._relay_channel = None
+            relay_child = getattr(self, '_relay_child_fd', None)
+            if relay_child is not None:
+                try:
+                    os.close(relay_child)
+                except OSError:
+                    pass
+                self._relay_child_fd = None
             if self._supervisor is not None:
                 deadline = time.monotonic_ns() + timeout_ms * 1000000
                 while self._supervisor.poll() is None and time.monotonic_ns() < deadline:

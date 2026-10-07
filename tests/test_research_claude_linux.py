@@ -54,11 +54,15 @@ PRE_CORRECTION_V2_GOLDEN = {
 # v3 (relay branch) golden: computed from the fixed synthetic golden profile
 # (symbolic relay endpoint written post-construction) plus a faithful
 # synthetic mirror of W2's documented relay policy_dict extension below.
-# The linux half follows the same recipe with the linux golden root (the
-# linux constant is verifiable only on the Linux host, like the v1/v2 goldens).
+# Re-pinned against W2's landed RELAY_HELPER_SOURCE (L9 W2): the mirror's
+# helper pins carry the real relay helper digest, so the synthetic policy
+# bytes equal the real relay launch policy_dict and the golden-recompute
+# test below verifies that equality on every run. The linux half follows the
+# same recipe with the linux golden root (the linux constant is verifiable
+# only on the Linux host, like the v1/v2 goldens).
 CLAUDE_V3_GOLDEN = {
-    'linux': '7096309b169c0bf98039fd278a65c8d032592fa6abef911aeeeffa125e736cbe',
-    'win32': '77e6e98f04a2f74859cd5cc09d08ef81f40499ae279f64d768eb371aadb989ae',
+    'linux': 'a093f08f5da404b9a906b6494eea3dff9fd665504ebfd595eba1e84e4a37923d',
+    'win32': '563a5fdea44c9622423ab4bdc26f5920902df68c7e3b06f2a539b8716deba1e9',
 }
 # Fixed synthetic reviewed trust configuration (declaration-only; no file).
 # The forwarded-header rules are pinned as an explicitly name-sorted tuple:
@@ -71,10 +75,12 @@ GOLDEN_RELAY_TRUST = RelayTrustConfig(
     ca_bundle=RelayCaBundlePin(path='/opt/pal-golden/relay-ca.pem',
                                sha256='e' * 64, size_bytes=4096),
     requests=(RelayRequestEntry(forwarded_headers=SORTED_FORWARDED_HEADERS),))
-# Placeholder pin for the relay helper digest: W2's RELAY_HELPER_SOURCE does
-# not exist yet, so the synthetic policy pins a clearly synthetic digest. The
-# golden-recompute test below forces the re-pin against W2's real values.
-SYNTHETIC_RELAY_HELPER_SHA256 = '5' * 64
+# The relay helper digest pinned by the synthetic mirror: W2's real
+# RELAY_HELPER_SOURCE digest, recomputed from the checked-in bytes through
+# the accessor (the helper-digest pattern). This replaces the pre-W2
+# clearly-synthetic placeholder; the golden-recompute test below keeps the
+# mirror and the real relay launch byte-equal.
+SYNTHETIC_RELAY_HELPER_SHA256 = relay._relay_helper_digest()
 
 
 def golden_process(argv0, cwd, environment, digest):
@@ -469,15 +475,18 @@ def test_operator_admission_guard_covers_every_defect(defect, monkeypatch):
 # ---- v3 relay branch: synthetic golden, trust sensitivity, operator wiring ----
 
 def synthetic_relay_policy_dict(trust=None):
-    """Faithful synthetic mirror of W2's documented policy_dict extension for
+    """Faithful synthetic mirror of W2's landed policy_dict extension for
     the closed 'relay-fixed-origin' egress value: the offline fixed launch
-    policy with the relay egress value, a relay section carrying the relay
-    helper digest pin, the exact (20000, 32767) per-call port window and the
-    reviewed trust configuration, and the inherited relay channel declared
-    model-phase-only (the offline policy keeps []). Real relay launches
-    replace this synthetic once W2 lands; the golden-recompute test forces
-    that reconciliation instead of silently drifting."""
+    policy with the relay egress value, the relay helper digest pin on BOTH
+    the top-level helper entry (the launch's helper_sha256 IS the relay
+    digest on this branch) and the relay section, the exact (20000, 32767)
+    per-call port window, the reviewed trust configuration, and the
+    inherited relay channel declared model-phase-only (the offline policy
+    keeps []). Real relay launches must digest identically; the
+    golden-recompute test enforces that byte equality."""
     policy = fixed_launch().policy_dict()
+    policy['helper'] = dict(policy['helper'],
+                            sha256=SYNTHETIC_RELAY_HELPER_SHA256)
     policy['egress'] = dict(policy=profile.RELAY_EGRESS_POLICY,
                             production_egress='unavailable',
                             host_network_fallback='forbidden',

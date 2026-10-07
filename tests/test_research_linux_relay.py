@@ -20,6 +20,12 @@ are deliberately absent pending the design amendment):
   through a getaddrinfo stub so no test ever performs real name resolution
   or off-loopback egress; TLS fakes use synthetic self-signed test
   identities generated at test time.
+* the L9 W2 surface - the RELAY_HELPER_SOURCE second helper (strictly
+  additive over the frozen offline helper), the two-value closed egress
+  branch and the relay launch/CONF bindings, plus the R-W1 review
+  prescriptions (chunked terminal release cap, head caps on the completing
+  read, teardown-failure accounting, report vocabulary, sub-phase timeout
+  alignment).
 
 No real provider, credential or official client is involved anywhere. All
 sentinels are synthetic test markers; evidence-hygiene assertions prove none
@@ -42,6 +48,9 @@ import time
 import pytest
 
 from polymarket_alpha_lab import research_linux_relay as relay
+from polymarket_alpha_lab import research_process_linux as linux_launch
+from polymarket_alpha_lab.research_process import ResearchProcessSpec
+from tests.test_research_process_linux import fixed_launch, relaunch
 
 if os.name == 'nt':  # Windows development host support (test harness only)
     import msvcrt
@@ -102,6 +111,26 @@ def test_validate_relay_outcome_membership():
             relay.validate_relay_outcome(bad)
 
 
+def test_report_vocabulary_covers_every_engine_report_code():
+    """R-W1 NOTE-4: the engine reports the 20 call outcomes PLUS the two
+    startup error codes; both closed sets stay explicit, tested and
+    separate (the startup codes are never call outcomes)."""
+    assert relay.RELAY_REPORT_CODES == frozenset(('relay_config_invalid',
+                                                  'relay_ca_pin_mismatch'))
+    assert relay.RELAY_REPORT_VOCABULARY == (
+        relay.RELAY_OUTCOMES | relay.RELAY_REPORT_CODES)
+    assert len(relay.RELAY_REPORT_VOCABULARY) == 22
+    for code in relay.RELAY_REPORT_VOCABULARY:
+        assert relay.validate_relay_report_code(code) == code
+    for bad in ('relay_ok ', 'relay_config_invalidx', 'relay_ca_pin', '',
+                None, 7, 'relay_retry'):
+        with pytest.raises(ValueError, match='relay_report_code_invalid'):
+            relay.validate_relay_report_code(bad)
+    for code in relay.RELAY_REPORT_CODES:
+        with pytest.raises(ValueError, match='relay_outcome_invalid'):
+            relay.validate_relay_outcome(code)
+
+
 def test_module_is_stdlib_only_with_no_import_time_io():
     source = Path(relay.__file__).read_text(encoding='utf-8')
     tree = ast.parse(source)
@@ -124,16 +153,19 @@ def test_module_is_stdlib_only_with_no_import_time_io():
     assert 'psycopg' not in source
 
 
-def test_omission_boundary_is_declared_and_inner_peer_absent():
+def test_crossing_decision_is_declared_and_inner_peer_absent():
     source = Path(relay.__file__).read_text(encoding='utf-8')
-    # The crossing-dependent sources are absent as constants; the docstring
-    # still names them as the declared omission boundary.
+    # The L9 amendment resolved the crossing: the separately planned
+    # inner-peer/stage constants never exist as names - the namespace side
+    # lives inside RELAY_HELPER_SOURCE, and the parent side stays bound to
+    # the two inherited relay channel halves.
     assert not hasattr(relay, 'INNER_PEER_SOURCE')
     assert not hasattr(relay, 'STAGE_SOURCE')
     assert 'INNER_PEER_SOURCE =' not in source
     assert 'STAGE_SOURCE =' not in source
-    assert 'Slice boundary (deliberate omission)' in relay.__doc__
+    assert 'Crossing decision (L9 Amendment 1' in relay.__doc__
     assert 'INNER_PEER_SOURCE' in relay.__doc__
+    assert type(relay.RELAY_HELPER_SOURCE) is str and relay.RELAY_HELPER_SOURCE
 
 
 def test_engine_digest_mirrors_the_helper_digest_pattern():
@@ -1640,7 +1672,11 @@ def test_engine_pipelined_extra_bytes_refuse_before_upstream(tmp_path):
         request = approved_head('127.0.0.1:%d' % bound_port) \
             + b'POST /v1/messages?beta=true HTTP/1.1\r\n'
         run.send_guest(request)
-        assert run.call_done()['code'] == 'relay_refused_cardinality'
+        done = run.call_done()
+        assert done['code'] == 'relay_refused_cardinality'
+        # R-W1 NOTE-7: the refusal happens BEFORE any upstream work, exactly
+        # like the sibling cardinality/bytes refusals.
+        assert done['counters']['upstream_connections'] == 0
         run.stop()
         run.wait_exit()
     finally:
@@ -2398,8 +2434,7 @@ def test_engine_report_evidence_hygiene(tmp_path, cert_material):
     events = [json.loads(line) for line in lines if line]
     assert [event['type'] for event in events] == ['started', 'call_done',
                                                    'call_done', 'engine_done']
-    allowed_codes = relay.RELAY_OUTCOMES | {'relay_config_invalid',
-                                            'relay_ca_pin_mismatch'}
+    allowed_codes = relay.RELAY_REPORT_VOCABULARY
     for event in events:
         assert set(event) <= {'type', 'code', 'counters',
                               'protocol_version'}
@@ -2411,3 +2446,352 @@ def test_engine_report_evidence_hygiene(tmp_path, cert_material):
     stream = bytes(run.report_reader.raw) + stderr.encode('utf-8', 'replace')
     for sentinel in (KEY_SENTINEL, PROMPT_SENTINEL, RESPONSE_SENTINEL):
         assert sentinel not in stream
+
+
+
+# ---------------------------------------------------------------------------
+# L9 W2 surface: the relay helper source, the closed egress branch, the
+# launch/CONF bindings, and the R-W1 review prescriptions.
+# ---------------------------------------------------------------------------
+
+def test_relay_helper_digest_mirrors_the_helper_digest_pattern():
+    computed = sha256(relay.RELAY_HELPER_SOURCE.encode('utf-8')).hexdigest()
+    assert relay._relay_helper_digest() == computed
+    assert len(computed) == 64
+    assert all(character in '0123456789abcdef' for character in computed)
+    # three distinct checked-in sources, three distinct digests
+    assert computed != relay._engine_digest()
+    assert computed != linux_launch._helper_digest()
+    assert linux_launch.RELAY_HELPER_DIGEST == computed
+
+
+def test_relay_helper_source_is_frozen_helper_plus_relay_branches():
+    """Strict additivity over lines: every frozen offline helper line appears
+    in order inside RELAY_HELPER_SOURCE, the additions are non-empty, the
+    result is still stdlib-only and parses, and no relay CONF key line ever
+    names a /proc path or a bind-data source (the channel descriptor crosses
+    by inheritance only)."""
+    source = relay.RELAY_HELPER_SOURCE
+    helper_lines = linux_launch.HELPER_SOURCE.splitlines()
+    relay_lines = source.splitlines()
+    added = []
+    cursor = 0
+    for line in helper_lines:
+        while cursor < len(relay_lines) and relay_lines[cursor] != line:
+            added.append(relay_lines[cursor])
+            cursor += 1
+        assert cursor < len(relay_lines), 'dropped or reordered: %r' % line
+        cursor += 1
+    added.extend(relay_lines[cursor:])
+    assert added, 'the relay branches are missing entirely'
+    compile(source, '<relay-helper-source>', 'exec')
+    tree = ast.parse(source)
+    imported = {alias.name for node in ast.walk(tree)
+                if isinstance(node, ast.Import) for alias in node.names}
+    assert imported <= frozenset(('hashlib', 'json', 'os', 'select', 'signal',
+                                  'sys', 'time', 'socket')), imported
+    assert 'polymarket_alpha_lab' not in source
+    for line in relay_lines:
+        if 'relay_channel_fd' in line or 'relay_port' in line:
+            assert '/proc' not in line and 'bind-data' not in line, line
+    stage = next(ast.get_source_segment(source, node) for node in tree.body
+                 if isinstance(node, ast.FunctionDef) and node.name == '_stage')
+    assert 'relay_channel_fd' in stage
+    assert "keep.add(cfg['relay_channel_fd'])" in stage
+
+
+def test_relay_helper_guest_forks_pump_before_credential_read():
+    source = relay.RELAY_HELPER_SOURCE
+    tree = ast.parse(source)
+    guest = next(ast.get_source_segment(source, node) for node in tree.body
+                 if isinstance(node, ast.FunctionDef) and node.name == 'guest')
+    assert 'os.fork()' in guest
+    assert guest.index('os.fork()') < guest.index("credential_file != 'none'")
+    # the channel is validated BEFORE the fork, so a dead or non-socket
+    # descriptor fails the call before any listener can ever exist
+    assert guest.index('fileno=relay_fd') < guest.index('os.fork()')
+    assert 'PAL_RELAY_' in guest
+    assert '/proc' not in guest
+    assert guest.count('.bind(') == 1
+    assert guest.count('.accept(') == 1
+    assert '92' in guest  # terminal bind-failure code
+    lowered = guest.lower()
+    for word in ('redraw', 're-draw', 'retry'):
+        assert word not in lowered, word
+
+
+def test_relay_helper_argv_binds_exactly_two_relay_setenvs():
+    namespace = {}
+    exec(compile(relay.RELAY_HELPER_SOURCE, '<relay-helper-source>', 'exec'),
+         namespace)
+    offline = {}
+    exec(compile(linux_launch.HELPER_SOURCE, '<helper-source>', 'exec'), offline)
+    conf = _relay_gate_conf()
+    offline_conf = {key: value for key, value in conf.items()
+                    if key not in ('relay_channel_fd', 'relay_port')}
+    # without the relay CONF keys the relay helper is byte-identical offline
+    for mode in ('version', 'model'):
+        assert namespace['_bwrap_argv'](offline_conf, mode) \
+            == offline['_bwrap_argv'](offline_conf, mode)
+    model_relay = namespace['_bwrap_argv'](conf, 'model')
+    version_relay = namespace['_bwrap_argv'](conf, 'version')
+    assert not [token for token in version_relay
+                if token.startswith('PAL_RELAY_')]
+    setenvs = [(model_relay[index + 1], model_relay[index + 2])
+               for index in range(len(model_relay) - 2)
+               if model_relay[index] == '--setenv']
+    assert [pair for pair in setenvs if pair[0].startswith('PAL_RELAY_')] == [
+        ('PAL_RELAY_CHANNEL_FD', '160'), ('PAL_RELAY_PORT', '21222')]
+    # removing exactly those two entries restores the frozen offline argv
+    stripped, index = [], 0
+    while index < len(model_relay):
+        if (model_relay[index] == '--setenv'
+                and model_relay[index + 1].startswith('PAL_RELAY_')):
+            index += 3
+            continue
+        stripped.append(model_relay[index])
+        index += 1
+    assert stripped == offline['_bwrap_argv'](offline_conf, 'model')
+    # the channel fd crosses as a setenv VALUE, never as a bind-data source
+    for index, token in enumerate(model_relay):
+        if token == '--ro-bind-data':
+            assert model_relay[index + 1] != '160'
+        if token == '160':
+            assert model_relay[index - 2] == '--setenv'
+            assert model_relay[index - 1].startswith('PAL_RELAY_')
+
+
+def _relay_trust():
+    return relay.RelayTrustConfig(
+        ca_bundle=relay.RelayCaBundlePin('/opt/pal-synthetic/relay-ca.pem',
+                                         SYNTHETIC_CA['sha256'],
+                                         SYNTHETIC_CA['size']))
+
+
+def _relay_launch():
+    return relaunch(fixed_launch(), egress_policy=linux_launch.EGRESS_RELAY,
+                    helper_sha256=linux_launch.RELAY_HELPER_DIGEST,
+                    relay_trust=_relay_trust())
+
+
+def test_helper_source_selection_follows_the_closed_egress_branch():
+    assert linux_launch.EGRESS_RELAY == 'relay-fixed-origin'
+    assert linux_launch._helper_source(fixed_launch()) is linux_launch.HELPER_SOURCE
+    assert linux_launch._helper_source(_relay_launch()) is relay.RELAY_HELPER_SOURCE
+    assert type(linux_launch.RELAY_HELPER_DIGEST) is str
+
+
+def test_relay_launch_cross_pins_and_neighbor_values_refuse():
+    launch = _relay_launch()
+    assert launch.egress_policy == 'relay-fixed-origin'
+    assert launch.helper_sha256 == linux_launch.RELAY_HELPER_DIGEST
+    for changes in (dict(helper_sha256=linux_launch._helper_digest()),
+                    dict(relay_trust=None),
+                    dict(relay_trust='not-a-trust-record'),
+                    dict(relay_trust=_relay_trust(),
+                         helper_sha256=linux_launch._helper_digest())):
+        with pytest.raises(ValueError, match='linux_launch_spec_invalid'):
+            relaunch(launch, **changes)
+    for changes in (dict(helper_sha256=linux_launch.RELAY_HELPER_DIGEST),
+                    dict(relay_trust=_relay_trust())):
+        with pytest.raises(ValueError, match='linux_launch_spec_invalid'):
+            relaunch(fixed_launch(), **changes)
+    for neighbor in ('relay-fixed-origins', 'RELAY-FIXED-ORIGIN', 'host',
+                     'loopback-relay', 'qualified', 'online', '',
+                     'relay-fixed-origin '):
+        with pytest.raises(ValueError, match='linux_launch_spec_invalid'):
+            relaunch(fixed_launch(), egress_policy=neighbor)
+
+
+def test_relay_launch_policy_dict_bindings():
+    policy = _relay_launch().policy_dict()
+    assert policy['descriptors']['inherited_from_parent'] == [
+        'relay-channel-model-phase-only']
+    assert policy['relay']['port_window'] == list(relay.RELAY_PORT_WINDOW) \
+        == [20000, 32767]
+    assert policy['relay']['helper'] == dict(
+        protocol_version=relay.RELAY_PROTOCOL_VERSION,
+        sha256=linux_launch.RELAY_HELPER_DIGEST)
+    assert policy['relay']['trust'] == _relay_trust().policy_dict()
+    assert policy['egress']['policy'] == 'relay-fixed-origin'
+    assert policy['helper']['sha256'] == linux_launch.RELAY_HELPER_DIGEST
+    # the offline branch keeps the frozen declarations byte-for-byte
+    offline = fixed_launch().policy_dict()
+    assert offline['descriptors']['inherited_from_parent'] == []
+    assert 'relay' not in offline
+    assert offline['egress']['policy'] == 'offline'
+    assert offline['egress']['relay'] == 'not-shipped-in-this-node'
+
+
+def _relay_gate_spec():
+    root = '/opt/pal-synthetic' if sys.platform == 'linux' else 'C:/pal-synthetic'
+    return ResearchProcessSpec(
+        (root + '/claude', '--print', '--bare'), root + '/work',
+        (('HOME', root + '/home'),
+         ('CLAUDE_CONFIG_DIR', root + '/config'),
+         ('ANTHROPIC_BASE_URL', 'https://gateway.example.invalid'),
+         ('CLAUDE_CODE_MAX_OUTPUT_TOKENS', '8192'),
+         ('ANTHROPIC_API_KEY', 'SYNTHETIC-NOT-A-REAL-KEY')), 'd' * 64, 15000)
+
+
+def _relay_gate_conf():
+    """A relay-egress supervisor CONF through the production constructor."""
+    spec = _relay_gate_spec()
+    conf = linux_launch._supervisor_configuration(
+        spec, _relay_launch(), wrapper_fd=101, helper_fd=102, interp_fd=103,
+        vendor_fd=104, runtime_fds=(105,), allocation='pal-call-relay-gate',
+        report_fd=106, liveness_fd=107, prompt_fd=108, credential_fd=109,
+        relay_channel_fd=160, relay_port=21222)
+    conf['env_pairs'] = [['HOME', '/pal/home']]
+    conf['passthrough_env_keys'] = ['HOME']
+    return conf
+
+
+def test_supervisor_conf_relay_keys_follow_the_egress_branch():
+    spec = _relay_gate_spec()
+    kwargs = dict(wrapper_fd=101, helper_fd=102, interp_fd=103, vendor_fd=104,
+                  runtime_fds=(105,), allocation='pal-call-relay',
+                  report_fd=106, liveness_fd=107, prompt_fd=108,
+                  credential_fd=109)
+    offline_conf = linux_launch._supervisor_configuration(
+        spec, fixed_launch(), **kwargs)
+    assert 'relay_channel_fd' not in offline_conf
+    assert 'relay_port' not in offline_conf
+    conf = linux_launch._supervisor_configuration(
+        spec, _relay_launch(), relay_channel_fd=160, relay_port=21222,
+        **kwargs)
+    assert conf['relay_channel_fd'] == 160 and conf['relay_port'] == 21222
+    # closed bounds: the channel clears the canonical 3..6 slots and the
+    # port sits inside the exact reviewed window
+    for bad in (dict(relay_channel_fd=160, relay_port=19999),
+                dict(relay_channel_fd=160, relay_port=32768),
+                dict(relay_channel_fd=6, relay_port=21222),
+                dict(relay_channel_fd=160),
+                dict(relay_port=21222)):
+        with pytest.raises(ValueError, match='linux_launch_spec_invalid'):
+            linux_launch._supervisor_configuration(
+                spec, _relay_launch(), **{**kwargs, **bad})
+    # cross-pinned: relay keys never exist on the offline branch; the relay
+    # branch refuses to build a CONF without them
+    with pytest.raises(ValueError, match='linux_launch_spec_invalid'):
+        linux_launch._supervisor_configuration(
+            spec, fixed_launch(), relay_channel_fd=160, relay_port=21222,
+            **kwargs)
+    with pytest.raises(ValueError, match='linux_launch_spec_invalid'):
+        linux_launch._supervisor_configuration(spec, _relay_launch(), **kwargs)
+
+
+def test_trust_sub_phase_timeouts_match_the_engine_cap():
+    """R-W1 NOTE-5: the real asymmetry was the three SUB-phase timeouts -
+    the parent admitted up to 24h where the engine refuses above 1h. The
+    parent now admits exactly the engine's tighter bound; the total budget
+    keeps the shared 24h cap on both sides."""
+    assert relay.RELAY_PHASE_TIMEOUT_CAP_MS == 3_600_000
+    assert relay.RELAY_TOTAL_TIMEOUT_CAP_MS == 86_400_000
+    for field in ('connect_timeout_ms', 'handshake_timeout_ms',
+                  'idle_timeout_ms'):
+        at_cap = _trust(**{field: relay.RELAY_PHASE_TIMEOUT_CAP_MS})
+        assert at_cap.policy_dict()['limits'][field] == 3_600_000
+        with pytest.raises(ValueError, match='relay_trust_config_invalid'):
+            _trust(**{field: relay.RELAY_PHASE_TIMEOUT_CAP_MS + 1})
+    assert _trust(total_timeout_ms=86_400_000).total_timeout_ms == 86_400_000
+    with pytest.raises(ValueError, match='relay_trust_config_invalid'):
+        _trust(total_timeout_ms=86_400_001)
+    # the engine pins the same numbers on its side of the trust validation
+    assert "('connect_timeout_ms', 1, 3600000)" in relay.ENGINE_SOURCE
+    assert "('handshake_timeout_ms', 1, 3600000)" in relay.ENGINE_SOURCE
+    assert "('idle_timeout_ms', 1, 3600000)" in relay.ENGINE_SOURCE
+    assert "1, 86400000" in relay.ENGINE_SOURCE
+
+
+def test_engine_response_chunked_terminal_never_releases_trailing_bytes(
+        engine_namespace):
+    """R-W1 MINOR-1: bytes that arrived in the same block AFTER the terminal
+    0 CRLF CRLF are never released - the chunked completion caps the release
+    at the framing end exactly like length-mode."""
+    tracker = engine_namespace['_Response']()
+    head = b'HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n'
+    block = head + b'5\r\nhello\r\n0\r\n\r\nSMUGGLED'
+    code, release = tracker.feed(block, 65536, 32 * 1024 * 1024)
+    assert code == 'relay_ok_complete'
+    assert release == len(block) - len(b'SMUGGLED')
+    assert bytes(tracker.buf[:release]).endswith(b'0\r\n\r\n')
+    assert bytes(tracker.buf[release:]) == b'SMUGGLED'
+    assert tracker.released + release == len(block) - len(b'SMUGGLED')
+
+
+def test_engine_response_head_cap_on_the_completing_read(engine_namespace):
+    """R-W1 MINOR-2 (response side): a head whose terminator arrives inside
+    the read that crossed the cap is still refused; a head exactly at the
+    cap (including its terminator) parses and releases."""
+    response = engine_namespace['_Response']
+    over = response()
+    head = b'HTTP/1.1 200 OK\r\nx-fill: ' + b'a' * 70000 + b'\r\n\r\n'
+    assert over.feed(head, 65536, 32 * 1024 * 1024) == (
+        'relay_channel_failed', 0)
+    prefix = b'HTTP/1.1 200 OK\r\nx-fill: '
+    exact = response()
+    # terminator end == the cap exactly (end + 4 == head_cap)
+    fill = 65536 - 4 - len(prefix)
+    block = prefix + b'a' * fill + b'\r\n\r\n'
+    code, release = exact.feed(block, 65536, 32 * 1024 * 1024)
+    assert code is None and release == len(block)
+    one_over = response()
+    # one header byte MORE (a longer head, not extra body bytes) crosses
+    over = prefix + b'a' * (fill + 1) + b'\r\n\r\n'
+    code, release = one_over.feed(over, 65536, 32 * 1024 * 1024)
+    assert code == 'relay_channel_failed' and release == 0
+
+
+def test_engine_request_head_cap_refused_on_the_completing_read(tmp_path):
+    """R-W1 MINOR-2 (request side): a terminated request head longer than
+    max_head_bytes is refused as framing exactly like the unterminated case,
+    before any upstream work."""
+    bound_port = relay.draw_relay_port()
+    run = EngineRun(tmp_path / 'engine', _trust().policy_dict(),
+                    SYNTHETIC_CA['pem'], bound_port=bound_port)
+    try:
+        run.wait_started()
+        filler = b'x-fill: ' + b'a' * 4000 + b'\r\n'
+        head = (b'POST /v1/messages?beta=true HTTP/1.1\r\n'
+                b'Host: 127.0.0.1:%d\r\n' % bound_port + filler * 17
+                + b'Content-Length: 0\r\n\r\n')
+        assert head.index(b'\r\n\r\n') + 4 > 65536
+        run.send_guest(head)
+        done = run.call_done()
+        assert done['code'] == 'relay_refused_framing'
+        assert done['counters']['upstream_connections'] == 0
+        assert done['counters']['dns_resolutions'] == 0
+        run.stop()
+        run.wait_exit()
+    finally:
+        run.close()
+
+
+def test_engine_teardown_failure_is_counted_and_reported(engine_namespace):
+    """R-W1 MINOR-3: a teardown whose socket operations hit a real OSError
+    (harness-side descriptor invalidation) is counted as a teardown failure
+    and reported as failed, and the engine source maps a failed teardown to
+    relay_teardown_failed at BOTH completion sites (success suppression)."""
+    teardown = engine_namespace['_teardown']
+    counters = {'teardown_drain_bytes': 0, 'teardown_failures': 0}
+    healthy_left, healthy_right = socket.socketpair()
+    try:
+        assert teardown(healthy_right, counters) is False
+        assert counters['teardown_failures'] == 0
+        assert counters['teardown_drain_bytes'] == 0
+    finally:
+        healthy_left.close()
+        healthy_right.close()
+    dead_left, dead_right = socket.socketpair()
+    dead_right.close()  # the harness invalidates the descriptor
+    try:
+        assert teardown(dead_right, counters) is True
+        assert counters['teardown_failures'] == 1
+    finally:
+        dead_left.close()
+    # the success-suppression mapping at both completion sites
+    assert ("result = 'relay_teardown_failed' if failed else 'relay_ok'"
+            in relay.ENGINE_SOURCE)
+    assert ("code = 'relay_teardown_failed' if failed else 'relay_ok'"
+            in relay.ENGINE_SOURCE)
