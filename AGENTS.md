@@ -1,5 +1,18 @@
 # Project Instructions
 
+## Current owner override: all tasks to ZCode native subagents (2026-10-07)
+
+Owner instruction (verbatim): "修改项目规则，本项目所有任务交给zcode的子代理工作，
+包括计划，开发和审核。多模块，多子代理，多节点并行开发". From this point,
+planning, arbitration, implementation, testing and review are ALL performed by
+ZCode-native Agent-tool subagents. No new Codex/claude/opencode external
+dispatches are issued for this project (the watchdog wrapper and the §63/§64
+Codex delegations/model pins are retained as history and apply only to
+already-issued dispatches). Native review subagents keep the Iron Rule 4
+requirements (fresh, read-only, VERDICT line). Parallel development keeps
+Project Iron Rule 6: discover capacity dynamically, split write ownership by
+non-overlapping files, one independent reviewer per change.
+
 ## Current owner override: Linux-only V1 platform (2026-09-27)
 
 Owner instruction (verbatim): "本机不能做虚拟架构，你就直接再linux开发不行么？为什么要在windows开发？以后也在linux用，不要管windows了". Linux is now the sole

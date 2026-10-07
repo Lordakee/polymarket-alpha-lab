@@ -2797,3 +2797,18 @@ and a Codex-approved pinned activation record with scoped PG evidence writes.
 D1-D3 and Phase 1 paper-only/report-only/readonly boundaries remain unchanged.
 G2's official synthetic-probe subcondition stays closed; its real-research half,
 final G3, G4, G5 and G6 remain open. V1 remains incomplete.
+
+## 66. Owner 指令：全部任务交由 ZCode 原生子代理（2026-10-07）
+
+Owner 指令（verbatim）："修改项目规则，本项目所有任务交给zcode的子代理工作，
+包括计划，开发和审核。多模块，多子代理，多节点并行开发"。据此：
+
+- 自本节起，本项目的规划、裁决、实现、测试与评审全部由 ZCode 原生
+  Agent-tool 子代理执行；不再发出新的 Codex/claude/opencode 外部分发。
+  §63 的"审批问 Codex"常设授权与 §64 的 Codex 模型钉定保留为历史，
+  仅适用于已发出的分发；后续决策仲裁改由原生子代理承担，沿用铁律 4
+  的独立性要求（新派、只读、VERDICT 行）。
+- 并行开发继续遵循铁律 6：动态发现可用容量、按非重叠文件划分写所有权、
+  每项变更一名独立评审。
+- 进行中的 L8 工作（工作者 B、工作者 C 评审）本就是原生子代理，不受
+  影响；L8 之后的规划节点将由原生子代理承担。
