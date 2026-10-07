@@ -7,6 +7,11 @@ owns the already-open project-private research session, two reviewed immutable
 single-request BTC/ETH batches, a reviewed Claude profile, and the existing
 typed uncapped authorization. Freshness, claims, turn replay, audit commits,
 and capture semantics remain governed by the existing stores and runners.
+
+A relay-bearing profile (the L8-D bounded fixed-origin validating relay design
+boundary) changes only the profile/launch inputs this assembly accepts; the
+wiring itself performs no discovery, builds no default client and supplies no
+default trust, and authorizes no real endpoint, credential or activation.
 """
 from __future__ import annotations
 
@@ -18,6 +23,7 @@ from typing import TYPE_CHECKING
 from polymarket_alpha_lab.research_claude_profile import (
     ClaudeExecProfile,
     FiniteInMemoryApiKeySupplier,
+    RELAY_EGRESS_POLICY,
     claude_profile_factory,
 )
 from polymarket_alpha_lab.research_dispatch import (
@@ -29,6 +35,7 @@ from polymarket_alpha_lab.research_dispatch_rotation_runner import (
     ResearchRotationReport,
 )
 from polymarket_alpha_lab.research_dispatch_runner import ResearchDispatchStop
+from polymarket_alpha_lab.research_linux_relay import RelayTrustConfig
 from polymarket_alpha_lab.research_uncapped import (
     UncappedResearchAuthorization,
     copy_authorization,
@@ -47,6 +54,9 @@ if TYPE_CHECKING:
 ApiKeySupplier = Callable[[], str]
 
 _ASSEMBLY_TEAMS = ('crypto_btc', 'crypto_eth')
+# The two admitted closed egress values: the offline default and the L8-D
+# bounded fixed-origin validating relay value. Every other value is refused.
+_ADMITTED_EGRESS = frozenset(('offline', RELAY_EGRESS_POLICY))
 # Session platform captured once at import: the admission guard must see the
 # real host platform without tests rewriting the global interpreter view.
 _SESSION_PLATFORM = sys.platform
@@ -73,18 +83,32 @@ class ClaudeResearchOperatorResult:
 def _admit_linux_session(profile, api_key_supplier, stop):
     """Session-write admission guard; runs before any session I/O.
 
-    Requires Linux, a contained v2 profile (an immutable offline launch
-    specification), the EXACT finite in-memory supplier type, and that the
-    supplier's construction-bound stop token is the identical object (``is``)
-    supplied for this session. A supplier bound to a different or absent stop
-    object is rejected here, never at credential time.
+    Requires Linux, a contained profile (an immutable launch specification
+    whose closed egress policy is exactly ``offline`` or the L8-D
+    ``relay-fixed-origin`` value), the EXACT finite in-memory supplier type,
+    and that the supplier's construction-bound stop token is the identical
+    object (``is``) supplied for this session. A supplier bound to a different
+    or absent stop object is rejected here, never at credential time.
+
+    A relay-bearing launch additionally requires the typed reviewed relay
+    trust configuration carried on the launch itself (the RelayTrustConfig
+    record): no discovery, no default client and no default trust exists
+    anywhere in this wiring.
+
+    Admission names the L8-D bounded fixed-origin validating relay design
+    boundary only; it authorizes no real endpoint, no credential use and no
+    activation of any kind.
     """
     if _SESSION_PLATFORM != 'linux':
         raise ValueError('research_claude_operator_linux_required')
     if type(profile) is not ClaudeExecProfile or profile.linux_launch is None:
         raise ValueError('research_claude_operator_profile_uncontained')
-    if profile.linux_launch.egress_policy != 'offline':
+    launch = profile.linux_launch
+    if launch.egress_policy not in _ADMITTED_EGRESS:
         raise ValueError('research_claude_operator_egress_unsupported')
+    if launch.egress_policy == RELAY_EGRESS_POLICY and type(
+            getattr(launch, 'relay_trust', None)) is not RelayTrustConfig:
+        raise ValueError('research_claude_operator_relay_trust_invalid')
     if type(api_key_supplier) is not FiniteInMemoryApiKeySupplier:
         raise ValueError('research_claude_operator_supplier_invalid')
     if not api_key_supplier.bound_stop_is(stop):
@@ -172,8 +196,13 @@ def run_claude_research_rotation(
     after failure or interruption; never retry or replace identities here.
 
     Before any session write, the Linux session admission guard requires a
-    contained v2 profile with offline egress and the exact finite supplier
-    type whose construction-bound stop token is this call's stop token.
+    contained profile whose closed egress policy is exactly ``offline`` or the
+    L8-D ``relay-fixed-origin`` value (the latter additionally requiring the
+    launch's typed reviewed relay trust configuration; no discovery, no
+    default client, no default trust) and the exact finite supplier type
+    whose construction-bound stop token is this call's stop token. Admitting
+    a relay-bearing profile names that design boundary only and authorizes
+    nothing.
 
     Return the exact runner report object, preserving any pending_run.
     Audit handles are lookup references, not reconciled provenance.

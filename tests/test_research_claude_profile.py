@@ -286,3 +286,93 @@ def test_contained_authorization_binds_the_v2_digest(tmp_path):
     v2 = contained(tmp_path)
     with pytest.raises(ValueError, match='authorization_mismatch'):
         bound(v2, permission(v1), api_key_supplier=supplier, stop=stop)
+
+
+# ---- contained v3 relay branch: the symbolic per-call loopback endpoint ----
+
+@pytest.mark.parametrize('url', [
+    'https://127.0.0.1:0', 'https://gateway.example.invalid',   # https forms
+    'http://127.0.0.1:1234', 'http://127.0.0.1:65535',          # concrete ports
+    'http://127.0.0.1:00', 'http://127.0.0.1:0/',               # port/host spelling
+    'http://127.0.0.1:0/path', 'http://127.0.0.1:0?q=secret',
+    'http://127.0.0.1:0#fragment', 'http://user:secret@127.0.0.1:0',
+    'http://localhost:0', 'http://[::1]:0', 'http://127.0.0.1',
+    'HTTP://127.0.0.1:0', ' http://127.0.0.1:0', 'http://127.0.0.1:0 ', '',
+])
+def test_relay_endpoint_form_is_exactly_the_symbolic_declaration(url):
+    with pytest.raises(ValueError) as caught:
+        profile._relay_endpoint(url)
+    assert 'secret' not in str(caught.value)
+
+
+def test_endpoint_validation_is_branch_scoped_to_the_relay_egress_value():
+    """Faithful synthetic launch structures (the single duck-typed attribute
+    the branch reads): the symbolic form binds only to the closed
+    'relay-fixed-origin' egress value; https remains the v1/v2 form."""
+    from types import SimpleNamespace
+    relay_launch = SimpleNamespace(egress_policy='relay-fixed-origin')
+    offline_launch = SimpleNamespace(egress_policy='offline')
+    for launch in (None, offline_launch):
+        profile._validate_endpoint(launch, 'https://gateway.example.invalid')
+        with pytest.raises(ValueError):
+            profile._validate_endpoint(launch, profile.RELAY_ENDPOINT_DECLARATION)
+    profile._validate_endpoint(relay_launch, profile.RELAY_ENDPOINT_DECLARATION)
+    with pytest.raises(ValueError):
+        profile._validate_endpoint(relay_launch, 'https://gateway.example.invalid')
+
+
+@pytest.mark.parametrize('profile_kind', ['uncontained', 'offline_contained'])
+def test_v1_and_v2_profiles_still_refuse_the_symbolic_relay_endpoint(tmp_path, profile_kind):
+    """The symbolic numeric-loopback declaration is valid ONLY in the v3
+    branch: uncontained and offline-contained profiles keep the https
+    endpoint contract byte for byte."""
+    from tests.test_research_process_linux import fixed_launch
+    values = dict(endpoint_url=profile.RELAY_ENDPOINT_DECLARATION)
+    if profile_kind == 'offline_contained':
+        values['linux_launch'] = fixed_launch()
+    with pytest.raises(ValueError, match='profile_invalid'):
+        candidate(tmp_path, **values)
+
+
+def relay_claiming_launch():
+    """The offline fixed launch with the closed relay egress value written
+    into its declared egress slot — the exact attribute a real relay launch
+    carries once the relay launch value lands (W2)."""
+    from tests.test_research_process_linux import fixed_launch
+    launch = fixed_launch()
+    object.__setattr__(launch, 'egress_policy', profile.RELAY_EGRESS_POLICY)
+    return launch
+
+
+def test_relay_egress_claim_requires_the_symbolic_endpoint_at_construction(tmp_path):
+    """Cross-branch fail-close through the real constructor: a launch whose
+    egress policy claims the relay value accepts ONLY the symbolic endpoint
+    declaration; https and every other form fail closed as
+    research_claude_profile_invalid."""
+    launch = relay_claiming_launch()
+    claimed = candidate(tmp_path, linux_launch=launch,
+                        endpoint_url=profile.RELAY_ENDPOINT_DECLARATION)
+    assert claimed.linux_launch.egress_policy == profile.RELAY_EGRESS_POLICY
+    assert claimed.contract_sha256 != contained(tmp_path).contract_sha256
+    for url in ('https://gateway.example.invalid', 'http://127.0.0.1:1234',
+                'http://127.0.0.1:0/path', 'http://user@127.0.0.1:0'):
+        with pytest.raises(ValueError, match='profile_invalid'):
+            candidate(tmp_path, linux_launch=launch, endpoint_url=url)
+
+
+def test_v3_shaped_authorization_cannot_authorize_an_offline_profile(tmp_path):
+    """An offline launch digests as v2 and can never satisfy a v3-shaped
+    authorization; nothing rewrites either side to force a match."""
+    from polymarket_alpha_lab.research_claude_profile import FiniteInMemoryApiKeySupplier
+    stop = ResearchDispatchStop()
+    supplier = FiniteInMemoryApiKeySupplier(stop=stop)
+    relay_claim = candidate(tmp_path, linux_launch=relay_claiming_launch(),
+                            endpoint_url=profile.RELAY_ENDPOINT_DECLARATION)
+    offline = contained(tmp_path)
+    assert offline.contract_sha256 != relay_claim.contract_sha256
+    v3_shaped = replace(permission(offline),
+                        adapter_contract_sha256=relay_claim.contract_sha256)
+    with pytest.raises(ValueError, match='authorization_mismatch'):
+        bound(offline, v3_shaped, api_key_supplier=supplier, stop=stop)
+    assert offline.contract_sha256 == contained(tmp_path).contract_sha256
+    assert v3_shaped.adapter_contract_sha256 == relay_claim.contract_sha256

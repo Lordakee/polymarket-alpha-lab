@@ -7,6 +7,7 @@ used anywhere here.
 """
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
+import json
 import sys
 import traceback
 
@@ -15,12 +16,18 @@ import pytest
 from polymarket_alpha_lab import research_claude_operator as operator
 from polymarket_alpha_lab import research_claude_profile as profile
 from polymarket_alpha_lab import research_claude_exec as cli
+from polymarket_alpha_lab import research_linux_relay as relay
+from polymarket_alpha_lab import research_process_linux as linux_launch_module
 from polymarket_alpha_lab.research_claude_profile import (
     ClaudeExecProfile, FiniteInMemoryApiKeySupplier, claude_profile_factory,
 )
 from polymarket_alpha_lab.research_codex_profile import CodexExecProfile
 from polymarket_alpha_lab.research_dispatch_runner import ResearchDispatchStop
+from polymarket_alpha_lab.research_linux_relay import (
+    RelayCaBundlePin, RelayRequestEntry, RelayTrustConfig,
+)
 from polymarket_alpha_lab.research_process import ResearchProcessError, ResearchProcessSpec
+from polymarket_alpha_lab.research_process_linux import LinuxLaunchSpec
 from tests.test_research_claude_exec import MODEL, action, envelope, wire
 from tests.test_research_claude_profile import SENTINEL, permission
 from tests.test_research_process_linux import HELPER_DIGEST, fixed_launch, relaunch
@@ -44,6 +51,30 @@ PRE_CORRECTION_V2_GOLDEN = {
     'linux': '46c14c1f8bbaf2f9dda2899489b6cc09b0825e0f796d6376bc00381d8112f204',
     'win32': 'f1986a31715dc34c3dbf30dbd42451f8753875ed83d03d6888f37b38ca246390',
 }
+# v3 (relay branch) golden: computed from the fixed synthetic golden profile
+# (symbolic relay endpoint written post-construction) plus a faithful
+# synthetic mirror of W2's documented relay policy_dict extension below.
+# The linux half follows the same recipe with the linux golden root (the
+# linux constant is verifiable only on the Linux host, like the v1/v2 goldens).
+CLAUDE_V3_GOLDEN = {
+    'linux': '7096309b169c0bf98039fd278a65c8d032592fa6abef911aeeeffa125e736cbe',
+    'win32': '77e6e98f04a2f74859cd5cc09d08ef81f40499ae279f64d768eb371aadb989ae',
+}
+# Fixed synthetic reviewed trust configuration (declaration-only; no file).
+# The forwarded-header rules are pinned as an explicitly name-sorted tuple:
+# the RelayRequestEntry default iterates a frozenset, whose order (and
+# therefore the trust policy_dict bytes) varies with the per-process hash
+# seed, which no golden digest may depend on.
+SORTED_FORWARDED_HEADERS = tuple(
+    relay.RelayHeaderRule(name) for name in sorted(relay.FORWARDED_HEADER_NAMES))
+GOLDEN_RELAY_TRUST = RelayTrustConfig(
+    ca_bundle=RelayCaBundlePin(path='/opt/pal-golden/relay-ca.pem',
+                               sha256='e' * 64, size_bytes=4096),
+    requests=(RelayRequestEntry(forwarded_headers=SORTED_FORWARDED_HEADERS),))
+# Placeholder pin for the relay helper digest: W2's RELAY_HELPER_SOURCE does
+# not exist yet, so the synthetic policy pins a clearly synthetic digest. The
+# golden-recompute test below forces the re-pin against W2's real values.
+SYNTHETIC_RELAY_HELPER_SHA256 = '5' * 64
 
 
 def golden_process(argv0, cwd, environment, digest):
@@ -433,3 +464,262 @@ def test_operator_admission_guard_covers_every_defect(defect, monkeypatch):
                                                    'egress_tampered') else supplier
     with pytest.raises(ValueError):
         operator._admit_linux_session(profile_obj, supplier, stop)
+
+
+# ---- v3 relay branch: synthetic golden, trust sensitivity, operator wiring ----
+
+def synthetic_relay_policy_dict(trust=None):
+    """Faithful synthetic mirror of W2's documented policy_dict extension for
+    the closed 'relay-fixed-origin' egress value: the offline fixed launch
+    policy with the relay egress value, a relay section carrying the relay
+    helper digest pin, the exact (20000, 32767) per-call port window and the
+    reviewed trust configuration, and the inherited relay channel declared
+    model-phase-only (the offline policy keeps []). Real relay launches
+    replace this synthetic once W2 lands; the golden-recompute test forces
+    that reconciliation instead of silently drifting."""
+    policy = fixed_launch().policy_dict()
+    policy['egress'] = dict(policy=profile.RELAY_EGRESS_POLICY,
+                            production_egress='unavailable',
+                            host_network_fallback='forbidden',
+                            relay='bounded-fixed-origin-validating-relay')
+    policy['relay'] = dict(
+        helper=dict(protocol_version=relay.RELAY_PROTOCOL_VERSION,
+                    sha256=SYNTHETIC_RELAY_HELPER_SHA256),
+        port_window=[20000, 32767],
+        trust=(GOLDEN_RELAY_TRUST if trust is None else trust).policy_dict())
+    policy['descriptors'] = dict(policy['descriptors'],
+                                 inherited_from_parent=['relay-channel-model-phase-only'])
+    return policy
+
+
+def v3_base_profile():
+    """The golden v1 profile with the symbolic relay endpoint written
+    post-construction (the real v3 constructor path lands with W2); used only
+    to build the public contract value for the synthetic golden."""
+    base = golden_claude_v1()
+    object.__setattr__(base, 'endpoint_url', profile.RELAY_ENDPOINT_DECLARATION)
+    return base
+
+
+def synthetic_v3_digest(trust=None):
+    return profile._relay_v3_digest(v3_base_profile()._contract_value(),
+                                    synthetic_relay_policy_dict(trust))
+
+
+def test_v3_golden_digest_is_pinned():
+    assert synthetic_v3_digest() == CLAUDE_V3_GOLDEN[sys.platform]
+    assert CLAUDE_V3_GOLDEN['linux'] != CLAUDE_V3_GOLDEN['win32']
+
+
+def test_v3_digest_is_distinct_from_v1_and_v2_and_secret_free():
+    v3 = synthetic_v3_digest()
+    assert v3 != golden_claude_v1().contract_sha256
+    assert v3 != contained_profile().contract_sha256
+    assert len(v3) == 64 and SENTINEL not in v3 and 'SYNTHETIC-KEY' not in v3
+
+
+def test_v3_declarations_match_the_relay_module_boundary():
+    assert profile.RELAY_ENDPOINT_BINDING == relay.ENDPOINT_BINDING == 'per-call-numeric-loopback-http'
+    assert profile.RELAY_ENDPOINT_DECLARATION == 'http://127.0.0.1:0'
+    assert profile.RELAY_PROFILE_SCHEMA == 'research-claude-profile-linux-v3'
+    assert profile.RELAY_EGRESS_POLICY == 'relay-fixed-origin'
+    assert relay.RELAY_PORT_WINDOW == (20000, 32767)
+
+
+@pytest.mark.parametrize('mutation', [
+    lambda trust: replace(trust, origin_hostname='relay-alternate.invalid'),
+    lambda trust: replace(trust, ca_bundle=RelayCaBundlePin(
+        '/opt/pal-golden/relay-ca-other.pem', 'f' * 64, 2048)),
+    lambda trust: replace(trust, origin_port=8443),
+    lambda trust: replace(trust, permitted_address_rule='qualification-loopback-only'),
+    lambda trust: replace(trust, idle_timeout_ms=12345),
+    lambda trust: replace(trust, total_timeout_ms=987654),
+])
+def test_v3_digest_covers_every_valid_trust_mutation(mutation):
+    assert synthetic_v3_digest(mutation(GOLDEN_RELAY_TRUST)) != synthetic_v3_digest()
+
+
+def test_v3_digest_covers_the_closed_request_set_bytes():
+    """The parent trust record is closed to exactly the one reviewed Messages
+    entry (any other requests value refuses construction), so digest coverage
+    of the request-set bytes is proven at the serialized-policy level, the
+    same way the tls/limit mutations prove their fields."""
+    target = json.loads(json.dumps(synthetic_relay_policy_dict()))
+    target['relay']['trust']['requests'][0]['target'] = '/v1/other'
+    assert (profile._relay_v3_digest(v3_base_profile()._contract_value(), target)
+            != synthetic_v3_digest())
+    query = json.loads(json.dumps(synthetic_relay_policy_dict()))
+    query['relay']['trust']['requests'][0]['query'] = ''
+    assert (profile._relay_v3_digest(v3_base_profile()._contract_value(), query)
+            != synthetic_v3_digest())
+    headers = json.loads(json.dumps(synthetic_relay_policy_dict()))
+    headers['relay']['trust']['requests'][0]['forwarded_headers'] = \
+        headers['relay']['trust']['requests'][0]['forwarded_headers'][:-1]
+    assert (profile._relay_v3_digest(v3_base_profile()._contract_value(), headers)
+            != synthetic_v3_digest())
+
+
+def test_v3_digest_covers_tls_floor_limit_and_endpoint_form():
+    base_policy = synthetic_relay_policy_dict()
+    tls_floor = json.loads(json.dumps(base_policy))
+    tls_floor['relay']['trust']['tls_floor'] = 'tls13'
+    assert (profile._relay_v3_digest(v3_base_profile()._contract_value(), tls_floor)
+            != synthetic_v3_digest())
+    limits = json.loads(json.dumps(base_policy))
+    limits['relay']['trust']['limits']['max_header_count'] = 31
+    assert (profile._relay_v3_digest(v3_base_profile()._contract_value(), limits)
+            != synthetic_v3_digest())
+    tampered_endpoint = v3_base_profile()
+    object.__setattr__(tampered_endpoint, 'endpoint_url', 'http://127.0.0.1:1')
+    assert (profile._relay_v3_digest(tampered_endpoint._contract_value(), base_policy)
+            != synthetic_v3_digest())
+
+
+def test_operator_admits_the_offline_egress_value(monkeypatch):
+    monkeypatch.setattr(operator, '_SESSION_PLATFORM', 'linux')
+    stop = ResearchDispatchStop()
+    assert operator._admit_linux_session(contained_profile(),
+                                         finite_supplier(stop), stop) is None
+
+
+@pytest.mark.parametrize('value', ['relay', 'relay-fixed-origin-typo',
+                                   'RELAY-FIXED-ORIGIN', 'relay_fixed_origin', '',
+                                   'host', 'loopback-relay', 'online', 'qualified'])
+def test_operator_rejects_every_neighbor_egress_value(value, monkeypatch):
+    """Exactly the two closed values are admitted; every neighbor — including
+    near-misses of the relay value, case variants and emptiness — keeps the
+    fixed egress_unsupported code."""
+    monkeypatch.setattr(operator, '_SESSION_PLATFORM', 'linux')
+    stop = ResearchDispatchStop()
+    launch = fixed_launch()
+    object.__setattr__(launch, 'egress_policy', value)
+    # Neighbor values are not the relay key, so construction keeps the https
+    # endpoint branch exactly like a real tampered offline launch would.
+    claimed = replace(golden_claude_v1(), linux_launch=launch)
+    with pytest.raises(ValueError, match='research_claude_operator_egress_unsupported'):
+        operator._admit_linux_session(claimed, finite_supplier(stop), stop)
+
+
+def test_operator_requires_typed_relay_trust_for_a_relay_egress_claim(monkeypatch):
+    """A launch claiming the relay egress value without the typed reviewed
+    trust configuration is refused here (no discovery, no default trust)."""
+    monkeypatch.setattr(operator, '_SESSION_PLATFORM', 'linux')
+    stop = ResearchDispatchStop()
+    launch = fixed_launch()
+    object.__setattr__(launch, 'egress_policy', profile.RELAY_EGRESS_POLICY)
+    claimed = replace(golden_claude_v1(), linux_launch=launch,
+                      endpoint_url=profile.RELAY_ENDPOINT_DECLARATION)
+    with pytest.raises(ValueError, match='research_claude_operator_relay_trust'):
+        operator._admit_linux_session(claimed, finite_supplier(stop), stop)
+
+
+# ---- W2-gated: the real relay launch value does not exist yet ----
+
+_HELPER_DIGEST_ATTRIBUTES = ('RELAY_HELPER_DIGEST', 'relay_helper_digest')
+
+
+def relay_launch():
+    """The documented W2 relay launch interface, or None while W2 has not
+    landed: LinuxLaunchSpec gains the closed 'relay-fixed-origin' egress
+    value, the relay helper digest pin, the exact (20000, 32767) port window
+    and the relay_trust field (W1's RelayTrustConfig type). Once the field
+    exists, a construction failure is a loud error, never a silent skip."""
+    if 'relay_trust' not in LinuxLaunchSpec.__dataclass_fields__:
+        return None
+    attempts = [dict(egress_policy=profile.RELAY_EGRESS_POLICY,
+                     relay_trust=GOLDEN_RELAY_TRUST)]
+    for name in _HELPER_DIGEST_ATTRIBUTES:
+        digest = getattr(linux_launch_module, name, None)
+        if digest is not None:
+            attempts.append(dict(egress_policy=profile.RELAY_EGRESS_POLICY,
+                                 relay_trust=GOLDEN_RELAY_TRUST,
+                                 helper_sha256=digest))
+    failure = None
+    for changes in attempts:
+        try:
+            return relaunch(fixed_launch(), **changes)
+        except (TypeError, ValueError) as caught:
+            failure = caught
+    raise failure
+
+
+def v3_profile(launch):
+    return replace(golden_claude_v1(), linux_launch=launch,
+                   endpoint_url=profile.RELAY_ENDPOINT_DECLARATION)
+
+
+def test_v3_golden_digest_recomputed_when_the_real_relay_launch_lands():
+    """TODO(W2 golden recompute): the synthetic golden above MUST be
+    recomputed from the real relay launch policy_dict once W2 lands. Until
+    then the real construction is impossible and this test xfails as a
+    visible reminder; once construction succeeds, any mismatch FAILS here
+    (never silently drifts) and CLAUDE_V3_GOLDEN must be re-pinned."""
+    launch = relay_launch()
+    if launch is None:
+        pytest.xfail('awaits W2: the relay-fixed-origin launch value is not '
+                     'constructible yet; recompute CLAUDE_V3_GOLDEN when it lands')
+    assert v3_profile(launch).contract_sha256 == CLAUDE_V3_GOLDEN[sys.platform]
+
+
+def test_operator_admits_a_relay_launch_with_typed_trust(monkeypatch):
+    launch = relay_launch()
+    if launch is None:
+        pytest.skip('awaits W2: real relay launch construction '
+                    '(typed-trust operator acceptance)')
+    monkeypatch.setattr(operator, '_SESSION_PLATFORM', 'linux')
+    stop = ResearchDispatchStop()
+    assert operator._admit_linux_session(v3_profile(launch),
+                                         finite_supplier(stop), stop) is None
+
+
+def test_v3_factory_wiring_keeps_the_v2_supplier_and_stop_requirements():
+    launch = relay_launch()
+    if launch is None:
+        pytest.skip('awaits W2: real relay launch construction (factory wiring)')
+    relay_profile = v3_profile(launch)
+    stop = ResearchDispatchStop()
+    with pytest.raises(ValueError, match='supplier'):
+        claude_profile_factory(profile=relay_profile, authorization=permission(relay_profile),
+                               api_key_supplier=lambda: SENTINEL,
+                               allow_process_start=True, allow_api_key_use=True, stop=stop)
+    with pytest.raises(ValueError, match='supplier_stop_mismatch'):
+        claude_profile_factory(profile=relay_profile, authorization=permission(relay_profile),
+                               api_key_supplier=finite_supplier(ResearchDispatchStop()),
+                               allow_process_start=True, allow_api_key_use=True, stop=stop)
+    factory = claude_profile_factory(profile=relay_profile,
+                                     authorization=permission(relay_profile),
+                                     api_key_supplier=finite_supplier(stop),
+                                     allow_process_start=True, allow_api_key_use=True,
+                                     stop=stop)
+    assert type(factory('crypto_btc')) is type(factory('crypto_eth')) is cli.ClaudeProcessModel
+    assert relay_profile.contract_sha256 == CLAUDE_V3_GOLDEN[sys.platform]
+
+
+def test_v3_composition_through_the_factory_never_leaks_the_key(monkeypatch):
+    launch = relay_launch()
+    if launch is None:
+        pytest.skip('awaits W2: real relay launch construction (contained composition)')
+    stop = ResearchDispatchStop()
+    supplier = finite_supplier(stop, btc=('KEY-V3-ONLY',), eth=())
+    relay_profile = v3_profile(launch)
+    factory = claude_profile_factory(profile=relay_profile,
+                                     authorization=permission(relay_profile),
+                                     api_key_supplier=supplier, allow_process_start=True,
+                                     allow_api_key_use=True, stop=stop)
+    calls = []
+
+    def process(**kwargs):
+        calls.append(kwargs)
+        return wire()
+
+    monkeypatch.setattr(cli, 'run_research_process', process)
+    factory('crypto_btc').complete(messages_json='[{}]', max_output_tokens=100)
+    environment = dict(calls[0]['spec'].environment)
+    assert environment['ANTHROPIC_BASE_URL'] == profile.RELAY_ENDPOINT_DECLARATION
+    assert environment['ANTHROPIC_API_KEY'] == 'KEY-V3-ONLY'
+    assert 'KEY-V3-ONLY' not in json.dumps(calls[0]['spec'].argv) + relay_profile.contract_sha256
+    assert calls[0]['linux_launch'] is launch
+    with pytest.raises(ValueError) as caught:
+        factory('crypto_btc').complete(messages_json='[{}]', max_output_tokens=100)
+    assert 'KEY-V3-ONLY' not in ''.join(traceback.format_exception(caught.value))
+    assert supplier.remaining('crypto_btc') == 0 and supplier.remaining('crypto_eth') == 0
