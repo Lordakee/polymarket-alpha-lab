@@ -2872,3 +2872,48 @@ T1 必须运行与生产相同的哈希钉定 wrapper。
 D:/Projects/.agent-artifacts/polymarket-alpha-lab/l9-amendment/。
 激活边界不变（activation_authorized=false；本修正案不授权任何真实
 端点或凭据使用）。L9 实施自此可以开始，9 文件范围不变。
+
+## 68. L9 实施记录：离线半段全部落地；T1 原生门控推送（2026-10-07）
+
+全部由 §66 原生子代理完成（计划 W7、实现 W1/W2/W5/W6/W6b、评审
+R-W1/R-W6/R-W6b/R-W2/R-W7 均为全新只读独立评审，VERDICT 行齐备）：
+
+- **W1 中继核心**（e337ccea，已推送）：信任记录 + 校验引擎
+  ENGINE_SOURCE + 69 测试函数（151 过/1 跳）；含 W5 评审处方
+  （forwarded-header 默认 sorted + 跨 PYTHONHASHSEED 子进程字节一致
+  测试）。R-W1 PASS，其 MINOR-1/2/3 与 NOTE-4/5/7 六项处方由 W2 承接
+  落实。
+- **W5 profile v3 + 操作员准入**（db44df7c，已推送）：符号端点
+  'http://127.0.0.1:0'、schema v3、_relay_v3_digest、双值封闭
+  _ADMITTED_EGRESS + 类型化 RelayTrustConfig 强制；因 W1 最终模块将
+  requests 封闭为恰好默认 Messages 条目，请求集摘要覆盖改至序列化
+  policy 层。
+- **W6/W6b 门文件**（91168a31，已推送）：T3 五项冻结离线字节钉 +
+  skip-until-landed 绑定 + T1 原生探针。R-W6 FAIL（setenv 索引算术
+  自相矛盾、标记词表过度绑定、CLOEXEC 对照时序依赖）→ W6b 全修 →
+  R-W6b PASS（执行验证含敌意输入、真实源手术变体、13 结局用例）。
+- **W2 第二 helper + 双值 egress 分支**（ad07d3be，**仅本地**）：
+  RELAY_HELPER_SOURCE 严格增量（评审 difflib 游走独立证明：恰 74 行
+  插入、零删除替换），摘要 26203110…；泵在 fork 前校验信道 fd、凭据
+  读取前 fork、单 bind/listen/accept、exit-92 不重抽；四向交叉钉定
+  全拒；离线 CONF/argv/policy/v1/v2/v3 字节冻结；W5 四项验收转绿并
+  按测试自设纪律重钉 CLAUDE_V3_GOLDEN（linux a093f08f…/win32
+  563a5fde…）。门：六文件 441/12；全套件 40747 过/80 跳/0 败
+  （49m51s，无 CI 期间的补偿验证）。R-W2 PASS 零 BLOCKER/MAJOR/MINOR。
+- **W7 W3 计划 + R-W7 计划门 PASS**：工件 l9-w3-plan/README.md；
+  两项约束性仲裁写入其 §13 附录——(1) 成功契约为 S2 回退读法
+  （model_done 干净后父侧驱动有界引擎收束；成功 = model_done 干净 +
+  最后 call_done==relay_ok + 干净拆解；父侧发起的成功后引擎退出是
+  预期清洁退出）；(2) 构造器信道/抽签/CONF 工作 W2 已落地，W3 仅做
+  符号端点替换、保留已抽端口、父端 fd>=100，禁止二次信道/抽签/键。
+
+**裁决（协调者，依据 §67 "T1 是 W2 的硬合并前置"）**：W2 的推送与
+W3 的启动均门控于 T1 原生探针在恢复的 Linux 承载机上通过——穿越属性
+是未文档化实现属性，探针失败即节点级阻断且无回退。CI 绿至 91168a31；
+ad07d3be 不在 origin。
+
+**开放项**（全部阻塞于服务器 166 宕机，恢复轮询在运行）：T1 原生
+（W6 门文件三测试 + 同哈希钉定 wrapper）；T8 原生（W4 资格门）；L8
+原生收尾（B 三 opt-in + C 五项 + 修正横幅往返）+ verify_local --full；
+随后 W2 推送、W3 派发（携带 §13 附录）。激活边界不变
+（activation_authorized=false）。
