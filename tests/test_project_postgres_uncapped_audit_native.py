@@ -9,6 +9,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import time
 import uuid
 
 import pytest
@@ -734,6 +735,176 @@ def _contained_native_fixture(parent, name):
     return root, port
 
 
+# ---------------------------------------------------------------------------
+# Positively observed, test-owned PID/start-time cleanup evidence. A global
+# /proc command-name scan (pgrep-style matching) cannot match the real launch
+# shape: the supervisor is the sealed interpreter exec'd with the sealed
+# helper payload, and the vendor tree is the sealed image exec'd through
+# bwrap inside the per-call cgroup. These helpers never match names; they
+# read /proc/<pid>/stat identities (start time, parent) plus the owned
+# delegated cgroup subtree the run actually uses.
+def _proc_stat(pid):
+    """(ppid, starttime, state) from /proc/<pid>/stat, or None when absent.
+
+    ``comm`` may contain spaces and parentheses, so fields are split after the
+    LAST ')': with state (field 3) at index 0, ppid (4) is index 1 and
+    starttime (22) is index 19.
+    """
+    try:
+        data = Path('/proc/%d/stat' % pid).read_bytes()
+    except OSError:
+        return None
+    try:
+        fields = data[data.rindex(b')') + 2:].split()
+        return int(fields[1]), int(fields[19]), fields[0].decode('ascii', 'replace')
+    except (ValueError, IndexError):
+        return None
+
+
+def _thread_children(pid):
+    """Every child PID of the process, unioned over its threads."""
+    children = set()
+    try:
+        tasks = list(Path('/proc/%d/task' % pid).iterdir())
+    except OSError:
+        return children
+    for entry in tasks:
+        try:
+            children.update(int(value)
+                            for value in (entry / 'children').read_text().split())
+        except (OSError, ValueError):
+            continue
+    return children
+
+
+def _owned_allocations():
+    """Live member identities per owned per-call allocation directory.
+
+    Reads only the delegated cgroup root configured for this run
+    (POLYMARKET_ALPHA_LAB_LINUX_CGROUP_ROOT, the pal.dev-style subtree the
+    launcher creates its pal-call-* directories under). Returns
+    {directory name: {member pid: (ppid, starttime, state)}}.
+    """
+    allocations = {}
+    try:
+        entries = list(Path(os.environ['POLYMARKET_ALPHA_LAB_LINUX_CGROUP_ROOT']).iterdir())
+    except OSError:
+        return allocations
+    for entry in entries:
+        if not entry.name.startswith('pal-call-'):
+            continue
+        members = {}
+        try:
+            for value in (entry / 'cgroup.procs').read_text().split():
+                stat = _proc_stat(int(value))
+                if stat is not None:
+                    members[int(value)] = stat
+        except (OSError, ValueError):
+            continue
+        allocations[entry.name] = members
+    return allocations
+
+
+class _DriverLossIdentities:
+    """Test-owned identities captured for one driver-loss round.
+
+    driver: the launched driver subprocess. supervisors: the driver children
+    structurally identified as the parents of the live vendor-cgroup members
+    (they live OUTSIDE the vendor cgroup and are verified separately from it).
+    members: the vendor-cgroup member identities. allocations: the owned
+    per-call cgroup directories holding exactly those members.
+    """
+
+    def __init__(self, driver_pid, supervisors, members, allocations):
+        stat = _proc_stat(driver_pid)
+        assert stat is not None, 'driver vanished before identity capture'
+        self.driver_pid = driver_pid
+        self.driver_starttime = stat[1]
+        self.supervisors = dict(supervisors)   # pid -> starttime
+        self.members = dict(members)           # pid -> starttime
+        self.allocations = tuple(allocations)  # owned cgroup directory names
+
+    def survivors(self):
+        """Labels of recorded identities whose /proc entry still shows the
+        SAME start time (a reused PID number does not count as survival)."""
+        alive = []
+        stat = _proc_stat(self.driver_pid)
+        if stat is not None and stat[1] == self.driver_starttime:
+            alive.append('driver-%d' % self.driver_pid)
+        for kind, identities in (('supervisor', self.supervisors),
+                                 ('member', self.members)):
+            for pid, starttime in identities.items():
+                current = _proc_stat(pid)
+                if current is not None and current[1] == starttime:
+                    alive.append('%s-%d' % (kind, pid))
+        return alive
+
+
+def _observe_driver_loss_identities(driver_pid, timeout=120):
+    """Capture the live launch shape before the kill, by identity only.
+
+    Polls until at least one owned pal-call-* allocation holds a live member
+    whose host parent is a live driver child. The supervisor is bound
+    STRUCTURALLY, never by name: it is that parent, it is itself NOT a member
+    of the vendor cgroup, and it is a direct child of the driver. Allocations
+    whose members belong to other parents (a concurrently running native test)
+    are never captured. Fails the test when the shape never appears.
+    """
+    deadline = time.monotonic() + timeout
+    detail = 'no live vendor-cgroup member was ever observed'
+    while time.monotonic() < deadline:
+        if _proc_stat(driver_pid) is None:
+            pytest.fail('driver %d vanished before identity capture' % driver_pid)
+        children = {pid: _proc_stat(pid) for pid in _thread_children(driver_pid)}
+        children = {pid: stat for pid, stat in children.items() if stat is not None}
+        live = {name: members for name, members in _owned_allocations().items()
+                if members}
+        if live:
+            parents = {stat[0] for members in live.values()
+                       for stat in members.values()}
+            supervisors = parents & set(children)
+            detail = ('members %s parents %s driver children %s'
+                      % (sorted({pid for members in live.values() for pid in members}),
+                         sorted(parents), sorted(children)))
+            ours = {name: members for name, members in live.items()
+                    if {stat[0] for stat in members.values()} & supervisors}
+            if (supervisors and ours
+                    and {pid for members in ours.values() for pid in members}.isdisjoint(supervisors)
+                    and all(children[pid][0] == driver_pid for pid in supervisors)
+                    and all(children[pid][2] != 'Z' for pid in supervisors)):
+                observed = _DriverLossIdentities(
+                    driver_pid,
+                    {pid: children[pid][1] for pid in supervisors},
+                    {pid: members[pid][1] for members in ours.values() for pid in members},
+                    ours)
+                # Positive pre-kill assertions: the expected members were
+                # present, and every supervisor was alive, outside the vendor
+                # cgroup, and a direct child of the launched driver.
+                assert observed.members and observed.supervisors
+                return observed
+        time.sleep(0.1)
+    pytest.fail('driver-loss identity capture never observed a live vendor '
+                'cgroup member with a live supervisor parent (%s)' % detail)
+
+
+def _verify_driver_loss_cleanup(observed, timeout=90):
+    """After the kill, every recorded identity must be gone: the driver, each
+    supervisor (verified SEPARATELY by its own PID identity because it lives
+    outside the vendor cgroup), and each vendor-cgroup member. Each recorded
+    owned allocation directory must also be gone: the supervisor's cleanup
+    kills the cgroup, verifies it empty, then removes the directory."""
+    deadline = time.monotonic() + timeout
+    survivors = observed.survivors()
+    while survivors and time.monotonic() < deadline:
+        time.sleep(0.1)
+        survivors = observed.survivors()
+    assert not survivors, ('driver loss left processes alive by PID identity: %s'
+                           % survivors)
+    root = Path(os.environ['POLYMARKET_ALPHA_LAB_LINUX_CGROUP_ROOT'])
+    leftover = [name for name in observed.allocations if (root / name).exists()]
+    assert not leftover, 'driver loss left owned cgroup allocations behind: %s' % leftover
+
+
 _DRIVER_LOSS_CODE = '''
 import json, os, sys, time
 sys.path.insert(0, sys.argv[6])
@@ -790,11 +961,18 @@ profile = ClaudeExecProfile(
         (('HOME', str(work / 'host-home')), ('CLAUDE_CONFIG_DIR', str(work / 'host-config'))),
         digest, 600000),
     endpoint_url='https://gateway.example.invalid', linux_launch=launch)
-btc = replace(prepared(6500, 'crypto_btc'), model_id=profile.model_id)
-eth = replace(_contained_request(6501, 'crypto_eth', condition='blocked-eth-driver-loss'),
-              model_id=profile.model_id)
-batches = (ResearchBatch('driver-loss-btc', (btc,)), ResearchBatch('driver-loss-eth', (eth,)))
-permission = authorization((btc, eth), authorization_id='contained-driver-loss',
+scenario = json.loads(Path(sys.argv[8]).read_text(encoding='utf-8'))
+def build(entry):
+    if entry.get('prepared'):
+        return replace(prepared(entry['number'], entry['team']), model_id=profile.model_id)
+    return replace(_contained_request(entry['number'], entry['team'],
+                                      condition=entry['condition']),
+                   model_id=profile.model_id)
+btc = build(scenario['btc'])
+eth = build(scenario['eth'])
+batches = (ResearchBatch(scenario['prefix'] + '-btc', (btc,)),
+           ResearchBatch(scenario['prefix'] + '-eth', (eth,)))
+permission = authorization((btc, eth), authorization_id=scenario['authorization_id'],
                            adapter_contract_sha256=profile.contract_sha256)
 control = ResearchDispatchStop()
 supplier = FiniteInMemoryApiKeySupplier(stop=control,
@@ -805,8 +983,8 @@ marker.write_text(json.dumps({'btc': btc.record_id, 'eth': eth.record_id}))
 with ProjectPostgres(root).session() as session:
     report = operator.run_claude_research_rotation(session,
         reviewed_batches=batches, profile=profile, authorization=permission,
-        api_key_supplier=supplier, rotation_id='driver-loss-rotation', turn_id='turn-one',
-        stop=control, max_tasks=2, max_workers=2)
+        api_key_supplier=supplier, rotation_id=scenario['rotation_id'], turn_id='turn-one',
+        stop=control, max_tasks=scenario['max_tasks'], max_workers=scenario['max_workers'])
 raise SystemExit(0)
 '''
 
@@ -827,7 +1005,6 @@ def test_contained_operator_two_by_two_stop_restart_replay_and_audit(tmp_path, m
     official-image evidence.
     """
     import threading
-    import time
     from concurrent.futures import ThreadPoolExecutor
     from polymarket_alpha_lab import research_claude_operator as operator
     from polymarket_alpha_lab import research_process_linux as linux
@@ -1044,7 +1221,6 @@ def test_contained_driver_loss_preserves_incomplete_claim_and_replays_inert(tmp_
         build_native_launch, require_native_containment,
     )
     require_native_containment()
-    import time
     for key in tuple(os.environ):
         if key.upper().startswith('PG'):
             monkeypatch.delenv(key)
@@ -1070,10 +1246,18 @@ def test_contained_driver_loss_preserves_incomplete_claim_and_replays_inert(tmp_
                        'POLYMARKET_ALPHA_LAB_RUN_LINUX_CONTAINMENT': '1',
                        'POLYMARKET_ALPHA_LAB_LINUX_CGROUP_ROOT':
                            os.environ['POLYMARKET_ALPHA_LAB_LINUX_CGROUP_ROOT']}
+        scenario = tmp_path / 'driver-scenario.json'
+        scenario.write_text(json.dumps({
+            'btc': {'number': 6500, 'team': 'crypto_btc', 'prepared': True},
+            'eth': {'number': 6501, 'team': 'crypto_eth',
+                    'condition': 'blocked-eth-driver-loss'},
+            'prefix': 'driver-loss', 'authorization_id': 'contained-driver-loss',
+            'rotation_id': 'driver-loss-rotation', 'max_tasks': 2, 'max_workers': 2,
+        }), encoding='utf-8')
         driver = subprocess.Popen(
             [sys.executable, '-I', '-c', _DRIVER_LOSS_CODE,
              str(root), str(artifacts), str(work), str(marker), launch.wrapper.path, str(ROOT),
-             str(launch_file)],
+             str(launch_file), str(scenario)],
             cwd=str(tmp_path), env=environment, stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE, stdin=subprocess.DEVNULL)
         deadline = time.monotonic() + 180
@@ -1144,26 +1328,20 @@ def test_contained_driver_loss_preserves_incomplete_claim_and_replays_inert(tmp_
                 print('OBSERVER-STATE-ERROR:', type(error).__name__, error)
             pytest.fail('observer never saw progress; driver rc=%r stderr tail: %s'
                         % (driver.returncode, tail))
+        # Positively observed, test-owned identities BEFORE the kill: the
+        # launched driver (PID + start time), the supervisor child(ren)
+        # identified structurally as the parents of the live vendor-cgroup
+        # members (they live outside the vendor cgroup), and those members
+        # with their own start times inside the owned per-call allocations.
+        observed = _observe_driver_loss_identities(driver.pid)
         driver.kill()
         driver.kill()
         driver.wait(timeout=15)
-        gone_deadline = time.monotonic() + 30
-
-        def standins_alive():
-            for entry in Path('/proc').iterdir():
-                if not entry.name.isdigit():
-                    continue
-                try:
-                    command = (entry / 'cmdline').read_bytes()
-                except OSError:
-                    continue
-                if b'pal-standin' in command or (b'supervise' in command
-                                                 and b'pal-artifact' in command):
-                    return True
-            return False
-        while standins_alive() and time.monotonic() < gone_deadline:
-            time.sleep(0.1)
-        assert not standins_alive(), 'driver loss left contained processes alive'
+        # The supervisor notices the liveness-pipe EOF from its dead parent,
+        # kills and empties its owned cgroup, removes the allocation, exits
+        # and is reaped: every recorded PID identity and every recorded
+        # allocation directory must be gone. No process-name scan remains.
+        _verify_driver_loss_cleanup(observed)
         with db.session() as session:
             btc_stored = session.inspect_research_batch(batch_id='driver-loss-btc')
             eth_stored = session.inspect_research_batch(batch_id='driver-loss-eth')
@@ -1206,6 +1384,406 @@ def test_contained_driver_loss_preserves_incomplete_claim_and_replays_inert(tmp_
         assert db.status()['status'] == 'running'
         print('native driver loss: PASS;supervisor cleanup,incomplete claim preserved,'
               'no terminal outcome,inert replay from fresh parent session')
+    finally:
+        if driver is not None and driver.poll() is None:
+            driver.kill()
+            driver.wait(timeout=15)
+        if db.layout.home.exists():
+            db.down()
+
+
+@pytest.mark.skipif(not (ENABLED and CONTAINMENT_ENABLED),
+                    reason='explicit native contained operator proof is opt-in')
+def test_contained_driver_loss_useful_recovery_fresh_parent_rounds(tmp_path, monkeypatch):
+    """Driver loss mid-call, then USEFUL recovery work from fresh parents.
+
+    Round one is LIMITED to one interrupted request: BTC's first contained
+    call blocks, the driver is killed mid-call, and the supervisor (its own
+    PID identity, outside the vendor cgroup) reaps the vendor tree and its
+    owned allocation. BTC's claim stays permanently incomplete with no
+    terminal outcome and one unknown-usage call; ETH's ORIGINAL request stays
+    unclaimed. Fresh parent sessions then prove three things: the original
+    turn replays inertly; a SEPARATE two-request BTC/ETH scenario ends in an
+    ORDINARY, visible failure; and an explicit new turn of the ORIGINAL
+    rotation completes ETH's original still-unclaimed request while BTC's
+    incomplete state, identities, hashes and audits stay unchanged and no
+    renewed call is made for the prior claim. The roster keeps the operator's
+    exact BTC-then-ETH single-request batch shape.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    from polymarket_alpha_lab import research_process_linux as linux
+    from polymarket_alpha_lab import research_claude_operator as operator
+    from polymarket_alpha_lab.research_claude_profile import (
+        ClaudeExecProfile, FiniteInMemoryApiKeySupplier,
+    )
+    from polymarket_alpha_lab.research_process import ResearchProcessSpec
+    from polymarket_alpha_lab.research_dispatch import ResearchBatch
+    from polymarket_alpha_lab.research_dispatch_runner import ResearchDispatchStop
+    from tests.test_research_process_linux import (
+        build_native_launch, require_native_containment,
+    )
+    require_native_containment()
+    for key in tuple(os.environ):
+        if key.upper().startswith('PG'):
+            monkeypatch.delenv(key)
+    prefix = Path(os.environ['POLYMARKET_ALPHA_LAB_NATIVE_PG_PREFIX'])
+    root, port = _contained_native_fixture(tmp_path, 'Useful Recovery')
+    import_runtime_directory(root, prefix)
+    artifacts = tmp_path / 'native'
+    binary, digest, size, launch = build_native_launch(artifacts)
+    work = root / 'Useful Recovery Work'
+    marker = tmp_path / 'recovery-ids.json'
+    launch_file = tmp_path / 'recovery-launch.json'
+    from dataclasses import asdict as _asdict
+    launch_file.write_text(json.dumps(_asdict(launch)), encoding='utf-8')
+    db = ProjectPostgres(root)
+    driver = None
+    try:
+        assert db.initialize(port=port)['migrations_applied'] == 68
+        assert db.up()['status'] == 'running'
+        environment = {'PATH': os.environ.get('PATH', '/usr/bin:/bin'),
+                       'PYTHONPATH': (str(ROOT) + os.pathsep + str(ROOT / 'src')
+                                      + os.pathsep + str(ROOT / 'tests')),
+                       'PYTHONUTF8': '1',
+                       'POLYMARKET_ALPHA_LAB_RUN_LINUX_CONTAINMENT': '1',
+                       'POLYMARKET_ALPHA_LAB_LINUX_CGROUP_ROOT':
+                           os.environ['POLYMARKET_ALPHA_LAB_LINUX_CGROUP_ROOT']}
+        # Round one: the driver runs ONE turn limited to ONE request (BTC),
+        # whose first contained model call blocks forever.
+        scenario = tmp_path / 'recovery-scenario.json'
+        scenario.write_text(json.dumps({
+            # The block marker rides in the condition text; the team is still
+            # crypto_btc. ETH's condition has no marker: its original request
+            # is simply never claimed in this limited round.
+            'btc': {'number': 6600, 'team': 'crypto_btc',
+                    'condition': 'driver-loss-btc-blocked-eth'},
+            'eth': {'number': 6601, 'team': 'crypto_eth',
+                    'condition': 'recovery-eth-original'},
+            'prefix': 'useful-recovery', 'authorization_id': 'useful-recovery-driver-loss',
+            'rotation_id': 'useful-recovery', 'max_tasks': 1, 'max_workers': 1,
+        }), encoding='utf-8')
+        driver = subprocess.Popen(
+            [sys.executable, '-I', '-c', _DRIVER_LOSS_CODE,
+             str(root), str(artifacts), str(work), str(marker), launch.wrapper.path, str(ROOT),
+             str(launch_file), str(scenario)],
+            cwd=str(tmp_path), env=environment, stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE, stdin=subprocess.DEVNULL)
+        deadline = time.monotonic() + 180
+        while not marker.exists() and driver.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.1)
+        if not marker.exists():
+            driver.poll()
+            tail = (driver.stderr.read() or b'')[-900:].decode('utf-8', 'replace')
+            pytest.fail('driver did not reach its invocation (rc=%r): %s'
+                        % (driver.returncode, tail))
+        ids = json.loads(marker.read_text(encoding='utf-8'))
+        btc_id, eth_id = ids['btc'], ids['eth']
+        # Same trusted committed-row observer as the driver-loss proof: the
+        # driver holds the engine's session lease, so reads go over the
+        # engine's own validated local DSN.
+        import psycopg
+        observer_dsn = db._dsn(db._state())
+
+        def committed_counts(record_id):
+            with psycopg.connect(observer_dsn, autocommit=True) as connection:
+                starts = connection.execute(
+                    'SELECT count(*) FROM research_capture.uncapped_call_starts '
+                    'WHERE record_id = %s', (record_id,)).fetchone()[0]
+                outcomes = connection.execute(
+                    'SELECT count(*) FROM research_capture.uncapped_call_outcomes '
+                    'WHERE record_id = %s', (record_id,)).fetchone()[0]
+                return starts, outcomes
+
+        def committed_attempts(record_id):
+            with psycopg.connect(observer_dsn, autocommit=True) as connection:
+                rows = connection.execute(
+                    "SELECT payload::jsonb #>> '{run,research,status}' "
+                    'FROM research_capture.attempts WHERE record_id = %s',
+                    (record_id,)).fetchall()
+                return [row[0] for row in rows]
+
+        deadline = time.monotonic() + 480
+        reached = False
+        while time.monotonic() < deadline:
+            if driver.poll() is not None:
+                pytest.fail('driver exited early (rc=%r)' % driver.returncode)
+            try:
+                btc_starts, btc_outcomes = committed_counts(btc_id)
+                eth_starts, eth_outcomes = committed_counts(eth_id)
+                btc_attempts = committed_attempts(btc_id)
+                if btc_attempts or btc_outcomes:
+                    pytest.fail('BTC became terminal before the kill '
+                                '(starts/outcomes/attempts: %d/%d/%d)'
+                                % (btc_starts, btc_outcomes, len(btc_attempts)))
+                if (btc_starts == 1 and eth_starts == 0 and eth_outcomes == 0):
+                    reached = True
+                    break
+            except Exception:
+                pass
+            time.sleep(0.25)
+        if not reached:
+            driver.poll()
+            driver.kill()
+            tail = ''
+            try:
+                tail = (driver.stderr.read() or b'')[-1200:].decode('utf-8', 'replace')
+            except Exception:
+                pass
+            try:
+                print('OBSERVER-STATE btc:', committed_counts(btc_id),
+                      'eth:', committed_counts(eth_id))
+            except Exception as error:
+                print('OBSERVER-STATE-ERROR:', type(error).__name__, error)
+            pytest.fail('observer never saw the interrupted round; driver rc=%r '
+                        'stderr tail: %s' % (driver.returncode, tail))
+        observed = _observe_driver_loss_identities(driver.pid)
+        driver.kill()
+        driver.kill()
+        driver.wait(timeout=15)
+        _verify_driver_loss_cleanup(observed)
+        # The parent reconstructs the identical profile digest from the same
+        # measured artifacts; every later round reuses exactly this contract.
+        replay_profile = ClaudeExecProfile(
+            process=ResearchProcessSpec(
+                (binary,), str(work),
+                (('HOME', str(work / 'host-home')),
+                 ('CLAUDE_CONFIG_DIR', str(work / 'host-config'))),
+                digest, 600000),
+            endpoint_url='https://gateway.example.invalid', linux_launch=launch)
+        # Fresh parent: durable state after the kill.
+        with db.session() as session:
+            btc_stored = session.inspect_research_batch(batch_id='useful-recovery-btc')
+            eth_stored = session.inspect_research_batch(batch_id='useful-recovery-eth')
+            assert btc_stored.states() == ('incomplete',)
+            assert eth_stored.states() == ('pending',)
+            btc_state = session.inspect(record_id=btc_id)
+            assert btc_state.status == 'incomplete' and btc_state.record is None
+            btc_audit = session.inspect_uncapped_calls(record_id=btc_id)
+            assert len(btc_audit.calls) == 1 and btc_audit.outcomes == ()
+            interrupted = btc_audit.to_dict()
+            # The interruption has NO terminal record at all; its single call
+            # keeps unknown usage. (The ordinary-failure scenario below is
+            # the contrast: terminal, still unknown usage.)
+            assert interrupted['unknown_usage_call_count'] == 1
+            assert interrupted['all_calls_have_terminal_record'] is False
+            assert session.inspect_uncapped_calls(record_id=eth_id).calls == ()
+            receipt = session.inspect_uncapped_authorization(
+                authorization_id='useful-recovery-driver-loss')
+            stored_authorization = receipt.authorization
+            assert replay_profile.contract_sha256 == stored_authorization.adapter_contract_sha256
+            stored_batches = (btc_stored.stored.batch, eth_stored.stored.batch)
+            first_turn = session.inspect_research_turn(
+                rotation_id='useful-recovery', turn_id='turn-one')
+            assert first_turn.turn.chosen == (0,) and first_turn.turn.next_slot == 1
+            assert first_turn.turn.max_tasks == first_turn.turn.max_workers == 1
+        # Fresh parent: the original turn replays inertly, consuming nothing.
+        with db.session() as session:
+            replay_stop = ResearchDispatchStop()
+            untouched = FiniteInMemoryApiKeySupplier(stop=replay_stop,
+                crypto_btc=tuple('R-B%d' % n for n in range(3)),
+                crypto_eth=tuple('R-E%d' % n for n in range(3)))
+            counters_before = linux.LINUX_PHASE_COUNTERS.snapshot()
+            replay = operator.run_claude_research_rotation(
+                session, reviewed_batches=stored_batches, profile=replay_profile,
+                authorization=stored_authorization, api_key_supplier=untouched,
+                rotation_id='useful-recovery', turn_id='turn-one',
+                stop=replay_stop, max_tasks=1, max_workers=1)
+            assert replay.report.status == 'turn_already_reserved'
+            assert replay.report.attempts == ()
+            assert linux.LINUX_PHASE_COUNTERS.snapshot() == counters_before
+            assert untouched.remaining('crypto_btc') == untouched.remaining('crypto_eth') == 3
+            assert session.inspect(record_id=btc_id) == btc_state
+            assert session.inspect_uncapped_calls(record_id=btc_id) == btc_audit
+            assert session.inspect_uncapped_calls(record_id=eth_id).calls == ()
+        # Fresh parent: a SEPARATE two-request scenario whose visible ending
+        # is an ORDINARY failure - BTC completes, ETH's first call blocks and
+        # a cooperative stop finishes it with a terminal failed outcome.
+        btc2 = replace(_contained_request(6602, 'crypto_btc', condition='ordinary-btc'),
+                       model_id=replay_profile.model_id)
+        eth2 = replace(_contained_request(6603, 'crypto_eth',
+                                          condition='ordinary-eth-blocked-eth'),
+                       model_id=replay_profile.model_id)
+        ordinary_batches = (ResearchBatch('ordinary-btc', (btc2,)),
+                            ResearchBatch('ordinary-eth', (eth2,)))
+        ordinary_permission = authorization(
+            (btc2, eth2), authorization_id='useful-recovery-ordinary',
+            adapter_contract_sha256=replay_profile.contract_sha256)
+        with db.session() as session:
+            control = ResearchDispatchStop()
+            supplier = FiniteInMemoryApiKeySupplier(stop=control,
+                crypto_btc=tuple('O-B%d' % n for n in range(3)),
+                crypto_eth=tuple('O-E%d' % n for n in range(3)))
+            counters_before = linux.LINUX_PHASE_COUNTERS.snapshot()
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(operator.run_claude_research_rotation, session,
+                    reviewed_batches=ordinary_batches, profile=replay_profile,
+                    authorization=ordinary_permission, api_key_supplier=supplier,
+                    rotation_id='useful-recovery-ordinary', turn_id='turn-one',
+                    stop=control, max_tasks=2, max_workers=2)
+                deadline = time.monotonic() + 600
+                blocked = False
+                while time.monotonic() < deadline:
+                    if future.done():
+                        pytest.fail('ordinary rotation returned early: %r'
+                                    % future.exception())
+                    try:
+                        btc2_state = session.inspect(record_id=btc2.record_id)
+                        if (btc2_state.status == 'already_captured'
+                                and btc2_state.record.run.research.status != 'completed'):
+                            pytest.fail('ordinary BTC captured unsuccessfully: %r'
+                                        % btc2_state.record.run.research.reason_code)
+                        btc2_calls = session.inspect_uncapped_calls(record_id=btc2.record_id)
+                        eth2_calls = session.inspect_uncapped_calls(record_id=eth2.record_id)
+                        if (btc2_state.status == 'already_captured'
+                                and btc2_state.record.run.research.status == 'completed'
+                                and len(btc2_calls.calls) == len(btc2_calls.outcomes) == 3
+                                and len(eth2_calls.calls) == 1
+                                and eth2_calls.outcomes == ()):
+                            blocked = True
+                            break
+                    except Exception:
+                        pass
+                    time.sleep(0.25)
+                assert blocked, 'ordinary scenario never reached BTC complete + ETH blocked'
+                control.request_stop()
+                ordinary = future.result(timeout=300)
+            assert ordinary.report.status == 'dispatched'
+            assert ordinary.report.stop_requested is True
+            attempts = {attempt.position: attempt for attempt in ordinary.report.attempts}
+            assert set(attempts) == {0, 1}
+            assert attempts[0].status == 'returned'
+            assert attempts[0].execution.status == 'captured'
+            assert attempts[0].execution.record.run.research.status == 'completed'
+            assert attempts[1].status == 'returned'
+            assert attempts[1].execution.status == 'captured'
+            eth2_research = attempts[1].execution.record.run.research
+            assert eth2_research.status == 'failed' and eth2_research.model_calls == 1
+            btc2_audit = session.inspect_uncapped_calls(record_id=btc2.record_id)
+            eth2_audit = session.inspect_uncapped_calls(record_id=eth2.record_id)
+            assert len(btc2_audit.calls) == len(btc2_audit.outcomes) == 3
+            assert all(outcome.status == 'returned' for outcome in btc2_audit.outcomes)
+            assert len(eth2_audit.calls) == 1 and len(eth2_audit.outcomes) == 1
+            assert eth2_audit.outcomes[0].status == 'failed'
+            assert eth2_audit.outcomes[0].reported_total_tokens is None
+            summary = eth2_audit.to_dict()
+            # An ordinary failure is TERMINAL and visible - every call has a
+            # terminal record, unlike the interruption - while the stopped
+            # call's usage stays honestly unknown: the killed vendor reported
+            # no provider usage for it.
+            assert summary['all_calls_have_terminal_record'] is True
+            assert summary['unknown_usage_call_count'] == 1
+            assert summary['reported_tokens_known_subset'] is None
+            assert supplier.remaining('crypto_btc') == 0
+            assert supplier.remaining('crypto_eth') == 2
+            counters_after = linux.LINUX_PHASE_COUNTERS.snapshot()
+            assert (counters_after['model_executions']
+                    - counters_before['model_executions'] == 4)
+            assert (counters_after['version_executions']
+                    - counters_before['version_executions'] == 4)
+            # The interrupted rotation was untouched by the ordinary scenario.
+            assert session.inspect(record_id=btc_id) == btc_state
+            assert session.inspect_uncapped_calls(record_id=btc_id) == btc_audit
+            assert session.inspect_uncapped_calls(record_id=eth_id).calls == ()
+        # Fresh parent: an explicit new turn completes ETH's ORIGINAL
+        # still-unclaimed request; the prior incomplete claim is never renewed.
+        with db.session() as session:
+            control = ResearchDispatchStop()
+            supplier = FiniteInMemoryApiKeySupplier(stop=control,
+                crypto_btc=tuple('S-B%d' % n for n in range(3)),
+                crypto_eth=tuple('S-E%d' % n for n in range(3)))
+            counters_before = linux.LINUX_PHASE_COUNTERS.snapshot()
+            recovered = operator.run_claude_research_rotation(
+                session, reviewed_batches=stored_batches, profile=replay_profile,
+                authorization=stored_authorization, api_key_supplier=supplier,
+                rotation_id='useful-recovery', turn_id='turn-two',
+                stop=control, max_tasks=1, max_workers=1)
+            assert recovered.report.status == 'dispatched'
+            assert recovered.report.stop_requested is False
+            second_turn = recovered.report.stored
+            assert second_turn.turn.turn_number == 2
+            assert second_turn.turn.start_slot == first_turn.turn.next_slot == 1
+            assert second_turn.turn.chosen == (1,) and second_turn.turn.next_slot == 0
+            assert len(recovered.report.attempts) == 1
+            attempt = recovered.report.attempts[0]
+            assert attempt.position == 1 and attempt.status == 'returned'
+            eth_execution = attempt.execution
+            assert eth_execution.status == 'captured'
+            assert eth_execution.request.record_id == eth_id
+            eth_research = eth_execution.record.run.research
+            assert eth_research.status == 'completed'
+            assert eth_research.model_calls == 3 and eth_research.total_tokens == 78
+            eth_audit = session.inspect_uncapped_calls(record_id=eth_id)
+            assert len(eth_audit.calls) == len(eth_audit.outcomes) == 3
+            assert tuple(outcome.status for outcome in eth_audit.outcomes) == ('returned',) * 3
+            summary = eth_audit.to_dict()
+            assert summary['started_call_count'] == summary['validated_reply_count'] == 3
+            assert summary['unknown_usage_call_count'] == 0
+            assert summary['reported_tokens_known_subset'] == 78
+            # No renewed call for the prior claim: BTC's audit and state are
+            # unchanged and BTC's fresh supplier slots were never consumed.
+            assert session.inspect(record_id=btc_id) == btc_state
+            assert session.inspect_uncapped_calls(record_id=btc_id) == btc_audit
+            assert supplier.remaining('crypto_btc') == 3
+            assert supplier.remaining('crypto_eth') == 0
+            counters_after = linux.LINUX_PHASE_COUNTERS.snapshot()
+            assert (counters_after['model_executions']
+                    - counters_before['model_executions'] == 3)
+            assert (counters_after['version_executions']
+                    - counters_before['version_executions'] == 3)
+        # Fresh parent: final inert original-turn replay and full durable
+        # reconciliation of identities, hashes, audits and global counts.
+        with db.session() as session:
+            final_stop = ResearchDispatchStop()
+            counters_before = linux.LINUX_PHASE_COUNTERS.snapshot()
+            final = operator.run_claude_research_rotation(
+                session, reviewed_batches=stored_batches, profile=replay_profile,
+                authorization=stored_authorization,
+                api_key_supplier=FiniteInMemoryApiKeySupplier(stop=final_stop),
+                rotation_id='useful-recovery', turn_id='turn-one',
+                stop=final_stop, max_tasks=1, max_workers=1)
+            assert final.report.status == 'turn_already_reserved'
+            assert final.report.attempts == ()
+            assert linux.LINUX_PHASE_COUNTERS.snapshot() == counters_before
+            btc_after = session.inspect_research_batch(batch_id='useful-recovery-btc')
+            eth_after = session.inspect_research_batch(batch_id='useful-recovery-eth')
+            assert btc_after.stored == btc_stored.stored
+            assert eth_after.stored == eth_stored.stored
+            stored_btc = btc_after.stored.batch.requests[0]
+            stored_eth = eth_after.stored.batch.requests[0]
+            # The recovered execution was the ORIGINAL request: same record
+            # ids and content hashes as the round-one reservation.
+            assert first_turn.turn.request_keys == (
+                (stored_btc.record_id, stored_btc.content_sha256),
+                (stored_eth.record_id, stored_eth.content_sha256))
+            assert eth_execution.request.content_sha256 == stored_eth.content_sha256
+            assert session.inspect_uncapped_authorization(
+                authorization_id='useful-recovery-driver-loss') == receipt
+            assert session.inspect_research_turn(
+                rotation_id='useful-recovery', turn_id='turn-one') == first_turn
+            assert session.inspect(record_id=btc_id) == btc_state
+            assert session.inspect_uncapped_calls(record_id=btc_id) == btc_audit
+            assert session.inspect_uncapped_calls(record_id=eth_id) == eth_audit
+        identity = db._state()
+        for statement, expected in (
+                ('SELECT count(*) FROM research_capture.execution_claims;','4'),
+                ('SELECT count(*) FROM research_capture.attempts;','3'),
+                ('SELECT count(*) FROM research_capture.outcomes;','0'),
+                ('SELECT count(*) FROM research_capture.dispatch_batches;','4'),
+                ('SELECT count(*) FROM research_capture.dispatch_turns;','3'),
+                ('SELECT count(*) FROM research_capture.uncapped_authorizations;','2'),
+                ('SELECT count(*) FROM research_capture.uncapped_call_starts;','8'),
+                ('SELECT count(*) FROM research_capture.uncapped_call_outcomes;','7'),
+                ('SELECT count(*) FROM research_capture.model_budgets;','0'),
+                ('SELECT count(*) FROM research_capture.model_call_reservations;','0'),
+                ('SELECT count(*) FROM project_private.migrations;','68')):
+            # Business rows are counted as the application role;
+            # project_private is owner-only (an app-role read fails).
+            owner = not statement.startswith('SELECT count(*) FROM research_capture.')
+            assert db._psql(identity, statement, owner=owner) == expected
+        assert db.status()['status'] == 'running'
+        print('native useful recovery: PASS;identity cleanup,one interrupted claim kept,'
+              'inert replay,ordinary visible failure,new turn completes original request,'
+              'no renewed calls,unchanged audits')
     finally:
         if driver is not None and driver.poll() is None:
             driver.kill()
