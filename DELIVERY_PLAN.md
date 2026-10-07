@@ -2832,3 +2832,43 @@ Owner 指令（verbatim）："修改项目规则，本项目所有任务交给zc
   opt-in、C 的 5 项、修正横幅受控往返）与 verify_local --full 全量
   套件待服务器恢复后执行；§65 完成记录以该证据为准，此前不声明
   L8 收官。
+
+## 67. L9 设计修正案 1 过门（2026-10-07）
+
+原生子代理（§66）起草的设计修正案解决 L9 计划门的两项阻断：
+
+1. **穿越机制（BLOCKER 1）**：`--pass-fd` 不是 bubblewrap 0.11.1 的选项
+   （门评审独立重取 v0.11.1 bubblewrap.c 全文核验：该字符串不存在于
+   文件；fd 清扫仅在 monitor_child 与 pid-1 reaper 分支运行；载荷 exec
+   分支只关闭 proc_fd 与（非 --as-pid-1 时）opt_sync_fd——继承描述符
+   因此到达载荷）。修正案以**继承的 AF_UNIX socketpair 描述符**为主
+   机制：父侧创建、经 _stage 的既有 keep-set/set_inheritable/execv 路
+   径进入 bwrap、不出现在任何 bwrap 选项中。该存活属性是未文档化的
+   实现属性——T1 原生探针（正例字节往返 + CLOEXEC 阴性对照 + 拆解
+   验证）因此是 W2 的硬合并前置；评估并否决全部四个回退（内容复制
+   非活信道、host bind 违反挂载边界、namespace 外 TCP 破坏离线边界、
+   无其他 0.11.1 选项）——**无可行回退，探针失败即节点级阻断**。
+2. **第二 helper（BLOCKER 2）**：RELAY_HELPER_SOURCE——新的 checked-in
+   stdlib 源（冻结 HELPER_SOURCE 的结构 + 严格增量的 relay-model 分支：
+   CONF 增 relay_channel_fd/relay_port（仅模型阶段）；_stage 将信道
+   fd 加入 keep-set；_bwrap_argv 增两个 --setenv PAL_RELAY_*；guest 在
+   凭据读取前 fork 哑泵（绑定一次性抽取端口、失败 exit 92 不重抽、
+   恰好服务一个连接），随后逐字执行冻结 guest 职责并 execve 供应商）。
+   三层选择：LinuxLaunchSpec 双值封闭分支（offline→冻结摘要+空窗口；
+   relay-fixed-origin→relay 摘要+恰为 (20000,32767)；交叉钉定拒绝）；
+   _Admission 按 egress 选源；载荷 argv 分支只在 relay 源内。离线
+   CONF/argv/policy_dict/v1/v2 摘要/全部金样本字节不变。
+
+修正案另：T1-T8 测试增项（含 MINOR 3 的 no-retry/no-replay/no-cache
+全覆盖）；R4 撤销（bwrap 在 --unshare-net 下自行 loopback_setup）；
+新增 R-fd-survival 与 R-second-helper；修正 W4 依赖 W3；工作者门显式
+含推送/CI。门评审 VERDICT: PASS，其 3 项 MINOR 处方对 W2/W3 有约束
+力：descriptors.inherited_from_parent 摘要绑定（relay 分支声明
+'relay-channel-model-phase-only'，离线保持 []）；信道 fd 经
+F_DUPFD>=100 现有习语防 3..6 碰撞；guard 测试保留为显式验收项。
+T1 必须运行与生产相同的哈希钉定 wrapper。
+
+记录：过门文本即受审文本（门评审 NOTE 1）；工件索引
+D:/Projects/.agent-artifacts/polymarket-alpha-lab/l9-amendment/。
+激活边界不变（activation_authorized=false；本修正案不授权任何真实
+端点或凭据使用）。L9 实施自此可以开始，9 文件范围不变。
