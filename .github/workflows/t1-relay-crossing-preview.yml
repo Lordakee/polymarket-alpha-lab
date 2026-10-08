@@ -124,6 +124,38 @@ jobs:
             *) echo 'pids controller missing from the delegated subtree'; exit 1 ;;
           esac
           test -w /sys/fs/cgroup/pal-t1/cgroup.subtree_control
+      - name: PREVIEW (non-binding) - diagnose the interpreter runtime closure
+        run: |
+          set -euo pipefail
+          # Ground truth for the persistent guest libz.so.1 failure: the T1
+          # harness binds the guest /pal/runtime from a measured closure
+          # (tests/test_research_process_linux.py discover_runtime_closure).
+          # Dump the interpreter's DT_NEEDED chain and re-run that closure
+          # probe verbatim to see whether libz enters the traced set at all.
+          INTERP="$(readlink -f "$(command -v .venv/bin/python)")"
+          echo "interpreter: $INTERP"
+          ldd "$INTERP" || true
+          for obj in "$INTERP" $(ldd "$INTERP" 2>/dev/null | awk '/=> \//{print $3}'); do
+            echo "--- $obj"
+            objdump -p "$obj" 2>/dev/null | grep -E 'NEEDED|RPATH|RUNPATH' || true
+          done
+          echo '--- closure probe output (verbatim from discover_runtime_closure)'
+          "$INTERP" -S -B -c 'import hashlib,json,os,select,signal,sys,time
+          files={m.__file__ for m in sys.modules.values() if getattr(m,"__file__",None)}
+          mapped=set()
+          for line in open("/proc/self/maps"):
+              path=line.rstrip().rsplit(" ",1)[-1]
+              if path.startswith("/") and ".so" in path: mapped.add(path)
+          print(json.dumps(sorted(files|mapped)))'
+          echo '--- libz presence in probe output:'
+          "$INTERP" -S -B -c 'import hashlib,json,os,select,signal,sys,time
+          files={m.__file__ for m in sys.modules.values() if getattr(m,"__file__",None)}
+          mapped=set()
+          for line in open("/proc/self/maps"):
+              path=line.rstrip().rsplit(" ",1)[-1]
+              if path.startswith("/") and ".so" in path: mapped.add(path)
+          hits=[p for p in sorted(files|mapped) if "libz" in p]
+          print("libz entries:", hits)'
       - name: PREVIEW (non-binding) - run the relay gate file with the crossing opt-in
         shell: bash
         env:
