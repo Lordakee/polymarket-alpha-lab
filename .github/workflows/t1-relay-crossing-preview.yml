@@ -1,0 +1,162 @@
+# PREVIEW (non-binding): T1 relay-crossing fd-survival probe on a
+# GitHub-hosted Ubuntu runner. Manual workflow_dispatch ONLY - there are no
+# push/pull_request triggers, so this job can NEVER gate a merge or a release.
+# The binding T1 qualification remains the dev-server run on the recovered
+# Linux host (DELIVERY_PLAN.md S67/S68). Preconditions P1-P4 mirror the L9 T1
+# CI feasibility report (GO verdict):
+#   P1 manual dispatch only, PREVIEW/non-binding labels on the job and every
+#      step;
+#   P2 bubblewrap 0.11.1 built from the sha256-pinned official release
+#      tarball, installed non-setuid into a writable prefix, with the version
+#      asserted in its own step before pytest (the gate file is version-blind;
+#      apt on 24.04 ships 0.8/0.9, not 0.11.1);
+#   P3 AppArmor unprivileged-userns restriction lifted via sudo sysctl
+#      (Ubuntu 24.04 defaults it to 1, which breaks bwrap namespace and
+#      loopback setup under --unshare-net);
+#   P4 delegated cgroup v2 subtree with memory+pids controllers, owned by the
+#      runner user (the supervisor writes the subtree's own subtree_control,
+#      memory.max/memory.swap.max/pids.max/cgroup.procs/cgroup.kill).
+name: T1 relay-crossing fd-survival PREVIEW (non-binding)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  preview:
+    name: PREVIEW (non-binding) - T1 relay-crossing fd-survival probe
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: PREVIEW (non-binding) - check out revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: PREVIEW (non-binding) - install pinned uv
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        with:
+          version: '0.10.0'
+          enable-cache: false
+      - name: PREVIEW (non-binding) - install locked development environment
+        run: uv sync --locked --extra dev --python 3.12
+      - name: PREVIEW (non-binding) - install bwrap build dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends meson ninja-build libcap-dev pkg-config xz-utils
+      - name: PREVIEW (non-binding) - build bubblewrap 0.11.1 from the sha256-pinned official tarball
+        env:
+          BWRAP_URL: https://github.com/containers/bubblewrap/releases/download/v0.11.1/bubblewrap-0.11.1.tar.xz
+          BWRAP_SHA256: c1b7455a1283b1295879a46d5f001dfd088c0bb0f238abb5e128b3583a246f71
+          BWRAP_PREFIX: ${{ runner.temp }}/pal-t1-bwrap
+        run: |
+          set -euo pipefail
+          # P2: the fd-sweep property under test is 0.11.1 userspace logic, so
+          # the SOURCE must be the official 0.11.1 release tarball. The pin is
+          # the sha256 published in the upstream release notes; any mismatch
+          # fails this step loudly. Man-page generation stays off
+          # (-Dman=disabled, the 0.11.1 feature option; there is no "docs"
+          # option in this release) to avoid the xsltproc dependency; the
+          # meson default priv-mode yields a plain non-setuid binary.
+          cd "$RUNNER_TEMP"
+          curl -fsSL -o bubblewrap-0.11.1.tar.xz "$BWRAP_URL"
+          echo "$BWRAP_SHA256  bubblewrap-0.11.1.tar.xz" | sha256sum -c -
+          tar -xJf bubblewrap-0.11.1.tar.xz
+          meson setup bwrap-build bubblewrap-0.11.1 --prefix="$BWRAP_PREFIX" -Dman=disabled
+          ninja -C bwrap-build
+          meson install -C bwrap-build
+          test -x "$BWRAP_PREFIX/bin/bwrap"
+          echo "$BWRAP_PREFIX/bin" >> "$GITHUB_PATH"
+      - name: PREVIEW (non-binding) - assert bwrap 0.11.1 resolves on PATH, non-setuid
+        run: |
+          set -euo pipefail
+          # P2: the gate file pins whatever bwrap it finds (self-measured
+          # digest) and never checks the version, so this step must prove the
+          # PATH-resolved binary is exactly 0.11.1 (mirroring the WP-02
+          # bwrap_identity version check) and carries no setuid/setgid bit
+          # (the production _check_no_elevation refuses elevation).
+          bwrap_path="$(command -v bwrap)"
+          echo "resolved bwrap: $bwrap_path"
+          sha256sum "$bwrap_path"
+          version="$("$bwrap_path" --version)"
+          echo "bwrap --version: $version"
+          [ "$version" = "bubblewrap 0.11.1" ]
+          if [ -u "$bwrap_path" ] || [ -g "$bwrap_path" ]; then
+            echo "REFUSED: resolved bwrap is setuid/setgid; admission would reject it"
+            exit 1
+          fi
+      - name: PREVIEW (non-binding) - lift AppArmor unprivileged userns restriction
+        run: |
+          set -euo pipefail
+          # P3: without this, bwrap cannot create the user namespace or bring
+          # up namespace-local loopback under --unshare-net on 24.04.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          sysctl kernel.apparmor_restrict_unprivileged_userns
+      - name: PREVIEW (non-binding) - delegate cgroup v2 subtree with memory+pids
+        run: |
+          set -euo pipefail
+          # P4: replicate systemd Delegate=yes semantics by hand. The root
+          # cgroup is exempt from the no-internal-process rule, so enabling
+          # +memory +pids at the root succeeds even with systemd as PID 1;
+          # the subtree itself must be fully owned by the runner user because
+          # the supervisor writes its cgroup.subtree_control, per-allocation
+          # controls and cgroup.kill, and runs with cwd inside it.
+          sudo mkdir -p /sys/fs/cgroup/pal-t1
+          echo '+memory +pids' | sudo tee /sys/fs/cgroup/cgroup.subtree_control
+          sudo chown -R "$(id -un):$(id -gn)" /sys/fs/cgroup/pal-t1
+          controllers="$(cat /sys/fs/cgroup/pal-t1/cgroup.controllers)"
+          echo "pal-t1 cgroup.controllers: $controllers"
+          case " $controllers " in
+            *" memory "*) ;;
+            *) echo 'memory controller missing from the delegated subtree'; exit 1 ;;
+          esac
+          case " $controllers " in
+            *" pids "*) ;;
+            *) echo 'pids controller missing from the delegated subtree'; exit 1 ;;
+          esac
+          test -w /sys/fs/cgroup/pal-t1/cgroup.subtree_control
+      - name: PREVIEW (non-binding) - run the relay gate file with the crossing opt-in
+        shell: bash
+        env:
+          POLYMARKET_ALPHA_LAB_RUN_LINUX_RELAY_CROSSING: '1'
+          POLYMARKET_ALPHA_LAB_LINUX_CGROUP_ROOT: /sys/fs/cgroup/pal-t1
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
+          PYTHONUTF8: '1'
+          PYTHONUNBUFFERED: '1'
+        run: |
+          set -o pipefail
+          # Sanitized env discipline (scripts/verify_local.py
+          # build_environment): no PYTEST_ADDOPTS/PYTEST_PLUGINS/PYTHONPATH/
+          # PYTHONHOME inheritance; the two POLYMARKET_ALPHA_LAB_* opt-ins
+          # come from the step env above. -v so the three native T1 tests are
+          # individually visible.
+          unset PYTEST_ADDOPTS PYTEST_PLUGINS PYTHONPATH PYTHONHOME
+          .venv/bin/python -m pytest -v -ra tests/test_research_linux_relay_helper_gates.py 2>&1 | tee "$RUNNER_TEMP/t1-relay-crossing-preview.log"
+      - name: PREVIEW (non-binding) - check tracked files unchanged
+        if: always()
+        run: |
+          git diff --check
+          git diff --exit-code
+      - name: PREVIEW (non-binding) - publish preview log
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: t1-relay-crossing-preview-${{ github.sha }}
+          path: ${{ runner.temp }}/t1-relay-crossing-preview.log
+          retention-days: 7
+          if-no-files-found: ignore
+      - name: PREVIEW (non-binding) - print non-binding disclaimer
+        if: always()
+        run: |
+          echo '================================================================================'
+          echo 'T1 relay-crossing fd-survival probe - GitHub Actions PREVIEW (NON-BINDING)'
+          echo ''
+          echo '- This manual preview run NEVER gates a merge or a release.'
+          echo '- The binding T1 qualification runs on the recovered Linux dev server'
+          echo '  (DELIVERY_PLAN.md S67/S68); that dev-server run stays authoritative.'
+          echo '- A FAILURE here is environment diagnostics only, not probe evidence'
+          echo '  against the node.'
+          echo '- A PASS here is early de-risking only, not a qualification.'
+          echo '================================================================================'
