@@ -2944,6 +2944,31 @@ socketpair 描述符穿过 bwrap 0.11.1 载荷 exec 的存活属性、CLOEXEC
 运行补挂"提前启动 W3（合并仍门控），属门放宽决策，留待仲裁，本记录
 不构成授权。
 
+**W3 提前启动仲裁（2026-10-08，§66 原生仲裁子代理，只读）**：
+RULING: authorize-early-start-with-conditions。理由要点：穿越假设已
+非"实践未验"——R-W6/门评审独立追迹 v0.11.1 bubblewrap.c 证实载荷
+exec 分支仅关 proc_fd 与（非 --as-pid-1）opt_sync_fd，预演又在真实
+内核上以同版本源、同门文件、同钉定机制实证（含 CLOEXEC 阴性对照
+证明测试装置能检出非存活）；服务器若要证伪需内核跨 execve 关闭
+非 CLOEXEC fd 或钉定 wrapper 用户态逻辑不同，两者皆与钉定/版本断言
+机制矛盾（残余证伪概率个位数百分比）。承载同假设的 W2 已在 origin，
+证伪本就封锁节点，与是否启动 W3 无关；W3 为加法性父侧接线且大部分
+交付与穿越无关；Iron Rule 6 反对为顺序便利闲置产能；安全边界
+（paper-only/report-only/readonly、无凭据、无真实端点、
+activation_authorized=false）全部不动。**约束条件（违反即授权失效）**：
+C1 仅授权按 R-W7 过门计划 + §13 附录逐字执行的离线实现，写域恰为
+research_process_linux.py + tests/test_research_process_linux.py 两
+文件；C2 约束性 T1 仍为服务器运行（W6 门文件 + 生产哈希钉定
+wrapper），仅从 W3 的启动门移至合并/推送门——服务器 T1 通过前 W3
+不得合并 main 或推送 origin；节点收尾、T8、L8 原生、verify_local
+--full 与激活（false）门不变；C3 服务器若先恢复，约束性 T1 为第一
+任务并先于 W3 合并（原序恢复，本授权作废）；C4 服务器 T1 失败或与
+预演假设出现任何分叉（钉定 wrapper 摘要/版本/来源不同）即冻结 W3
+落地路径，携失败证据走全新只读复审 + 再仲裁，回退用 git revert 非
+改写；预演永远不是资格、永不做门；C5 W3 交付材料必须明示其依据本
+仲裁启动且约束性 T1 仍待运行，不得声称 T1 通过/T8/节点完成，首败
+保留；C6 安全边界重申不变；C7 本记录即随 W3 派发落账。
+
 **开放项**（全部阻塞于服务器 166 宕机，恢复轮询在运行）：T1 原生
 （W6 门文件三测试 + 同哈希钉定 wrapper）；T8 原生（W4 资格门）；L8
 原生收尾（B 三 opt-in + C 五项 + 修正横幅往返）+ verify_local --full；
