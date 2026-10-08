@@ -40,7 +40,14 @@ jobs:
           version: '0.10.0'
           enable-cache: false
       - name: PREVIEW (non-binding) - install locked development environment
-        run: uv sync --locked --extra dev --python 3.12
+        run: uv sync --locked --extra dev --python /usr/bin/python3.12
+        # System CPython, not uv's standalone build: the T1 harness measures
+        # sys.executable's runtime closure and rebinds the interpreter into
+        # the guest at /pal/runtime/bin/python3; the standalone build's
+        # private-lib RPATH ($ORIGIN/../lib) then misses libz.so.1 inside the
+        # namespace, while the system interpreter's libs live in the standard
+        # search dirs the closure binds at their original absolute paths.
+        # This also matches the dev server's system-Python production runtime.
       - name: PREVIEW (non-binding) - install bwrap build dependencies
         run: |
           set -euo pipefail
