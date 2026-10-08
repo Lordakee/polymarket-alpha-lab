@@ -59,8 +59,10 @@ import time
 
 from polymarket_alpha_lab.research_dispatch_runner import ResearchDispatchStop
 from polymarket_alpha_lab.research_linux_relay import (
-    RELAY_HELPER_SOURCE, RELAY_PORT_WINDOW, RELAY_PROTOCOL_VERSION,
-    RelayTrustConfig, _relay_helper_digest, draw_relay_port,
+    ENGINE_SOURCE, RELAY_CA_SIZE_CAP, RELAY_HELPER_SOURCE,
+    RELAY_LOOPBACK_BIND_ADDRESS, RELAY_PORT_WINDOW, RELAY_PROTOCOL_VERSION,
+    RELAY_TOTAL_TIMEOUT_CAP_MS, RelayTrustConfig, _engine_digest,
+    _relay_helper_digest, draw_relay_port, validate_relay_outcome,
 )
 from polymarket_alpha_lab.research_process import (
     ResearchProcessError, ResearchProcessResult,
@@ -77,7 +79,16 @@ EGRESS_OFFLINE = 'offline'
 # record. Cross-pinned combinations refuse construction.
 EGRESS_RELAY = 'relay-fixed-origin'
 RELAY_HELPER_DIGEST = _relay_helper_digest()
+RELAY_ENGINE_DIGEST = _engine_digest()
 RELAY_INHERITED_FROM_PARENT = 'relay-channel-model-phase-only'
+# Local byte-equal mirror of the profile layer's RELAY_ENDPOINT_DECLARATION
+# (W3 layering pin: the profile module imports THIS module for
+# LinuxLaunchSpec, so the process layer must not import the profile module;
+# a cross-pinning test keeps the two literals equal). The symbolic form is
+# the ONLY guest endpoint value a relay-bearing launch may declare: the
+# trusted parent substitutes the one drawn numeric loopback endpoint before
+# any env pair is set.
+RELAY_SYMBOLIC_ENDPOINT = 'http://127.0.0.1:0'
 NAMESPACES = ('user', 'mount', 'pid', 'net', 'ipc', 'uts')
 SCRATCH_SIZE_CAP = 1073741824        # 1 GiB declared engineering bound
 TMP_SIZE_CAP = 536870912             # 512 MiB declared engineering bound
@@ -1079,6 +1090,63 @@ class _LinuxPhaseCounters:
 LINUX_PHASE_COUNTERS = _LinuxPhaseCounters()
 
 
+def _relay_integer_counters(counters):
+    """Closed integer-only counter metadata from an engine report line."""
+    if type(counters) is not dict:
+        return {}
+    return {name: value for name, value in counters.items()
+            if type(name) is str and type(value) is int}
+
+
+class _LinuxRelayEvidence:
+    """Single-slot in-memory relay evidence for the most recent relay call
+    in this process: one closed outcome code plus integer counter metadata.
+
+    This mirrors :class:`_LinuxPhaseCounters` (engineering evidence, not
+    persistence). Last completed call wins; two rotation workers may run
+    relay calls concurrently, so every access is lock-protected. ``code`` is
+    a closed RELAY_OUTCOMES member and is None only when the engine died
+    without a final call record (a code is never guessed); per the W3 plan
+    addendum the code stays pinned to the engine's LAST ``call_done`` code,
+    so a parent-initiated ``relay_stopped`` exit after a concluded call
+    never overwrites the concluded outcome. The counters are pinned to the
+    engine's final/``call_done`` report counters."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._code = None
+        self._counters = {}
+
+    def record_call(self, code, counters):
+        with self._lock:
+            self._code = code if code is None or type(code) is str else None
+            self._counters = _relay_integer_counters(counters)
+
+    def record_final(self, counters):
+        # The engine's final report updates only the counters: the outcome
+        # code belongs to the last call_done record, never to the
+        # parent-driven teardown exit.
+        with self._lock:
+            self._counters = _relay_integer_counters(counters)
+
+    def snapshot(self):
+        with self._lock:
+            return {'code': self._code, 'counters': dict(self._counters)}
+
+
+_LINUX_RELAY_EVIDENCE = _LinuxRelayEvidence()
+
+
+def LINUX_RELAY_EVIDENCE():
+    """Fixed relay evidence for the most recent relay call in this process:
+    ``{'code': <closed RELAY_OUTCOMES member or None>, 'counters': {str: int}}``.
+
+    In-memory only (the LINUX_PHASE_COUNTERS discipline: not persistence).
+    No credential, prompt, response byte or descriptor number ever enters
+    the record."""
+    return _LINUX_RELAY_EVIDENCE.snapshot()
+
+
 def _open_pinned(path):
     # FIFO-safe: O_NONBLOCK never blocks a regular image; nonregular files are
     # rejected by the callers. O_NOFOLLOW refuses symlink substitution.
@@ -1238,7 +1306,7 @@ class _Admission:
     """Sealed descriptor snapshots retained through cleanup."""
 
     __slots__ = ('vendor_fd', 'wrapper_fd', 'helper_fd', 'interp_fd',
-                 'runtime_fds', 'closed')
+                 'runtime_fds', 'engine_fd', 'ca_fd', 'closed')
 
     def __init__(self, spec, launch):
         if sys.platform != 'linux':
@@ -1260,6 +1328,11 @@ class _Admission:
         self.closed = False
         self.vendor_fd = self.wrapper_fd = self.helper_fd = self.interp_fd = None
         self.runtime_fds = []
+        # Relay-branch-only sealed snapshots (L9 W3): the validating engine
+        # source and the pinned CA bundle. Offline admissions allocate
+        # neither, so the offline admission behavior is unchanged.
+        self.engine_fd = None
+        self.ca_fd = None
         failure = None
         try:
             verify_pinned_bytes(launch.wrapper.path, launch.wrapper.sha256,
@@ -1288,6 +1361,22 @@ class _Admission:
                 self.runtime_fds.append(_seal_file(item.host_path, item.sha256,
                                                    item.size_bytes,
                                                    RUNTIME_MEMBER_SIZE_CAP, False))
+            if launch.egress_policy == EGRESS_RELAY:
+                # W3 relay admission (the launch layer re-checks what the
+                # operator admission already enforces): the typed reviewed
+                # trust record, the sealed validating engine (digest verified
+                # while sealing, helper-sealing pattern) and the pinned CA
+                # bundle verified once by pathname then sealed.
+                trust = getattr(launch, 'relay_trust', None)
+                if type(trust) is not RelayTrustConfig:
+                    raise ValueError('research_process_artifact_invalid')
+                self.engine_fd = _seal_payload(
+                    ENGINE_SOURCE.encode('utf-8'), RELAY_ENGINE_DIGEST)
+                self.ca_fd = _seal_file(trust.ca_bundle.path,
+                                        trust.ca_bundle.sha256,
+                                        trust.ca_bundle.size_bytes,
+                                        max_bytes=RELAY_CA_SIZE_CAP,
+                                        require_elf=False)
             if not Path(launch.cgroup_root).is_dir():
                 raise ValueError('research_process_cgroup_unavailable')
             controllers = Path(launch.cgroup_root, 'cgroup.controllers')
@@ -1311,6 +1400,10 @@ class _Admission:
             fresh = _fresh_copy(getattr(self, name))
             os.close(getattr(self, name))
             setattr(self, name, fresh)
+        for name in ('engine_fd', 'ca_fd'):
+            fd = getattr(self, name)
+            if fd is not None:
+                setattr(self, name, self._protect_one(fd))
         self.runtime_fds = [self._protect_one(fd) for fd in self.runtime_fds]
 
     @staticmethod
@@ -1324,7 +1417,7 @@ class _Admission:
             return
         self.closed = True
         for fd in (self.vendor_fd, self.wrapper_fd, self.helper_fd, self.interp_fd,
-                   *self.runtime_fds):
+                   self.engine_fd, self.ca_fd, *self.runtime_fds):
             if fd is not None:
                 try:
                     os.close(fd)
@@ -1428,6 +1521,117 @@ def _model_phase_error(code):
     return ResearchProcessError('research_process_failed')
 
 
+def _substitute_relay_endpoint(pairs, port):
+    """Relay branch only: the ANTHROPIC_BASE_URL pair must be EXACTLY
+    :data:`RELAY_SYMBOLIC_ENDPOINT` and is replaced with the one drawn
+    numeric loopback endpoint ``http://127.0.0.1:<port>``.
+
+    Any other value (a concrete URL, another scheme, a wrong authority, a
+    path/query/userinfo form, or a missing pair) and any port outside the
+    exact reviewed window refuses closed with the existing admitted
+    ``research_process_launch_env_forbidden`` code before any spawn.
+    ``pairs`` is the :func:`_guest_configuration` output (the credential is
+    already popped); the caller-owned spec is never mutated and the
+    credential value never appears here."""
+    if (type(port) is not int
+            or not RELAY_PORT_WINDOW[0] <= port <= RELAY_PORT_WINDOW[1]):
+        raise ResearchProcessError('research_process_launch_env_forbidden')
+    substituted = []
+    seen = False
+    for key, value in pairs:
+        if key != 'ANTHROPIC_BASE_URL':
+            substituted.append((key, value))
+            continue
+        if value != RELAY_SYMBOLIC_ENDPOINT:
+            raise ResearchProcessError('research_process_launch_env_forbidden')
+        substituted.append((key, 'http://127.0.0.1:%d' % port))
+        seen = True
+    if not seen:
+        raise ResearchProcessError('research_process_launch_env_forbidden')
+    return tuple(substituted)
+
+
+def _create_relay_channel():
+    """One AF_UNIX relay channel per call as two descriptors >= 100.
+
+    Returns ``(engine_fd, supervisor_fd)``: both halves are duplicated to
+    numbers >= 100 through the existing F_DUPFD idiom (never the canonical
+    3..6 supervisor slots or the staged artifact descriptors) and the
+    originals are closed, so every later channel reference is an owned raw
+    descriptor. Runtime-Linux-only: the explicit AF_UNIX socket family makes
+    a non-Linux host fail loudly instead of silently taking a TCP emulation."""
+    parent, child = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        engine_fd = _fresh_copy(parent.fileno())
+        try:
+            supervisor_fd = _fresh_copy(child.fileno())
+        except BaseException:
+            os.close(engine_fd)
+            raise
+    except BaseException:
+        parent.close()
+        child.close()
+        raise
+    parent.close()
+    child.close()
+    return engine_fd, supervisor_fd
+
+
+def _engine_configuration(trust_policy, *, channel_fd, control_fd, report_fd,
+                          liveness_fd, ca_fd, total_timeout_ms, port):
+    """Pure engine CONF document: exactly the shape the W1 ENGINE_SOURCE
+    main() validator accepts and nothing more.
+
+    One bidirectional channel descriptor is named twice as the read and the
+    write half; the control/report/liveness/CA descriptors are pairwise
+    distinct and disjoint from it; the total budget is the parent's concrete
+    remaining model budget (1..86400000, a sub-budget of spec.timeout_ms);
+    the bound authority is the one drawn numeric loopback endpoint the
+    engine enforces on the guest request's Host header. No credential key,
+    no prompt bytes, no guest data: the document is json.dumps-able with
+    separators (',', ':') and fails closed with the admitted
+    ``research_process_launch_invalid`` code on any deviation."""
+    channels = (control_fd, report_fd, liveness_fd, ca_fd)
+    if type(trust_policy) is not dict:
+        raise ValueError('research_process_launch_invalid')
+    if any(type(value) is not int or value < 0
+           for value in (channel_fd,) + channels):
+        raise ValueError('research_process_launch_invalid')
+    if len(set(channels)) != len(channels) or channel_fd in set(channels):
+        raise ValueError('research_process_launch_invalid')
+    if (type(total_timeout_ms) is not int
+            or not 1 <= total_timeout_ms <= RELAY_TOTAL_TIMEOUT_CAP_MS):
+        raise ValueError('research_process_launch_invalid')
+    if (type(port) is not int
+            or not RELAY_PORT_WINDOW[0] <= port <= RELAY_PORT_WINDOW[1]):
+        raise ValueError('research_process_launch_invalid')
+    return dict(
+        trust=trust_policy,
+        relay_read_fd=channel_fd, relay_write_fd=channel_fd,
+        control_fd=control_fd, report_fd=report_fd,
+        liveness_fd=liveness_fd, ca_fd=ca_fd,
+        total_timeout_ms=total_timeout_ms,
+        bound_authority='%s:%d' % (RELAY_LOOPBACK_BIND_ADDRESS, port))
+
+
+def _relay_outcome_error(code):
+    """Closed mapping of a relay outcome onto EXISTING admitted
+    ResearchProcessError codes; the precise relay code lives only in the
+    in-memory evidence record. ``_ADMITTED_ERRORS`` grows by nothing."""
+    if code == 'relay_stopped':
+        return ResearchProcessError('research_process_stopped')
+    if code in ('relay_total_timeout', 'relay_connect_timeout',
+                'relay_handshake_timeout', 'relay_idle_timeout'):
+        return ResearchProcessError('research_process_timeout')
+    if code == 'relay_teardown_failed':
+        return ResearchProcessError('research_process_cleanup_failed')
+    if code == 'relay_channel_failed':
+        # R-W7 MINOR-2: the already-admitted relay-failure code is precise
+        # for a channel break; no new admitted string either way.
+        return ResearchProcessError('research_process_relay_failed')
+    return ResearchProcessError('research_process_failed')
+
+
 class _ContainedSession:
     """Parent-side driver for one supervisor and its two contained phases."""
 
@@ -1439,6 +1643,7 @@ class _ContainedSession:
         self._stdout_r = self._stderr_r = self._report_r = self._liveness_w = None
         self._relay_channel = None
         self._relay_child_fd = None
+        self._relay_port = None
         self._supervisor = None
         admission = _Admission(spec, launch)
         self._admission = admission
@@ -1471,24 +1676,33 @@ class _ContainedSession:
             relay_child_fd = None
             relay_kwargs = {}
             if launch.egress_policy == EGRESS_RELAY:
-                # The inherited relay channel (L9 Amendment 1): one AF_UNIX
-                # socketpair per call. The child-bound half moves to a
-                # descriptor >= 100 through the existing F_DUPFD idiom (the
+                # The inherited relay channel (L9 Amendment 1 + W3): one
+                # AF_UNIX socketpair per call; BOTH halves move to
+                # descriptors >= 100 through the existing F_DUPFD idiom (the
                 # canonical 3..6 supervisor slots and the staged artifact
-                # descriptors are never touched); the drawn port comes from
-                # the production draw inside the exact reviewed window; the
-                # parent half stays here for the trusted-parent engine peer
-                # and is closed only by cleanup. Nothing crosses the wrapper
-                # argv except the two PAL_RELAY_* setenv values.
-                channel_parent, channel_child = socket.socketpair()
-                relay_child_fd = _fresh_copy(channel_child.fileno())
-                channel_child.close()
-                self._relay_channel = channel_parent
-                # cleanup owns the duplicate until the supervisor has
-                # inherited it, so a failure below cannot leak it
+                # descriptors are never touched). The child-bound half is
+                # handed to the supervisor through pass_fds; the parent half
+                # is the trusted-parent engine peer's channel, closed only
+                # by the engine spawn or cleanup. The ONE production draw
+                # inside the exact reviewed window is retained on the
+                # session and flows to the CONF key, the substituted guest
+                # endpoint and the engine's bound authority. The symbolic
+                # guest endpoint declaration is substituted to the drawn
+                # numeric loopback endpoint HERE, before any env pair is
+                # set and before any channel is allocated (a non-symbolic
+                # declaration refuses closed with no allocation at all);
+                # nothing crosses the wrapper argv except the two
+                # PAL_RELAY_* setenv values.
+                self._relay_port = draw_relay_port()
+                pairs = _substitute_relay_endpoint(pairs, self._relay_port)
+                engine_channel_fd, relay_child_fd = _create_relay_channel()
+                self._relay_channel = engine_channel_fd
+                # cleanup owns the duplicates until the supervisor (and
+                # later the engine) has inherited them, so a failure below
+                # cannot leak either half
                 self._relay_child_fd = relay_child_fd
                 relay_kwargs = dict(relay_channel_fd=relay_child_fd,
-                                    relay_port=draw_relay_port())
+                                    relay_port=self._relay_port)
             allocation = 'pal-call-' + sha256(
                 (str(os.getpid()) + ':' + str(time.monotonic_ns())).encode('ascii')
             ).hexdigest()[:16]
@@ -1735,8 +1949,11 @@ class _ContainedSession:
                     setattr(self, name, None)
             channel = getattr(self, '_relay_channel', None)
             if channel is not None:
+                # W3: the channel is a raw duplicated descriptor (>= 100).
+                # After the engine spawn there must be no parent-held copy;
+                # closing here is defensive.
                 try:
-                    channel.close()
+                    os.close(channel)
                 except OSError:
                     pass
                 self._relay_channel = None
@@ -1774,6 +1991,525 @@ class _ContainedSession:
         return failure
 
 
+# Hosts whose select refuses pipe descriptors fall back to non-blocking
+# reads on the engine report pipe (the W1 engine's own _SELECT_OK idiom).
+_ENGINE_REPORT_SELECT_OK = True
+
+
+class _RelayEngineProcess:
+    """The trusted-parent relay engine peer for one admitted relay call.
+
+    Spawned OUTSIDE the vendor cgroup as a direct child of this process,
+    from the sealed ENGINE_SOURCE snapshot and the sealed interpreter (the
+    supervisor spawn idiom), and driven ONLY by its CONF-named channels and
+    the parent deadline: ``start_new_session`` isolates it from terminal
+    signals and no signal handler is installed anywhere. The parent closes
+    its channel copy right after the spawn, so the engine is the sole
+    parent-side channel holder and guest-side EOF semantics are exact in
+    both directions. The engine creates the one upstream HTTPS connection
+    itself; nothing but channel bytes and fixed-code report lines ever
+    crosses this boundary."""
+
+    def __init__(self, *, interp_fd, engine_fd, ca_fd, channel_fd,
+                 trust_policy, total_timeout_ms, port, python_home, cwd):
+        self._events = []
+        self._buf = bytearray()
+        self._report_eof = False
+        self._protocol_invalid = False
+        self._started_seen = False
+        self._engine_done_seen = False
+        self._exit_code = None
+        self._forced = False
+        self._proc = None
+        self._report_r = None
+        self._ctrl_w = None
+        self._liveness_w = None
+        conf_r = conf_w = ctrl_r = rep_w = live_r = None
+        try:
+            conf_r, conf_w = os.pipe()
+            ctrl_r, self._ctrl_w = os.pipe()
+            self._report_r, rep_w = os.pipe()
+            live_r, self._liveness_w = os.pipe()
+            # Non-blocking report reads keep the parent drain loop safe on
+            # hosts whose select refuses pipe descriptors; the child keeps
+            # its own blocking write end (independent open-file state).
+            os.set_blocking(self._report_r, False)
+            conf = _engine_configuration(
+                trust_policy, channel_fd=channel_fd, control_fd=ctrl_r,
+                report_fd=rep_w, liveness_fd=live_r, ca_fd=ca_fd,
+                total_timeout_ms=total_timeout_ms, port=port)
+            line = b'CONF ' + json.dumps(
+                conf, separators=(',', ':')).encode('utf-8')
+            self._proc = self._spawn(
+                ['/proc/self/fd/%d' % interp_fd, '-S', '-B',
+                 '/proc/self/fd/%d' % engine_fd],
+                stdin=conf_r,
+                pass_fds=[channel_fd, ctrl_r, rep_w, live_r, ca_fd,
+                          engine_fd, interp_fd],
+                env={'PYTHONHOME': python_home}, cwd=cwd)
+            os.write(conf_w, line.hex().encode('ascii') + b'\n')
+            for fd in (conf_r, conf_w, ctrl_r, rep_w, live_r):
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+            conf_r = conf_w = ctrl_r = rep_w = live_r = None
+            # The engine is now the only parent-side channel holder, so the
+            # channel EOF direction is exact for the guest too.
+            os.close(channel_fd)
+        except BaseException:
+            for fd in (conf_r, conf_w, ctrl_r, rep_w, live_r):
+                if fd is not None:
+                    try:
+                        os.close(fd)
+                    except OSError:
+                        pass
+            proc = self._proc
+            if proc is not None:
+                if proc.poll() is None:
+                    try:
+                        proc.kill()
+                    except OSError:
+                        pass
+                try:
+                    proc.wait(timeout=5)
+                except OSError:
+                    pass
+                except subprocess.TimeoutExpired:
+                    pass
+            self.close_fds()
+            raise
+
+    def _spawn(self, argv, *, stdin, pass_fds, env, cwd):
+        # Production spawn: the sealed interpreter executes the sealed
+        # engine source through /proc/self/fd (the supervisor idiom). The
+        # single seam lets the offline tests drive the identical
+        # pipe/CONF/report/STOP machinery with a host-compatible launcher.
+        return subprocess.Popen(
+            argv, stdin=stdin, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL, pass_fds=pass_fds, env=env, cwd=cwd,
+            shell=False, close_fds=True, start_new_session=True)
+
+    @property
+    def report_fd(self):
+        return self._report_r
+
+    @property
+    def started_seen(self):
+        return self._started_seen
+
+    @property
+    def engine_done_seen(self):
+        return self._engine_done_seen
+
+    @property
+    def protocol_invalid(self):
+        return self._protocol_invalid
+
+    def poll(self):
+        return self._proc.poll()
+
+    def collect_reports(self):
+        """Non-blocking drain of the engine report pipe into parsed report
+        events: fixed-code JSON lines only, never a spawn or a resend."""
+        global _ENGINE_REPORT_SELECT_OK
+        while self._report_r is not None:
+            if _ENGINE_REPORT_SELECT_OK:
+                try:
+                    if not select.select([self._report_r], [], [], 0)[0]:
+                        break
+                except (OSError, ValueError):
+                    _ENGINE_REPORT_SELECT_OK = False
+            try:
+                block = os.read(self._report_r, 65536)
+            except BlockingIOError:
+                break
+            except OSError:
+                break
+            if not block:
+                self._report_eof = True
+                break
+            self._buf.extend(block)
+        while True:
+            index = self._buf.find(b'\n')
+            if index < 0:
+                break
+            line = bytes(self._buf[:index])
+            del self._buf[:index + 1]
+            if not line:
+                continue
+            try:
+                event = json.loads(line.decode('utf-8'))
+            except (UnicodeDecodeError, ValueError):
+                self._protocol_invalid = True
+                continue
+            if type(event) is not dict:
+                self._protocol_invalid = True
+                continue
+            kind = event.get('type')
+            if kind == 'started':
+                self._started_seen = True
+            elif kind == 'engine_done':
+                self._engine_done_seen = True
+            self._events.append(event)
+
+    def drain_reports(self):
+        events, self._events = self._events, []
+        return events
+
+    def send_stop(self):
+        """One best-effort STOP write, then the control write end closes:
+        the engine honors STOP immediately and never starts new upstream
+        work after it."""
+        if self._ctrl_w is not None:
+            try:
+                os.write(self._ctrl_w, b'STOP\n')
+            except OSError:
+                pass
+            try:
+                os.close(self._ctrl_w)
+            except OSError:
+                pass
+            self._ctrl_w = None
+
+    def close_liveness(self):
+        """Parent-liveness EOF: the engine exits 'relay_parent_lost'."""
+        if self._liveness_w is not None:
+            try:
+                os.close(self._liveness_w)
+            except OSError:
+                pass
+            self._liveness_w = None
+
+    def await_exit(self, timeout_ms):
+        """Bounded engine conclusion: natural exit first, then terminate,
+        then kill, all inside the budget. The final report line precedes
+        every clean exit, so the report pipe drains to EOF (within a short
+        fixed bound) before the read end closes."""
+        deadline = time.monotonic_ns() + timeout_ms * 1000000
+        while self._proc.poll() is None and time.monotonic_ns() < deadline:
+            self.collect_reports()
+            time.sleep(0.005)
+        if self._proc.poll() is None:
+            self._forced = True
+            for killer in (self._proc.terminate, self._proc.kill):
+                try:
+                    killer()
+                except OSError:
+                    pass
+                stage = time.monotonic_ns() + max(timeout_ms * 1000000 // 2,
+                                                  50000000)
+                while self._proc.poll() is None and time.monotonic_ns() < stage:
+                    self.collect_reports()
+                    time.sleep(0.005)
+                if self._proc.poll() is not None:
+                    break
+        drain_deadline = time.monotonic_ns() + 1000000000
+        while not self._report_eof and time.monotonic_ns() < drain_deadline:
+            self.collect_reports()
+            if not self._report_eof:
+                time.sleep(0.002)
+        self._exit_code = self._proc.poll()
+        self.close_fds()
+        return self._exit_code
+
+    def conclusion(self):
+        return {'exit_code': self._exit_code, 'forced': self._forced,
+                'engine_done': self._engine_done_seen}
+
+    def close_fds(self):
+        for name in ('_report_r', '_ctrl_w', '_liveness_w'):
+            fd = getattr(self, name)
+            if fd is not None:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+                setattr(self, name, None)
+
+
+class _RelayContainedSession(_ContainedSession):
+    """Relay-bearing contained session (L9 W3): the frozen two-phase
+    discipline plus the trusted-parent validating engine peer.
+
+    The engine is spawned only for the model phase, after the version
+    subtree teardown verified clean; its 'started' report is required
+    BEFORE the supervisor receives MODEL and therefore before the one-use
+    credential channel is ever released. Nothing is ever retried: one
+    engine spawn, one MODEL command, one channel, one drawn port per
+    admitted call, and a relay refusal closes the call with no resend."""
+
+    def __init__(self, spec, launch, stop, deadline_ns):
+        self._launch = launch
+        self._engine = None
+        self._last_call_done_code = None
+        self._engine_done_code = None
+        super().__init__(spec, launch, stop, deadline_ns)
+
+    def run_model_phase(self, stdin):
+        # Order is load-bearing: the validating engine must report 'started'
+        # before the supervisor receives MODEL and before the one-use
+        # credential channel is ever released (the engine observes the
+        # credential only as the forwarded x-api-key header inside the one
+        # TLS connection).
+        self._spawn_engine()
+        self._await_engine_started()
+        return super().run_model_phase(stdin)
+
+    def _spawn_engine(self):
+        self._engine = _RelayEngineProcess(
+            interp_fd=self._admission.interp_fd,
+            engine_fd=self._admission.engine_fd,
+            ca_fd=self._admission.ca_fd,
+            channel_fd=self._relay_channel,
+            trust_policy=self._launch.relay_trust.policy_dict(),
+            total_timeout_ms=max(self._remaining_ms(), 1),
+            port=self._relay_port,
+            python_home=self._launch.supervisor_python_home,
+            cwd=self._launch.cgroup_root)
+        # The engine owns the parent-side channel copy from here.
+        self._relay_channel = None
+
+    def _await_engine_started(self):
+        engine = self._engine
+        while True:
+            if self._stopped():
+                raise ResearchProcessError('research_process_stopped')
+            if time.monotonic_ns() >= self._deadline:
+                raise ResearchProcessError('research_process_timeout')
+            engine.collect_reports()
+            failure = self._handle_engine_reports(engine.drain_reports())
+            if failure is not None:
+                raise failure
+            if engine.protocol_invalid:
+                raise ResearchProcessError('research_process_failed')
+            if engine.started_seen:
+                return
+            if engine.poll() is not None:
+                # Engine died before 'started' (startup refusal codes exit
+                # 1 with an error report; CONF defects exit 96-99).
+                raise ResearchProcessError('research_process_failed')
+            time.sleep(0.01)
+
+    def _relay_failure(self, code):
+        if type(code) is str:
+            return _relay_outcome_error(code)
+        return ResearchProcessError('research_process_failed')
+
+    def _record_call_evidence(self, code, counters):
+        outcome = None
+        if type(code) is str:
+            try:
+                outcome = validate_relay_outcome(code)
+            except ValueError:
+                # Startup error codes are never guessed as call outcomes.
+                outcome = None
+        self._last_call_done_code = code if type(code) is str else None
+        _LINUX_RELAY_EVIDENCE.record_call(outcome, counters)
+
+    def _handle_engine_reports(self, events):
+        """Fold parsed engine reports into evidence and a first failure;
+        the caller raises the returned failure (never a resend, never a
+        respawn)."""
+        failure = None
+        for event in events:
+            if type(event) is not dict:
+                return ResearchProcessError('research_process_failed')
+            kind = event.get('type')
+            code = event.get('code')
+            if kind == 'started':
+                continue
+            if kind == 'call_done':
+                self._record_call_evidence(code, event.get('counters'))
+                if code != 'relay_ok':
+                    # A refusal or failure closes the call NOW.
+                    failure = failure or self._relay_failure(code)
+                continue
+            if kind == 'engine_done':
+                self._engine_done_code = code
+                _LINUX_RELAY_EVIDENCE.record_final(event.get('counters'))
+                if code != 'relay_ok':
+                    failure = failure or self._relay_failure(code)
+                continue
+            failure = failure or ResearchProcessError('research_process_failed')
+        return failure
+
+    def _pump_engine_events(self):
+        engine = self._engine
+        if engine is None:
+            return
+        engine.collect_reports()
+        failure = self._handle_engine_reports(engine.drain_reports())
+        if failure is not None:
+            raise failure
+        if engine.protocol_invalid:
+            raise ResearchProcessError('research_process_failed')
+        if engine.poll() is not None and not engine.engine_done_seen:
+            # The engine died without its final report: the call fails
+            # closed and the evidence keeps the last recorded call state
+            # (never a guessed outcome).
+            raise ResearchProcessError('research_process_failed')
+
+    def _conclude_relay_call(self):
+        """S2-fallback success contract (W3 plan addendum): after a clean
+        supervisor model_done, the parent verifies the engine's LAST
+        call_done record within the existing deadline. The bounded engine
+        conclusion itself (STOP; the post-success parent-initiated exit is
+        the EXPECTED clean exit) runs in cleanup, where a forced kill or a
+        missing final report suppresses the successful result."""
+        while self._last_call_done_code is None:
+            if self._stopped():
+                raise ResearchProcessError('research_process_stopped')
+            if time.monotonic_ns() >= self._deadline:
+                raise ResearchProcessError('research_process_timeout')
+            self._pump_engine_events()
+            if (self._last_call_done_code is None
+                    and self._engine.poll() is not None):
+                # The engine died before concluding any call: never a
+                # fabricated success.
+                raise ResearchProcessError('research_process_failed')
+            time.sleep(0.005)
+        if self._last_call_done_code != 'relay_ok':
+            raise _relay_outcome_error(self._last_call_done_code)
+
+    def _drain_model(self, stdin):
+        # Mirrors the frozen base drain loop (kept in step by the offline
+        # suite) with exactly one addition per iteration: the engine report
+        # pipe joins the watched set and every engine report line is folded
+        # into the relay evidence; a relay refusal or engine death fails
+        # the call immediately.
+        collected, stderr_bytes, offset = bytearray(), 0, 0
+        source = self._prompt_w
+        done = False
+        while not done:
+            if self._stopped():
+                raise ResearchProcessError('research_process_stopped')
+            if time.monotonic_ns() >= self._deadline:
+                raise ResearchProcessError('research_process_timeout')
+            # Drive the prompt write directly each iteration: a pipe write
+            # end never reports readable, so it must not join the read set.
+            if source is not None:
+                if offset == len(stdin):
+                    # Relinquish before close: cancellation can arrive after
+                    # the OS already released the descriptor number.
+                    fd, source = source, None
+                    self._prompt_w = None
+                    os.close(fd)
+                else:
+                    try:
+                        count = os.write(source, stdin[offset:offset + 4096])
+                    except BlockingIOError:
+                        count = 0
+                    offset += count
+            watched = [self._stdout_r, self._stderr_r, self._report_r]
+            if self._engine is not None and self._engine.report_fd is not None:
+                watched.append(self._engine.report_fd)
+            try:
+                readable = select.select(watched, [], [], 0.05)[0]
+            except (OSError, ValueError):
+                raise ResearchProcessError('research_process_failed') from None
+            for index, fd in ((1, self._stdout_r), (2, self._stderr_r)):
+                if fd not in readable:
+                    continue
+                used = len(collected) if index == 1 else stderr_bytes
+                cap = self._spec.max_stdout_bytes if index == 1 else self._spec.max_stderr_bytes
+                try:
+                    block = os.read(fd, min(65536, cap - used + 1))
+                except BlockingIOError:
+                    continue
+                if not block:
+                    continue
+                if len(block) + used > cap:
+                    raise ResearchProcessError('research_process_output_limit')
+                if index == 1:
+                    collected.extend(block)
+                else:
+                    stderr_bytes += len(block)
+            if self._report_r in readable:
+                event = self._read_report()
+                code = event.get('code')
+                if event.get('type') == 'model_done':
+                    if code is not None:
+                        raise _model_phase_error(code)
+                    if event.get('exit_code') != 0:
+                        raise ResearchProcessError('research_process_nonzero_exit')
+                    if source is not None:
+                        # A protocol-conforming vendor reads all stdin before
+                        # exiting 0; a success report with the prompt pipe
+                        # still open means accepted bytes never reached it.
+                        raise ResearchProcessError(
+                            'research_process_input_incomplete')
+                    done = True
+                elif event.get('type') == 'error':
+                    raise ResearchProcessError('research_process_failed')
+                else:
+                    raise ResearchProcessError('research_process_failed')
+            elif self._supervisor.poll() is not None and not readable:
+                raise ResearchProcessError('research_process_failed')
+            self._pump_engine_events()
+        output = self._final_drain(collected, stderr_bytes)
+        self._conclude_relay_call()
+        return output
+
+    def _record_engine_evidence(self, events):
+        # Evidence-only fold (cleanup never raises on report content).
+        for event in events:
+            if type(event) is not dict:
+                continue
+            kind = event.get('type')
+            if kind == 'call_done':
+                self._record_call_evidence(event.get('code'),
+                                           event.get('counters'))
+            elif kind == 'engine_done':
+                self._engine_done_code = event.get('code')
+                _LINUX_RELAY_EVIDENCE.record_final(event.get('counters'))
+
+    def _teardown_engine(self, timeout_ms):
+        # Engine FIRST, then the frozen supervisor teardown. A forced kill,
+        # or a live engine driven out without its final report, is a
+        # cleanup failure that suppresses a successful result (L8-A); an
+        # engine that already died by itself failed the call above and is
+        # only reaped here.
+        engine = getattr(self, '_engine', None)
+        if engine is None:
+            return None
+        self._engine = None
+        failure = None
+        was_alive = engine.poll() is None
+        try:
+            engine.send_stop()
+            engine.close_liveness()
+            engine.collect_reports()
+            self._record_engine_evidence(engine.drain_reports())
+            engine.await_exit(timeout_ms)
+            engine.collect_reports()
+            self._record_engine_evidence(engine.drain_reports())
+        except BaseException as error:
+            failure = error
+        conclusion = engine.conclusion()
+        if failure is None:
+            if conclusion['forced'] or (was_alive
+                                        and not conclusion['engine_done']):
+                failure = ResearchProcessError('research_process_cleanup_failed')
+            if failure is not None:
+                LINUX_PHASE_COUNTERS.teardown_failure()
+        return failure
+
+    def _cleanup(self, timeout_ms):
+        engine_failure = None
+        interrupt = None
+        try:
+            engine_failure = self._teardown_engine(timeout_ms)
+        except (KeyboardInterrupt, SystemExit) as error:
+            interrupt = error
+        except BaseException as error:
+            engine_failure = error
+        base_failure = super()._cleanup(timeout_ms)
+        if interrupt is not None:
+            raise interrupt from None
+        return engine_failure if engine_failure is not None else base_failure
+
+
 _ADMITTED_ERRORS = frozenset((
     'research_process_stopped', 'research_process_timeout',
     'research_process_not_started', 'research_process_output_limit',
@@ -1809,7 +2545,13 @@ def run_linux_contained_process(*, spec, launch, stdin, stop):
     failure = None
     result = None
     try:
-        session = _ContainedSession(spec, launch, stop, deadline)
+        # The single additive run-path check (L9 W3): a relay-bearing launch
+        # drives the relay session; every offline launch keeps the frozen
+        # offline path, byte for byte.
+        if launch.egress_policy == EGRESS_RELAY:
+            session = _RelayContainedSession(spec, launch, stop, deadline)
+        else:
+            session = _ContainedSession(spec, launch, stop, deadline)
         if time.monotonic_ns() >= deadline or session._stopped():
             raise ResearchProcessError('research_process_not_started')
         session.run_version_phase()

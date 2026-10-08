@@ -15,6 +15,7 @@ from pathlib import Path
 import posixpath
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import threading
@@ -559,6 +560,8 @@ def relaunch(launch, **changes):
 
 
 _REAL_POPEN = subprocess.Popen
+_REAL_SOCKET = socket.socket
+_RELAY_HELPER_DIGEST = relay._relay_helper_digest()
 
 
 @pytest.fixture(autouse=True)
@@ -1191,3 +1194,1329 @@ def test_helper_source_conserves_prompt_bytes():
             in source)
     # The flush loop includes the prompt buffer.
     assert "(staged['stdin_w'], prompt_buf))" in source
+
+
+# ---------------------------------------------------------------------------
+# L9 W3: parent-side relay wiring (plan l9-w3-plan sections 4/7 as amended
+# by the R-W7 gate addendum section 13). Offline tests run on every host;
+# the two native parent-path proofs stay opt-in-gated and skip cleanly.
+# ---------------------------------------------------------------------------
+
+
+def relay_trust_declaration(ca_path='/opt/pal-synthetic/relay-ca.pem',
+                            ca_sha256=None, ca_size=4096):
+    """Declaration-only reviewed trust record (inert; no file is read)."""
+    return relay.RelayTrustConfig(
+        ca_bundle=relay.RelayCaBundlePin(ca_path, ca_sha256 or 'c' * 64,
+                                         ca_size))
+
+
+def synthetic_relay_launch(tmp_path=None, **changes):
+    """Declaration-only relay launch: the relay helper digest, the closed
+    relay egress value and the typed trust record (no files, no I/O)."""
+    changes.setdefault('relay_trust', relay_trust_declaration())
+    return synthetic_launch(tmp_path, egress_policy=linux.EGRESS_RELAY,
+                            helper_sha256=_RELAY_HELPER_DIGEST, **changes)
+
+
+def relay_vendor_spec(tmp_path, base_url=None):
+    """Relay-branch spec environment: the SYMBOLIC endpoint declaration and
+    the fixed synthetic credential sentinel."""
+    return ResearchProcessSpec(
+        (str(tmp_path / 'claude-relay'), '--print', '--bare'),
+        str(tmp_path / 'work'),
+        (('HOME', str(tmp_path / 'home')),
+         ('CLAUDE_CONFIG_DIR', str(tmp_path / 'config')),
+         ('ANTHROPIC_BASE_URL',
+          linux.RELAY_SYMBOLIC_ENDPOINT if base_url is None else base_url),
+         ('CLAUDE_CODE_MAX_OUTPUT_TOKENS', '8192'),
+         ('ANTHROPIC_API_KEY', 'SYNTHETIC-NOT-A-REAL-KEY')), 'd' * 64, 15000)
+
+
+def test_relay_symbolic_endpoint_substitution_is_exact_and_fail_closed(tmp_path):
+    """Plan 7.1.1: the symbolic declaration is substituted with the exact
+    drawn numeric loopback endpoint; every other pair is byte-identical and
+    order-preserved; the caller-owned input is never mutated; the exact
+    window bounds pass and every neighbor refuses closed."""
+    spec = relay_vendor_spec(tmp_path)
+    pairs, credential = linux._guest_configuration(spec, synthetic_launch(tmp_path))
+    assert credential == 'SYNTHETIC-NOT-A-REAL-KEY'
+    assert dict(pairs)['ANTHROPIC_BASE_URL'] == linux.RELAY_SYMBOLIC_ENDPOINT
+    assert 'ANTHROPIC_API_KEY' not in dict(pairs)
+    substituted = linux._substitute_relay_endpoint(pairs, 21007)
+    expected = dict(pairs)
+    expected['ANTHROPIC_BASE_URL'] = 'http://127.0.0.1:21007'
+    assert dict(substituted) == expected
+    assert tuple(dict(substituted)) == tuple(dict(pairs))
+    assert 'ANTHROPIC_API_KEY' not in json.dumps(
+        [list(pair) for pair in substituted])
+    # the input tuple is never mutated
+    assert dict(pairs)['ANTHROPIC_BASE_URL'] == linux.RELAY_SYMBOLIC_ENDPOINT
+    low, high = relay.RELAY_PORT_WINDOW
+    for port in (low, high):
+        assert dict(linux._substitute_relay_endpoint(pairs, port))[
+            'ANTHROPIC_BASE_URL'] == 'http://127.0.0.1:%d' % port
+    for port in (low - 1, high + 1, 0, -1, 65536):
+        with pytest.raises(ResearchProcessError,
+                           match='research_process_launch_env_forbidden'):
+            linux._substitute_relay_endpoint(pairs, port)
+
+
+@pytest.mark.parametrize('base_url', [
+    'https://api.anthropic.com', 'http://127.0.0.1:1',
+    'http://127.0.0.0:0', 'http://localhost:0', 'http://127.0.0.1',
+    'http://127.0.0.1:0/', 'http://127.0.0.1:0/path', 'http://127.0.0.1:0?q=1',
+    'http://127.0.0.1:0#frag', 'http://user@127.0.0.1:0',
+    'http://user:pw@127.0.0.1:0', 'https://127.0.0.1:0', 'http://[::1]:0',
+    'http://127.0.0.1:00', '',
+])
+def test_relay_endpoint_substitution_refuses_every_deviation(tmp_path, base_url):
+    """Plan 7.1.1: every deviation from the exact symbolic literal — wrong
+    scheme, authority, port, path, query, fragment or userinfo spelling —
+    refuses closed with the existing admitted code."""
+    spec = relay_vendor_spec(tmp_path, base_url)
+    pairs, _credential = linux._guest_configuration(spec, synthetic_launch(tmp_path))
+    with pytest.raises(ResearchProcessError,
+                       match='research_process_launch_env_forbidden'):
+        linux._substitute_relay_endpoint(pairs, 21007)
+
+
+def test_relay_endpoint_substitution_requires_the_endpoint_pair(tmp_path):
+    """Plan 7.1.1: a relay call without the endpoint declaration is a
+    deviation and refuses closed (never a silent passthrough)."""
+    base = relay_vendor_spec(tmp_path)
+    environment = tuple(pair for pair in base.environment
+                        if pair[0] != 'ANTHROPIC_BASE_URL')
+    spec = ResearchProcessSpec(base.argv, base.cwd, environment,
+                               base.executable_sha256, base.timeout_ms)
+    pairs, _credential = linux._guest_configuration(spec, synthetic_launch(tmp_path))
+    with pytest.raises(ResearchProcessError,
+                       match='research_process_launch_env_forbidden'):
+        linux._substitute_relay_endpoint(pairs, 21007)
+
+
+def test_relay_symbolic_endpoint_constant_matches_profile_declaration():
+    """Plan 7.1.2: the process-layer constant is byte-equal to the profile
+    layer's declaration (test-side import only) and the layering pin holds:
+    the process layer never imports the profile module."""
+    from polymarket_alpha_lab import research_claude_profile as profiles
+    assert linux.RELAY_SYMBOLIC_ENDPOINT == profiles.RELAY_ENDPOINT_DECLARATION
+    assert linux.RELAY_SYMBOLIC_ENDPOINT == 'http://127.0.0.1:0'
+    source = Path(linux.__file__).read_text(encoding='utf-8')
+    assert 'research_claude_profile' not in source
+
+
+@pytest.mark.skipif(linux.fcntl is None or not hasattr(socket, 'AF_UNIX'),
+                    reason='the relay channel builder (AF_UNIX socketpair '
+                           'plus the F_DUPFD idiom) is a Linux runtime '
+                           'surface; fcntl is absent on Windows hosts')
+def test_relay_channel_builder_moves_both_ends_above_100():
+    """Plan 7.1.3: both channel halves land at descriptors >= 100 (never
+    the canonical 3..6 supervisor slots), are distinct live descriptors,
+    and closing them leaves the descriptor set exactly as before (the
+    originals are closed; no fd leaks)."""
+    def open_fd_set():
+        directory = os.open('/proc/self/fd', os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            return frozenset(int(name) for name in os.listdir(directory)) - {directory}
+        finally:
+            os.close(directory)
+    before = open_fd_set()
+    engine_fd, supervisor_fd = linux._create_relay_channel()
+    try:
+        assert engine_fd >= 100 and supervisor_fd >= 100
+        assert engine_fd != supervisor_fd
+        os.fstat(engine_fd)
+        os.fstat(supervisor_fd)
+        assert open_fd_set() - before == {engine_fd, supervisor_fd}
+    finally:
+        os.close(engine_fd)
+        os.close(supervisor_fd)
+    assert open_fd_set() == before
+
+
+def _wire_session_constructor(monkeypatch, *, relay, base_url=None,
+                               draw_port=21007, channel=(107, 108)):
+    """Offline constructor wiring harness: the admission and the spawn are
+    fakes (the real ones are Linux-only), while the production constructor
+    logic under test — substitution, the ONE draw, port retention, the CONF
+    keys, pass_fds, env_pairs — runs for real. Records every spawn and the
+    CONF document the constructor hands the supervisor."""
+    record = {'conf': None, 'popen': [], 'draws': 0, 'channel': channel}
+
+    class FakeAdmission:
+        closed = False
+        vendor_fd, wrapper_fd, helper_fd, interp_fd = 201, 202, 203, 204
+        engine_fd = None
+        ca_fd = None
+        runtime_fds = [205]
+
+        def __init__(self, spec, launch):
+            pass
+
+        def protect(self):
+            pass
+
+        def close(self):
+            self.closed = True
+
+    class FakePopen:
+        def __init__(self, argv, **kwargs):
+            record['popen'].append((list(argv), kwargs))
+
+        def poll(self):
+            return None
+
+        def kill(self):
+            pass
+
+        def wait(self, timeout=None):
+            return 0
+
+    monkeypatch.setattr(linux, '_Admission', FakeAdmission)
+    monkeypatch.setattr(linux, 'subprocess', types.SimpleNamespace(
+        Popen=FakePopen, DEVNULL=subprocess.DEVNULL,
+        TimeoutExpired=subprocess.TimeoutExpired))
+    monkeypatch.setattr(linux, '_create_relay_channel', lambda: channel)
+
+    def fake_draw():
+        record['draws'] += 1
+        return draw_port
+
+    monkeypatch.setattr(linux, 'draw_relay_port', fake_draw)
+    monkeypatch.setattr(linux._ContainedSession, '_send_conf',
+                        lambda self, configuration: record.__setitem__(
+                            'conf', configuration))
+    monkeypatch.setattr(linux._ContainedSession, '_await_first_event',
+                        lambda self: {'type': 'started'})
+    root = Path('C:/pal-w3-wiring') if os.name == 'nt' else Path('/opt/pal-w3-wiring')
+    if relay:
+        launch = synthetic_relay_launch()
+        spec = relay_vendor_spec(root, base_url)
+    else:
+        launch = synthetic_launch()
+        spec = vendor_spec(root)
+    return record, launch, spec
+
+
+def test_relay_session_conf_gains_exactly_the_two_amendment_keys(monkeypatch):
+    """Plan 7.1.4: the relay constructor substitutes the guest endpoint
+    BEFORE env_pairs are set, performs exactly ONE production draw, retains
+    the drawn port and the >=100 parent channel end on the session, and
+    injects exactly the two amendment-named CONF keys."""
+    record, launch, spec = _wire_session_constructor(monkeypatch, relay=True)
+    session = linux._ContainedSession(spec, launch, None,
+                                      time.monotonic_ns() + 30000000000)
+    try:
+        assert record['draws'] == 1
+        conf = record['conf']
+        assert conf['relay_channel_fd'] == record['channel'][1] >= 100
+        assert conf['relay_port'] == 21007
+        assert relay.RELAY_PORT_WINDOW[0] <= conf['relay_port'] <= relay.RELAY_PORT_WINDOW[1]
+        assert dict(map(tuple, conf['env_pairs']))[
+            'ANTHROPIC_BASE_URL'] == 'http://127.0.0.1:21007'
+        assert linux.RELAY_SYMBOLIC_ENDPOINT not in json.dumps(conf['env_pairs'])
+        assert 'SYNTHETIC-NOT-A-REAL-KEY' not in json.dumps(conf)
+        assert session._relay_port == 21007
+        assert session._relay_channel == record['channel'][0] >= 100
+        assert len(record['popen']) == 1
+        _argv, kwargs = record['popen'][0]
+        assert record['channel'][1] in kwargs['pass_fds']
+        assert record['channel'][0] not in kwargs['pass_fds']
+    finally:
+        session._cleanup(50)
+    assert record['conf'] is not None
+
+
+def test_offline_session_conf_has_neither_relay_key(monkeypatch):
+    """Plan 7.1.4 (offline half): the offline constructor performs no draw,
+    allocates no channel, keeps the declared (unresolved) guest endpoint
+    pair, and its CONF is structurally identical to the pre-branch builder
+    output — absence of the keys, never None-valued placeholders."""
+    record, launch, spec = _wire_session_constructor(monkeypatch, relay=False)
+    session = linux._ContainedSession(spec, launch, None,
+                                      time.monotonic_ns() + 30000000000)
+    try:
+        conf = record['conf']
+        assert 'relay_channel_fd' not in conf and 'relay_port' not in conf
+        assert record['draws'] == 0
+        assert session._relay_port is None and session._relay_channel is None
+        assert dict(map(tuple, conf['env_pairs']))[
+            'ANTHROPIC_BASE_URL'] == 'https://gateway.example.invalid'
+        baseline = linux._supervisor_configuration(
+            spec, launch, wrapper_fd=conf['wrapper_fd'],
+            helper_fd=conf['helper_fd'], interp_fd=conf['interp_fd'],
+            vendor_fd=conf['vendor_fd'], runtime_fds=(conf['runtime'][0]['fd'],),
+            allocation=conf['alloc_name'], report_fd=conf['report_fd'],
+            liveness_fd=conf['liveness_fd'], prompt_fd=conf['prompt_fd'],
+            credential_fd=conf['credential_fd'])
+        baseline['env_pairs'] = conf['env_pairs']
+        baseline['passthrough_env_keys'] = conf['passthrough_env_keys']
+        assert baseline == conf
+    finally:
+        session._cleanup(50)
+
+
+def _exec_engine_namespace():
+    namespace = {}
+    exec(compile(relay.ENGINE_SOURCE, '<engine-source>', 'exec'), namespace)
+    return namespace
+
+
+def test_engine_conf_builder_shape_and_no_credential():
+    """Plan 7.1.5: the engine CONF document has exactly the keys the W1
+    engine main() validator accepts — the channel named twice, four
+    pairwise-distinct channel fds disjoint from it, the concrete total
+    budget, the numeric bound authority — is hex-line encodable, carries no
+    credential anywhere, and its trust document passes the real engine's
+    _validate_trust."""
+    policy = relay_trust_declaration().policy_dict()
+    conf = linux._engine_configuration(
+        policy, channel_fd=120, control_fd=121, report_fd=122,
+        liveness_fd=123, ca_fd=124, total_timeout_ms=15000, port=21007)
+    assert set(conf) == {'trust', 'relay_read_fd', 'relay_write_fd',
+                         'control_fd', 'report_fd', 'liveness_fd', 'ca_fd',
+                         'total_timeout_ms', 'bound_authority'}
+    assert conf['relay_read_fd'] == conf['relay_write_fd'] == 120
+    assert (conf['control_fd'], conf['report_fd'], conf['liveness_fd'],
+            conf['ca_fd']) == (121, 122, 123, 124)
+    assert conf['total_timeout_ms'] == 15000
+    assert conf['bound_authority'] == '127.0.0.1:21007'
+    serialized = json.dumps(conf, separators=(',', ':'))
+    line = b'CONF ' + serialized.encode('utf-8')
+    assert line.hex().encode('ascii') + b'\n'
+    # No credential surface: no credential VALUE, no credential key. (The
+    # trust policy legitimately pins the forwarded header NAME x-api-key;
+    # the credential value itself must never appear anywhere.)
+    for forbidden in ('SYNTHETIC', 'ANTHROPIC_API_KEY', 'pal-call'):
+        assert forbidden not in serialized
+    code, config = _exec_engine_namespace()['_validate_trust'](policy)
+    assert code is None and config is not None
+    port = int(conf['bound_authority'].split(':', 1)[1])
+    assert relay.RELAY_PORT_WINDOW[0] <= port <= relay.RELAY_PORT_WINDOW[1]
+
+    def build(**kwargs):
+        values = dict(channel_fd=120, control_fd=121, report_fd=122,
+                      liveness_fd=123, ca_fd=124, total_timeout_ms=15000,
+                      port=21007)
+        values.update(kwargs)
+        return linux._engine_configuration(policy, **values)
+
+    for total in (1, 86400000):
+        assert build(total_timeout_ms=total)['total_timeout_ms'] == total
+    for total in (0, -1, 86400001, None, '15000', 15000.0):
+        with pytest.raises(ValueError, match='research_process_launch_invalid'):
+            build(total_timeout_ms=total)
+    for port in (relay.RELAY_PORT_WINDOW[0] - 1,
+                 relay.RELAY_PORT_WINDOW[1] + 1, 0, 65536, '21007'):
+        with pytest.raises(ValueError, match='research_process_launch_invalid'):
+            build(port=port)
+    for kwargs in ({'control_fd': 120}, {'report_fd': 120},
+                   {'liveness_fd': 120}, {'ca_fd': 120},
+                   {'control_fd': '121'}, {'channel_fd': '120'},
+                   {'control_fd': 122, 'report_fd': 122},
+                   {'liveness_fd': 123, 'ca_fd': 123}, {'channel_fd': -1}):
+        with pytest.raises(ValueError, match='research_process_launch_invalid'):
+            build(**kwargs)
+    with pytest.raises(ValueError, match='research_process_launch_invalid'):
+        linux._engine_configuration(
+            None, channel_fd=120, control_fd=121, report_fd=122,
+            liveness_fd=123, ca_fd=124, total_timeout_ms=15000, port=21007)
+
+
+def _restore_real_process_surfaces(monkeypatch):
+    """Narrowly restore the real Popen/socket surfaces for the
+    engine-executing tests only (plan 7.1 preamble): the autouse tripwire
+    keeps guarding every other test."""
+    monkeypatch.setattr(subprocess, 'Popen', _REAL_POPEN)
+    monkeypatch.setattr('socket.socket', _REAL_SOCKET)
+
+
+def test_engine_real_source_lifecycle_offline(tmp_path, monkeypatch):
+    """Plan 7.1.6: the REAL ENGINE_SOURCE under a real interpreter —
+    malformed CONF lines exit 96/97/98/99 (never a hang); the started
+    handshake, the STOP conclusion (engine_done relay_stopped, exit 0) and
+    the parent-liveness EOF conclusion (relay_parent_lost, exit 0) all run
+    through the W1 subprocess harness; the sealed engine bytes stay
+    digest-pinned."""
+    _restore_real_process_surfaces(monkeypatch)
+    from tests.test_research_linux_relay import EngineRun, SYNTHETIC_CA, _trust
+    assert sha256(relay.ENGINE_SOURCE.encode('utf-8')).hexdigest() \
+        == relay._engine_digest() == linux.RELAY_ENGINE_DIGEST
+    engine_py = tmp_path / 'engine.py'
+    engine_py.write_text(relay.ENGINE_SOURCE, encoding='ascii')
+    for line, expected in ((b'', 96), (b'zz\n', 97),
+                           (b'hello world'.hex().encode('ascii') + b'\n', 98),
+                           (b'CONF {'.hex().encode('ascii') + b'\n', 99),
+                           (b'CONF {}'.hex().encode('ascii'), 96)):
+        proc = subprocess.Popen([sys.executable, str(engine_py)],
+                                stdin=subprocess.PIPE,
+                                stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL)
+        proc.communicate(line, timeout=120)
+        assert proc.returncode == expected, (line, proc.returncode)
+    trust = _trust().policy_dict()
+    run = EngineRun(tmp_path / 'stop', trust, SYNTHETIC_CA['pem'])
+    try:
+        run.wait_started()
+        run.stop()
+        event = run.engine_done()
+        assert event['code'] == 'relay_stopped', event
+        assert run.wait_exit() == 0
+    finally:
+        run.close()
+    run = EngineRun(tmp_path / 'lost', trust, SYNTHETIC_CA['pem'])
+    try:
+        run.wait_started()
+        run.close_liveness()
+        event = run.engine_done()
+        assert event['code'] == 'relay_parent_lost', event
+        assert run.wait_exit() == 0
+    finally:
+        run.close()
+
+
+@pytest.mark.skipif(os.name != 'posix',
+                    reason='the parent CONF fd numbers reach the engine '
+                           'child unchanged only through POSIX pass_fds')
+def test_engine_main_accepts_the_parent_conf_document(tmp_path, monkeypatch):
+    """Plan 7.1.5/7.1.6 (POSIX full-main proof): the CONF document built by
+    the production _engine_configuration passes the REAL engine main()
+    validator end to end — CA verified from the CONF-named descriptor, the
+    started report emitted, STOP honored, engine_done relay_stopped with
+    exit 0."""
+    _restore_real_process_surfaces(monkeypatch)
+    from tests.test_research_linux_relay import SYNTHETIC_CA, _trust
+    engine_py = tmp_path / 'engine.py'
+    engine_py.write_text(relay.ENGINE_SOURCE, encoding='ascii')
+    chan_r, _chan_w = os.pipe()
+    ctrl_r, ctrl_w = os.pipe()
+    rep_r, rep_w = os.pipe()
+    live_r, live_w = os.pipe()
+    ca_r, ca_w = os.pipe()
+    conf = linux._engine_configuration(
+        _trust().policy_dict(), channel_fd=chan_r, control_fd=ctrl_r,
+        report_fd=rep_w, liveness_fd=live_r, ca_fd=ca_r,
+        total_timeout_ms=15000, port=relay.draw_relay_port())
+    os.write(ca_w, SYNTHETIC_CA['pem'])
+    os.close(ca_w)
+
+    def read_json_line(fd):
+        data = bytearray()
+        while not data.endswith(b'\n'):
+            block = os.read(fd, 4096)
+            if not block:
+                raise AssertionError('engine report EOF; tail='
+                                     + repr(bytes(data[-120:])))
+            data.extend(block)
+        return json.loads(bytes(data).decode('utf-8'))
+
+    try:
+        proc = subprocess.Popen(
+            [sys.executable, str(engine_py)], stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            pass_fds=[chan_r, ctrl_r, rep_w, live_r, ca_r])
+        line = b'CONF ' + json.dumps(conf, separators=(',', ':')).encode('utf-8')
+        proc.stdin.write(line.hex().encode('ascii') + b'\n')
+        proc.stdin.close()
+        started = read_json_line(rep_r)
+        assert started['type'] == 'started', started
+        assert started['protocol_version'] == relay.RELAY_PROTOCOL_VERSION
+        os.write(ctrl_w, b'STOP\n')
+        done = read_json_line(rep_r)
+        assert done['type'] == 'engine_done', done
+        assert done['code'] == 'relay_stopped', done
+        assert all(type(value) is int for value in done['counters'].values())
+        assert proc.wait(timeout=30) == 0
+    finally:
+        for fd in (chan_r, _chan_w, ctrl_r, ctrl_w, rep_r, rep_w, live_r,
+                   live_w, ca_r):
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        if proc.poll() is None:
+            proc.kill()
+
+
+def test_engine_ca_pin_mismatch_records_fixed_code(tmp_path, monkeypatch):
+    """Plan 7.1.7 as amended by R-W7 MINOR-3: literal garbage through the
+    channel refuses as relay_refused_framing; a VALID-framing approved
+    request over the correctly-pinned but non-loadable (non-PEM) bundle
+    reaches relay_ca_pin_mismatch — with zero DNS resolutions and zero
+    upstream connections (the network-free proof for the native tests)."""
+    _restore_real_process_surfaces(monkeypatch)
+    from tests.test_research_linux_relay import (
+        EngineRun, SYNTHETIC_CA, _trust, approved_head)
+    trust = _trust().policy_dict()
+    run = EngineRun(tmp_path / 'garbage', trust, SYNTHETIC_CA['pem'])
+    try:
+        run.wait_started()
+        run.send_guest(b'PAL-W3 not-http garbage\r\n\r\n')
+        event = run.call_done()
+        assert event['code'] == 'relay_refused_framing', event
+        assert event['counters']['dns_resolutions'] == 0
+        assert event['counters']['upstream_connections'] == 0
+        run.close_guest()
+        event = run.engine_done()
+        assert event['code'] == 'relay_refused_framing', event
+        assert run.wait_exit() == 0
+    finally:
+        run.close()
+    run = EngineRun(tmp_path / 'valid', trust, SYNTHETIC_CA['pem'],
+                    bound_port=21222)
+    try:
+        run.wait_started()
+        run.send_guest(approved_head('127.0.0.1:21222'))
+        event = run.call_done()
+        assert event['code'] == 'relay_ca_pin_mismatch', event
+        counters = event['counters']
+        assert counters['requests_observed'] == 1
+        assert counters['dns_resolutions'] == 0
+        assert counters['upstream_connections'] == 0
+        run.close_guest()
+        assert run.engine_done()['code'] == 'relay_ca_pin_mismatch'
+        assert run.wait_exit() == 0
+    finally:
+        run.close()
+    # a truncated (short) head then channel EOF is a cardinality failure,
+    # never a hang
+    run = EngineRun(tmp_path / 'short', trust, SYNTHETIC_CA['pem'])
+    try:
+        run.wait_started()
+        run.send_guest(b'POST /v1/messages?beta=true HTTP/1.1\r\nHost: 127')
+        run.close_guest()
+        event = run.engine_done()
+        assert event['code'] == 'relay_refused_cardinality', event
+        assert run.wait_exit() == 0
+    finally:
+        run.close()
+
+
+def test_relay_outcome_error_mapping_is_closed():
+    """Plan 7.1.8: every RELAY_OUTCOMES member maps onto an EXISTING
+    admitted ResearchProcessError code per the amended table (channel
+    breaks take the already-admitted relay-failure code); the startup error
+    codes and unknown values map onto the generic failure; nothing outside
+    the admitted vocabulary is ever produced."""
+    timeout_group = ('relay_total_timeout', 'relay_connect_timeout',
+                     'relay_handshake_timeout', 'relay_idle_timeout')
+    specific = {'relay_stopped': 'research_process_stopped',
+                'relay_teardown_failed': 'research_process_cleanup_failed',
+                'relay_channel_failed': 'research_process_relay_failed'}
+    for code in relay.RELAY_OUTCOMES:
+        error = linux._relay_outcome_error(code)
+        assert type(error) is ResearchProcessError, code
+        expected = specific.get(
+            code, 'research_process_timeout' if code in timeout_group
+            else 'research_process_failed')
+        assert error.args[0] == expected, code
+        assert error.args[0] in linux._ADMITTED_ERRORS
+    for code in (*relay.RELAY_REPORT_CODES, 'relay_retry', None, 7, ''):
+        assert linux._relay_outcome_error(code).args[0] \
+            == 'research_process_failed', code
+
+
+def test_relay_evidence_accessor_is_single_slot_fixed_code_int_counters():
+    """Plan 7.1.9: the accessor returns the fixed record shape — a closed
+    RELAY_OUTCOMES code (or None) plus integer counters only; the final
+    report updates the counters without moving the code (it stays pinned to
+    the last call_done record); the last completed call wins under two
+    concurrent writers; the serialized record carries no credential,
+    prompt, allocation or descriptor content."""
+    holder = linux._LINUX_RELAY_EVIDENCE
+    holder.record_call(None, {})
+    assert linux.LINUX_RELAY_EVIDENCE() == {'code': None, 'counters': {}}
+    holder.record_call('relay_ok', {
+        'requests_observed': 1, 'requests_refused': 0, 'dns_resolutions': 0,
+        'upstream_connections': 0, 'guest_bytes_in': 64,
+        'guest_bytes_out': 0, 'teardown_drain_bytes': 0,
+        'teardown_failures': 0, 'not-an-int': 'x', 7: 1})
+    record = linux.LINUX_RELAY_EVIDENCE()
+    assert record['code'] == 'relay_ok'
+    relay.validate_relay_outcome(record['code'])
+    assert all(type(key) is str and type(value) is int
+               for key, value in record['counters'].items())
+    assert 'not-an-int' not in record['counters'] and 7 not in record['counters']
+    assert record['counters']['upstream_connections'] == 0
+    holder.record_final({'teardown_drain_bytes': 4096, 'teardown_failures': 1,
+                         'guest_bytes_out': 'not-an-int'})
+    record = linux.LINUX_RELAY_EVIDENCE()
+    assert record['code'] == 'relay_ok'
+    # the counters are REPLACED by the final report's (integer-only) set
+    assert record['counters'] == {'teardown_drain_bytes': 4096,
+                                  'teardown_failures': 1}
+    encoded = json.dumps(record)
+    for forbidden in ('SYNTHETIC', 'ANTHROPIC', 'pal-call', 'stdin',
+                      'messages_json'):
+        assert forbidden not in encoded
+
+    def worker():
+        for index in range(200):
+            holder.record_call('relay_ok' if index % 2 else 'relay_stopped',
+                               {'requests_observed': index})
+
+    threads = [threading.Thread(target=worker) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    record = linux.LINUX_RELAY_EVIDENCE()
+    assert record['code'] in ('relay_ok', 'relay_stopped')
+    assert type(record['counters']['requests_observed']) is int
+    holder.record_call(None, {})
+
+
+# A stub engine script for the parent-side teardown races (plan 7.1.10): it
+# speaks the exact engine report protocol over the production pipes and
+# selects its pathology by scenario. Test-only code; never shipped.
+STUB_ENGINE_SOURCE = '''\
+import json
+import os
+import select
+import sys
+import time
+
+scenario = sys.argv[1]
+fds = {}
+for spec in sys.argv[2:]:
+    name, _, value = spec.partition('=')
+    if os.name == 'nt':
+        import msvcrt
+        fds[name] = msvcrt.open_osfhandle(int(value, 16), os.O_BINARY | os.O_RDWR)
+    else:
+        fds[name] = int(value)
+for name in ('control', 'liveness'):
+    try:
+        os.set_blocking(fds[name], False)
+    except OSError:
+        pass
+sys.stdin.buffer.readline(1 << 20)  # consume the CONF line (never parsed)
+
+def report(value):
+    os.write(fds['report'],
+             (json.dumps(value, separators=(',', ':')) + chr(10)).encode('ascii'))
+
+ZEROS = {'requests_observed': 0, 'requests_refused': 0, 'dns_resolutions': 0,
+         'upstream_connections': 0, 'guest_bytes_in': 0, 'guest_bytes_out': 0,
+         'teardown_drain_bytes': 0, 'teardown_failures': 0}
+COUNTERS = dict(ZEROS)
+
+def call_done(code, **deltas):
+    COUNTERS.update(deltas)
+    report({'type': 'call_done', 'code': code, 'counters': dict(COUNTERS)})
+
+report({'type': 'started', 'protocol_version': 'stub'})
+if scenario == 'hang':
+    while True:
+        time.sleep(1)
+elif scenario == 'die-no-report':
+    sys.exit(7)
+elif scenario == 'die-after-ok':
+    call_done('relay_ok', requests_observed=1, guest_bytes_in=64)
+    sys.exit(7)
+elif scenario == 'refuse':
+    call_done('relay_refused_target', requests_observed=1)
+elif scenario == 'ok':
+    call_done('relay_ok', requests_observed=1, guest_bytes_in=64,
+              guest_bytes_out=64)
+_SELECT_OK = True
+
+def await_end():
+    global _SELECT_OK
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        watched = [fds['control'], fds['liveness']]
+        ready = []
+        if _SELECT_OK:
+            try:
+                ready = select.select(watched, [], [], 0.2)[0]
+            except (OSError, ValueError):
+                _SELECT_OK = False
+            except InterruptedError:
+                continue
+        if not _SELECT_OK:
+            time.sleep(0.05)
+            ready = watched
+        for name in ('control', 'liveness'):
+            fd = fds[name]
+            if fd not in ready:
+                continue
+            try:
+                block = os.read(fd, 4096)
+            except OSError:
+                continue
+            if name == 'control':
+                if block.strip() == b'STOP':
+                    return 'relay_stopped'
+            elif block == b'':
+                return 'relay_parent_lost'
+    return 'relay_total_timeout'
+
+report({'type': 'engine_done', 'code': await_end(),
+        'counters': dict(COUNTERS)})
+sys.exit(0)
+'''
+
+
+class _StubEngine(linux._RelayEngineProcess):
+    """The production engine-supervision machinery driven by a stub script:
+    only the spawn differs (a host-compatible launcher; the production
+    /proc/self/fd spawn is the Linux native path). The production __init__
+    runs for real — pipes, CONF line, the parent channel close, report
+    parsing, STOP, liveness EOF and the bounded force ladder."""
+
+    def __init__(self, tmp_path, scenario):
+        self._scenario = scenario
+        self._stub_root = tmp_path / ('stub-' + scenario)
+        self._stub_root.mkdir(parents=True, exist_ok=True)
+        self._stub_path = self._stub_root / 'stub.py'
+        self._stub_path.write_text(STUB_ENGINE_SOURCE, encoding='ascii')
+        self._channel_r, self._channel_w = os.pipe()
+        super().__init__(
+            interp_fd=0, engine_fd=0, ca_fd=0, channel_fd=self._channel_r,
+            trust_policy=relay_trust_declaration().policy_dict(),
+            total_timeout_ms=15000, port=21007,
+            python_home=sys.base_prefix, cwd=str(self._stub_root))
+
+    def _spawn(self, argv, *, stdin, pass_fds, env, cwd):
+        # pass_fds order is the production construction: channel, control,
+        # report, liveness, then the (placeholder zero) artifact pins.
+        assert len(pass_fds) == 7 and pass_fds[4] == pass_fds[5] == pass_fds[6] == 0
+        named = {'channel': pass_fds[0], 'control': pass_fds[1],
+                 'report': pass_fds[2], 'liveness': pass_fds[3]}
+        stub_argv = [sys.executable, str(self._stub_path), self._scenario]
+        if os.name == 'nt':
+            import msvcrt
+            for fd in named.values():
+                os.set_inheritable(fd, True)
+            stub_argv += ['%s=%s' % (name, hex(msvcrt.get_osfhandle(fd)))
+                          for name, fd in named.items()]
+            return _REAL_POPEN(stub_argv, stdin=stdin,
+                               stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL,
+                               env=dict(os.environ), cwd=cwd, shell=False,
+                               close_fds=False)
+        stub_argv += ['%s=%d' % (name, fd) for name, fd in named.items()]
+        return _REAL_POPEN(stub_argv, stdin=stdin, stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL,
+                           pass_fds=list(named.values()), env=dict(os.environ),
+                           cwd=cwd, shell=False, close_fds=True,
+                           start_new_session=True)
+
+    def discard(self):
+        for fd in (self._channel_w,):
+            if fd is not None:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+
+
+class _RaceAdmission:
+    closed = False
+
+    def close(self):
+        self.closed = True
+
+
+def _relay_race_session(tmp_path, engine):
+    """A _RelayContainedSession wired for the offline race tests: the real
+    engine supervision methods against a real stub process, with the
+    Linux-only supervisor/admission seat reduced to inert fakes."""
+    session = linux._RelayContainedSession.__new__(
+        linux._RelayContainedSession)
+    session._spec = vendor_spec(tmp_path)
+    session._stop = None
+    session._deadline = time.monotonic_ns() + 30000000000
+    session._prompt_w = session._credential_w = session._control_w = None
+    session._stdout_r = session._stderr_r = None
+    session._report_r = session._liveness_w = None
+    session._relay_channel = None
+    session._relay_child_fd = None
+    session._relay_port = 21007
+    session._supervisor = None
+    session._admission = _RaceAdmission()
+    session._launch = None
+    session._engine = engine
+    session._last_call_done_code = None
+    session._engine_done_code = None
+    return session
+
+
+def _await_stub_started(engine, timeout=20.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        engine.collect_reports()
+        if engine.started_seen:
+            return
+        if engine.poll() is not None:
+            raise AssertionError('stub engine died before started: %r'
+                                 % engine.poll())
+        time.sleep(0.01)
+    raise AssertionError('stub engine never reported started')
+
+
+def test_synthetic_engine_teardown_race_hang_is_killed_and_suppresses(
+        tmp_path, monkeypatch):
+    """Plan 7.1.10(a): a stub engine that hangs ignoring STOP is killed
+    inside the bounded cleanup budget; the teardown failure is recorded
+    (research_process_cleanup_failed, which the driver discipline uses to
+    suppress an otherwise successful result) and the phase counter bumps."""
+    _restore_real_process_surfaces(monkeypatch)
+    before = linux.LINUX_PHASE_COUNTERS.snapshot()['teardown_failures']
+    engine = _StubEngine(tmp_path, 'hang')
+    try:
+        _await_stub_started(engine)
+        session = _relay_race_session(tmp_path, engine)
+        started = time.monotonic()
+        failure = session._teardown_engine(600)
+        elapsed = time.monotonic() - started
+        assert failure is not None
+        assert failure.args[0] == 'research_process_cleanup_failed'
+        assert engine.poll() is not None
+        assert elapsed < 10
+        assert engine.conclusion() == {'exit_code': engine.poll(),
+                                       'forced': True, 'engine_done': False}
+        assert linux.LINUX_PHASE_COUNTERS.snapshot()['teardown_failures'] \
+            == before + 1
+    finally:
+        engine.discard()
+    engine = _StubEngine(tmp_path / 'second', 'hang')
+    try:
+        _await_stub_started(engine)
+        session = _relay_race_session(tmp_path, engine)
+        failure = session._cleanup(600)
+        assert failure is not None
+        assert failure.args[0] == 'research_process_cleanup_failed'
+        assert session._engine is None
+    finally:
+        engine.discard()
+
+
+def test_relay_driver_cleanup_failure_suppresses_a_successful_result(
+        monkeypatch, tmp_path):
+    """Plan 7.1.10(a) through the run driver: a relay session whose cleanup
+    fails suppresses the successful model output — and the dispatch check
+    sends relay-bearing launches to the relay session class."""
+    record = []
+
+    class FakeRelaySession:
+        def __init__(self, spec, launch, stop, deadline):
+            record.append('construct')
+
+        def _stopped(self):
+            return False
+
+        def run_version_phase(self):
+            record.append('version')
+
+        def run_model_phase(self, stdin):
+            record.append('model')
+            return (b'relay-output', 3)
+
+        def _cleanup(self, timeout_ms):
+            record.append('cleanup')
+            return ResearchProcessError('research_process_cleanup_failed')
+
+    monkeypatch.setattr(linux, '_RelayContainedSession', FakeRelaySession)
+    monkeypatch.setattr(linux, 'sys', types.SimpleNamespace(platform='linux'))
+    monkeypatch.setattr(linux, 'signal', types.SimpleNamespace(
+        SIG_DFL=signal.SIG_DFL, SIGCHLD='placeholder',
+        getsignal=lambda _: signal.SIG_DFL))
+    with pytest.raises(ResearchProcessError,
+                       match='research_process_cleanup_failed'):
+        linux.run_linux_contained_process(
+            spec=relay_vendor_spec(tmp_path), stdin=b'{}',
+            launch=synthetic_relay_launch(tmp_path), stop=None)
+    assert record == ['construct', 'version', 'model', 'cleanup']
+
+
+def test_synthetic_engine_death_without_report_fails_closed(tmp_path, monkeypatch):
+    """Plan 7.1.10(b): a stub engine that exits nonzero with no final
+    report fails the call research_process_failed with the evidence code
+    None (never guessed); the already-dead engine is only reaped."""
+    _restore_real_process_surfaces(monkeypatch)
+    linux._LINUX_RELAY_EVIDENCE.record_call(None, {})
+    engine = _StubEngine(tmp_path, 'die-no-report')
+    try:
+        _await_stub_started(engine)
+        deadline = time.monotonic() + 20
+        while engine.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert engine.poll() == 7
+        session = _relay_race_session(tmp_path, engine)
+        with pytest.raises(ResearchProcessError, match='research_process_failed'):
+            session._pump_engine_events()
+        evidence = linux.LINUX_RELAY_EVIDENCE()
+        assert evidence['code'] is None
+        assert session._teardown_engine(500) is None
+    finally:
+        engine.discard()
+
+
+def test_synthetic_engine_death_after_ok_keeps_the_last_record(
+        tmp_path, monkeypatch):
+    """Plan 7.1.10(c): a stub engine that reports call_done relay_ok and
+    then dies before engine_done fails the call (research_process_failed)
+    while the evidence keeps the last recorded call state."""
+    _restore_real_process_surfaces(monkeypatch)
+    linux._LINUX_RELAY_EVIDENCE.record_call(None, {})
+    engine = _StubEngine(tmp_path, 'die-after-ok')
+    try:
+        _await_stub_started(engine)
+        deadline = time.monotonic() + 20
+        while engine.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert engine.poll() == 7
+        session = _relay_race_session(tmp_path, engine)
+        with pytest.raises(ResearchProcessError, match='research_process_failed'):
+            session._pump_engine_events()
+        evidence = linux.LINUX_RELAY_EVIDENCE()
+        assert evidence['code'] == 'relay_ok'
+        assert evidence['counters']['requests_observed'] == 1
+        assert evidence['counters']['upstream_connections'] == 0
+        assert session._teardown_engine(500) is None
+    finally:
+        engine.discard()
+
+
+def test_synthetic_engine_refusal_closes_the_call_with_no_resend(
+        tmp_path, monkeypatch):
+    """Plan 7.1.10(d): a call_done refusal mid-model fails the call
+    immediately with the mapped fixed code; no second MODEL command is
+    written and no engine respawn happens; the STOP-driven teardown after
+    the refusal is clean and the evidence keeps the precise refusal code."""
+    _restore_real_process_surfaces(monkeypatch)
+    linux._LINUX_RELAY_EVIDENCE.record_call(None, {})
+    engine = _StubEngine(tmp_path, 'refuse')
+    try:
+        _await_stub_started(engine)
+        session = _relay_race_session(tmp_path, engine)
+        sent = []
+        spawns = []
+        session._send = lambda line: sent.append(line)
+        session._spawn_engine = lambda: spawns.append(1)
+        with pytest.raises(ResearchProcessError, match='research_process_failed'):
+            session._pump_engine_events()
+        assert linux.LINUX_RELAY_EVIDENCE()['code'] == 'relay_refused_target'
+        failure = session._cleanup(2000)
+        assert failure is None
+        assert engine.conclusion() == {'exit_code': 0, 'forced': False,
+                                       'engine_done': True}
+        assert sent == [] and spawns == []
+        assert linux.LINUX_RELAY_EVIDENCE()['code'] == 'relay_refused_target'
+    finally:
+        engine.discard()
+
+
+def test_synthetic_engine_success_conclusion_pins_the_call_done_code(
+        tmp_path, monkeypatch):
+    """W3 plan addendum (R-W7 MAJOR-1): after a clean model_done the success
+    contract is the LAST call_done code; the parent-initiated STOP exit is
+    the expected clean exit (never an error) and never overwrites the
+    pinned evidence code."""
+    _restore_real_process_surfaces(monkeypatch)
+    linux._LINUX_RELAY_EVIDENCE.record_call(None, {})
+    engine = _StubEngine(tmp_path, 'ok')
+    try:
+        _await_stub_started(engine)
+        session = _relay_race_session(tmp_path, engine)
+        session._pump_engine_events()
+        assert session._last_call_done_code == 'relay_ok'
+        session._conclude_relay_call()
+        order = []
+        original_base = linux._ContainedSession._cleanup
+
+        def recording_base(self, timeout_ms):
+            order.append('supervisor-cleanup-started')
+            return original_base(self, timeout_ms)
+
+        monkeypatch.setattr(linux._ContainedSession, '_cleanup', recording_base)
+        failure = session._cleanup(2000)
+        assert failure is None
+        assert engine.conclusion() == {'exit_code': 0, 'forced': False,
+                                       'engine_done': True}
+        # Teardown ordering: the engine fully concluded (engine_done
+        # observed) BEFORE the frozen supervisor teardown began.
+        assert order == ['supervisor-cleanup-started']
+        assert engine.engine_done_seen
+        evidence = linux.LINUX_RELAY_EVIDENCE()
+        assert evidence['code'] == 'relay_ok'
+        assert evidence['counters']['requests_observed'] == 1
+    finally:
+        engine.discard()
+
+
+def test_relay_launch_refuses_non_symbolic_base_url_at_the_launch_layer(
+        monkeypatch):
+    """Plan 7.1.11: a relay launch whose spec declares anything but the
+    symbolic endpoint refuses closed at the launch layer — before any
+    spawn and before any CONF line exists."""
+    record, launch, spec = _wire_session_constructor(
+        monkeypatch, relay=True, base_url='https://gateway.example.invalid')
+    with pytest.raises(ResearchProcessError,
+                       match='research_process_launch_env_forbidden'):
+        linux._ContainedSession(spec, launch, None,
+                                time.monotonic_ns() + 30000000000)
+    assert record['popen'] == [] and record['conf'] is None
+    environment = tuple(pair for pair in spec.environment
+                        if pair[0] != 'ANTHROPIC_BASE_URL')
+    missing = ResearchProcessSpec(spec.argv, spec.cwd, environment,
+                                  spec.executable_sha256, spec.timeout_ms)
+    with pytest.raises(ResearchProcessError,
+                       match='research_process_launch_env_forbidden'):
+        linux._ContainedSession(missing, launch, None,
+                                time.monotonic_ns() + 30000000000)
+    assert record['popen'] == []
+
+
+def test_offline_path_byte_identity_after_w3():
+    """Plan 7.1.12: cheap defense-in-depth re-assertion that the offline
+    helper/CONF/argv/policy surfaces still equal the frozen W6 pins on the
+    post-W3 tree (W6's own pins run in the same suite; this guards the
+    gate recipe from this file too)."""
+    from tests.test_research_linux_relay_helper_gates import (
+        OFFLINE_ARGV_MODEL_SHA256, OFFLINE_ARGV_VERSION_SHA256,
+        OFFLINE_CONF_SHA256, OFFLINE_HELPER_SHA256, OFFLINE_POLICY_SHA256,
+        _argv_digest, _conf_digest, _gate_conf, _helper_namespace)
+    assert sha256(linux.HELPER_SOURCE.encode('utf-8')).hexdigest() \
+        == OFFLINE_HELPER_SHA256
+    conf = _gate_conf()
+    assert _conf_digest(conf) == OFFLINE_CONF_SHA256
+    assert 'relay_channel_fd' not in conf and 'relay_port' not in conf
+    namespace = _helper_namespace()
+    assert _argv_digest(namespace['_bwrap_argv'](conf, 'version')) \
+        == OFFLINE_ARGV_VERSION_SHA256
+    assert _argv_digest(namespace['_bwrap_argv'](conf, 'model')) \
+        == OFFLINE_ARGV_MODEL_SHA256
+    assert _conf_digest(fixed_launch().policy_dict()) == OFFLINE_POLICY_SHA256
+
+
+# ---------------------------------------------------------------------------
+# L9 W3 native parent-path proofs (plan 7.3): opt-in exactly like the file's
+# other native tests, skip-until-landed through W6's surface resolver, fail
+# closed after the opt-in. DELIVERY_PLAN section 68 production insight: the
+# trusted parent already lives inside the delegated cgroup subtree on the
+# containment host, so these tests add NO cgroup-migration workaround.
+# Network-free by construction: the probe vendor writes a garbage head that
+# the real sealed engine refuses before any DNS or upstream connection.
+# ---------------------------------------------------------------------------
+
+W3_PROBE_BANNER = 'pal-w3-relay-parent-probe-v1 (synthetic)\n'
+W3_PROBE_KEY = 'PAL-W3-PARENT-PATH-SYNTHETIC-KEY'
+
+W3_RELAY_PROBE_C_SOURCE = r'''
+/* Synthetic W3 relay parent-path probe vendor (compiled at test time).
+ * Explicitly NOT the official image and NOT official evidence: it reads
+ * stdin to EOF, then connects to the loopback endpoint named by its own
+ * ANTHROPIC_BASE_URL environment and either writes one fixed garbage head
+ * (the framing-refusal probe; the credential is never read) or hangs
+ * (--pal-hang: the stop/driver-loss probe). No real endpoint anywhere. */
+#include <arpa/inet.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <sys/time.h>
+#include <unistd.h>
+
+static int endpoint_port(void) {
+    const char *url = getenv("ANTHROPIC_BASE_URL");
+    if (!url) return -1;
+    const char *colon = strrchr(url, ':');
+    if (!colon) return -1;
+    int port = atoi(colon + 1);
+    if (port < 1 || port > 65535) return -1;
+    return port;
+}
+
+static int connect_loopback(int port) {
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) return -1;
+    struct timeval tv;
+    tv.tv_sec = 20;
+    tv.tv_usec = 0;
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
+    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof tv);
+    struct sockaddr_in address;
+    memset(&address, 0, sizeof address);
+    address.sin_family = AF_INET;
+    address.sin_port = htons((unsigned short)port);
+    address.sin_addr.s_addr = htonl(0x7f000001u);
+    if (connect(fd, (struct sockaddr *)&address, sizeof address) != 0) {
+        close(fd);
+        return -1;
+    }
+    return fd;
+}
+
+int main(int argc, char **argv) {
+    if (argc > 1 && strcmp(argv[1], "--version") == 0) {
+        fputs("pal-w3-relay-parent-probe-v1 (synthetic)\n", stdout);
+        return 0;
+    }
+    char buffer[65536];
+    for (;;) {
+        ssize_t got = read(0, buffer, sizeof buffer);
+        if (got <= 0) break;
+    }
+    int hang = 0;
+    for (int i = 1; i < argc; i++)
+        if (strcmp(argv[i], "--pal-hang") == 0) hang = 1;
+    int port = endpoint_port();
+    if (port < 0) { fputs("W3-NO-ENDPOINT\n", stdout); return 84; }
+    int fd = connect_loopback(port);
+    if (fd < 0) { fputs("W3-CONNECT-REFUSED\n", stdout); return 83; }
+    if (hang) {
+        fputs("W3-VENDOR-CONNECTED\n", stdout);
+        fflush(stdout);
+        for (;;) pause();
+    }
+    static const char garbage[] = "PAL-W3-SYNTHETIC-GARBAGE HTTP/1.1\r\n\r\n";
+    if (write(fd, garbage, sizeof garbage - 1) < 0) return 85;
+    shutdown(fd, SHUT_WR);
+    struct timeval tv;
+    tv.tv_sec = 5;
+    tv.tv_usec = 0;
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
+    long total = 0;
+    for (;;) {
+        ssize_t got = read(fd, buffer, sizeof buffer);
+        if (got <= 0) break;
+        total += got;
+    }
+    close(fd);
+    printf("W3-VENDOR-DONE %ld\n", total);
+    return 0;
+}
+'''
+
+
+def require_relay_parent_path():
+    """Opt-in gate for the W3 native parent-path proofs: the file's own
+    containment opt-in (skip without it, fail closed after it) plus the W2
+    surface resolution (skip-until-landed through W6's resolver; a
+    landed-but-divergent surface FAILS)."""
+    require_native_containment()
+    from tests.test_research_linux_relay_helper_gates import (
+        relay_crossing_surface)
+    return relay_crossing_surface()
+
+
+def build_native_relay_probe(directory, *, hang=False):
+    """Assemble the native relay call from measured host facts: the W3
+    synthetic C probe vendor, the real bwrap/interpreter/closure, the relay
+    helper digest, the symbolic endpoint declaration, a REAL synthetic CA
+    file pinned exactly, and the declaration-only reviewed trust record.
+    Returns (launch, spec, ca_bytes)."""
+    from tests.test_research_linux_relay import SYNTHETIC_CA
+    surface = require_relay_parent_path()
+    vendor_dir = directory / 'vendor'
+    vendor_dir.mkdir(parents=True, exist_ok=True)
+    binary, digest, size = _compile(vendor_dir, 'w3-relay-probe',
+                                    W3_RELAY_PROBE_C_SOURCE)
+    ca_path = directory / 'relay-ca.pem'
+    ca_path.write_bytes(SYNTHETIC_CA['pem'])
+    trust = relay.RelayTrustConfig(
+        ca_bundle=relay.RelayCaBundlePin(str(ca_path), SYNTHETIC_CA['sha256'],
+                                         SYNTHETIC_CA['size']))
+    interpreter = str(Path(sys.executable).resolve())
+    interp_bytes = Path(interpreter).read_bytes()
+    wrapper_path = shutil.which('bwrap') or '/usr/bin/bwrap'
+    wrapper_bytes = Path(wrapper_path).read_bytes()
+    runtime = discover_runtime_closure(interpreter, binary)
+    launch = linux.LinuxLaunchSpec(
+        wrapper=linux.LinuxArtifactPin(
+            str(Path(wrapper_path).resolve()),
+            sha256(wrapper_bytes).hexdigest(), len(wrapper_bytes)),
+        helper_sha256=surface['helper_digest'],
+        interpreter=linux.LinuxArtifactPin(
+            interpreter, sha256(interp_bytes).hexdigest(), len(interp_bytes)),
+        supervisor_python_home=sys.base_prefix,
+        runtime_files=tuple(runtime),
+        vendor_guest_path='/pal/vendor/claude',
+        helper_guest_path='/pal/runtime/helper.py',
+        vendor_size_bytes=size,
+        expected_version_output=W3_PROBE_BANNER,
+        cgroup_root=os.environ['POLYMARKET_ALPHA_LAB_LINUX_CGROUP_ROOT'],
+        scratch_size_bytes=64 * 1024 * 1024,
+        guest_tmp_size_bytes=32 * 1024 * 1024,
+        memory_max_bytes=512 * 1024 * 1024,
+        pids_max=32,
+        egress_policy=linux.EGRESS_RELAY,
+        relay_trust=trust)
+    work = directory / 'work'
+    work.mkdir(parents=True, exist_ok=True)
+    spec = ResearchProcessSpec(
+        (binary, *(('--pal-hang',) if hang else ())), str(work),
+        (('HOME', str(directory / 'home')),
+         ('CLAUDE_CONFIG_DIR', str(directory / 'config')),
+         ('ANTHROPIC_BASE_URL', linux.RELAY_SYMBOLIC_ENDPOINT),
+         ('CLAUDE_CODE_MAX_OUTPUT_TOKENS', '8192'),
+         ('ANTHROPIC_API_KEY', W3_PROBE_KEY)), digest, 60000,
+        cleanup_timeout_ms=15000)
+    return launch, spec, SYNTHETIC_CA['pem']
+
+
+def _probe_open_fds():
+    from tests.test_research_linux_relay_helper_gates import _probe_open_fds
+    return _probe_open_fds()
+
+
+@pytest.mark.skipif(not CONTAINMENT_ENABLED,
+                    reason='explicit native containment proof is opt-in')
+def test_relay_parent_path_synthetic_exchange_native(tmp_path):
+    """Plan 7.3.13: the FULL production parent path — run_linux_contained_
+    process with a relay launch built from measured host facts, the W3
+    synthetic probe vendor and the real sealed ENGINE. The sealed engine
+    bytes equal ENGINE_SOURCE at admission; the garbage head the probe
+    writes through the inherited channel is refused (relay_refused_framing
+    in LINUX_RELAY_EVIDENCE) and the call FAILS CLOSED; zero DNS
+    resolutions and zero upstream connections prove the run network-free;
+    clean teardown leaves no cgroup survivors and no fd leaks; the offline
+    pins stay byte-identical in the same run. The channel bytes reaching
+    the engine (guest_bytes_in > 0) is the end-to-end proof that the engine
+    was spawned and reading the channel before the vendor wrote: the
+    started gate precedes MODEL by construction, so the credential is
+    released only after readiness."""
+    launch, spec, ca_bytes = build_native_relay_probe(tmp_path)
+    probe_admission = linux._Admission(spec, launch)
+    try:
+        os.lseek(probe_admission.engine_fd, 0, os.SEEK_SET)
+        sealed = bytearray()
+        while True:
+            block = os.read(probe_admission.engine_fd, 65536)
+            if not block:
+                break
+            sealed.extend(block)
+        os.lseek(probe_admission.engine_fd, 0, os.SEEK_SET)
+        assert bytes(sealed) == relay.ENGINE_SOURCE.encode('utf-8')
+        assert sha256(bytes(sealed)).hexdigest() == linux.RELAY_ENGINE_DIGEST
+        os.lseek(probe_admission.ca_fd, 0, os.SEEK_SET)
+        assert os.read(probe_admission.ca_fd, len(ca_bytes) + 1) == ca_bytes
+        os.lseek(probe_admission.ca_fd, 0, os.SEEK_SET)
+    finally:
+        probe_admission.close()
+    before_fds = _probe_open_fds()
+    counters_before = linux.LINUX_PHASE_COUNTERS.snapshot()
+    with pytest.raises(ResearchProcessError, match='research_process_failed'):
+        linux.run_linux_contained_process(
+            spec=spec, stdin=b'{"schema_version":"probe"}', launch=launch,
+            stop=None)
+    evidence = linux.LINUX_RELAY_EVIDENCE()
+    assert evidence['code'] == 'relay_refused_framing', evidence
+    counters = evidence['counters']
+    assert counters['guest_bytes_in'] > 0
+    assert counters['dns_resolutions'] == 0
+    assert counters['upstream_connections'] == 0
+    assert counters['requests_observed'] == 1
+    assert all(type(value) is int for value in counters.values())
+    counters_after = linux.LINUX_PHASE_COUNTERS.snapshot()
+    assert counters_after['version_executions'] \
+        == counters_before['version_executions'] + 1
+    assert counters_after['model_executions'] \
+        == counters_before['model_executions'] + 1
+    assert counters_after['contained_calls'] \
+        == counters_before['contained_calls'] + 1
+    assert not [name for name in os.listdir(launch.cgroup_root)
+                if name.startswith('pal-call-')]
+    assert _probe_open_fds() == before_fds
+    test_offline_path_byte_identity_after_w3()
+
+
+@pytest.mark.skipif(not CONTAINMENT_ENABLED,
+                    reason='explicit native containment proof is opt-in')
+def test_relay_parent_path_stop_and_driver_loss_native(tmp_path):
+    """Plan 7.3.14 through the production parent path: a cooperative stop
+    mid-model (engine STOP honored, fixed code, never a guessed evidence
+    code) and parent-liveness loss (a child parent dies mid-call; the
+    engine exits on liveness EOF, the supervisor tears the cgroup down and
+    empties it, the namespace dies with the parent: no surviving
+    contained process anywhere)."""
+    from polymarket_alpha_lab.research_dispatch_runner import (
+        ResearchDispatchStop)
+    launch, spec, _ca = build_native_relay_probe(tmp_path / 'stop', hang=True)
+    linux._LINUX_RELAY_EVIDENCE.record_call(None, {})
+    stop = ResearchDispatchStop()
+
+    def request_stop_later():
+        time.sleep(1.5)
+        stop.request_stop()
+
+    thread = threading.Thread(target=request_stop_later)
+    thread.start()
+    try:
+        with pytest.raises(ResearchProcessError,
+                           match='research_process_stopped'):
+            linux.run_linux_contained_process(
+                spec=spec, stdin=b'{"schema_version":"probe"}',
+                launch=launch, stop=stop)
+    finally:
+        thread.join()
+    evidence = linux.LINUX_RELAY_EVIDENCE()
+    assert evidence['code'] is None  # no call_done ever concluded: never guessed
+    assert all(type(value) is int for value in evidence['counters'].values())
+    assert not [name for name in os.listdir(launch.cgroup_root)
+                if name.startswith('pal-call-')]
+
+    # Parent-liveness loss: a child process occupies the parent seat, is
+    # killed mid-call, and every component must die without a daemon.
+    runner = tmp_path / 'runner.py'
+    repo_root = str(Path(__file__).resolve().parent.parent)
+    runner.write_text(
+        'import sys\n'
+        'sys.path.insert(0, %r)\n'
+        'from polymarket_alpha_lab import research_process_linux as linux\n'
+        'from tests.test_research_process_linux import build_native_relay_probe\n'
+        'launch, spec, _ca = build_native_relay_probe(sys.argv[1], hang=True)\n'
+        "print('RUNNING', flush=True)\n"
+        'linux.run_linux_contained_process('
+        "spec=spec, stdin=b'{\"schema_version\":\"probe\"}', launch=launch, "
+        'stop=None)\n' % repo_root, encoding='utf-8')
+    child = subprocess.Popen(
+        [sys.executable, str(runner), str(tmp_path / 'driver-loss')],
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, cwd=repo_root)
+    try:
+        deadline = time.monotonic() + 300
+        line = b''
+        while time.monotonic() < deadline:
+            block = child.stdout.readline()
+            if not block:
+                pytest.fail('driver-loss runner died before RUNNING')
+            line = block
+            if line.strip() == b'RUNNING':
+                break
+        assert line.strip() == b'RUNNING'
+        time.sleep(3)  # let the engine, supervisor and vendor come up
+    finally:
+        child.kill()
+        child.wait()
+        child.stdout.close()
+
+    def surviving_contained_processes():
+        survivors = []
+        for entry in os.listdir('/proc'):
+            if not entry.isdigit():
+                continue
+            try:
+                with open('/proc/%s/cmdline' % entry, 'rb') as handle:
+                    cmdline = handle.read()
+            except OSError:
+                continue
+            if ((b'/proc/self/fd/' in cmdline and b'-B' in cmdline)
+                    or cmdline.startswith(b'bwrap')
+                    or b'/pal/vendor/claude' in cmdline):
+                survivors.append((entry, cmdline[:80]))
+        return survivors
+
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline:
+        if (not surviving_contained_processes()
+                and not [name for name in os.listdir(launch.cgroup_root)
+                         if name.startswith('pal-call-')]):
+            break
+        time.sleep(0.5)
+    assert not surviving_contained_processes()
+    assert not [name for name in os.listdir(launch.cgroup_root)
+                if name.startswith('pal-call-')]
