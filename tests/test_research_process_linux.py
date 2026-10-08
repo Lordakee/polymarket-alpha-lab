@@ -23,6 +23,7 @@ import types
 
 import pytest
 
+from polymarket_alpha_lab import research_linux_relay as relay
 from polymarket_alpha_lab import research_process_linux as linux
 from polymarket_alpha_lab.research_claude_exec import CLAUDE_VERSION
 from polymarket_alpha_lab.research_process import (
@@ -375,19 +376,38 @@ def soname_default_search_bindings(trace_text):
     return bindings
 
 
-def discover_runtime_closure(interpreter, vendor_path):
-    """Measure the interpreter stdlib/lib closure plus the vendor's ELF deps.
+# The stdlib modules the closure probe imports before tracing: pure-Python
+# stdlib files are only captured when actually imported by the probe, so this
+# tuple is the union of the top-level stdlib imports of BOTH guest helper
+# sources (HELPER_SOURCE and RELAY_HELPER_SOURCE). A helper import outside
+# this tuple dies in the namespace with ModuleNotFoundError because its file
+# was never bound into /pal/runtime/lib/python3.12/ (preview run 37716295041:
+# the relay helper's socket). The coupling test at the bottom of this module
+# keeps this tuple a superset of both sources' imports.
+CLOSURE_PROBE_STDLIB_MODULES = (
+    'hashlib', 'json', 'os', 'select', 'signal', 'socket', 'sys', 'time')
 
-    Every entry comes from an actual import trace or loaded-object listing;
-    nothing is invented or defaulted."""
-    probe = (
-        'import hashlib,json,os,select,signal,sys,time\n'
+
+def _closure_probe_program():
+    """The single ``-c`` program whose import and loaded-object trace defines
+    the guest runtime closure: one import statement over the sorted module
+    tuple, then sys.modules files plus /proc/self/maps objects."""
+    return (
+        'import ' + ','.join(CLOSURE_PROBE_STDLIB_MODULES) + '\n'
         'files={m.__file__ for m in sys.modules.values() if getattr(m,"__file__",None)}\n'
         'mapped=set()\n'
         'for line in open("/proc/self/maps"):\n'
         '    path=line.rstrip().rsplit(" ",1)[-1]\n'
         '    if path.startswith("/") and ".so" in path: mapped.add(path)\n'
         'print(json.dumps(sorted(files|mapped)))\n')
+
+
+def discover_runtime_closure(interpreter, vendor_path):
+    """Measure the interpreter stdlib/lib closure plus the vendor's ELF deps.
+
+    Every entry comes from an actual import trace or loaded-object listing;
+    nothing is invented or defaulted."""
+    probe = _closure_probe_program()
     completed = subprocess.run([interpreter, '-S', '-B', '-c', probe], capture_output=True,
                                check=True, timeout=120, env={'PATH': '/usr/bin:/bin'})
     traced = set(json.loads(completed.stdout.decode('utf-8')))
@@ -921,6 +941,56 @@ def test_helper_source_is_stdlib_only_and_protocol_pinned():
     assert imported <= {'hashlib', 'json', 'os', 'select', 'signal', 'sys', 'time'}
     assert 'polymarket_alpha_lab' not in linux.HELPER_SOURCE
     assert 'psycopg' not in linux.HELPER_SOURCE
+
+
+# Every stdlib name either checked-in helper source may import: a name outside
+# this set is a non-stdlib dependency leaking into the offline guest namespace
+# and must fail loudly rather than surface as a namespace ModuleNotFoundError.
+_HELPER_STDLIB_ALLOWLIST = frozenset((
+    'hashlib', 'json', 'os', 'select', 'signal', 'socket', 'sys', 'time'))
+
+
+def _helper_imported_module_names(source):
+    """Dotted-root module names a helper source imports, from actual parsing.
+
+    ``import X.Y`` counts as X and ``from X import y`` counts as X; relative
+    imports (level > 0) cannot exist in a guest script and are ignored. The
+    walk also covers function-local imports: a deferred import dies just as
+    hard inside the namespace as a top-level one."""
+    import ast
+    names = set()
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Import):
+            names.update(alias.name.split('.')[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+            names.add(node.module.split('.')[0])
+    return names
+
+
+def test_closure_probe_covers_every_helper_stdlib_import():
+    """Couple the closure probe to both guest helper sources (pure parsing,
+    no subprocess, Windows-runnable). Pure-Python stdlib files reach
+    /pal/runtime/lib/python3.12/ only when the probe actually imports them,
+    so a helper import the probe lacks killed the guest helper with
+    ModuleNotFoundError: No module named 'socket' (preview run 37716295041).
+    Both sources must stay inside the stdlib allowlist, and the probe's one
+    import statement must import exactly CLOSURE_PROBE_STDLIB_MODULES."""
+    import ast
+    helper_imports = (_helper_imported_module_names(linux.HELPER_SOURCE)
+                      | _helper_imported_module_names(relay.RELAY_HELPER_SOURCE))
+    non_stdlib = helper_imports - _HELPER_STDLIB_ALLOWLIST
+    assert not non_stdlib, ('helper sources import non-stdlib modules',
+                            sorted(non_stdlib))
+    program = ast.parse(_closure_probe_program())
+    import_nodes = [node for node in program.body
+                    if isinstance(node, (ast.Import, ast.ImportFrom))]
+    assert len(import_nodes) == 1 and isinstance(import_nodes[0], ast.Import)
+    probed = {alias.name for alias in import_nodes[0].names}
+    missing = helper_imports - probed
+    assert not missing, ('closure probe does not import helper stdlib modules',
+                         sorted(missing))
+    assert probed == set(CLOSURE_PROBE_STDLIB_MODULES)
+    assert list(CLOSURE_PROBE_STDLIB_MODULES) == sorted(CLOSURE_PROBE_STDLIB_MODULES)
 
 
 def test_helper_source_mirrors_output_caps_and_credential_bound():
