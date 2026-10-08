@@ -156,6 +156,52 @@ jobs:
               if path.startswith("/") and ".so" in path: mapped.add(path)
           hits=[p for p in sorted(files|mapped) if "libz" in p]
           print("libz entries:", hits)'
+      - name: PREVIEW (non-binding) - drain the supervisor stderr from one session
+        timeout-minutes: 5
+        env:
+          POLYMARKET_ALPHA_LAB_RUN_LINUX_RELAY_CROSSING: '1'
+          POLYMARKET_ALPHA_LAB_LINUX_CGROUP_ROOT: /sys/fs/cgroup/pal-t1
+        run: |
+          set -euo pipefail
+          # Run-5 evidence: the CLOEXEC control path works, but the full
+          # supervisor drive dies with the report channel at EOF and no bytes;
+          # the harness captures the supervisor's stderr into _stderr_r and
+          # never shows it. Drive one real _CrossingSession, catch the report
+          # assertion, then drain stderr/stdout and print the exit code.
+          .venv/bin/python - << 'DRIVER'
+          import fcntl, json, os, select, sys, tempfile
+          from pathlib import Path
+          sys.path.insert(0, '.')
+          from tests.test_research_linux_relay_helper_gates import (
+              _open_channel, _CrossingSession, require_crossing_probe)
+          from polymarket_alpha_lab import research_linux_relay as relay
+          requirements = require_crossing_probe()
+          with tempfile.TemporaryDirectory() as workdir:
+              port = relay.draw_relay_port()
+              parent_end, child_fd = _open_channel()
+              session = _CrossingSession(requirements, Path(workdir), parent_end,
+                                         child_fd, port)
+              try:
+                  session.run_version()
+                  print('DRIVER: run_version completed')
+              except AssertionError as failure:
+                  print('DRIVER: run_version assertion:', failure)
+              for name in ('_stderr_r', '_stdout_r'):
+                  descriptor = getattr(session, name)
+                  fcntl.fcntl(descriptor, fcntl.F_SETFL, os.O_NONBLOCK)
+                  drained = b''
+                  while True:
+                      ready, _, _ = select.select([descriptor], [], [], 0.3)
+                      if not ready:
+                          break
+                      block = os.read(descriptor, 65536)
+                      if not block:
+                          break
+                      drained += block
+                  print('DRIVER: %s (%d bytes):' % (name, len(drained)))
+                  print(drained.decode('utf-8', 'replace')[-4000:] or '(empty)')
+              print('DRIVER: supervisor returncode:', session._supervisor.poll())
+          DRIVER
       - name: PREVIEW (non-binding) - run the relay gate file with the crossing opt-in
         shell: bash
         env:
