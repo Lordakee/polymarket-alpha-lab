@@ -2920,6 +2920,30 @@ ad07d3be 不在 origin。
 实质门不变且继续有效：W3 启动、节点收尾、任何激活决策仍门控于 T1
 原生通过；T1 失败时的处置含回退 ad07d3be（git revert，非改写）。
 
+**T1 预演记录（2026-10-08，非约束性，GitHub Actions
+`t1-relay-crossing-preview.yml`，手动 workflow_dispatch）**：服务器
+宕机期间以 sha256 钉定官方 tarball 源码构建的 bubblewrap 0.11.1 +
+系统 CPython 在 ubuntu-24.04 runner 上预演 T1。九次迭代烧掉四个
+全部会在服务器原生运行命中的环境缺陷并已修复入库（各带独立评审）：
+(1) 解释器来源保真度（uv standalone 的私有 RPATH 在 /pal/runtime
+重绑定后失效→改用系统 CPython，e0cd874f 之前）；(2) 闭包按 maps
+版本化路径绑定系统库而加载器按 soname 搜索（W10 fe13da54：解释器
+LD_TRACE + soname 路径绑定）；(3) 闭包探针固定导入集缺 socket（W11
+ef7e85db：两 helper 源导入并集 + 耦合测试）；(4) cgroup v2 迁移规则
+——写入者需对源/目标公共祖先的 cgroup.procs 有写权限，步骤 shell
+在 systemd slice 内时公共祖先为 root 所有的全局根（修复：步骤 shell
+经 root 辅助写入一次性迁入 pal-t1 子树，054d8163）。**最终
+run 37719238674：12/12 全过（run conclusion success）——继承 AF_UNIX
+socketpair 描述符穿过 bwrap 0.11.1 载荷 exec 的存活属性、CLOEXEC
+阴性对照与拆解验证首次获得实证**，经与生产相同的哈希钉定 wrapper
+机制。约束性裁定不变：服务器恢复后的 T1 原生运行仍是 §67 的合并/
+启动门；但"探针失败即节点级阻断且无回退"的最大下行风险已大幅收敛。
+生产洞见（对服务器 T1 与 W3 均适用并记录）：**可信父进程必须已居于
+委托 cgroup 子树内**，分配准入才可行——166 的 WP-02 环境本就如此；
+服务器 T1 运行无需迁移 hack。若宕机持续，是否允许以"预演通过 + 服务器
+运行补挂"提前启动 W3（合并仍门控），属门放宽决策，留待仲裁，本记录
+不构成授权。
+
 **开放项**（全部阻塞于服务器 166 宕机，恢复轮询在运行）：T1 原生
 （W6 门文件三测试 + 同哈希钉定 wrapper）；T8 原生（W4 资格门）；L8
 原生收尾（B 三 opt-in + C 五项 + 修正横幅往返）+ verify_local --full；
