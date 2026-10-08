@@ -158,31 +158,44 @@ jobs:
           print("libz entries:", hits)'
       - name: PREVIEW (non-binding) - replicate the cgroup admit sequence
         run: |
-          set -uo pipefail
-          # Run-6 driver: the supervisor dies writing <allocation>/cgroup.procs
-          # (EACCES) inside _stage -> Cgroup.admit. Replicate the sequence with
-          # per-operation exit codes and variants to pin the exact refusal.
+          set +e
+          # Run-7 finding: pal-t1's subtree_control is EMPTY at job start (the
+          # setup step enables controllers at the global root only), so a
+          # fresh child cannot enable them; the supervisor's own sequence must
+          # first enable at pal-t1 (production _enable_root_controls), then
+          # create the allocation, write limits, then admit. Mirror that order
+          # with full per-operation capture (no -e so every line runs).
           R=/sys/fs/cgroup/pal-t1
-          echo "root subtree_control: $(cat $R/cgroup.subtree_control)"
-          echo "existing allocations:"; ls -la $R | head -12
+          echo "start: root subtree_control='$(cat $R/cgroup.subtree_control)'"
+          echo '+memory +pids' > "$R/cgroup.subtree_control" 2>/tmp/r0
+          echo "1 enable(+memory +pids at pal-t1): $? err='$(cat /tmp/r0)'"
+          echo "after: root subtree_control='$(cat $R/cgroup.subtree_control)'"
           A=$R/pal-call-diag-a
-          rm -rf "$A"; mkdir "$A"; echo "A mkdir: $?"
-          echo '+memory +pids' > "$A/cgroup.subtree_control" 2>/tmp/a1; echo "A enable(+memory+pids on allocation): $? ($(cat /tmp/a1))"
-          echo $$ > "$A/cgroup.procs" 2>/tmp/a2; echo "A admit-self-after-enable: $? ($(cat /tmp/a2))"
+          rm -rf "$A"; mkdir "$A"
+          echo "2 mkdir allocation: $?"
+          echo 536870912 > "$A/memory.max" 2>/tmp/a1
+          echo "3 memory.max: $? err='$(cat /tmp/a1)'"
+          echo 0 > "$A/memory.swap.max" 2>/tmp/a1b
+          echo "4 memory.swap.max: $? err='$(cat /tmp/a1b)'"
+          echo 32 > "$A/pids.max" 2>/tmp/a1c
+          echo "5 pids.max: $? err='$(cat /tmp/a1c)'"
+          echo $$ > "$A/cgroup.procs" 2>/tmp/a2
+          echo "6 admit-SELF, no subtree_control on allocation: $? err='$(cat /tmp/a2)'"
+          echo '+memory +pids' > "$A/cgroup.subtree_control" 2>/tmp/a3
+          echo "7 enable(+memory +pids ON allocation): $? err='$(cat /tmp/a3)'"
+          echo $$ > "$A/cgroup.procs" 2>/tmp/a4
+          echo "8 admit-SELF after enabling on allocation: $? err='$(cat /tmp/a4)'"
           B=$R/pal-call-diag-b
-          rm -rf "$B"; mkdir "$B"; echo "B mkdir: $?"
-          echo $$ > "$B/cgroup.procs" 2>/tmp/b1; echo "B admit-self-no-enable: $? ($(cat /tmp/b1))"
+          rm -rf "$B"; mkdir "$B"
           .venv/bin/python -c 'import time; time.sleep(30)' & CPID=$!
           sleep 0.5
-          echo "$CPID" > "$B/cgroup.procs" 2>/tmp/b2; echo "B admit-child-no-enable: $? ($(cat /tmp/b2))"
-          C=$R/pal-call-diag-c
-          rm -rf "$C"; mkdir "$C"; echo "C mkdir: $?"
-          echo '+memory +pids' > "$C/cgroup.subtree_control" 2>/tmp/c1; echo "C enable: $? ($(cat /tmp/c1))"
-          echo "$CPID" > "$C/cgroup.procs" 2>/tmp/c2; echo "C admit-child-after-enable: $? ($(cat /tmp/c2))"
-          echo "B procs now: $(cat $B/cgroup.procs 2>/dev/null)"
-          echo "C procs now: $(cat $C/cgroup.procs 2>/dev/null)"
-          kill "$CPID" 2>/dev/null || true
-          rm -rf "$A" "$B" "$C" 2>/dev/null || true
+          echo "$CPID" > "$B/cgroup.procs" 2>/tmp/b1
+          echo "9 admit-CHILD, no subtree_control: $? err='$(cat /tmp/b1)'"
+          echo "10 allocation-A procs: '$(cat $A/cgroup.procs 2>/dev/null)'"
+          echo "11 allocation-B procs: '$(cat $B/cgroup.procs 2>/dev/null)'"
+          kill "$CPID" 2>/dev/null
+          rmdir "$A" "$B" 2>/dev/null
+          echo "12 cleanup: $? (rmdir fails if procs remain - that is evidence)"
           echo done
       - name: PREVIEW (non-binding) - drain the supervisor stderr from one session
         timeout-minutes: 5
