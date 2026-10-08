@@ -159,12 +159,24 @@ jobs:
       - name: PREVIEW (non-binding) - replicate the cgroup admit sequence
         run: |
           set +e
-          # Run-7 finding: pal-t1's subtree_control is EMPTY at job start (the
-          # setup step enables controllers at the global root only), so a
-          # fresh child cannot enable them; the supervisor's own sequence must
-          # first enable at pal-t1 (production _enable_root_controls), then
-          # create the allocation, write limits, then admit. Mirror that order
-          # with full per-operation capture (no -e so every line runs).
+          # Run-8 finding: controller/limit writes succeed but EVERY
+          # cgroup.procs write fails EACCES - the v2 migration rule requires
+          # write access to the COMMON ANCESTOR's cgroup.procs, and the step
+          # shell lives in a systemd slice whose common ancestor with pal-t1
+          # is the root-owned global root. Fix: migrate this shell (and thus
+          # every child) into a pal-t1 child once, as root; from then on the
+          # common ancestor is runner-writable pal-t1. The production host
+          # works because the WP-02 parent already lives inside its delegated
+          # subtree. Keep the before/after evidence below.
+          CG=/sys/fs/cgroup/pal-t1
+          echo '+memory +pids' > "$CG/cgroup.subtree_control" 2>/dev/null
+          STEP_CG="$CG/pal-step-$$"
+          mkdir -p "$STEP_CG"
+          echo $$ | sudo tee "$STEP_CG/cgroup.procs" >/dev/null
+          echo "step shell now: $(grep pal /proc/self/cgroup | head -1)"
+          echo "step-shell self-admit (post-migration sanity):"
+          echo $$ > "$STEP_CG/cgroup.procs" 2>&1 | head -1
+          echo "self-write exit: $?"
           R=/sys/fs/cgroup/pal-t1
           echo "start: root subtree_control='$(cat $R/cgroup.subtree_control)'"
           echo '+memory +pids' > "$R/cgroup.subtree_control" 2>/tmp/r0
@@ -204,11 +216,13 @@ jobs:
           POLYMARKET_ALPHA_LAB_LINUX_CGROUP_ROOT: /sys/fs/cgroup/pal-t1
         run: |
           set -euo pipefail
-          # Run-5 evidence: the CLOEXEC control path works, but the full
-          # supervisor drive dies with the report channel at EOF and no bytes;
-          # the harness captures the supervisor's stderr into _stderr_r and
-          # never shows it. Drive one real _CrossingSession, catch the report
-          # assertion, then drain stderr/stdout and print the exit code.
+          # Run-8 fix: migrate this shell into the delegated subtree first
+          # (see the replication step for the mechanism and evidence).
+          CG=/sys/fs/cgroup/pal-t1
+          echo '+memory +pids' > "$CG/cgroup.subtree_control" 2>/dev/null
+          STEP_CG="$CG/pal-step-$$"
+          mkdir -p "$STEP_CG"
+          echo $$ | sudo tee "$STEP_CG/cgroup.procs" >/dev/null
           .venv/bin/python - << 'DRIVER'
           import fcntl, json, os, select, sys, tempfile
           from pathlib import Path
@@ -253,6 +267,13 @@ jobs:
           PYTHONUNBUFFERED: '1'
         run: |
           set -o pipefail
+          # Run-8 fix: migrate this shell into the delegated subtree first
+          # (see the replication step for the mechanism and evidence).
+          CG=/sys/fs/cgroup/pal-t1
+          echo '+memory +pids' > "$CG/cgroup.subtree_control" 2>/dev/null
+          STEP_CG="$CG/pal-step-$$"
+          mkdir -p "$STEP_CG"
+          echo $$ | sudo tee "$STEP_CG/cgroup.procs" >/dev/null
           # Sanitized env discipline (scripts/verify_local.py
           # build_environment): no PYTEST_ADDOPTS/PYTEST_PLUGINS/PYTHONPATH/
           # PYTHONHOME inheritance; the two POLYMARKET_ALPHA_LAB_* opt-ins
