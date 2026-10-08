@@ -12,6 +12,7 @@ from hashlib import sha256
 import json
 import os
 from pathlib import Path
+import posixpath
 import shutil
 import signal
 import subprocess
@@ -333,6 +334,47 @@ def _interpreter_stdlib_root(interpreter):
     return Path(completed.stdout.decode('utf-8').strip())
 
 
+def parse_ld_trace_pairs(trace_text):
+    """Extract ``soname => hostpath`` pairs from LD_TRACE_LOADED_OBJECTS text.
+
+    Arrow-less lines (linux-vdso, the dynamic loader itself, statically
+    linked binaries) and ``=> not found`` resolutions carry no bindable
+    host path and are ignored. Pure string parsing, so it is testable on
+    any host; the traced subprocess itself runs only on Linux.
+    """
+    pairs = []
+    for line in trace_text.splitlines():
+        if '=>' not in line:
+            continue
+        left, right = line.split('=>', 1)
+        soname = left.strip()
+        target = right.strip().split(' ', 1)[0] if right.strip() else ''
+        if not soname or not target.startswith('/'):
+            continue
+        pairs.append((soname, target))
+    return pairs
+
+
+def soname_default_search_bindings(trace_text):
+    """Map interpreter trace pairs to guest bindings reachable by soname.
+
+    /proc/self/maps exposes version-suffixed real paths (libz.so.1.3,
+    libexpat.so.1.9.1) while the guest binary's DT_NEEDED entries name the
+    soname, and the namespace carries no ld.so cache: the loader therefore
+    falls back to its default search directories and needs the soname path
+    there. Every traced pair binds at ``dirname(hostpath)/soname`` (the
+    trace's right side is usually already that soname-resolved path, e.g.
+    /lib/x86_64-linux-gnu/libz.so.1); pairs collapsing onto one guest path
+    keep the first binding. posixpath keeps the guest path POSIX-shaped on
+    Windows development hosts.
+    """
+    bindings = {}
+    for soname, hostpath in parse_ld_trace_pairs(trace_text):
+        guest = posixpath.join(posixpath.dirname(hostpath), soname)
+        bindings.setdefault(guest, hostpath)
+    return bindings
+
+
 def discover_runtime_closure(interpreter, vendor_path):
     """Measure the interpreter stdlib/lib closure plus the vendor's ELF deps.
 
@@ -357,6 +399,15 @@ def discover_runtime_closure(interpreter, vendor_path):
         for token in line.split():
             if token.startswith('/'):
                 traced.add(token)
+    # The interpreter's own DT_NEEDED closure must also be reachable by
+    # soname in the loader's default search directories: maps only exposed
+    # version-suffixed real paths and the namespace has no ld.so cache.
+    interpreter_deps = subprocess.run([interpreter], capture_output=True, check=False,
+                                      timeout=60, env=traced_env)
+    soname_bindings = soname_default_search_bindings(
+        interpreter_deps.stdout.decode('utf-8', 'replace'))
+    traced.update(soname_bindings.values())
+    soname_guests = {host_path: guest for guest, host_path in soname_bindings.items()}
     stdlib_root = _interpreter_stdlib_root(interpreter)
     runtime, seen, digests = [], set(), set()
     for host in sorted(traced):
@@ -374,7 +425,9 @@ def discover_runtime_closure(interpreter, vendor_path):
             # System libraries (dynamic loader, libc, ...) bind at their
             # original absolute paths: the ELF PT_INTERP interpreter and the
             # loader's default search must resolve inside the namespace.
-            guest = str(path)
+            # Interpreter-traced dependencies prefer their default-search
+            # soname path so DT_NEEDED resolution succeeds without a cache.
+            guest = soname_guests.get(host, str(path))
         if guest in seen:
             continue
         seen.add(guest)
@@ -921,6 +974,36 @@ def test_standin_source_is_synthetic_and_secret_free():
     assert '--version' in STANDIN_C_SOURCE
     assert (CLAUDE_VERSION + ' (Claude Code)\\n') in STANDIN_C_SOURCE
     assert (CLAUDE_VERSION + '\\n') not in STANDIN_C_SOURCE
+
+
+SYNTHETIC_INTERPRETER_LD_TRACE = (
+    '\tlinux-vdso.so.1 (0x00007ffc7a9be000)\n'
+    '\tlibc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x00007f2e8c9a1000)\n'
+    '\tlibz.so.1 => /lib/x86_64-linux-gnu/libz.so.1 (0x00007f2e8c3b1000)\n'
+    '\tlibexpat.so.1 => /usr/lib/x86_64-linux-gnu/libexpat.so.1.9.1 (0x00007f2e8c12f000)\n'
+    '\tlibpalmissing.so.7 => not found\n'
+    '\t/lib64/ld-linux-x86-64.so.2 (0x00007f2e8cdff000)\n'
+    '\tlibz.so.1 => /lib/x86_64-linux-gnu/libz.so.1.3 (0x00007f2e8c3b1000)\n')
+
+
+def test_interpreter_ld_trace_binds_sonames_in_default_search_dirs():
+    """Pure unit test of the runtime-closure discovery mapping: no
+    subprocess and no Linux requirement, so the soname-binding rule is
+    verified on Windows development hosts too. Arrow-less lines
+    (linux-vdso, the dynamic loader itself) and ``=> not found``
+    resolutions are ignored; every real pair binds at
+    ``dirname(hostpath)/soname`` so DT_NEEDED resolution succeeds inside
+    the namespace where no ld.so cache exists; and a versioned-vs-soname
+    duplicate for the same library collapses onto one guest path."""
+    assert parse_ld_trace_pairs(SYNTHETIC_INTERPRETER_LD_TRACE) == [
+        ('libc.so.6', '/lib/x86_64-linux-gnu/libc.so.6'),
+        ('libz.so.1', '/lib/x86_64-linux-gnu/libz.so.1'),
+        ('libexpat.so.1', '/usr/lib/x86_64-linux-gnu/libexpat.so.1.9.1'),
+        ('libz.so.1', '/lib/x86_64-linux-gnu/libz.so.1.3')]
+    assert soname_default_search_bindings(SYNTHETIC_INTERPRETER_LD_TRACE) == {
+        '/lib/x86_64-linux-gnu/libc.so.6': '/lib/x86_64-linux-gnu/libc.so.6',
+        '/lib/x86_64-linux-gnu/libz.so.1': '/lib/x86_64-linux-gnu/libz.so.1',
+        '/usr/lib/x86_64-linux-gnu/libexpat.so.1': '/usr/lib/x86_64-linux-gnu/libexpat.so.1.9.1'}
 
 
 @pytest.mark.skipif(not CONTAINMENT_ENABLED, reason='explicit native containment proof is opt-in')
