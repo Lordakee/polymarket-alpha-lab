@@ -2995,3 +2995,31 @@ W3 原生两测试 + T8 资格、L8 原生收尾 + verify_local --full、节点
 原生收尾（B 三 opt-in + C 五项 + 修正横幅往返）+ verify_local --full；
 随后 W2 推送、W3 派发（携带 §13 附录）。激活边界不变
 （activation_authorized=false）。
+
+**L9.1 重基线与 L8 原生收尾闭合（2026-10-10，协调者记录）**：W3
+原生首跑在 154 暴露三个真实缺陷并全部修复入库：(1) 探针目录 str/
+Path 强转（dd668cd1）；(2) 父侧三等待循环"先查死后读管道"丢弃已
+缓冲终报（L5 原始竞态，对齐 _drain_model 的 drain-first 习语）；
+(3) **冻结 helper 源内的收割竞态**——_try_reap 在 ECHILD 返回 None、
+_run_version/_run_model 每轮无条件重收割，二次收割以 None 覆盖已
+定案的退出状态、跳过分类，拒绝被误报为通用失败（快主机 ~30%；
+L5 以来潜伏，166 慢 CPU 掩盖；插桩复现实证定位）。四个位点守护
+（双源 × 双循环）+ 协调重钉（OFFLINE_HELPER 22a396e3…、policy
+37e8c9af…、v3 金样本 linux c29b8353…/win32 8f06ef6d…；CONF/argv
+钉实测不变——其字节不含 helper 摘要）+ 工程化窗口 POSIX 回归 +
+AST 静态封闭测试。另含 CI AF_UNIX 绊线窄域放行与 T1 夹具真实 CA
+适配（W3 admission 现按钉定路径读取密封 CA；预演与旧绑定运行皆
+前 W3 故未触及）。R-W14 主审 FAIL（我的竞态回归测试触发 autouse
+进程绊线——按处方一行修复）→ 补充裁定 PASS（含 CA 增量）。
+**落地 d3eec34f 后的 154 验证链（树 = d3eec34f）**：T1 门 12/12
+（约束性 T1 在 L9.1 摘要重绑定）；**§65 五文件原生块 322 过/1 跳
+（3:37）——L8 原生收尾（B 三 opt-in + C 五项 + 修正横幅往返）自此
+闭合**；`verify_local --full` PASS（完整日志
+~/pal-artifacts/l91-landing.log，含全部三段）；CI 绿（37955091414，
+dd668cd1 的红清除）。W3 原生两测试与拒绝分类稳定性网（×40）亦绿
+（121/1、40/0，同批补丁树）。交接文档 docs/handoffs/l8-l9-status.md
+（W17，R-W17 PASS 修订版）随批落地。**L9 节点仅余 T8 一门**，阻塞
+于 D-1 所有者断言：154 是否构成 §65 意义上的专用/非共享主机
+（事实：/home 仅 ubuntu 单主体、所有者本人运营、无其他人类用户；
+W13 手册要求非专用即 STOP）。激活边界不变（activation_
+authorized=false；T8 亦不构成激活授权）。
