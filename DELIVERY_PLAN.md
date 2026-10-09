@@ -3048,3 +3048,37 @@ activation 仅出现在拒绝断言）、待定状态诚实（无人声称 T8 �
 `sudo -n true` 通过（NOPASSWD）。该四项事实与 §68:3025-3027 的
 三项记录合并构成 D-1 决策的完整事实基础（R-N1 MINOR-1 促成本
 补记；最初浮现于 post-l9 计划 Revision 1 F1）。
+
+**Post-L9 对抗审计递延发现（2026-10-10，N4 审计 + R-N4 独立复验
+PASS）**：N4 对中继面跨切片接缝的对抗审计（树 67cad027）结论为
+零 BLOCKER/零 MAJOR/零修复——13+ 种构造攻击（egress 篡改、边界值
+信任配置、W5 链、端口窗七处、单连接规则、drain×engine 交互、
+证据词表、CA 密封、响应跟踪）全部故障关闭，负面结果经 R-N4 复跑
+全部复现。以下发现递延（重开条件：对应消费者落地或冻结源变更
+评审时一并处理）：
+- M-1（MINOR）_ContainedSession 构造器中 Popen 抛出时泄漏 7 个
+  子侧管道端（14 个创建 fd 中的 7；R-N4 修正原 14 之计数）——
+  有界、无死锁，修复=把子侧 fd 预挂到 self；
+- M-2（MINOR）LINUX_RELAY_EVIDENCE 单槽跨调用不复位：第二次调用
+  中途死亡时留下 call-1 的 relay_ok 混 call-2 计数器（实证复现；
+  当前无生产消费者——grep 验证仅测试读取；轮转消费者落地时需
+  begin_call() 复位）；
+- M-3（MINOR）两冻结源的 _run_model finally 在 _stage 中途抛出时
+  对 staged=None 解引用 → TypeError 掩盖原始错误（故障关闭、仅
+  可诊断性；修复即冻结摘要轮转，须专门冻结变更评审）；
+- M-4（MINOR）监督者终身持有子半信道 fd——引擎侧 guest→engine
+  EOF 在监督者存活期间不可达；设计注释（:2022-2025"EOF 双向
+  精确"）言过其实需限定；保留反而消除若干 mid-call 竞态（R-N4
+  判定 sound），代价仅为检测延迟；
+- M-5（MINOR）_supervisor_configuration 的 ValueError
+  'linux_launch_spec_invalid' 不在 _ADMITTED_VALUE_ERRORS——今日
+  不可达（fd≥7 与端口窗已在 __post_init__ 前置校验）；
+- N-1..N-7（NOTE）：引擎对不读信道的 vendor 仅受 total（非 idle）
+  期限约束（实证）；STOP 在飞行交换中产生无 call_done 的
+  relay_stopped（仅清理路径可达）；16MiB 进程级提示可衍生超限中继
+  请求（精确拒绝码）；_LinuxRelayEvidence.record_call 不自证词表；
+  关闭 stdio 的父进程理论上 fd 0/1/2 可被管道占据（既有冻结习语，
+  正常 stdio 不可达）；_read_report 1s 单读停顿超时（既有行为）；
+  SIGKILL 监督者遗留 pal-call-* 目录（下次运行自愈清扫）。
+审计工件：探针存于本机 %TEMP%\n4-probes（仓外）；本记录即 N4 报告
+的账本化（含 R-N4 的 M-1 计数修正与全部复验结论）。
