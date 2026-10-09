@@ -2312,6 +2312,9 @@ def build_native_relay_probe(directory, *, hang=False):
     Returns (launch, spec, ca_bytes)."""
     from tests.test_research_linux_relay import SYNTHETIC_CA
     surface = require_relay_parent_path()
+    # The driver-loss runner passes sys.argv[1] (a str); in-process callers
+    # pass pytest's Path. Coerce once so both shapes work identically.
+    directory = Path(directory)
     vendor_dir = directory / 'vendor'
     vendor_dir.mkdir(parents=True, exist_ok=True)
     binary, digest, size = _compile(vendor_dir, 'w3-relay-probe',
