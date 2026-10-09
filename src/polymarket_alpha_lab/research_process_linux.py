@@ -458,7 +458,11 @@ def _run_version(cfg, cgroup, report_fd, liveness_fd, remaining_ms):
                     stderr_bytes += len(block)
                     if len(sniff) < 4096:
                         sniff.extend(block[:4096 - len(sniff)])
-            status = _try_reap(staged['pid'])
+            # L9.1 reap-race fix: waitpid on an already-reaped pid raises
+            # ECHILD (returned as None); never let that overwrite a finalized
+            # status, or the exit-code classification below is skipped.
+            if status is _RUNNING:
+                status = _try_reap(staged['pid'])
             if status is not _RUNNING and not out_open and not err_open:
                 break
         if failure is None and status is _RUNNING:
@@ -584,7 +588,10 @@ def _run_model(cfg, cgroup, report_fd, liveness_fd, prompt_fd, out_fd, err_fd, r
                         err_buf.extend(block)
             if failure == 'model_output_limit':
                 break
-            status = _try_reap(staged['pid'])
+            # L9.1 reap-race fix (see _run_version): reap only while running;
+            # the loop head already guarantees it, the guard makes it uniform.
+            if status is _RUNNING:
+                status = _try_reap(staged['pid'])
         if failure is None and status is _RUNNING:
             # A failed phase (for example the output cap) must not wait on a
             # still-running vendor; the teardown below kills it. A successful
@@ -1774,10 +1781,14 @@ class _ContainedSession:
                 raise ResearchProcessError('research_process_stopped')
             if time.monotonic_ns() >= self._deadline:
                 raise ResearchProcessError('research_process_timeout')
-            if self._supervisor.poll() is not None:
-                raise ResearchProcessError('research_process_failed')
             if select.select([self._report_r], [], [], 0.05)[0]:
                 return self._read_report()
+            # The supervisor writes its final report line before exiting, so
+            # only a channel with nothing buffered makes its death
+            # unclassified (the same drain-first idiom as _drain_model).
+            if self._supervisor.poll() is not None \
+                    and not select.select([self._report_r], [], [], 0)[0]:
+                raise ResearchProcessError('research_process_failed')
 
     def run_version_phase(self):
         LINUX_PHASE_COUNTERS.version_execution()
@@ -1787,7 +1798,10 @@ class _ContainedSession:
                 raise ResearchProcessError('research_process_stopped')
             if time.monotonic_ns() >= self._deadline:
                 raise ResearchProcessError('research_process_timeout')
-            if self._supervisor.poll() is not None:
+            # Drain a buffered final report before treating the supervisor's
+            # exit as unclassified (it always reports before exiting).
+            if self._supervisor.poll() is not None \
+                    and not select.select([self._report_r], [], [], 0)[0]:
                 raise ResearchProcessError('research_process_failed')
             event = self._read_report()
             kind = event.get('type')
@@ -1818,7 +1832,9 @@ class _ContainedSession:
                 raise ResearchProcessError('research_process_stopped')
             if time.monotonic_ns() >= self._deadline:
                 raise ResearchProcessError('research_process_timeout')
-            if self._supervisor.poll() is not None:
+            # Same drain-first guard as run_version_phase.
+            if self._supervisor.poll() is not None \
+                    and not select.select([self._report_r], [], [], 0)[0]:
                 raise ResearchProcessError('research_process_failed')
             event = self._read_report()
             if event.get('type') == 'ready':

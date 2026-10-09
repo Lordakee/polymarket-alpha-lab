@@ -9,6 +9,7 @@ stand-in's version output and envelope are explicitly synthetic and are never
 official-image evidence.
 """
 from hashlib import sha256
+import ast
 import json
 import os
 from pathlib import Path
@@ -827,6 +828,67 @@ def test_cleanup_failure_is_reported_not_swallowed():
         session._cleanup(5)
 
 
+@pytest.mark.skipif(sys.platform != 'linux',
+                    reason='the native session waits on pipe descriptors')
+def test_supervisor_death_does_not_discard_a_buffered_final_report(monkeypatch):
+    """The await/version/ready loops historically raised the generic failure
+    the moment poll() showed the supervisor exited, discarding its final
+    classified report line still buffered in the pipe — a scheduling race
+    latent since L5 and surfaced by the faster substituted dev server (a
+    wrapper-option refusal was misreported as research_process_failed). The
+    drain-first guard now delivers the buffered event instead."""
+    # The dead supervisor is a real reaped Popen; narrowly lift the autouse
+    # process tripwire for it (the engine-executing tests' idiom) so the
+    # default stripped-opt-in full suite on Linux runs this for real.
+    monkeypatch.setattr(subprocess, 'Popen', _REAL_POPEN)
+    dead = subprocess.Popen([sys.executable, '-c', 'pass'])
+    dead.wait()
+
+    def session_with(report_line):
+        session = linux._ContainedSession.__new__(linux._ContainedSession)
+        session._stop = None
+        session._deadline = time.monotonic_ns() + 10_000_000_000
+        session._supervisor = dead
+        report_r, report_w = os.pipe()
+        os.write(report_w, report_line)
+        os.close(report_w)
+        session._report_r = report_r
+        control_r, control_w = os.pipe()
+        session._control_w = control_w
+        return session, report_r, (control_r, control_w)
+
+    classified = b'{"type":"version_done","code":"wrapper_option_unsupported"}\n'
+    # _await_first_event returns the buffered event, not the generic failure.
+    session, report_r, control = session_with(classified)
+    try:
+        assert session._await_first_event() == {
+            'type': 'version_done', 'code': 'wrapper_option_unsupported'}
+    finally:
+        os.close(report_r)
+        for fd in control:
+            os.close(fd)
+    # run_version_phase maps the buffered classified refusal code.
+    session, report_r, control = session_with(classified)
+    try:
+        with pytest.raises(ResearchProcessError,
+                           match='research_process_wrapper_unsupported'):
+            session.run_version_phase()
+    finally:
+        os.close(report_r)
+        for fd in control:
+            os.close(fd)
+    # An exited supervisor whose report channel is truly empty stays the
+    # generic failure - nothing was discarded.
+    session, report_r, control = session_with(b'')
+    try:
+        with pytest.raises(ResearchProcessError, match='research_process_failed'):
+            session._await_first_event()
+    finally:
+        os.close(report_r)
+        for fd in control:
+            os.close(fd)
+
+
 MODEL_PHASE_OUTPUT = b'{"synthetic":"model-output"}'
 
 
@@ -1310,11 +1372,16 @@ def test_relay_symbolic_endpoint_constant_matches_profile_declaration():
                     reason='the relay channel builder (AF_UNIX socketpair '
                            'plus the F_DUPFD idiom) is a Linux runtime '
                            'surface; fcntl is absent on Windows hosts')
-def test_relay_channel_builder_moves_both_ends_above_100():
+def test_relay_channel_builder_moves_both_ends_above_100(monkeypatch):
     """Plan 7.1.3: both channel halves land at descriptors >= 100 (never
     the canonical 3..6 supervisor slots), are distinct live descriptors,
     and closing them leaves the descriptor set exactly as before (the
-    originals are closed; no fd leaks)."""
+    originals are closed; no fd leaks). The builder constructs an AF_UNIX
+    socketpair (module-level socketpair wraps descriptors through the
+    socket factory), so the no-network tripwire is narrowly lifted for
+    this test exactly like the engine-executing tests do."""
+    monkeypatch.setattr('socket.socket', _REAL_SOCKET)
+
     def open_fd_set():
         directory = os.open('/proc/self/fd', os.O_RDONLY | os.O_DIRECTORY)
         try:
@@ -2175,7 +2242,8 @@ def test_offline_path_byte_identity_after_w3():
     """Plan 7.1.12: cheap defense-in-depth re-assertion that the offline
     helper/CONF/argv/policy surfaces still equal the frozen W6 pins on the
     post-W3 tree (W6's own pins run in the same suite; this guards the
-    gate recipe from this file too)."""
+    gate recipe from this file too). The pins were re-pinned at the L9.1
+    reap-race fix in the W6 module; this test follows them automatically."""
     from tests.test_research_linux_relay_helper_gates import (
         OFFLINE_ARGV_MODEL_SHA256, OFFLINE_ARGV_VERSION_SHA256,
         OFFLINE_CONF_SHA256, OFFLINE_HELPER_SHA256, OFFLINE_POLICY_SHA256,
@@ -2523,3 +2591,272 @@ def test_relay_parent_path_stop_and_driver_loss_native(tmp_path):
     assert not surviving_contained_processes()
     assert not [name for name in os.listdir(launch.cgroup_root)
                 if name.startswith('pal-call-')]
+
+
+# ---------------------------------------------------------------------------
+# L9.1 reap-race regression (2026-10-09): the per-iteration _try_reap in the
+# frozen helper sources' phase loops is guarded by ``status is _RUNNING`` so
+# an ECHILD None can never overwrite a reaped status. The deterministic proof
+# runs on every host (the static shape test below); the behavioral proof
+# drives the REAL phase-loop code offline on POSIX (no bwrap, no cgroup, no
+# namespace - only fork, pipes and WNOHANG, which the Windows host lacks).
+# ---------------------------------------------------------------------------
+
+REAP_RACE_STDERR = b'unrecognized option --pass-fd\n'
+
+
+class _NullCgroup:
+    """Phase-loop stand-in cgroup: admission is the stub stage's to skip and
+    teardown always succeeds (no kernel cgroup is touched offline)."""
+
+    def admit(self, pid):
+        pass
+
+    def kill(self, deadline_ms):
+        return True
+
+
+def _stub_stage(cfg, cgroup, mode, cred_source_fd):
+    """Fork-based stand-in for the helper's _stage on POSIX: same staged
+    dict shape (pid plus three pipe fd ends), no namespace and no wrapper
+    re-verification. The staged child writes the fixed classify-marker
+    stderr and exits 3; a forked GRANDCHILD deliberately outlives it while
+    holding the dup2'd stderr write end, so the phase loop's LAST pipe EOF
+    arrives strictly AFTER the first successful reap. That is exactly the
+    L5-era window in which the pre-fix unconditional per-iteration waitpid
+    re-reaps the already-reaped pid (ECHILD -> None) and destroys the
+    classified status."""
+    stdin_r, stdin_w = os.pipe()
+    stdout_r, stdout_w = os.pipe()
+    stderr_r, stderr_w = os.pipe()
+    pid = os.fork()
+    if pid == 0:
+        try:
+            os.dup2(stdin_r, 0)
+            os.dup2(stdout_w, 1)
+            os.dup2(stderr_w, 2)
+            for fd in (stdin_r, stdin_w, stdout_r, stdout_w, stderr_r,
+                       stderr_w):
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+            grand = os.fork()
+            if grand == 0:
+                time.sleep(0.4)
+                os._exit(0)
+            os.write(2, REAP_RACE_STDERR)
+            os._exit(3)
+        except BaseException:
+            os._exit(98)
+    for fd in (stdin_r, stdout_w, stderr_w):
+        os.close(fd)
+    return {'pid': pid, 'stdin_w': stdin_w, 'stdout_r': stdout_r,
+            'stderr_r': stderr_r}
+
+
+def _run_stub_version_phase(source):
+    """Exec the REAL frozen helper source and drive its REAL _run_version
+    loop against the stub stage; return the one reported version_done
+    event. Only _stage (namespace machinery the race does not touch) is
+    replaced."""
+    namespace = {}
+    exec(compile(source, '<helper-source>', 'exec'), namespace)
+    namespace['_stage'] = _stub_stage
+    report_r, report_w = os.pipe()
+    live_r, live_w = os.pipe()
+    cfg = {'max_version_output_bytes': 65536,
+           'expected_version_output_hex': b'synthetic-version\n'.hex()}
+    try:
+        namespace['_run_version'](cfg, _NullCgroup(), report_w, live_r, 15000)
+        os.close(report_w)
+        report_w = None
+        data = bytearray()
+        while not data.endswith(b'\n'):
+            block = os.read(report_r, 4096)
+            assert block, 'the helper closed the report pipe mid-line'
+            data.extend(block)
+        return json.loads(bytes(data).decode('utf-8'))
+    finally:
+        for fd in (report_w, report_r, live_r, live_w):
+            if fd is not None:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+
+
+@pytest.mark.skipif(os.name != 'posix',
+                    reason='the fork/pipe/WNOHANG reap mechanism is '
+                           'POSIX-only (the Windows host runs the static '
+                           'L9.1 guard test instead)')
+@pytest.mark.parametrize('source_name',
+                         ['HELPER_SOURCE', 'RELAY_HELPER_SOURCE'])
+def test_reap_guard_classifies_nonzero_stub_exit_every_repetition(source_name):
+    """L9.1 behavioral regression net: the phase loop must classify a
+    nonzero wrapper exit as wrapper_option_unsupported on EVERY of 10
+    repetitions, for BOTH frozen helper sources.
+
+    Honest scope statement: the stub stage ENGINEERS the race window (the
+    grandchild holds the stderr write end 0.4s past the child's exit), so on
+    POSIX the pre-fix code fails this deterministically, not
+    probabilistically - the observed ~30% production flake was only the
+    uncontrolled version of the same window. The 10 repetitions exist as a
+    stability net against scheduler variance in the harness itself (the
+    pre-fix production race hit ~30%, so 10 catches would be ~97% even
+    uncontrolled). The deterministic proof on EVERY host (Windows included)
+    is the code change plus the static shape test below; the disappearance
+    of the production ~30% flake is observable only in the coordinator's
+    server loop runs."""
+    source = (linux.HELPER_SOURCE if source_name == 'HELPER_SOURCE'
+              else relay.RELAY_HELPER_SOURCE)
+    for _ in range(10):
+        event = _run_stub_version_phase(source)
+        assert event['type'] == 'version_done', event
+        assert event['code'] == 'wrapper_option_unsupported', event
+        assert event['exit_code'] == 3, event
+        assert event['stderr_bytes'] == len(REAP_RACE_STDERR), event
+
+
+def _is_running_test(node):
+    return (isinstance(node, ast.Compare)
+            and isinstance(node.left, ast.Name) and node.left.id == 'status'
+            and len(node.ops) == 1 and isinstance(node.ops[0], ast.Is)
+            and len(node.comparators) == 1
+            and isinstance(node.comparators[0], ast.Name)
+            and node.comparators[0].id == '_RUNNING')
+
+
+def _is_not_running_test(node):
+    return (isinstance(node, ast.Compare)
+            and isinstance(node.left, ast.Name) and node.left.id == 'status'
+            and len(node.ops) == 1 and isinstance(node.ops[0], ast.IsNot)
+            and len(node.comparators) == 1
+            and isinstance(node.comparators[0], ast.Name)
+            and node.comparators[0].id == '_RUNNING')
+
+
+def _conjunction_tests(test):
+    if isinstance(test, ast.BoolOp) and isinstance(test.op, ast.And):
+        out = []
+        for value in test.values:
+            out.extend(_conjunction_tests(value))
+        return out
+    return [test]
+
+
+def _calls_under_running_guard(function_node, callee):
+    """Every ``callee(...)`` call that executes only under an
+    ``if status is _RUNNING:`` test (the test itself or one conjunct of an
+    ``and``): the guard dominates its whole body, so such calls can never
+    run after a finalized status exists."""
+    guarded = []
+    stack = [(child, False)
+             for child in ast.iter_child_nodes(function_node)]
+    while stack:
+        node, under = stack.pop()
+        if isinstance(node, ast.If):
+            holds = any(_is_running_test(part)
+                        for part in _conjunction_tests(node.test))
+            for child in node.body:
+                stack.append((child, under or holds))
+            for child in node.orelse:
+                stack.append((child, under))
+            continue
+        if (under and isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == callee):
+            guarded.append(node)
+        for child in ast.iter_child_nodes(node):
+            stack.append((child, under))
+    return guarded
+
+
+def _named_calls(function_node, callee):
+    return [node for node in ast.walk(function_node)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+            and node.func.id == callee]
+
+
+def test_both_helper_phase_loops_guard_every_try_reap():
+    """L9.1 static shape proof (offline, Windows-runnable): in BOTH frozen
+    helper sources, every _try_reap call inside a phase loop
+    (_run_version/_run_model) executes only under a
+    ``status is _RUNNING`` condition, the deadline-window _reap result is
+    assigned only under such a condition, the teardown _reap result is a
+    bare discarded expression, and _reap's own poll returns its first
+    non-_RUNNING result immediately (so it can never overwrite a finalized
+    status). The closed inventory also fails loudly if a _try_reap site
+    ever appears in any OTHER helper function."""
+    for source_name, source in (('HELPER_SOURCE', linux.HELPER_SOURCE),
+                                ('RELAY_HELPER_SOURCE',
+                                 relay.RELAY_HELPER_SOURCE)):
+        tree = ast.parse(source)
+        functions = {node.name: node for node in tree.body
+                     if isinstance(node, ast.FunctionDef)}
+        enclosing = set()
+        for name, node in functions.items():
+            if _named_calls(node, '_try_reap'):
+                enclosing.add(name)
+        assert enclosing == {'_reap', '_run_version', '_run_model'}, \
+            (source_name, sorted(enclosing))
+        for phase in ('_run_version', '_run_model'):
+            node = functions[phase]
+            calls = _named_calls(node, '_try_reap')
+            assert calls, (source_name, phase)
+            guarded = _calls_under_running_guard(node, '_try_reap')
+            for call in calls:
+                assert any(call is candidate for candidate in guarded), (
+                    source_name, phase,
+                    'an unguarded per-iteration _try_reap: the L9.1 '
+                    'reap race is back')
+            reaps = _named_calls(node, '_reap')
+            guarded_reaps = _calls_under_running_guard(node, '_reap')
+            assigned = [candidate.value for candidate in ast.walk(node)
+                        if isinstance(candidate, ast.Assign)
+                        and isinstance(candidate.value, ast.Call)
+                        and isinstance(candidate.value.func, ast.Name)
+                        and candidate.value.func.id == '_reap']
+            assert len(reaps) == 2, (source_name, phase, len(reaps))
+            # Exactly one _reap result is assigned, and only under the
+            # running-status guard (the deadline window).
+            assert len(assigned) == 1, (source_name, phase)
+            assert any(assigned[0] is candidate for candidate in guarded_reaps), (
+                source_name, phase,
+                'the assigned _reap result is not gated by '
+                'status is _RUNNING')
+            # The other _reap call's result is discarded bare (teardown).
+            discarded = [call for call in reaps
+                         if not any(call is candidate
+                                    for candidate in assigned)]
+            assert len(discarded) == 1, (source_name, phase)
+            bare = [candidate for candidate in ast.walk(node)
+                    if isinstance(candidate, ast.Expr)
+                    and isinstance(candidate.value, ast.Call)
+                    and candidate.value is discarded[0]]
+            assert bare, (source_name, phase,
+                          'the teardown _reap result is not a bare '
+                          'discarded expression')
+        # _reap's own poll: the loop assigns _try_reap's result and returns
+        # immediately on the first non-_RUNNING value, so an ECHILD None
+        # can only ever be _reap's own return, never an overwrite of a
+        # stored finalized status. The third statement is the poll sleep.
+        loop = [candidate for candidate in functions['_reap'].body
+                if isinstance(candidate, ast.While)]
+        assert len(loop) == 1, source_name
+        body = loop[0].body
+        assert (len(body) == 3 and isinstance(body[0], ast.Assign)
+                and len(body[0].targets) == 1
+                and isinstance(body[0].targets[0], ast.Name)
+                and body[0].targets[0].id == 'status'
+                and isinstance(body[0].value, ast.Call)
+                and isinstance(body[0].value.func, ast.Name)
+                and body[0].value.func.id == '_try_reap'
+                and isinstance(body[1], ast.If)
+                and _is_not_running_test(body[1].test)
+                and len(body[1].body) == 1
+                and isinstance(body[1].body[0], ast.Return)
+                and isinstance(body[1].body[0].value, ast.Name)
+                and body[1].body[0].value.id == 'status'
+                and isinstance(body[2], ast.Expr)
+                and isinstance(body[2].value, ast.Call)), source_name

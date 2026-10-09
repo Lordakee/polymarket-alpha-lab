@@ -16,7 +16,12 @@ T1 - the native fd-survival probe for the inherited-socketpair crossing. The
      the opt-in, missing host prerequisites are FAILURES, never skips.
 
 T3 - the offline byte-difference gate. The frozen offline pins below were
-     computed from the pre-W2 tree at L9 W6 authoring time and bind the
+     originally computed from the pre-W2 tree at L9 W6 authoring time and
+     were RE-PINNED at the L9.1 reap-race fix (2026-10-09: the per-iteration
+     _try_reap calls in both frozen helper sources are guarded by
+     ``status is _RUNNING`` so an ECHILD None can never overwrite a reaped
+     status; helper-embedding digests moved, CONF/argv did not - see the pin
+     block below). They bind the
      offline helper bytes, the offline supervisor CONF, the offline wrapper
      argv and the offline launch policy dict; they PASS today and must stay
      byte-identical when W2 lands (amendment: offline CONF/argv/policy_dict/
@@ -99,21 +104,25 @@ VENDOR_ECHOED = b'CROSSING-VENDOR-ECHOED '
 VENDOR_CONNECT_REFUSED = b'CROSSING-CONNECT-REFUSED\n'
 SYNTHETIC_RELAY_CA_PATH = '/opt/pal-gate/relay-ca.pem'
 
-# Offline pins, computed from the pre-W2 tree (L9 W6 authoring, 2026-10-07).
-# W2 must keep every one of these byte-identical (amendment blocker 2: the
-# offline path is frozen). The CONF/argv pins use the fixed synthetic gate
+# Offline pins. Originally computed from the pre-W2 tree (L9 W6 authoring,
+# 2026-10-07); RE-PINNED at the L9.1 reap-race fix (2026-10-09), which guards
+# the per-iteration _try_reap calls in both frozen helper sources and changes
+# the helper bytes and every digest embedding them. The CONF/argv pins are
+# re-measured UNCHANGED by L9.1 (the supervisor CONF carries helper_fd, not
+# the helper digest; _bwrap_argv carries paths and fd numbers only) - they
+# stay at their L9 W6 values. The CONF/argv pins use the fixed synthetic gate
 # recipe in _gate_conf() below; they are host-platform independent (the one
 # Path-derived guest literal is forward-slashed in the recipe).
-OFFLINE_HELPER_SHA256 = ('2d7e6515fdecfef86182e9cc7f28bddd21f2c0cc466a4cb5'
-                         '9cce5da59ea27cda')
+OFFLINE_HELPER_SHA256 = ('22a396e384be6f597e33009f7bde23f4938de010ac74d6a7'
+                         '3f3e95b58302b286')
 OFFLINE_CONF_SHA256 = ('f6864007d428adcc73b020b2818a7f83de258142d9716985b1ec'
                        '1452f363ed76')
 OFFLINE_ARGV_VERSION_SHA256 = ('d34891a5b1b97f4433d0bed4f81c0708f16c494d779f4'
                                '97e443284b1a7569cf2')
 OFFLINE_ARGV_MODEL_SHA256 = ('1b9f33c2a433de9711c7a662bd2aeb7c8d8afc6d1f211f9'
                              '99b562f36679a60d6')
-OFFLINE_POLICY_SHA256 = ('5ed0074c947ac471a560f148d1074536cf4195ecc4b372bd69'
-                         'b9a13377d60358')
+OFFLINE_POLICY_SHA256 = ('37e8c9afa9bc76769c4d0223fe0f1dc252d6174a48041a10fc'
+                         '9df6ff421ad56b')
 
 # Allowed shapes for lines RELAY_HELPER_SOURCE may add over HELPER_SOURCE.
 # The PRIMARY additivity guarantee is the subsequence-over-lines property
@@ -354,8 +363,9 @@ def _without_relay_setenv(argv):
 
 def test_offline_helper_source_is_frozen_at_the_l9_baseline():
     """T3.1: the frozen HELPER_SOURCE bytes and pin are unchanged by W2 (the
-    amendment requires the offline helper digest to stay byte-identical), and
-    the existing offline guard behavior is preserved."""
+    amendment requires the offline helper digest to stay byte-identical);
+    the pin was re-measured at the L9.1 reap-race fix, and the existing
+    offline guard behavior is preserved."""
     assert sha256(linux.HELPER_SOURCE.encode('utf-8')).hexdigest() \
         == OFFLINE_HELPER_SHA256
     assert linux._helper_digest() == OFFLINE_HELPER_SHA256
@@ -367,8 +377,9 @@ def test_offline_helper_source_is_frozen_at_the_l9_baseline():
 
 def test_offline_conf_and_argv_bytes_are_pinned_at_the_l9_baseline():
     """T3.1: the offline supervisor CONF and the offline wrapper argv (both
-    phases, through the frozen helper's own _bwrap_argv) are byte-pinned at
-    the pre-W2 baseline; W2 must not move them."""
+    phases, through the frozen helper's own _bwrap_argv) are byte-pinned;
+    re-measured UNCHANGED at the L9.1 reap-race fix (neither the CONF nor
+    the argv embeds the helper digest), W2 must not move them."""
     conf = _gate_conf()
     assert _conf_digest(conf) == OFFLINE_CONF_SHA256
     namespace = _helper_namespace()
@@ -460,7 +471,7 @@ def test_relay_helper_source_is_strictly_additive():
     assert imported <= RELAY_HELPER_ALLOWED_IMPORTS, imported
     assert 'polymarket_alpha_lab' not in surface['helper_source']
     # The offline side of the amendment requirement, re-asserted where W2's
-    # review will look: the frozen digest is untouched.
+    # review will look: the helper digest equals the re-pinned L9.1 value.
     assert linux._helper_digest() == OFFLINE_HELPER_SHA256
 
 
@@ -835,7 +846,18 @@ def _measured_relay_launch(payload_path, payload_digest, payload_size,
         memory_max_bytes=512 * 1024 * 1024,
         pids_max=32,
         egress_policy=RELAY_EGRESS)
-    values[RELAY_TRUST_FIELD] = surface['trust']
+    # The surface trust's CA pin is declaration-only (a fixed path with a
+    # placeholder digest): fine for offline shape assertions, but the landed
+    # W3 admission now READS and seals the CA bundle at the pinned path, so
+    # the native launch must carry a real synthetic CA exactly the way W3's
+    # own build_native_relay_probe does — same bytes, same pin discipline.
+    from tests.test_research_linux_relay import SYNTHETIC_CA
+    ca_path = Path(payload_path).parent / 'relay-ca.pem'
+    ca_path.write_bytes(SYNTHETIC_CA['pem'])
+    values[RELAY_TRUST_FIELD] = relay.RelayTrustConfig(
+        ca_bundle=relay.RelayCaBundlePin(str(ca_path),
+                                         SYNTHETIC_CA['sha256'],
+                                         SYNTHETIC_CA['size']))
     return linux.LinuxLaunchSpec(**values)
 
 

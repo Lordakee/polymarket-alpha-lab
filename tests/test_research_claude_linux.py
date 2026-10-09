@@ -54,15 +54,18 @@ PRE_CORRECTION_V2_GOLDEN = {
 # v3 (relay branch) golden: computed from the fixed synthetic golden profile
 # (symbolic relay endpoint written post-construction) plus a faithful
 # synthetic mirror of W2's documented relay policy_dict extension below.
-# Re-pinned against W2's landed RELAY_HELPER_SOURCE (L9 W2): the mirror's
+# Re-pinned against W2's landed RELAY_HELPER_SOURCE (L9 W2) and RE-PINNED
+# again at the L9.1 reap-race fix (2026-10-09: the relay helper bytes carry
+# the guarded per-iteration _try_reap, so every digest embedding the relay
+# helper digest moved with them); the mirror's
 # helper pins carry the real relay helper digest, so the synthetic policy
 # bytes equal the real relay launch policy_dict and the golden-recompute
 # test below verifies that equality on every run. The linux half follows the
 # same recipe with the linux golden root (the linux constant is verifiable
 # only on the Linux host, like the v1/v2 goldens).
 CLAUDE_V3_GOLDEN = {
-    'linux': 'a093f08f5da404b9a906b6494eea3dff9fd665504ebfd595eba1e84e4a37923d',
-    'win32': '563a5fdea44c9622423ab4bdc26f5920902df68c7e3b06f2a539b8716deba1e9',
+    'linux': 'c29b835394bba558a6a2fd33596e2c67e84ff373e8e3e11c60171f949c2813ee',
+    'win32': '8f06ef6d37467f5774957319e2a25dc62532cd03b416a63a71f56fc2776002c3',
 }
 # Fixed synthetic reviewed trust configuration (declaration-only; no file).
 # The forwarded-header rules are pinned as an explicitly name-sorted tuple:
