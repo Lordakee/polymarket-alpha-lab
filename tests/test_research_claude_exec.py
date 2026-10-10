@@ -14,6 +14,7 @@ from polymarket_alpha_lab import research_claude_exec as cli
 from polymarket_alpha_lab.research_process import ResearchProcessResult, ResearchProcessSpec
 from polymarket_alpha_lab.research_dispatch_runner import ResearchDispatchStop
 from polymarket_alpha_lab.team_research_agent_types import strict_json
+from tests import claude_cli_probe as probe
 
 MODEL = 'claude-opus-5'
 SESSION = '11111111-1111-4111-8111-111111111111'
@@ -233,6 +234,34 @@ def test_both_admitted_representations_stay_closed_and_distinct():
     for name in ('errors', 'structured_output', 'deferred_tool_use', 'origin'):
         value = retained(); value[name] = None
         with pytest.raises(ValueError): decode(value)
+
+
+def test_probe_decoder_stage_stages_both_admitted_representations():
+    """Regression for the §65 deferred probe-diagnostic correction: the
+    pre-decode mirror must recognize the calibrated 25-key terminal
+    representation instead of mislabeling every terminal-shaped payload
+    'outer_keys'. Diagnostic only -- the mirror never governs the production
+    acceptance proven by the tests above."""
+    request = cli.ClaudeExecInput(MODEL, '[{}]', 100)
+    assert probe._decoder_stage(wire(), request) is None            # original, as before
+    assert probe._decoder_stage(wire(retained()), request) is None  # terminal, was 'outer_keys'
+    # Defects inside the terminal shape report their accurate first stage.
+    assert probe._decoder_stage(wire(retained(type='error')), request) == 'envelope_values'
+    assert probe._decoder_stage(wire(retained(terminal_reason='max_tokens')), request) == 'envelope_values'
+    assert probe._decoder_stage(wire(retained(result=5)), request) == 'result_json'
+    assert probe._decoder_stage(wire(retained(result='{"calls": []}')), request) == 'action_validation'
+    assert probe._decoder_stage(wire(retained(modelUsage={})), request) == 'usage'
+    # Key-set violations still fail the outer stage: anything that is not the
+    # exact closed 25-key terminal set matches neither admitted shape.
+    value = retained(); del value['uuid']
+    assert probe._decoder_stage(wire(value), request) == 'outer_keys'
+    assert probe._decoder_stage(wire(retained(unexpected=1)), request) == 'outer_keys'
+    # The original envelope's staged ladder reports exactly as before.
+    original = envelope(); del original['usage']
+    assert probe._decoder_stage(wire(original), request) == 'outer_keys'
+    assert probe._decoder_stage(wire(envelope(unexpected=1)), request) == 'outer_keys'
+    assert probe._decoder_stage(wire(envelope(type='error')), request) == 'envelope_values'
+    assert probe._decoder_stage(wire(envelope(modelUsage={})), request) == 'usage'
 
 
 @pytest.mark.parametrize('field', RETAINED_KEYS)

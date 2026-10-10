@@ -1117,12 +1117,23 @@ class _LinuxRelayEvidence:
     addendum the code stays pinned to the engine's LAST ``call_done`` code,
     so a parent-initiated ``relay_stopped`` exit after a concluded call
     never overwrites the concluded outcome. The counters are pinned to the
-    engine's final/``call_done`` report counters."""
+    engine's final/``call_done`` report counters. Each admitted call empties
+    the slot first (:meth:`begin_call`, invoked at the engine spawn), so one
+    call's evidence never bleeds into the next."""
 
     def __init__(self):
         self._lock = threading.Lock()
         self._code = None
         self._counters = {}
+
+    def begin_call(self):
+        # M-2 fix (section 68 post-L9 audit): every admitted relay call
+        # starts with an empty slot. Without this reset a later call dying
+        # before its first ``call_done`` would leave the PREVIOUS call's
+        # outcome code misattributed against the new call's counters.
+        with self._lock:
+            self._code = None
+            self._counters = {}
 
     def record_call(self, code, counters):
         with self._lock:
@@ -1650,6 +1661,12 @@ class _ContainedSession:
         self._stdout_r = self._stderr_r = self._report_r = self._liveness_w = None
         self._relay_channel = None
         self._relay_child_fd = None
+        # M-1 hardening (section 68 post-L9 audit): the seven child-bound
+        # pipe ends are pre-tracked here and released by _cleanup, so a
+        # spawn-phase failure can never leak them. A successful spawn closes
+        # and relinquishes the tuple below (the post-L9.1 relay child fd
+        # ownership idiom); in the normal path it is empty after inheritance.
+        self._child_side_fds = None
         self._relay_port = None
         self._supervisor = None
         admission = _Admission(spec, launch)
@@ -1677,6 +1694,14 @@ class _ContainedSession:
             # descriptors; the parent's chunked writes stay bounded by the
             # select loop's deadline and stop checks.
             cred_r, self._credential_w = os.pipe()
+            # M-1 hardening: the seven LOCAL child-bound pipe ends are owned
+            # by the session from creation until the supervisor inherits
+            # them. The close loop below runs only after a successful Popen
+            # and _cleanup closes only attribute-tracked descriptors, so a
+            # Popen failure (or a configuration refusal between here and the
+            # spawn) must find these ends already tracked on self.
+            self._child_side_fds = (ctrl_r, vout_w, verr_w, rep_w, live_r,
+                                    prom_r, cred_r)
             artifact_fds = [admission.vendor_fd, admission.wrapper_fd,
                             admission.helper_fd, admission.interp_fd,
                             *admission.runtime_fds]
@@ -1735,6 +1760,10 @@ class _ContainedSession:
                     os.close(fd)
                 except OSError:
                     pass
+            # The supervisor inherited the child-bound ends through Popen
+            # semantics and pass_fds; the session relinquishes its tracking
+            # exactly like the relay child fd below (never double-closed).
+            self._child_side_fds = None
             if relay_child_fd is not None:
                 try:
                     os.close(relay_child_fd)
@@ -1980,6 +2009,16 @@ class _ContainedSession:
                 except OSError:
                     pass
                 self._relay_child_fd = None
+            # M-1 hardening: any child-bound pipe end the supervisor never
+            # inherited (a spawn-phase failure) is closed here; on the normal
+            # path the tuple is empty because a successful spawn relinquished
+            # it right after the Popen inheritance.
+            for fd in getattr(self, '_child_side_fds', None) or ():
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+            self._child_side_fds = None
             if self._supervisor is not None:
                 deadline = time.monotonic_ns() + timeout_ms * 1000000
                 while self._supervisor.poll() is None and time.monotonic_ns() < deadline:
@@ -2021,10 +2060,16 @@ class _RelayEngineProcess:
     the parent deadline: ``start_new_session`` isolates it from terminal
     signals and no signal handler is installed anywhere. The parent closes
     its channel copy right after the spawn, so the engine is the sole
-    parent-side channel holder and guest-side EOF semantics are exact in
-    both directions. The engine creates the one upstream HTTPS connection
-    itself; nothing but channel bytes and fixed-code report lines ever
-    crosses this boundary."""
+    parent-side channel holder and engine-to-guest EOF is exact (the engine
+    is the only holder of that half once spawned). Guest-to-engine EOF is
+    NOT observable while the supervisor lives: the supervisor retains the
+    child-half channel descriptor for its own lifetime, so the engine can
+    observe that half reaching EOF only after the supervisor exits. The
+    retention is deliberate -- it removes several mid-call races (the
+    section 68 post-L9 audit assessment) at the cost of detection latency
+    alone. The engine creates the one upstream HTTPS connection itself;
+    nothing but channel bytes and fixed-code report lines ever crosses
+    this boundary."""
 
     def __init__(self, *, interp_fd, engine_fd, ca_fd, channel_fd,
                  trust_policy, total_timeout_ms, port, python_home, cwd):
@@ -2070,8 +2115,12 @@ class _RelayEngineProcess:
                 except OSError:
                     pass
             conf_r = conf_w = ctrl_r = rep_w = live_r = None
-            # The engine is now the only parent-side channel holder, so the
-            # channel EOF direction is exact for the guest too.
+            # The engine is now the only PARENT-side holder of this half, so
+            # engine-to-guest channel EOF is exact. The opposite direction is
+            # not observable while the supervisor retains the child-half
+            # descriptor for its lifetime (deliberate retention; see the
+            # class docstring): the engine sees guest EOF only once the
+            # supervisor exits -- a detection-latency cost, nothing more.
             os.close(channel_fd)
         except BaseException:
             for fd in (conf_r, conf_w, ctrl_r, rep_w, live_r):
@@ -2273,6 +2322,11 @@ class _RelayContainedSession(_ContainedSession):
         return super().run_model_phase(stdin)
 
     def _spawn_engine(self):
+        # M-2 fix: the evidence slot resets HERE, at the admission of each
+        # relay call, before any engine byte can arrive -- a call dying before
+        # its first call_done must show its own (empty) state, never the
+        # previous call's outcome or counters.
+        _LINUX_RELAY_EVIDENCE.begin_call()
         self._engine = _RelayEngineProcess(
             interp_fd=self._admission.interp_fd,
             engine_fd=self._admission.engine_fd,
@@ -2539,7 +2593,11 @@ _ADMITTED_VALUE_ERRORS = frozenset((
     'research_process_artifact_invalid', 'research_process_wrapper_elevated',
     'research_process_cgroup_unavailable', 'research_process_interpreter_home_invalid',
     'research_process_launch_invalid', 'research_process_sigchld_unsupported',
-    'research_process_stop_invalid', 'research_process_input_invalid'))
+    'research_process_stop_invalid', 'research_process_input_invalid',
+    # M-5 fix (section 68 post-L9 audit): the _supervisor_configuration
+    # refusal code, so the (currently unreachable pre-validated) refusal
+    # would surface precisely instead of as generic research_process_failed.
+    'linux_launch_spec_invalid'))
 
 
 def run_linux_contained_process(*, spec, launch, stdin, stop):

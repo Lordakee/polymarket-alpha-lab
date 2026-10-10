@@ -1486,6 +1486,10 @@ def test_relay_session_conf_gains_exactly_the_two_amendment_keys(monkeypatch):
         assert 'SYNTHETIC-NOT-A-REAL-KEY' not in json.dumps(conf)
         assert session._relay_port == 21007
         assert session._relay_channel == record['channel'][0] >= 100
+        # M-1 normal path: a successful spawn closed and relinquished the
+        # child-side pipe tracking (the relay child fd ownership idiom).
+        assert session._child_side_fds is None
+        assert session._relay_child_fd is None
         assert len(record['popen']) == 1
         _argv, kwargs = record['popen'][0]
         assert record['channel'][1] in kwargs['pass_fds']
@@ -1508,6 +1512,11 @@ def test_offline_session_conf_has_neither_relay_key(monkeypatch):
         assert 'relay_channel_fd' not in conf and 'relay_port' not in conf
         assert record['draws'] == 0
         assert session._relay_port is None and session._relay_channel is None
+        # M-1 normal path (offline half): the child-side tracking tuple is
+        # empty after the successful Popen inheritance -- offline behavior
+        # identical to the pre-fix constructor.
+        assert session._child_side_fds is None
+        assert session._relay_child_fd is None
         assert dict(map(tuple, conf['env_pairs']))[
             'ANTHROPIC_BASE_URL'] == 'https://gateway.example.invalid'
         baseline = linux._supervisor_configuration(
@@ -1522,6 +1531,86 @@ def test_offline_session_conf_has_neither_relay_key(monkeypatch):
         assert baseline == conf
     finally:
         session._cleanup(50)
+
+
+def test_supervisor_spawn_failure_closes_every_child_side_pipe_end(
+        monkeypatch, tmp_path):
+    """M-1 portable half (every host): with the supervisor spawn exploding,
+    every one of the seven child-bound pipe ends handed to the spawn -- the
+    three stdio ends plus the four pass_fds channel ends -- is CLOSED by the
+    constructor's cleanup (each probe close fails: the descriptor is
+    already gone), and the ORIGINAL spawn error still propagates. The
+    Linux-gated sibling below adds the rigorous fd-set equality proof."""
+    record, launch, spec = _wire_session_constructor(monkeypatch, relay=False)
+    handed = {}
+
+    class ExplodingPopen:
+        def __init__(self, argv, **kwargs):
+            record['popen'].append((list(argv), kwargs))
+            handed['ctrl_r'] = kwargs['stdin']
+            handed['vout_w'] = kwargs['stdout']
+            handed['verr_w'] = kwargs['stderr']
+            (handed['rep_w'], handed['live_r'],
+             handed['prom_r'], handed['cred_r']) = kwargs['pass_fds'][:4]
+            raise OSError('synthetic supervisor spawn failure')
+
+    monkeypatch.setattr(linux.subprocess, 'Popen', ExplodingPopen)
+    with pytest.raises(OSError, match='synthetic supervisor spawn failure'):
+        linux._ContainedSession(spec, launch, None,
+                                time.monotonic_ns() + 30000000000)
+    assert len(record['popen']) == 1
+    assert len(handed) == 7
+    for name, fd in sorted(handed.items()):
+        with pytest.raises(OSError):
+            os.close(fd)
+
+
+@pytest.mark.skipif(sys.platform != 'linux',
+                    reason='the /proc/self/fd leak proof is a Linux runtime '
+                           'surface (the existing open_fd_set idiom)')
+def test_supervisor_spawn_failure_leaks_no_child_side_pipe_end(
+        monkeypatch, tmp_path):
+    """M-1 regression (section 68 post-L9 audit, R-N4-corrected count): a
+    supervisor Popen failure must not leak the seven LOCAL child-bound pipe
+    ends (of the fourteen descriptors the constructor creates). The REAL
+    constructor and the REAL cleanup run against an exploding Popen; the
+    descriptor set is compared before/after with the open_fd_set idiom, the
+    ORIGINAL spawn error still propagates (cleanup never masks it), and
+    through the run driver the same failure surfaces as the fixed generic
+    code research_process_failed -- an unadmitted spawn OSError never
+    invents a new vocabulary member."""
+    record, launch, spec = _wire_session_constructor(monkeypatch, relay=False)
+
+    class ExplodingPopen:
+        def __init__(self, argv, **kwargs):
+            record['popen'].append((list(argv), kwargs))
+            raise OSError('synthetic supervisor spawn failure')
+
+    monkeypatch.setattr(linux.subprocess, 'Popen', ExplodingPopen)
+
+    def open_fd_set():
+        directory = os.open('/proc/self/fd', os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            return frozenset(int(name) for name in os.listdir(directory)) \
+                - {directory}
+        finally:
+            os.close(directory)
+
+    before = open_fd_set()
+    with pytest.raises(OSError, match='synthetic supervisor spawn failure'):
+        linux._ContainedSession(spec, launch, None,
+                                time.monotonic_ns() + 30000000000)
+    assert len(record['popen']) == 1
+    assert open_fd_set() == before
+    monkeypatch.setattr(linux, 'sys', types.SimpleNamespace(platform='linux'))
+    monkeypatch.setattr(linux, 'signal', types.SimpleNamespace(
+        SIG_DFL=signal.SIG_DFL, SIGCHLD='placeholder',
+        getsignal=lambda _: signal.SIG_DFL))
+    with pytest.raises(ResearchProcessError, match='research_process_failed'):
+        linux.run_linux_contained_process(spec=spec, stdin=b'', launch=launch,
+                                          stop=None)
+    assert len(record['popen']) == 2
+    assert open_fd_set() == before
 
 
 def _exec_engine_namespace():
@@ -1784,6 +1873,40 @@ def test_relay_outcome_error_mapping_is_closed():
             == 'research_process_failed', code
 
 
+def test_supervisor_spec_value_error_is_admitted_and_stays_precise(
+        monkeypatch, tmp_path):
+    """M-5 (section 68 post-L9 audit): the _supervisor_configuration
+    refusal code 'linux_launch_spec_invalid' is a member of
+    _ADMITTED_VALUE_ERRORS, so through the run driver's normalization it
+    surfaces as itself -- never masked into the generic
+    research_process_failed. The refusal site is today pre-validated away
+    (fd>=7 and the port window are checked before construction), so this
+    pins the mapping for the day it becomes reachable."""
+    assert 'linux_launch_spec_invalid' in linux._ADMITTED_VALUE_ERRORS
+    launch = synthetic_relay_launch(tmp_path)
+    spec = relay_vendor_spec(tmp_path)
+    with pytest.raises(ValueError, match='linux_launch_spec_invalid'):
+        linux._supervisor_configuration(
+            spec, launch, wrapper_fd=201, helper_fd=203, interp_fd=204,
+            vendor_fd=201, runtime_fds=[205], allocation='pal-call-x',
+            report_fd=210, liveness_fd=211, prompt_fd=212, credential_fd=213,
+            relay_channel_fd=3, relay_port=21007)  # fd 3 < 7: below the slots
+
+    class RefusingSession:
+        def __init__(self, spec, launch, stop, deadline_ns):
+            raise ValueError('linux_launch_spec_invalid')
+
+    monkeypatch.setattr(linux, '_ContainedSession', RefusingSession)
+    monkeypatch.setattr(linux, 'sys', types.SimpleNamespace(platform='linux'))
+    monkeypatch.setattr(linux, 'signal', types.SimpleNamespace(
+        SIG_DFL=signal.SIG_DFL, SIGCHLD='placeholder',
+        getsignal=lambda _: signal.SIG_DFL))
+    with pytest.raises(ValueError, match='linux_launch_spec_invalid'):
+        linux.run_linux_contained_process(spec=vendor_spec(tmp_path),
+                                          stdin=b'',
+                                          launch=synthetic_launch(), stop=None)
+
+
 def test_relay_evidence_accessor_is_single_slot_fixed_code_int_counters():
     """Plan 7.1.9: the accessor returns the fixed record shape — a closed
     RELAY_OUTCOMES code (or None) plus integer counters only; the final
@@ -1831,6 +1954,45 @@ def test_relay_evidence_accessor_is_single_slot_fixed_code_int_counters():
     record = linux.LINUX_RELAY_EVIDENCE()
     assert record['code'] in ('relay_ok', 'relay_stopped')
     assert type(record['counters']['requests_observed']) is int
+    # M-2 (section 68 post-L9 audit): begin_call empties the slot for the
+    # NEXT admitted relay call -- code None with integer-only (empty)
+    # counters, never the previous call's outcome or counters.
+    holder.begin_call()
+    assert linux.LINUX_RELAY_EVIDENCE() == {'code': None, 'counters': {}}
+    holder.record_call(None, {})
+
+
+def test_relay_evidence_slot_resets_for_each_admitted_call(tmp_path,
+                                                           monkeypatch):
+    """M-2 regression (section 68 post-L9 audit): the single-slot evidence
+    never carries one call's outcome into the next. Call 1 concludes
+    relay_ok with its counters; call 2 is admitted through the REAL
+    _spawn_engine and its engine dies before its first report -- the
+    evidence must show call 2's own empty state (code None, no counters),
+    never call-1's relay_ok misattributed with call-2 accounting."""
+    holder = linux._LINUX_RELAY_EVIDENCE
+    holder.record_call('relay_ok', {'requests_observed': 1,
+                                    'guest_bytes_in': 64,
+                                    'guest_bytes_out': 64})
+    holder.record_final({'requests_observed': 1, 'teardown_drain_bytes': 4096,
+                         'teardown_failures': 0})
+    assert linux.LINUX_RELAY_EVIDENCE()['code'] == 'relay_ok'
+    spawns = []
+
+    class SilentEngine:
+        # The call-2 engine: constructs, then dies before its first report.
+        def __init__(self, **kwargs):
+            spawns.append(kwargs)
+
+    monkeypatch.setattr(linux, '_RelayEngineProcess', SilentEngine)
+    session = _relay_race_session(tmp_path, None)
+    session._launch = synthetic_relay_launch(tmp_path)
+    session._relay_channel = 107
+    session._admission = types.SimpleNamespace(interp_fd=204, engine_fd=206,
+                                               ca_fd=207)
+    session._spawn_engine()
+    assert len(spawns) == 1 and session._relay_channel is None
+    assert linux.LINUX_RELAY_EVIDENCE() == {'code': None, 'counters': {}}
     holder.record_call(None, {})
 
 

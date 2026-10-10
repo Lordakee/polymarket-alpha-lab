@@ -114,6 +114,19 @@ _OUTER_REQUIRED = ('type', 'subtype', 'is_error', 'num_turns', 'session_id', 're
                    'permission_denials')
 _OUTER_OPTIONAL = ('uuid', 'total_cost_usd', 'structured_output', 'deferred_tool_use', 'errors',
                    'api_error_status', 'terminal_reason', 'origin')
+# Same fixed-mirror doctrine for the decoder's SECOND admitted closed shape:
+# the calibrated 25-key terminal representation (L7 final ruling; the exact
+# key set production pins in research_claude_exec._TERMINAL_KEYS). A payload
+# matching this set is staged through the terminal branch below instead of
+# being mislabeled outer_keys; diagnostic staging only, never an admission
+# decision.
+_TERMINAL_OUTER_KEYS = frozenset((
+    'api_error_status', 'duration_api_ms', 'duration_ms',
+    'fast_mode_disabled_reason', 'fast_mode_state', 'first_content_frame_ms',
+    'is_error', 'modelUsage', 'num_turns', 'permission_denials', 'queued_turn_count',
+    'result', 'result_index', 'session_id', 'stop_reason', 'subagent_stats', 'subtype',
+    'terminal_reason', 'time_to_request_ms', 'total_cost_usd', 'ttft_ms',
+    'ttft_stream_ms', 'type', 'usage', 'uuid'))
 # Fixed process-failure codes the v2 observation may carry; anything else is
 # recorded as None and can never satisfy a negative case.
 PROCESS_ERROR_CODES = frozenset((
@@ -683,10 +696,15 @@ def state_delta(before, after):
 def _decoder_stage(raw, request):
     """Fixed first-failing validation stage mirroring decode_claude_result's
     admission order (stderr-zero -> outer JSON -> result JSON -> action
-    validation, with the envelope/usage steps broken out). Diagnostic only:
-    the real decoder remains the sole admission decision, and this mirror
-    never feeds matching or pass/fail logic. None means every mirrored
-    stage passed."""
+    validation, with the envelope/usage steps broken out) for BOTH admitted
+    closed shapes: the original envelope and the calibrated 25-key terminal
+    representation, whose positive terminal_reason 'completed' is staged at
+    the envelope step where neither-shape payloads are still outer_keys.
+    Representation-unique deep metadata (uuid/duration formats, subagent
+    stats, terminal timing metadata, cost) is not staged, exactly as the
+    original mirror never staged it. Diagnostic only: the real decoder
+    remains the sole admission decision, and this mirror never feeds
+    matching or pass/fail logic. None means every mirrored stage passed."""
     try:
         if type(raw) is not process.ResearchProcessResult:
             return 'not_a_process_result'
@@ -698,14 +716,17 @@ def _decoder_stage(raw, request):
             data = strict_json(raw.stdout.decode('utf-8'))
         except Exception:
             return 'outer_json'
+        terminal = type(data) is dict and set(data) == _TERMINAL_OUTER_KEYS
         if (type(data) is not dict
-                or not set(_OUTER_REQUIRED) <= set(data) <= set(_OUTER_REQUIRED) | set(_OUTER_OPTIONAL)):
+                or (not terminal
+                    and not set(_OUTER_REQUIRED) <= set(data) <= set(_OUTER_REQUIRED) | set(_OUTER_OPTIONAL))):
             return 'outer_keys'
         if (data['type'] != 'result' or data['subtype'] != 'success'
                 or data['is_error'] is not False or data['stop_reason'] != 'end_turn'
                 or data['num_turns'] != 1
                 or type(data['permission_denials']) is not list or data['permission_denials']
-                or ('errors' in data and (type(data['errors']) is not list or data['errors']))):
+                or ('errors' in data and (type(data['errors']) is not list or data['errors']))
+                or (terminal and data['terminal_reason'] != 'completed')):
             return 'envelope_values'
         if (type(data.get('modelUsage')) is not dict
                 or set(data['modelUsage']) != {request.model_id}
