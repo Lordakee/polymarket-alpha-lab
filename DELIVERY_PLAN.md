@@ -3107,3 +3107,33 @@ rebuild（可选后续）。R-N2 MINOR-A：N2 转述的"11,947 节点"为同步
 增量输出、以 status 现值为准。零测试修复、零 N4 路由、两工作树
 干净、无凭据。**post-L9 周期（N1–N4）至此全部闭环**；项目工程轨
 稳态，余下全部为所有者决策链（D-1→T8→D-2/3/4；D-tuple）。
+
+**决策链执行与 L9 全闭（2026-10-10，所有者指令"按你推荐的做"）**：
+所有者以该明确指令采纳协调者推荐，逐项落账——
+- **D-1 成立**：154 构成 §65 意义上的专用/非共享主机（事实即 §68
+  主机事实补记之四项；所有者明示采纳，满足 R-W16 F1 的"所有者
+  断言"要求与 W13 手册的 ISOLATED_HOST 前提）。
+- **T8 资格门执行并 PASSED**（树 2e5cd30a，154，全 opt-in 矩阵含
+  ISOLATED_HOST=1、镜像 sha256 5c47…47ab/234,119,480 B 经 npm 官方
+  通道重取与 L7 钉逐字节一致）：**11 过/0 败**，stdout 含
+  CLAUDE_RELAY_QUALIFICATION JSON——activation_authorized:false、
+  relay_evidence.code=relay_refused_method 且 **derived=false**、
+  dns_resolutions=0、upstream_connections=0、requests_refused=1、
+  cgroup_survivors=[]、launch 摘要=L9.1 值（15afa87d…/22a396e3…）、
+  port_window=[20000,32767]、credentials=dummy-synthetic、fake
+  服务 matches=true 且零连接（中继在协议层拒绝非批准方法请求，
+  属设计的封闭双结局之一）。**L9 节点自此彻底关闭（无剩余门）**。
+- **D-tuple 成立（混合重钉，N3 方案 c）**：G6 的代码检查面保持
+  linux/x86_64 + PG 主版本 18 + 每次发布记录 PG 精确构建；OS/Python
+  转为记录性环境事实加下限（Python ≥3.11；内核/命名空间闭合按 T1
+  实证惯例）；154 为首个重测实例（Ubuntu 24.04.1/内核 6.8/
+  CPython 3.12.3/PG 18.6 PGDG 18.6-1.pgdg24.04+2，来源区别如实
+  命名）；前置证据已由 N2-S6 分发运行（1 过，kit 溯源 67cad027）
+  与 CI linux-kit 绿（§62:2447）满足。不改变 G2-G5 任何判据；非
+  激活授权；§61 原文保留为历史。
+- **D-3（真实端点预检集）按证据预定**：T8 证据显示 CLI 的请求在
+  中继协议层被拒（fake 服务零连接）——首真运行的预检集维持 L7
+  已批准形态（单次 HEAD /api/hello，§63），无新增端点授权。
+- **D-4（凭据程序）与最终激活仍持**：授权链推进止步于真实凭据
+  边界——最终 go/no-go 与凭据供应窗口需所有者在完整钉定记录前
+  明示（N1 手册草稿 §F 为操作面；activation_authorized=false 不变）。
